@@ -1,0 +1,6 @@
+## Copy this file to `github.properties` and fill in your values.
+## `github.properties` is gitignored. Only needed when publishing the
+## shared Android artifact to GitHub Packages from this repo.
+
+username=YOUR-GITHUB-USERNAME
+token=YOUR-PERSONAL-ACCESS-TOKEN-WITH-WRITE-PACKAGES

@@ -1,0 +1,24 @@
+name: Setup KMP Environment
+description: Checkout, setup JDK, Gradle and publishing properties
+
+inputs:
+  publishing_properties_base64:
+    description: Base64 encoded github.properties
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: Create github.properties from Base64
+      shell: bash
+      run: |
+        echo "${{ inputs.publishing_properties_base64 }}" | base64 -d > github.properties

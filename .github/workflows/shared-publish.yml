@@ -1,0 +1,68 @@
+name: Publish Android & iOS Libraries
+
+on:
+  push:
+    branches: [ release/v*.* ]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish-release-ios:
+    name: Publish Shared iOS XCFrameworks
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: ./.github/actions/setup-project
+        with:
+          publishing_properties_base64: ${{ secrets.PUBLISHING_PROPERTIES_BASE64 }}
+
+      - name: Check if release tag exists
+        run: ./scripts/check-git-tag-exists.sh
+
+      - name: Build XCFrameworks, publish GitHub Release, patch Package.swift
+        if: ${{ success() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/release-xcframeworks.sh --publish
+
+      - name: Commit patched Package.swift back to the release branch
+        if: ${{ success() }}
+        run: |
+          git config user.name "CI Bot"
+          git config user.email "ci@users.noreply.github.com"
+          if git diff --quiet Package.swift; then
+            echo "Package.swift unchanged; nothing to commit."
+            exit 0
+          fi
+          VERSION=$(grep '^version' shared/build.gradle.kts | awk -F'"' '{print $2}')
+          git add Package.swift
+          git commit -m "CHORE: CI - Update Package.swift checksums for $VERSION"
+          git push origin HEAD:"$GITHUB_REF_NAME"
+
+  publish-release-android:
+    name: Publish Shared Android Library
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-project
+        with:
+          publishing_properties_base64: ${{ secrets.PUBLISHING_PROPERTIES_BASE64 }}
+
+      - name: Check if artifact version exists
+        run: ./scripts/check-maven-artifact-exists.sh
+
+      - name: Publish Artifacts to Maven Repository
+        if: ${{ success() }}
+        run: ./gradlew assembleRelease publishAndroidReleasePublicationToMavenRepository --stacktrace

@@ -1,0 +1,9 @@
+#include? "Secrets.xcconfig"
+
+TEAM_ID=
+
+PRODUCT_NAME=SupabaseOfflineDemo
+PRODUCT_BUNDLE_IDENTIFIER=io.github.nesfeder.supabase.demo.$(TEAM_ID)
+
+CURRENT_PROJECT_VERSION=1
+MARKETING_VERSION=1.0
