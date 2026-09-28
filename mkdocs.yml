@@ -76,6 +76,12 @@ theme:
 extra_css:
   - assets/extra.css
 
+# A pinned copy of Mermaid. Material for MkDocs uses it instead of fetching mermaid@11 from
+# unpkg.com, so no page loads a script from a third-party host. Version, source and checksum:
+# docs/assets/javascripts/mermaid/README.txt.
+extra_javascript:
+  - assets/javascripts/mermaid/mermaid.min.js
+
 plugins:
   - search
 
