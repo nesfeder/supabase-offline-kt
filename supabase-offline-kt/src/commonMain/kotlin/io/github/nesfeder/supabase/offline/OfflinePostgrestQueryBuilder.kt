@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
@@ -653,13 +654,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
         if (capture is QueueCapture.Queueable && store.pendingMutationCountForTable(table) > 0 &&
             delegate.requestsRollback(performOnline) != true
         ) {
-            if (enqueue(capture) != null) {
+            if (enqueue(capture, startedAtTick) is EnqueueOutcome.Queued) {
                 sdkLogger.info { "$verbLabel $table queued behind pending mutations" }
                 requestSync()
                 return MutationOutcome.Queued
             }
-            // The queue holds another identity's writes, so this one cannot join them; it goes
-            // straight to the server under the current session instead.
+            // The queue holds another identity's writes (or the identity cannot be told), so this
+            // one cannot join them; it goes straight to the server under the current session.
         }
 
         val probe = PreferHeaderProbe(shortCircuit = false)
@@ -695,43 +696,49 @@ internal class OfflinePostgrestQueryBuilderImpl(
         probe: PreferHeaderProbe,
         startedAtTick: Long,
     ): MutationOutcome {
-        when {
-            probe.requestedRollback -> {
-                sdkLogger.info { "Refusing to queue offline $verbLabel for $table: a dry run is never queued" }
-                throw failure
-            }
-
-            capture is QueueCapture.Refused -> {
+        if (probe.requestedRollback) {
+            sdkLogger.info { "Refusing to queue offline $verbLabel for $table: a dry run is never queued" }
+            throw failure
+        }
+        val queueable = when (capture) {
+            is QueueCapture.Queueable -> capture
+            is QueueCapture.Refused -> {
                 // Replaying it would target a broader row set than the caller wrote. Fail the
                 // original write instead so the caller sees it did not succeed.
                 sdkLogger.error { "Refusing to queue offline $verbLabel for $table: ${capture.reason}" }
                 throw failure
             }
+        }
+        when (enqueue(queueable, startedAtTick)) {
+            is EnqueueOutcome.Queued -> Unit
 
-            store.wasClearedSince(startedAtTick) -> {
+            EnqueueOutcome.LocalDataCleared -> {
                 sdkLogger.info { "Not queueing offline $verbLabel for $table: local data was cleared while it was in flight" }
                 throw failure
             }
-        }
-        if (enqueue(capture as QueueCapture.Queueable) == null) {
-            sdkLogger.warning {
-                "Not queueing offline $verbLabel for $table: the queue holds another identity's pending mutations"
+
+            EnqueueOutcome.QueueOwnedByAnotherIdentity -> {
+                sdkLogger.warning {
+                    "Not queueing offline $verbLabel for $table: the queue holds another identity's pending " +
+                        "mutations, or the current identity cannot be told"
+                }
+                throw failure
             }
-            throw failure
         }
         sdkLogger.info { "$verbLabel $table queued offline (network unavailable)" }
         return MutationOutcome.Queued
     }
 
     /**
-     * Queues [capture] under the current identity.
+     * Queues [capture] under the current identity, unless local data was cleared since
+     * [startedAtTick].
      *
-     * @return The new mutation's id, or `null` when the identity cannot be told or the queue holds
-     *   another identity's pending writes.
+     * @return What happened; [EnqueueOutcome.QueueOwnedByAnotherIdentity] also when the current
+     *   identity cannot be told.
      */
-    private suspend fun enqueue(capture: QueueCapture.Queueable): Long? {
-        val identity = queueIdentity() ?: return null
-        return store.enqueueOwnedBy(identity.storedValue) { capture.enqueue(this) }
+    private suspend fun enqueue(capture: QueueCapture.Queueable, startedAtTick: Long): EnqueueOutcome {
+        val identity = queueIdentity() ?: return EnqueueOutcome.QueueOwnedByAnotherIdentity
+        return store.enqueueOwnedBy(identity.storedValue, startedAtTick) { capture.enqueue(this) }
     }
 
     private fun preferResponseForCache(requestBody: JsonArray, responseData: String): String =

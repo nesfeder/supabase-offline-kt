@@ -62,10 +62,12 @@ class OnlineWriteJoinsQueueTest {
 
         // When — online again, the user renames it to B before any sync has run
         server.answer = { okJson("[]") }
+        val requestsBefore = server.requests.size
         val outcome = rename("B")
 
-        // Then — the edit is queued behind A, and the overlay shows B
+        // Then — the edit is queued behind A without reaching the server, and the overlay shows B
         assertEquals(MutationOutcome.Queued, outcome)
+        assertEquals(requestsBefore, server.requests.size, "a write that joins the queue is not sent")
         assertEquals("""[{"id":1,"title":"B"}]""", store.cachePayloadWithOverlayFlow(TABLE, SIGNATURE).first())
     }
 

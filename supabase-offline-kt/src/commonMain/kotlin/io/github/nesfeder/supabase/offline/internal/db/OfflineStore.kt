@@ -84,6 +84,23 @@ internal enum class AddPayloadOutcome {
     DROPPED_CACHE_CLEARED,
 }
 
+/** What [OfflineStore.enqueueOwnedBy] did with a write. */
+internal sealed interface EnqueueOutcome {
+
+    /**
+     * The write is in the queue.
+     *
+     * @property id Its mutation id.
+     */
+    data class Queued(val id: Long) : EnqueueOutcome
+
+    /** Another identity's writes are pending; the write was not queued. */
+    data object QueueOwnedByAnotherIdentity : EnqueueOutcome
+
+    /** Local data was cleared after the write started; it was not queued. */
+    data object LocalDataCleared : EnqueueOutcome
+}
+
 /**
  * Central persistence for offline features:
  *
@@ -279,14 +296,6 @@ internal class OfflineStore(
     internal fun wasClearedSince(tick: Long): Boolean = predatesCacheTeardown(tick)
 
     /**
-     * The store's wall clock, in epoch milliseconds — the clock queue rows and rejections are
-     * stamped with.
-     *
-     * @return Now.
-     */
-    internal fun currentTimeMillis(): Long = nowMillis()
-
-    /**
      * Rolling count of [addPayload] writes, used to run size enforcement only periodically
      * instead of on every network SELECT. Atomic because writes can arrive concurrently from
      * multiple coroutines/threads; exactness isn't required, only a monotonic cadence.
@@ -400,8 +409,14 @@ internal class OfflineStore(
                             updatedAt = nowMillis()
                         )
                     )
-                    if (requestStartedAtTick != null) {
-                        networkRefreshTicks.update { ticks -> ticks + ((table to signature) to requestStartedAtTick) }
+                    // Only a network response says which synced mutations the payload covers; a
+                    // write with no request behind it covers none.
+                    networkRefreshTicks.update { ticks ->
+                        if (requestStartedAtTick == null) {
+                            ticks - (table to signature)
+                        } else {
+                            ticks + ((table to signature) to requestStartedAtTick)
+                        }
                     }
                     AddPayloadOutcome.WRITTEN
                 }
@@ -503,17 +518,21 @@ internal class OfflineStore(
      * them. That is the guard's whole point, so it is recorded first and never rolled back.
      */
     suspend fun clearAll() {
-        val tick = monotonicTick()
-        // Never move the teardown tick backwards: two teardowns racing here must leave the later
-        // one, or the earlier assignment would re-admit responses the later wipe disqualified.
-        cacheClearedTick.update { existing -> if (existing >= tick) existing else tick }
-        // The object-cache wipe takes the reserved rows with it: the rejected list and the queue
-        // owner belong to the identity being torn down.
-        objectDao.deleteAll()
-        storageDao.deleteAll()
-        mutationDao.deleteAll()
-        networkRefreshTicks.value = emptyMap()
-        syncedMutationTicks.value = emptyMap()
+        // Under the ownership lock, so a write whose request predates this teardown cannot slip
+        // its queue row in between the tick and the deletes — see [enqueueOwnedBy].
+        queueOwnershipMutex.withLock {
+            val tick = monotonicTick()
+            // Never move the teardown tick backwards: two teardowns racing here must leave the later
+            // one, or the earlier assignment would re-admit responses the later wipe disqualified.
+            cacheClearedTick.update { existing -> if (existing >= tick) existing else tick }
+            // The object-cache wipe takes the reserved rows with it: the rejected list and the queue
+            // owner belong to the identity being torn down.
+            objectDao.deleteAll()
+            storageDao.deleteAll()
+            mutationDao.deleteAll()
+            networkRefreshTicks.value = emptyMap()
+            syncedMutationTicks.value = emptyMap()
+        }
     }
 
     /* ───────────────────────────── Storage metadata ───────────────────────────── */
@@ -670,16 +689,28 @@ internal class OfflineStore(
      * owners were recorded) is adopted. It is refused while another identity's writes are pending —
      * queueing it would send one account's write under the other's session, whichever replays.
      *
+     * It is also refused when [clearAll] has run since [startedAtTick]: the write belongs to the
+     * identity that was torn down. The check and the insert share [clearAll]'s lock, so no teardown
+     * can fall between them.
+     *
      * @param identity The stored value of the identity making the write, or `null` to skip the
      *   ownership check (a store driven directly, with no session model).
+     * @param startedAtTick [monotonicTickNow] as read before the write's request went out, or
+     *   `null` to skip the teardown check.
      * @param enqueue Inserts the queue row and returns its id.
-     * @return The new mutation's id, or `null` when the queue belongs to another identity.
+     * @return What happened.
      */
-    suspend fun enqueueOwnedBy(identity: String?, enqueue: suspend OfflineStore.() -> Long): Long? =
-        queueOwnershipMutex.withLock {
-            if (identity != null && !claimQueueLocked(identity)) return@withLock null
-            enqueue()
+    suspend fun enqueueOwnedBy(
+        identity: String?,
+        startedAtTick: Long? = null,
+        enqueue: suspend OfflineStore.() -> Long,
+    ): EnqueueOutcome = queueOwnershipMutex.withLock {
+        when {
+            predatesCacheTeardown(startedAtTick) -> EnqueueOutcome.LocalDataCleared
+            identity != null && !claimQueueLocked(identity) -> EnqueueOutcome.QueueOwnedByAnotherIdentity
+            else -> EnqueueOutcome.Queued(enqueue())
         }
+    }
 
     /**
      * Whether a sweep made as [identity] may replay the pending queue. A queue with no recorded
