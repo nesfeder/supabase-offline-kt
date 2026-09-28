@@ -81,6 +81,25 @@ class StorageAtomicWriteTest {
     }
 
     @Test
+    fun a_large_write_that_fails_part_way_leaves_the_previous_copy_whole() = runTest {
+        // Given — a copy large enough that the disk refuses it while it is still being written,
+        // not only when it is closed
+        primeWithOldCopy()
+        fileSystem.failWritesAfterBytes = 20_000
+        val large = ByteArray(100_000) { index -> (index % 97).toByte() }
+        delegate.onDownload = { large }
+
+        // When
+        val downloaded = bucket().downloadAuthenticated(PATH) { }
+
+        // Then
+        assertContentEquals(large, downloaded)
+        fileSystem.failWritesAfterBytes = null
+        assertContentEquals(OLD, FileSystem.SYSTEM.read(target) { readByteArray() })
+        assertEquals(listOf(target), regularFiles())
+    }
+
+    @Test
     fun a_new_copy_is_written_beside_the_target_then_renamed_over_it() = runTest {
         // Given
         primeWithOldCopy()
