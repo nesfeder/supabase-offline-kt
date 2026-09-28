@@ -32,6 +32,7 @@ import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -645,6 +646,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
      *   leaves the queue and the failure is thrown, as before.
      * - Not at the head, it stays queued behind the earlier writes, a replay pass is requested, and
      *   it reports [MutationOutcome.Queued]. A refusal then lands on the rejected list, not here.
+     * - A caller cancelled while its write is on the wire leaves the write queued, since whether the
+     *   server got it is not known; a pass is requested and it replays.
      *
      * A few writes cannot be queued faithfully, and are sent directly instead, bypassing the queue —
      * so they can overtake pending writes, and fail rather than queue when offline:
@@ -723,8 +726,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: the queue's owner records cannot be read" }
         }
 
-        val sent = headSender.sendAtHead(mutationId, identity, performOnline) { result ->
-            direct.overlay(result)
+        val sent = try {
+            headSender.sendAtHead(mutationId, identity, performOnline) { result -> direct.overlay(result) }
+        } catch (cancellation: CancellationException) {
+            // Cancelled on the wire: whether the server got it is not known, so it stays queued, and
+            // a pass sends it.
+            requestSync()
+            throw cancellation
         }
         return when (sent) {
             OfflineMutationSyncer.HeadSendOutcome.NotAtHead -> {

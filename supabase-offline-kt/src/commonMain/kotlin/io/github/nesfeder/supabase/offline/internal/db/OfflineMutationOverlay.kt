@@ -66,18 +66,19 @@ internal object OfflineMutationOverlay {
      * @param json          The shared [Json] instance used for (de)serialization.
      * @param serverJson    Raw JSON string returned by PostgREST `select(...)`.
      *                      We expect a JSON array (`[...]`).
-     * @param pending       Mutations queued for the same table (typically ordered
-     *                      by `createdAtMs` ascending).
+     * @param pending       Mutations queued for the same table, in queue order.
      * @param targetFilters Parsed filters of the cached query [serverJson] came from. When the
      *                      signature is [SignatureFilters.exhaustive], INSERT/UPSERT-appended rows
      *                      that the query's WHERE clause excludes are dropped instead of appended.
      *                      `null` (the default) preserves the legacy always-append behavior, as do
      *                      non-exhaustive signatures — we never under-apply a row the server would
      *                      return. UPDATE/DELETE targeting is unaffected.
-     * @param keyColumns    The table's primary-key columns. An INSERT (or keyless UPSERT) row that
-     *                      carries the key is not appended when a row with the same key is already
-     *                      there — the server would not add a second one either — so a write the
-     *                      payload already holds is never shown twice.
+     * @param keyColumns    The table's primary-key columns. An INSERT row that carries the key is
+     *                      not appended when a row with the same key is already there — the server
+     *                      would not add a second one either — so a write the payload already holds
+     *                      is never shown twice. An UPSERT row with no filter merges into the row with
+     *                      its key (left alone with `ignoreDuplicates`), as the server's upsert on
+     *                      the primary key does.
      * @param onMutationFailure Told about each mutation that was skipped because applying it threw,
      *                      so the caller can log it. Never given the mutation's body to log.
      *

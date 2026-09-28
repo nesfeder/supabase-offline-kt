@@ -89,6 +89,23 @@ class UnreadableOutboxStateTest {
     }
 
     @Test
+    fun unreadable_ownership_declines_a_retry_rather_than_throw() = runTest {
+        // Given — a rejected write, and then ownership bookkeeping that does not decode
+        store.enqueueOwnedBy("user:user-a") { enqueueInsert(table = TABLE, body = rows("""[{"title":"refused"}]""")) }
+        val refused = store.allPendingMutations().single()
+        store.rejectMutation(refused, "refused", serverError = null)
+        objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
+        store.outboxState.resetCaches()
+
+        // When
+        val retried = runCatching { store.retryRejectedMutation(refused.id, "user:user-a") }
+
+        // Then — no internal-state exception, and nothing re-queued it without an owner
+        assertEquals(null, retried.getOrThrow())
+        assertEquals(0, store.allPendingMutations().size)
+    }
+
+    @Test
     fun an_unreadable_rejected_list_is_moved_aside_so_the_queue_does_not_wedge() = runTest {
         // Given — an unreadable list, and a queued write the server refuses
         objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "not a list")

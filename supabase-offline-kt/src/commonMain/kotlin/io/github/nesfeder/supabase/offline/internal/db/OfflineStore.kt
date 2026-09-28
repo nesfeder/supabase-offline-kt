@@ -954,6 +954,7 @@ internal class OfflineStore(
     suspend fun retryRejectedMutation(id: Long, identity: String?): Long? = outboxMutex.withLock {
         val entry = outboxState.rejections().firstOrNull { rejection -> rejection.id == id } ?: return@withLock null
         if (identity != null && entry.owner != null && entry.owner != identity) return@withLock null
+        if (identity != null && outboxState.owners() !is MutationOwners.Known) return@withLock null
         val row = entry.toRequeuedRow(createdAtMs = nowMillis()) ?: return@withLock null
         val (rejectedRow, list) = outboxState.rejectedRowWith(removeId = id)
         var newId = 0L

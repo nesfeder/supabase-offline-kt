@@ -251,7 +251,9 @@ internal class OfflineMutationSyncer(
      * emission before the patched cache shows it.
      *
      * A connectivity failure leaves it queued. Any other failure — a refusal, or a `5xx` — removes
-     * it and is handed back for the caller to throw, as a write sent online always has been.
+     * it and is handed back for the caller to throw, as a write sent online always has been. A caller
+     * cancelled while the write is on the wire leaves it queued: whether the server got it is not
+     * known, so it replays.
      *
      * @param mutationId The queued write.
      * @param identity The identity that made it.
@@ -293,8 +295,13 @@ internal class OfflineMutationSyncer(
                 }
             }
             if (clearGeneration.value != generation) return HeadSendOutcome.Cleared(result = result, cause = null)
-            onAccepted(result)
-            store.completeSentMutation(mutationId)
+            try {
+                onAccepted(result)
+            } finally {
+                // The server has the write: it leaves the queue even if patching the cache failed or
+                // the caller was cancelled meanwhile, or a pass would send it again.
+                withContext(NonCancellable) { store.completeSentMutation(mutationId) }
+            }
             return HeadSendOutcome.Sent(result)
         } finally {
             withContext(NonCancellable) { sendLock.withLock { inFlight -= mutationId } }

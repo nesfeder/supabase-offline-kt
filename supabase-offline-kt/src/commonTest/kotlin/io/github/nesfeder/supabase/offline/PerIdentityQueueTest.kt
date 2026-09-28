@@ -9,6 +9,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -114,6 +116,30 @@ class PerIdentityQueueTest {
         // Then — it never goes out under B, and does under A
         assertEquals(0, asB.syncedCount)
         assertEquals(1, asA.syncedCount)
+    }
+
+    @Test
+    fun counts_and_the_overlay_show_only_the_current_identitys_writes() = runTest {
+        // Given — a store that follows the session, one offline write each from nobody and from A
+        val sessionChanges = MutableStateFlow<QueueIdentity>(session)
+        store.identityProvider = { session.storedValue }
+        store.identityChanges = sessionChanges
+        writeOffline("anonymous note")
+        session = USER_A
+        sessionChanges.value = session
+        writeOffline("A's note")
+        val countsAsA = store.pendingMutationCountFlow().first()
+
+        // When — A signs out
+        session = QueueIdentity.Anonymous
+        sessionChanges.value = session
+
+        // Then — each sees only its own
+        assertEquals(1, countsAsA)
+        assertEquals(1, store.pendingMutationCountFlow().first())
+        assertEquals(1, store.pendingMutationCount())
+        assertEquals(listOf("""[{"title":"anonymous note"}]"""), store.pendingMutationsFlow(null).first().map { it.bodyJson })
+        assertEquals("""[{"title":"anonymous note"}]""", store.cachePayloadWithOverlayFlow(TABLE, TABLE).first())
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

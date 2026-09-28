@@ -1,12 +1,16 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.outbox.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.outbox.toRejectedMutation
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -41,6 +45,48 @@ class RejectedListBoundsTest {
         assertEquals(2L, store.outboxState.rejections().first().id)
         val warnings = logger.entriesAt(OfflineLogLevel.WARNING).map { it.message }
         assertTrue(warnings.any { it.contains("1") && it.contains("notes") && it.contains("INSERT") }, "got $warnings")
+    }
+
+    @Test
+    fun a_body_too_long_to_keep_is_dropped_with_its_size_and_cannot_be_retried() = runTest {
+        // Given / When
+        val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS) + "\"}]"
+        store.outboxState.addRejection(rejection(id = 1L, bodyJson = body))
+
+        // Then — the entry stays, without its body, saying how long it was; a retry declines it
+        val entry = store.outboxState.rejections().single()
+        assertEquals(body.length, entry.bodyOmittedChars)
+        assertEquals(body.length, entry.toRejectedMutation(store.json, DefaultPrimaryKeys).bodyOmittedChars)
+        assertNull(store.retryRejectedMutation(1L, identity = null))
+        assertEquals(1, store.outboxState.rejections().size)
+    }
+
+    @Test
+    fun the_list_keeps_within_its_size_budget_and_counts_what_it_drops() = runTest {
+        // Given / When — fifty rejections whose bodies are just under the per-body limit
+        val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS - 20) + "\"}]"
+        repeat(50) { index -> store.outboxState.addRejection(rejection(id = index + 1L, bodyJson = body)) }
+
+        // Then — the newest are kept within the budget, and the count of dropped entries is persisted
+        val row = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+        assertTrue(row.payload.length <= MAX_REJECTED_LIST_CHARS + 1_000, "the row holds ${row.payload.length} characters")
+        val kept = store.outboxState.rejections()
+        assertEquals(50L, kept.last().id)
+        val reloaded = newTestOfflineStore(objectDao = objectDao)
+        assertEquals(50L - kept.size, reloaded.outboxState.droppedCount())
+    }
+
+    @Test
+    fun the_count_of_dropped_entries_can_be_reset() = runTest {
+        // Given
+        repeat(MAX_REJECTED_MUTATIONS + 3) { index -> store.outboxState.addRejection(rejection(id = index + 1L)) }
+        assertEquals(3L, store.outboxState.droppedCount())
+
+        // When
+        store.outboxState.resetDroppedCount()
+
+        // Then
+        assertEquals(0L, newTestOfflineStore(objectDao = objectDao).outboxState.droppedCount())
     }
 
     private fun rejection(id: Long, bodyJson: String = "[]"): StoredRejection = StoredRejection(

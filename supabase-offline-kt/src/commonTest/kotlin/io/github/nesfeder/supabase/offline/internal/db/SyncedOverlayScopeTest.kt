@@ -23,7 +23,13 @@ class SyncedOverlayScopeTest {
     private val objectDao = FakeObjectDao()
     private val mutationDao = FakeMutationDao()
     private var tick = 0L
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, monotonicTick = { tick })
+    private var clock = 1_000_000L
+    private val store = newTestOfflineStore(
+        objectDao = objectDao,
+        mutationDao = mutationDao,
+        monotonicTick = { tick },
+        nowMillis = { clock },
+    )
 
     @Test
     fun a_refreshed_query_does_not_show_a_retained_synced_insert_twice() = runTest {
@@ -74,6 +80,48 @@ class SyncedOverlayScopeTest {
         assertEquals("""[{"id":"a","list_id":"L","title":"C"}]""", store.cachePayloadWithOverlayFlow(TABLE, ALL).first())
     }
 
+    @Test
+    fun a_one_shot_read_of_a_refreshed_query_is_not_overwritten_by_a_retained_synced_update() = runTest {
+        // Given — as above: an offline rename to A replayed, then ALL refreshed with another device's C
+        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L","title":"orig"}]""")
+        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"orig"}]""")
+        tick = 10L
+        store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
+        tick = 20L
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        tick = 30L
+        val started = store.monotonicTickNow()
+        tick = 40L
+        store.addPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"C"}]""", requestStartedAtTick = started)
+
+        // When — a one-shot read falls back to the cache for each query
+        val all = store.applyAllMutationsForOfflineFallback(TABLE, ALL, """[{"id":"a","list_id":"L","title":"C"}]""")
+        val listL = store.applyAllMutationsForOfflineFallback(TABLE, LIST_L, """[{"id":"a","list_id":"L","title":"orig"}]""")
+
+        // Then — ALL keeps the server's C; L, fetched before the replay, still shows A
+        assertEquals("""[{"id":"a","list_id":"L","title":"C"}]""", all)
+        assertEquals("""[{"id":"a","list_id":"L","title":"A"}]""", listL)
+    }
+
+    @Test
+    fun a_synced_write_is_retired_after_a_day_even_if_a_query_that_needs_it_is_never_refreshed() = runTest {
+        // Given — a detail query cached once and never refreshed, and a replayed insert it shows
+        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.clearSyncedMutationsForTable(TABLE)
+        val keptWhileNeeded = mutationDao.inserted.size
+
+        // When — a day passes
+        clock += ONE_DAY_MS + 1
+        store.retireAgedSyncedMutations()
+
+        // Then — kept while the query needed it, retired once it aged out
+        assertEquals(1, keptWhileNeeded)
+        assertEquals(0, mutationDao.inserted.size)
+        assertEquals("""[{"id":"a","list_id":"L"}]""", store.cachePayloadWithOverlayFlow(TABLE, LIST_L).first())
+    }
+
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
 
     private fun element(json: String): JsonElement = Json.parseToJsonElement(json)
@@ -85,5 +133,6 @@ class SyncedOverlayScopeTest {
         const val TABLE = "tasks"
         const val LIST_L = "tasks?list_id=eq.L"
         const val ALL = "tasks"
+        const val ONE_DAY_MS = 24L * 60 * 60 * 1000
     }
 }
