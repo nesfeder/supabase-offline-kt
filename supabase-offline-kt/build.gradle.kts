@@ -62,7 +62,12 @@ kotlin {
             xcFramework.add(this)
         }
         if (iosUsesSystemSqlite) {
-            iosTarget.binaries.all { linkerOpts("-lsqlite3") }
+            iosTarget.binaries.all {
+                linkerOpts("-lsqlite3")
+                // Room 2.8.4 was built against androidx.sqlite 2.6; this variant links 2.7.1. Any
+                // ABI gap between them has to fail the link, not surface as a crash at runtime.
+                freeCompilerArgs += "-Xpartial-linkage-loglevel=ERROR"
+            }
         }
     }
 
@@ -97,7 +102,16 @@ kotlin {
                 // sqlite3_load_extension, which the iOS libsqlite3 does not export, and every open
                 // fails enabling extension loading (SQLITE_MISUSE). Resolving 2.7 also lifts the
                 // variant's androidx.sqlite core to 2.7; the bundled build is untouched.
-                implementation(if (iosUsesSystemSqlite) libs.androidx.sqlite.framework.system else libs.androidx.sqlite.bundled)
+                if (iosUsesSystemSqlite) {
+                    // Strictly: a newer androidx.sqlite arriving through Room must fail resolution
+                    // rather than silently change the SQLite layer this variant was verified on.
+                    val systemSqlite = libs.versions.sqlite.system.get()
+                    listOf(libs.androidx.sqlite.framework.system, libs.androidx.sqlite.system).forEach { library ->
+                        implementation(library.get().module.toString()) { version { strictly(systemSqlite) } }
+                    }
+                } else {
+                    implementation(libs.androidx.sqlite.bundled)
+                }
             }
         }
 
@@ -115,6 +129,20 @@ kotlin {
             implementation(libs.robolectric)
             implementation(libs.androidx.testExt.junit)
             implementation(libs.androidx.test.core.ktx)
+        }
+    }
+}
+
+// The system-SQLite variant builds the Swift package and runs the iOS suite on Apple's SQLite. Its
+// iOS publications would hand a Maven consumer Apple's SQLite without the -lsqlite3 it needs, in
+// place of the bundled SQLite every published version carries, so no publish task may run with it.
+if (providers.gradleProperty("supabase.offline.iosSqlite").orNull == "system") {
+    tasks.withType<AbstractPublishToMaven>().configureEach {
+        doFirst {
+            throw GradleException(
+                "Publishing is disabled with -Psupabase.offline.iosSqlite=system: that build is for the Swift " +
+                    "package and the system-SQLite test run only. Publish from a build without the property.",
+            )
         }
     }
 }
