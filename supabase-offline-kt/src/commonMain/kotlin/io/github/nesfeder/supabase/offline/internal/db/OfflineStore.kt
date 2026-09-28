@@ -861,9 +861,12 @@ internal class OfflineStore(
     /**
      * Refuses the engine's reserved state table (see [RESERVED_TABLE_NAME]) as the target of a
      * cache write or a queued write, so no user-facing path can touch the reserved rows.
+     *
+     * @return [table], when it is an app table.
      */
-    private fun requireUserTable(table: String) {
+    private fun requireUserTable(table: String): String {
         require(!isReservedTable(table)) { "The table name is reserved by the offline engine" }
+        return table
     }
 
     /** Logs a mutation the overlay skipped. Never the mutation's body or filter values. */
@@ -1058,30 +1061,7 @@ internal class OfflineStore(
         onConflict: String? = null,
         ignoreDuplicates: Boolean? = null,
         liveSignatures: Set<String>? = null,
-    ) {
-        requireUserTable(table)
-        applyLocalMutationToCacheLocked(
-            table = table,
-            operation = operation,
-            bodyJson = bodyJson,
-            filterJson = filterJson,
-            defaultToNull = defaultToNull,
-            onConflict = onConflict,
-            ignoreDuplicates = ignoreDuplicates,
-            liveSignatures = liveSignatures,
-        )
-    }
-
-    private suspend fun applyLocalMutationToCacheLocked(
-        table: String,
-        operation: String,
-        bodyJson: String,
-        filterJson: String?,
-        defaultToNull: Boolean?,
-        onConflict: String?,
-        ignoreDuplicates: Boolean?,
-        liveSignatures: Set<String>?,
-    ) = tableWriteLock(table).withLock {
+    ): Unit = tableWriteLock(requireUserTable(table)).withLock {
         // Disqualify every network SELECT already in flight for this table before touching a row:
         // their responses describe the server as it was before this mutation committed, and
         // nothing would replay this patch if one of them landed on top of it.

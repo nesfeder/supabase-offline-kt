@@ -99,7 +99,7 @@ public interface SupabaseOfflineClient {
      *   an unexpected error — stops the whole pass and keeps every remaining
      *   mutation queued, so a later write never overtakes an earlier one (a child
      *   row never replays ahead of its parent). Nothing transient ever removes a
-     *   mutation. Errors are not thrown from this method.
+     *   mutation. Replay failures are not thrown from this method.
      * - A mutation the server refuses for good (another `4xx`) is taken out of the
      *   queue and kept on a rejected list with the server's reason, and the pass
      *   continues. A `403` or `409` on a mutation that has an earlier one still
@@ -234,9 +234,9 @@ public interface SupabaseOfflineClient {
      * to the next user on the same device, and no personal data survives on disk after an
      * account is deleted.
      *
-     * A sync in progress is cancelled first, and nothing it queued is sent once this has begun.
-     * A write whose request was already in flight is neither overlaid onto the cache nor queued
-     * when it returns.
+     * A replay pass in progress is cancelled first, and no queued write is sent once clearing has
+     * begun. A write whose request was already in flight is neither overlaid onto the cache nor
+     * queued when it returns.
      */
     public suspend fun clearAllCache()
 }
