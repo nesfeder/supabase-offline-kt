@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalObjCRefinement::class)
 
 package io.github.nesfeder.supabase.offline.internal.testing
 
@@ -12,6 +12,8 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.jan.supabase.SupabaseClient
 import kotlinx.coroutines.CoroutineScope
 import okio.Path.Companion.toPath
+import kotlin.experimental.ExperimentalObjCRefinement
+import kotlin.native.HiddenFromObjC
 
 /**
  * Builds a fully in-memory [SupabaseOfflineClient] backed by non-persistent DAOs — no Room, no
@@ -24,7 +26,9 @@ import okio.Path.Companion.toPath
  *
  * This is the hook behind `buildInMemorySupabaseOfflineClient` in the `supabase-offline-kt-testing`
  * artifact. It lives here because the in-memory DAOs implement the SDK's internal storage
- * interfaces, which stay internal; the testing artifact is the supported entry point.
+ * interfaces, which stay internal; the testing artifact is the supported entry point. The opt-in
+ * gates Kotlin callers; [HiddenFromObjC] keeps it out of the Objective-C and Swift export, where
+ * an opt-in cannot be enforced.
  *
  * @param supabase the (typically mock-engine) Supabase client the offline client wraps.
  * @param coordinatorScope scope hosting the client-scoped refresh loops; pass a test-dispatcher
@@ -33,6 +37,7 @@ import okio.Path.Companion.toPath
  * @return an offline client whose cache, storage metadata and mutation queue live in memory.
  */
 @InternalOfflineTestingApi
+@HiddenFromObjC
 public fun createInMemorySupabaseOfflineClient(
     supabase: SupabaseClient,
     coordinatorScope: CoroutineScope,
