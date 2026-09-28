@@ -20,3 +20,7 @@ jobs:
       # check runs the Android host tests (Robolectric) and the iOS simulator tests of both modules.
       - name: Run library checks
         run: ./gradlew :supabase-offline-kt:check :supabase-offline-kt-testing:check --stacktrace
+
+      # check never compiles the iOS device target or links the SKIE framework; this does.
+      - name: Link the iOS device framework
+        run: ./gradlew :supabase-offline-kt:linkReleaseFrameworkIosArm64 --stacktrace
