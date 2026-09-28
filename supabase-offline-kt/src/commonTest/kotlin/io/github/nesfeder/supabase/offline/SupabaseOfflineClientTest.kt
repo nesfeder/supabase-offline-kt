@@ -41,10 +41,11 @@ class SupabaseOfflineClientTest {
     }
 
     /**
-     * Pins today's behaviour: the one-argument `from(table)` reads the default schema from the
-     * PostgREST plugin before the engine's own guard runs, so without the plugin it fails with
-     * supabase-kt's error rather than the engine's install hint. A later change is expected to route
-     * it through the same guard as `from(schema, table)`.
+     * The one-argument `from(table)` reads the default schema from the PostgREST plugin before the
+     * engine's own guard runs, so without the plugin it fails with supabase-kt's own error (which
+     * also names the missing plugin), as the previous standalone engine asserted, rather than the
+     * engine's install hint. A later change is expected to route it through the same guard as
+     * `from(schema, table)`.
      */
     @Test
     fun from_table_whenPostgrestNotInstalled_throws_before_the_engine_guard() = runTest {
@@ -55,7 +56,9 @@ class SupabaseOfflineClientTest {
         val error = assertFailsWith<IllegalStateException> { client.from("todos") }
 
         // Then
-        assertFalse(error.message.orEmpty().contains("Postgrest plugin is not installed"))
+        val message = error.message.orEmpty()
+        assertTrue(message.contains("Plugin rest not installed or not of type Postgrest"), message)
+        assertFalse(message.contains("Postgrest plugin is not installed"))
     }
 
     @Test
