@@ -131,6 +131,7 @@ public interface SupabaseOfflineClient {
      * - Showing "N changes to sync" badges
      * - Deciding whether to show a "Sync" button
      */
+    @Throws(Exception::class)
     public suspend fun pendingMutationCount(): Int
 
     /**
@@ -148,6 +149,7 @@ public interface SupabaseOfflineClient {
      *
      * Useful for table-specific UI ("this screen has unsynced edits").
      */
+    @Throws(Exception::class)
     public suspend fun pendingMutationCount(table: String): Int
 
     /**

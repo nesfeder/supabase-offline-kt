@@ -7,6 +7,7 @@ import io.github.jan.supabase.storage.BucketApi
  * Ensure that [objectPath] is present in local cache.
  * If not cached yet, downloads it (authenticated) and returns the absolute POSIX path as [String].
  */
+@Throws(Exception::class)
 public suspend fun BucketApi.ensureLocalPath(
     objectPath: String,
     isPublic: Boolean = false
@@ -32,6 +33,7 @@ public suspend fun BucketApi.ensureLocalPath(
 /**
  * Return the local absolute path ONLY if already cached (no network).
  */
+@Throws(Exception::class)
 public suspend fun BucketApi.localPathIfCached(objectPath: String): String? {
     val offline = this as? OfflineBucketApi ?: return null
     return offline.localPathIfPresent(objectPath)?.toString()
@@ -41,11 +43,13 @@ public suspend fun BucketApi.localPathIfCached(objectPath: String): String? {
  * Convenience: return a file:// URL string for [objectPath],
  * downloading if necessary. Handy for Swift: URL(string: …).
  */
+@Throws(Exception::class)
 public suspend fun BucketApi.ensureLocalFileUrl(objectPath: String, isPublic: Boolean): String? =
     ensureLocalPath(objectPath, isPublic)?.let { "file://$it" }
 
 /**
  * Convenience: return a file:// URL string ONLY if already cached (no network).
  */
+@Throws(Exception::class)
 public suspend fun BucketApi.localFileUrlIfCached(objectPath: String): String? =
     localPathIfCached(objectPath)?.let { "file://$it" }
