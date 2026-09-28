@@ -22,6 +22,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+/** What a call on a closed client — or a reactive read it was serving — fails with. */
+internal const val CLIENT_CLOSED_MESSAGE: String = "This SupabaseOfflineClient is closed"
+
 /**
  * Client-scoped coordinator for `CacheFirstThenNetwork` subscriptions, keyed by
  * `(table, signature)`. Owns two responsibilities that both need a single client-wide instance:
@@ -79,7 +82,9 @@ internal class RefreshCoordinator(
      * - A failure in the upstream — a Room read failing on a malformed database, say — reaches
      *   every collector of that entry as their own exception, instead of escaping from the sharing
      *   coroutine to the process. The entry ends with it; the next collector starts afresh.
-     * - When [scope] ends (the client was closed), every collection completes.
+     * - When [scope] ends (the client was closed), every collection fails with
+     *   [IllegalStateException] — a collection started after that fails at once — rather than
+     *   completing as if the table had nothing more to say.
      *
      * @param table Table of the query.
      * @param signature Canonical signature of the query.
@@ -94,11 +99,11 @@ internal class RefreshCoordinator(
         val key = Key(table, signature)
         val entry = acquire(key, upstream)
         // When the client closes, its scope — and with it this entry's sharing coroutine — is
-        // cancelled. End the collection then, instead of leaving it waiting on a flow that will
-        // never emit again.
+        // cancelled. Fail the collection then, instead of leaving it waiting on a flow that will
+        // never emit again, or ending it as though the read were done.
         val closedWatcher = launch {
             scope.coroutineContext.job.join()
-            this@channelFlow.close()
+            this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
         }
         try {
             entry.flow.collect { emission ->

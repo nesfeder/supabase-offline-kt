@@ -3,6 +3,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -84,6 +85,33 @@ class StorageCacheWriteTest {
         // Then
         assertContentEquals(BYTES, downloaded)
         assertNull(store.getStorageByKey(BUCKET, PATH))
+    }
+
+    @Test
+    fun a_download_whose_cache_row_cannot_be_written_still_returns_its_bytes() = runTest {
+        // Given — the database refuses the row (a full disk, a closed or malformed database)
+        val dao = RecordingStorageDao()
+        dao.failUpserts = true
+        val failingStore = newTestOfflineStore(storageDao = dao)
+        delegate.onDownload = { BYTES }
+
+        // When
+        val downloaded = newTestBucketApi(
+            delegate = delegate,
+            baseDirectory = dataDirectory,
+            store = failingStore,
+            sdkLogger = logger.asSdkLogger(),
+        ).downloadAuthenticated(PATH) { }
+
+        // Then — the caller gets its bytes, and no untracked file is left behind
+        assertContentEquals(BYTES, downloaded)
+        assertEquals(emptyList(), dao.all())
+        val files = if (FileSystem.SYSTEM.exists(dataDirectory)) {
+            FileSystem.SYSTEM.listRecursively(dataDirectory).filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.toList()
+        } else {
+            emptyList()
+        }
+        assertEquals(emptyList(), files)
     }
 
     private companion object {

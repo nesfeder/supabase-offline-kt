@@ -2,11 +2,11 @@ package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.storage.Storage
-import io.github.jan.supabase.storage.resumable.MemoryResumableCache
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.toByteArray
+import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -15,6 +15,8 @@ import io.ktor.http.decodeURLPart
 import io.ktor.http.headersOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.io.IOException
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * A Supabase Storage server on a Ktor [MockEngine], answering the real supabase-kt `BucketApi`
@@ -71,6 +73,9 @@ internal class RecordingStorageServer {
         val segments = request.url.encodedPath.removePrefix("/").split('/').map { it.decodeURLPart() }
         // storage/v1/<kind...>/<bucket>/<path...>
         when {
+            segments.take(4) == listOf("storage", "v1", "upload", "resumable") ->
+                resumable(request.method.value, segments.drop(4).firstOrNull(), request)
+
             segments.take(4) == listOf("storage", "v1", "object", "authenticated") ||
                 segments.take(4) == listOf("storage", "v1", "object", "public") ->
                 download(segments.drop(4), transform = null)
@@ -86,6 +91,44 @@ internal class RecordingStorageServer {
 
             else -> error("RecordingStorageServer has no route for ${request.url.encodedPath}")
         }
+    }
+
+    /** A resumable upload in progress: the object key it writes, its declared length and what arrived. */
+    private class PendingUpload(val key: String, val length: Long, var received: ByteArray)
+
+    private val pendingUploads = mutableMapOf<String, PendingUpload>()
+
+    /**
+     * The TUS endpoints supabase-kt's resumable client speaks: `POST` creates an upload and answers
+     * its location, `PATCH` appends a chunk at `Upload-Offset`, `HEAD` reports the offset. The
+     * object is stored once its last byte arrives.
+     */
+    @OptIn(ExperimentalEncodingApi::class)
+    private suspend fun MockRequestHandleScope.resumable(method: String, uploadId: String?, request: HttpRequestData): HttpResponseData {
+        if (method == "POST" && uploadId == null) {
+            val metadata = request.headers["Upload-Metadata"].orEmpty().split(',').associate { entry ->
+                val (name, value) = entry.trim().split(' ', limit = 2)
+                name to Base64.decode(value).decodeToString()
+            }
+            val id = "upload-${pendingUploads.size + 1}"
+            pendingUploads[id] = PendingUpload(
+                key = "${metadata.getValue("bucketName")}/${metadata.getValue("objectName")}",
+                length = request.headers["Upload-Length"]?.toLong() ?: 0L,
+                received = ByteArray(0),
+            )
+            return respond(
+                content = "",
+                status = HttpStatusCode.Created,
+                headers = headersOf(HttpHeaders.Location, "$TEST_SUPABASE_URL/storage/v1/upload/resumable/$id"),
+            )
+        }
+        val upload = pendingUploads[uploadId] ?: error("RecordingStorageServer has no resumable upload $uploadId")
+        if (method == "PATCH") {
+            upload.received += request.body.toByteArray()
+            if (upload.received.size.toLong() == upload.length) objects[upload.key] = upload.received
+            return respond(content = "", status = HttpStatusCode.NoContent, headers = headersOf("Upload-Offset", upload.received.size.toString()))
+        }
+        return respond(content = "", status = HttpStatusCode.OK, headers = headersOf("Upload-Offset", upload.received.size.toString()))
     }
 
     private fun MockRequestHandleScope.store(key: String, bytes: ByteArray): HttpResponseData {
@@ -114,11 +157,12 @@ internal class RecordingStorageServer {
 
     /**
      * A supabase-kt client with the Storage plugin whose requests reach this server. Resumable
-     * uploads keep their state in memory: the default store needs an Android context.
+     * uploads keep their state in a [FakeResumableCache]: the default store needs an Android
+     * context.
      */
     fun supabaseClient(): SupabaseClient = newTestSupabaseClient(engine = engine) {
         install(Storage) {
-            resumable { cache = MemoryResumableCache() }
+            resumable { cache = FakeResumableCache() }
         }
     }
 }

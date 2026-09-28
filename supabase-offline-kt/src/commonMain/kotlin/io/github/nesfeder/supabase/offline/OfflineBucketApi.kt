@@ -17,7 +17,8 @@ import io.github.jan.supabase.storage.BucketApi
  *
  * **Writes** — uploads, updates, deletes, moves and copies — are online-only: offline they fail
  * with supabase-kt's own connectivity error, and nothing is queued. A write that reaches the server
- * drops any cached copy it made stale, so a later read never serves the old bytes.
+ * drops any cached copy it made stale, so a later read never serves the old bytes. A resumable
+ * upload started or continued through [resumable] drops them once it finishes.
  *
  * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\`, or a
  * control character — still download and write normally; they are never mapped onto a file.
@@ -26,6 +27,15 @@ import io.github.jan.supabase.storage.BucketApi
  * used files first; clearing local data empties it.
  */
 public interface OfflineBucketApi : BucketApi {
+
+    /**
+     * This bucket, sending the header [name] with [value] on every request, and still caching.
+     *
+     * @param name the header name.
+     * @param value the header value.
+     * @return the offline bucket with the header set.
+     */
+    override fun setHeader(name: String, value: String): OfflineBucketApi
 
     /**
      * The cached copy of the object at [path], or `null` when none is cached. Never touches the

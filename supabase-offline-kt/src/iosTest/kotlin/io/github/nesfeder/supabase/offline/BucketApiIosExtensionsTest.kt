@@ -14,19 +14,21 @@ import kotlinx.io.IOException
 import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
+import platform.Foundation.NSURL
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
  * The iOS storage helpers (`ensureLocalPath`, `localPathIfCached`, `ensureLocalFileUrl`) over the
- * offline bucket: they hand back the cached file, and they no longer turn a cancellation or a
- * failure into "not available".
+ * offline bucket: they hand back the cached file, as a file URL Swift can parse whatever the name,
+ * and they no longer turn a cancellation or a failure into "not available".
  */
 class BucketApiIosExtensionsTest {
 
@@ -49,7 +51,21 @@ class BucketApiIosExtensionsTest {
 
         // Then
         assertEquals((directory / "storage" / "test-bucket" / "a b" / "test.txt").toString(), path)
-        assertEquals("file://$path", offlineApi.localFileUrlIfCached("a b/test.txt"))
+        assertEquals(NSURL.fileURLWithPath(assertNotNull(path)).absoluteString, offlineApi.localFileUrlIfCached("a b/test.txt"))
+    }
+
+    @Test
+    fun a_file_url_leads_back_to_the_file_for_any_name() = runTest {
+        // Given — names with characters a URL must escape
+        fakeBucket.onDownload = { "content".encodeToByteArray() }
+        listOf("a b/test.txt", "100%.txt", "what?.txt", "c#.txt").forEach { name ->
+            // When
+            val path = offlineApi.ensureLocalPath(name)
+            val url = assertNotNull(offlineApi.ensureLocalFileUrl(name, isPublic = false))
+
+            // Then — Swift's URL(string:) accepts it, and it names the cached file
+            assertEquals(path, NSURL.URLWithString(url)?.path, "the URL for $name does not lead back to its file: $url")
+        }
     }
 
     @Test

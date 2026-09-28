@@ -1,12 +1,16 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
+import io.github.jan.supabase.storage.Storage
+import io.github.jan.supabase.storage.resumable.MemoryResumableCache
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
+import okio.IOException
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.SYSTEM
@@ -15,6 +19,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 
 /**
@@ -115,6 +120,54 @@ class StorageTransformCacheTest {
         assertEquals(PATH, row.path)
         assertEquals((dataDirectory / "storage" / BUCKET / "u-1" / "me.png").toString(), row.localPath)
         assertEquals(ORIGINAL, FileSystem.SYSTEM.read(row.localPath.toPath()) { readUtf8() })
+    }
+
+    @Test
+    fun an_object_under_render_image_is_cached_as_the_original() = runTest {
+        // Given — an untransformed object whose own path contains "render/image/"
+        server.objects["$BUCKET/render/image/cat.png"] = ORIGINAL.encodeToByteArray()
+
+        // When
+        bucket().downloadAuthenticated("render/image/cat.png") { }
+
+        // Then
+        assertNotNull(bucket().cachedFile("render/image/cat.png"), "cached as a transformed variant, not as the original")
+    }
+
+    @Test
+    fun the_original_is_served_offline_when_the_request_could_not_even_be_built() = runTest {
+        // Given — cached online, then read through a client whose access-token provider fails
+        // offline, as a third-party auth provider's refresh does; supabase-kt throws before it
+        // builds the request, so the variant the caller asked for is never observed
+        bucket().downloadAuthenticated(PATH) { }
+        val tokenFails = newTestSupabaseClient(engine = server.engine) {
+            accessToken = { throw IOException("token refresh failed: offline") }
+            install(Storage) { resumable { cache = MemoryResumableCache() } }
+        }
+        val offline = newTestBucketApi(delegate = tokenFails.storage.from(BUCKET), baseDirectory = dataDirectory, store = store)
+
+        // When
+        val original = offline.downloadAuthenticated(PATH) { }.decodeToString()
+        val asThumbnail = offline.downloadAuthenticated(PATH) { transform { size(64, 64) } }.decodeToString()
+
+        // Then — the original, for both: a full image in place of a thumbnail is what earlier
+        // versions served, and a thumbnail is never served in place of the full image
+        assertEquals(ORIGINAL, original)
+        assertEquals(ORIGINAL, asThumbnail)
+    }
+
+    @Test
+    fun a_transformed_variant_is_never_served_when_the_request_could_not_be_built() = runTest {
+        // Given — only a thumbnail is cached
+        bucket().downloadAuthenticated(PATH) { transform { size(64, 64) } }
+        val tokenFails = newTestSupabaseClient(engine = server.engine) {
+            accessToken = { throw IOException("token refresh failed: offline") }
+            install(Storage) { resumable { cache = MemoryResumableCache() } }
+        }
+        val offline = newTestBucketApi(delegate = tokenFails.storage.from(BUCKET), baseDirectory = dataDirectory, store = store)
+
+        // When / Then — the full image was asked for; the thumbnail must not stand in for it
+        assertFailsWith<IOException> { offline.downloadAuthenticated(PATH) { } }
     }
 
     private companion object {

@@ -17,7 +17,7 @@ import okio.Timeout
  *   many bytes have been written to it.
  * @property failMoves when `true`, [atomicMove] throws.
  */
-internal class FaultyFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
+internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
 
     var failWritesAfterBytes: Long? = null
 

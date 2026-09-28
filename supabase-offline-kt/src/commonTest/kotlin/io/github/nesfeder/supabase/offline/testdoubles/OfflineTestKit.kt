@@ -7,8 +7,10 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
@@ -125,6 +127,8 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  * @param sdkLogger the SDK logger.
  * @param onClose what the client's `close()` releases, as the factories wire the database.
  * @param coordinatorScope the scope the client's own scope is a child of, or `null` for a fresh one.
+ * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
+ *   database's scrub.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -134,12 +138,14 @@ internal fun newTestOfflineClient(
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
     onClose: () -> Unit = {},
     coordinatorScope: CoroutineScope? = null,
+    scrubDatabase: suspend () -> Unit = {},
 ): SupabaseOfflineClientImpl = if (coordinatorScope == null) {
     SupabaseOfflineClientImpl(
         supabase = supabase,
         store = store,
         baseDirectoryProvider = baseDirectoryProvider,
         sdkLogger = sdkLogger,
+        scrubDatabase = scrubDatabase,
         onClose = onClose,
     )
 } else {
@@ -149,6 +155,7 @@ internal fun newTestOfflineClient(
         baseDirectoryProvider = baseDirectoryProvider,
         sdkLogger = sdkLogger,
         coordinatorScope = coordinatorScope,
+        scrubDatabase = scrubDatabase,
         onClose = onClose,
     )
 }
@@ -160,7 +167,7 @@ internal fun newTestOfflineClient(
  * @param baseDirectory the offline data directory; files land under `<baseDirectory>/storage`.
  * @param store the offline store holding the cache rows.
  * @param sdkLogger the SDK logger.
- * @param fileSystem the file system; pass a [FaultyFileSystem] to make it fail.
+ * @param fileSystem the file system; pass a [FakeFailingFileSystem] to make it fail.
  * @param maxSizeBytes the size bound, or `null` for none.
  * @param nowMillis the clock use times are stamped from.
  * @return the cache.
@@ -191,6 +198,8 @@ internal fun newTestFileCache(
  * @param store the offline store holding the cache rows.
  * @param sdkLogger the SDK logger.
  * @param cache the file cache; by default one over [baseDirectory], [store] and [sdkLogger].
+ * @param backgroundScope where the bucket waits for resumable uploads to finish; by default an
+ *   engine scope of its own, as the client's is.
  * @return the offline bucket.
  */
 internal fun newTestBucketApi(
@@ -199,8 +208,24 @@ internal fun newTestBucketApi(
     store: OfflineStore = newTestOfflineStore(),
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
     cache: StorageFileCache = newTestFileCache(baseDirectory = baseDirectory, store = store, sdkLogger = sdkLogger),
+    backgroundScope: CoroutineScope = newEngineScope(sdkLogger),
 ): OfflineBucketApiImpl = OfflineBucketApiImpl(
     delegate = delegate,
     cache = cache,
     sdkLogger = sdkLogger,
+    backgroundScope = backgroundScope,
 )
+
+/**
+ * Runs [block] with this client, then closes it, whatever [block] does — the suspending `close()`'s
+ * counterpart of `use`.
+ *
+ * @param block what to do with the client.
+ * @return what [block] returns.
+ */
+internal suspend fun <T> SupabaseOfflineClient.closingAfter(block: suspend (SupabaseOfflineClient) -> T): T =
+    try {
+        block(this)
+    } finally {
+        close()
+    }

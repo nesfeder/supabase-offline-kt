@@ -7,15 +7,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.IOException
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -114,6 +117,39 @@ class RefreshCoordinatorTest {
             }
         }
         assertEquals(0, scopeJob.children.count())
+    }
+
+    @Test
+    fun the_shared_registry_empties_under_concurrent_joins_and_leaves() = runTest {
+        // Given
+        val coordinator = RefreshCoordinator(scope)
+        val upstream = {
+            flow {
+                emit(RESULT)
+                awaitCancellation()
+            }
+        }
+
+        // When — 400 collectors on 4 signatures join and leave concurrently, each followed by a
+        // one-shot reader racing the removal of the entry it just left
+        withContext(Dispatchers.Default) {
+            val collectors = List(400) { index ->
+                launch {
+                    delay(Random.nextLong(0, 5))
+                    val signature = "$TABLE?sig=${index % 4}"
+                    val collector = launch { coordinator.sharedReadFlow(TABLE, signature, upstream).collect { } }
+                    delay(Random.nextLong(0, 5))
+                    collector.cancelAndJoin()
+                    withTimeout(5.seconds) { coordinator.sharedReadFlow(TABLE, signature, upstream).first() }
+                }
+            }
+            collectors.forEach { it.join() }
+            withTimeout(5.seconds) { while (scopeJob.children.any()) delay(10) }
+        }
+
+        // Then — no sharing coroutine is left behind, and none failed
+        assertEquals(0, scopeJob.children.count())
+        assertEquals(0, uncaught.load())
     }
 
     private companion object {

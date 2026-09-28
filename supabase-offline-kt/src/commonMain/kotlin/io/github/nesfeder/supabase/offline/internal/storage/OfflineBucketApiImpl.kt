@@ -7,6 +7,7 @@ import io.github.jan.supabase.storage.DownloadOptionBuilder
 import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.jan.supabase.storage.UploadData
 import io.github.jan.supabase.storage.UploadOptionBuilder
+import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.SdkLogger
@@ -18,6 +19,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -45,18 +47,34 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * forward straight to supabase-kt past the cache. [setHeader] returns another offline bucket, for
  * the same reason.
  *
+ * Resumable uploads go through [resumable], which drops the path's cached copies once an upload
+ * finishes.
+ *
  * @param delegate the supabase-kt bucket.
  * @param cache the client's file cache.
  * @param sdkLogger the SDK logger. Messages at INFO and above name the bucket, never the object path.
+ * @param backgroundScope where the wait for a resumable upload to finish runs; the client's own
+ *   scope, so closing the client ends it.
+ * @param renderImagePath the encoded path prefix of a transformed download (see [renderImagePathOf]).
  */
 internal class OfflineBucketApiImpl(
     private val delegate: BucketApi,
     private val cache: StorageFileCache,
     private val sdkLogger: SdkLogger,
+    private val backgroundScope: CoroutineScope,
+    private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH,
 ) : OfflineBucketApi, BucketApi by delegate {
 
-    override fun setHeader(name: String, value: String): BucketApi =
-        OfflineBucketApiImpl(delegate.setHeader(name, value), cache, sdkLogger)
+    override fun setHeader(name: String, value: String): OfflineBucketApi =
+        OfflineBucketApiImpl(delegate.setHeader(name, value), cache, sdkLogger, backgroundScope, renderImagePath)
+
+    override val resumable: ResumableClient by lazy {
+        InvalidatingResumableClient(
+            delegate = delegate.resumable,
+            backgroundScope = backgroundScope,
+            onUploadFinished = { bucketId, path -> cache.invalidateObject(bucketId, path) },
+        )
+    }
 
     // ─────────────────────────────── Cached files ───────────────────────────────
 
@@ -139,7 +157,7 @@ internal class OfflineBucketApiImpl(
         fetch: suspend (wrap: (DownloadOptionBuilder.() -> Unit) -> (DownloadOptionBuilder.() -> Unit)) -> ByteArray,
     ): ByteArray {
         sdkLogger.debug { "Storage download $bucketId/$path attempting network" }
-        val probe = DownloadRequestProbe()
+        val probe = DownloadRequestProbe(renderImagePath)
         val generation = cache.currentGeneration()
         val bytes = try {
             fetch(probe::wrap)
@@ -147,7 +165,7 @@ internal class OfflineBucketApiImpl(
             currentCoroutineContext().ensureActive()
             return recover(path, probe, failure) { entry -> cache.readBytes(entry) }
         }
-        probe.entryIn(cache, bucketId, path)?.let { entry -> cache.store(entry, bytes, generation) }
+        probe.entryToStore(cache, bucketId, path)?.let { entry -> cache.store(entry, bytes, generation) }
         return bytes
     }
 
@@ -168,10 +186,10 @@ internal class OfflineBucketApiImpl(
             fetch(channel, options)
             return
         }
-        val probe = DownloadRequestProbe()
+        val probe = DownloadRequestProbe(renderImagePath)
         val generation = cache.currentGeneration()
         val download = try {
-            downloadToTemporaryFile(entryProvider = { probe.entryIn(cache, bucketId, path) }) { target ->
+            downloadToTemporaryFile(entryProvider = { probe.entryToStore(cache, bucketId, path) }) { target ->
                 fetch(target, probe.wrap(options))
             }
         } catch (failure: Exception) {
@@ -214,8 +232,9 @@ internal class OfflineBucketApiImpl(
      * - The server says the object is gone: every cached copy of it is dropped and the failure is
      *   rethrown, so a deleted object stops being served.
      * - Anything else (offline, a server error, a 403 during a token refresh): the cached copy of
-     *   the variant the download asked for, when there is one. When the request was never built,
-     *   the variant is unknown, and nothing is served rather than the wrong one.
+     *   the variant the download asked for, when there is one. When the request was never built
+     *   (the access token could not be resolved), the variant is unknown and the original's copy is
+     *   served: never a thumbnail in place of the full image.
      */
     private suspend fun <T : Any> recover(
         path: String,
@@ -228,7 +247,7 @@ internal class OfflineBucketApiImpl(
             sdkLogger.warning { "Storage object in $bucketId no longer exists; dropped its cached copy" }
             throw failure
         }
-        val cached = probe.entryIn(cache, bucketId, path)?.let { entry -> readCached(entry) }
+        val cached = probe.entryToServe(cache, bucketId, path)?.let { entry -> readCached(entry) }
         if (cached != null) {
             sdkLogger.warning { "Storage download from $bucketId failed; serving the cached copy" }
             return cached

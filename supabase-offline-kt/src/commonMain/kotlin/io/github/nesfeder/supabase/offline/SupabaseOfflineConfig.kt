@@ -32,15 +32,18 @@ public data class SupabaseOfflineConfig(
 
     /**
      * Optional directory for all offline data: the database (`supabase_offline.db`) and the Storage
-     * file cache (`storage/` and `storage-transformed/`).
+     * file cache (`storage/` and `storage-hashed/`).
      *
      * When `null` (the default), each platform keeps its original locations: the database in the
      * app's database directory on Android and in Documents on iOS, and the files under
      * `<filesDir>/supabase_offline` on Android and `Documents/supabase_offline` on iOS.
      *
-     * Setting it moves the database as well as the files. An app that sets it after shipping
-     * without it starts on an empty database there: the old database, with any unsent writes,
-     * stays at the default location and is not migrated.
+     * Setting it moves the database as well as the files. Earlier versions kept the database at the
+     * default location whatever this said, so when the directory has no database yet and the
+     * default location has one, the first client created moves it here, unsent writes and all.
+     * When it cannot be moved, or another open client holds it, the default database stays in use
+     * and a warning is logged. When both locations hold a database, this one is used and a warning
+     * says the other was left where it is.
      */
     val offlineStoragePath: Path? = null,
 

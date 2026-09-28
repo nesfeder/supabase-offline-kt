@@ -1,5 +1,6 @@
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.test.runTest
@@ -40,9 +41,9 @@ class IosClientLifecycleTest {
     }
 
     @Test
-    fun a_second_client_on_the_same_database_fails_fast_while_the_first_is_open() {
+    fun a_second_client_on_the_same_database_fails_fast_while_the_first_is_open() = runTest {
         // Given
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).use {
+        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter {
             // When / Then
             val failure = assertFailsWith<IllegalStateException> { createSupabaseOfflineClient(newTestSupabaseClient(), config()) }
             assertTrue("already open" in failure.message.orEmpty(), "unclear message: ${failure.message}")
@@ -59,7 +60,7 @@ class IosClientLifecycleTest {
         first.close()
 
         // Then
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).use { second ->
+        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { second ->
             assertEquals(0, second.pendingMutationCount())
         }
     }
@@ -67,7 +68,7 @@ class IosClientLifecycleTest {
     @Test
     fun offlineStoragePath_moves_the_database_as_well_as_the_downloaded_files() = runTest {
         // Given
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).use { client ->
+        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { client ->
             // When — the first query opens the database
             client.pendingMutationCount()
         }
@@ -79,7 +80,7 @@ class IosClientLifecycleTest {
     @Test
     fun the_database_and_the_file_cache_are_excluded_from_backup() = runTest {
         // Given
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).use { client ->
+        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { client ->
             // When — the first query opens the database
             client.pendingMutationCount()
 
@@ -87,14 +88,14 @@ class IosClientLifecycleTest {
             assertTrue(isExcludedFromBackup(directory / "supabase_offline.db"), "the database is backed up")
             assertTrue(isExcludedFromBackup(directory / "supabase_offline.db-wal"), "the database's WAL is backed up")
             assertTrue(isExcludedFromBackup(directory / "storage"), "the file cache is backed up")
-            assertTrue(isExcludedFromBackup(directory / "storage-transformed"), "the transformed-image cache is backed up")
+            assertTrue(isExcludedFromBackup(directory / "storage-hashed"), "the hashed-name cache is backed up")
         }
     }
 
     @Test
     fun clearing_local_data_keeps_the_file_cache_out_of_backups() = runTest {
         // Given
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).use { client ->
+        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { client ->
             // When — the clear deletes and re-creates the cache directories
             client.clearAllCache()
 

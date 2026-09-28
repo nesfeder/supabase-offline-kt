@@ -3,7 +3,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.FaultyFileSystem
+import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
@@ -138,7 +138,7 @@ class StorageStreamingDownloadTest {
     @Test
     fun a_channel_download_whose_disk_fills_up_still_delivers_every_byte() = runTest {
         // Given — the disk refuses the cache copy part-way through
-        val fileSystem = FaultyFileSystem()
+        val fileSystem = FakeFailingFileSystem()
         fileSystem.failWritesAfterBytes = 5
         delegate.onDownload = { LARGE }
         val channel = ByteChannel()

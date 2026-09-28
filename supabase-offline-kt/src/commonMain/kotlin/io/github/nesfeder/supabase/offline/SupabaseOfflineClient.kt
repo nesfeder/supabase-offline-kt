@@ -7,12 +7,14 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
+import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApiImpl
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.auth
@@ -20,10 +22,17 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -44,7 +53,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * Create one client per database and keep it for as long as the app uses it: a second client on
  * the same database fails to open until the first is [close]d.
  */
-public interface SupabaseOfflineClient : AutoCloseable {
+public interface SupabaseOfflineClient {
 
     /** Underlying online Supabase client. */
     public val supabase: SupabaseClient
@@ -223,19 +232,27 @@ public interface SupabaseOfflineClient : AutoCloseable {
      * to the next user on the same device, and no personal data survives on disk after an
      * account is deleted.
      *
+     * The deleted rows are not left readable in the database files either: the database is
+     * rebuilt without them and its write-ahead log emptied. That costs a rewrite of whatever the
+     * database still holds — little, once everything is cleared.
+     *
      * A Storage download still in flight when this runs may hand its bytes to the caller that asked
      * for them, but it is not written back into the cache.
      */
     public suspend fun clearAllCache()
 
     /**
-     * Releases the client: stops its background refreshes and closes its database, so another
-     * client can open the same database. Nothing is deleted. Calls made after `close()` fail.
+     * Releases the client: stops its background work — refreshes, and any replay in progress,
+     * which sends nothing more — closes its database, and frees the database for another client.
+     * Nothing is deleted. Calls made after `close()` fail with [IllegalStateException], and a
+     * reactive read still collecting fails with it too. Safe to call more than once.
      *
-     * The client returned by `createSupabaseOfflineClient` implements this; the default does
-     * nothing, so a test double need not.
+     * It suspends, like supabase-kt's own `close()`, while the client's background work winds down.
+     * The client returned by `createSupabaseOfflineClient` implements it; the default does nothing,
+     * so a wrapper must forward it — delegation with `by` does — or the database stays claimed.
      */
-    override fun close() {}
+    @Throws(Exception::class)
+    public suspend fun close() {}
 }
 
 /**
@@ -269,6 +286,11 @@ internal class SupabaseOfflineClientImpl(
      * write into, do not.
      */
     prepareFileCacheDirectories: Boolean = false,
+    /**
+     * Rewrites the database without the rows [clearAllCache] deleted, so none can be read back
+     * from its files. The factories pass the database's own; the in-memory store has no files.
+     */
+    private val scrubDatabase: suspend () -> Unit = {},
     /** Releases what the factory opened — the database and its registration — on [close]. */
     private val onClose: () -> Unit = {},
 ) : SupabaseOfflineClient {
@@ -281,6 +303,9 @@ internal class SupabaseOfflineClientImpl(
     private val clientScope: CoroutineScope = newEngineScope(sdkLogger, parent = coordinatorScope.coroutineContext[Job])
 
     private val closed = AtomicBoolean(false)
+
+    /** Where [storage]'s buckets see an image transform's requests go; resolved on first use. */
+    private val renderImagePath: String by lazy { renderImagePathOf(supabase) }
 
     /** The Storage file cache every bucket of this client shares. */
     private val fileCache = StorageFileCache(
@@ -371,34 +396,45 @@ internal class SupabaseOfflineClientImpl(
             delegate = supabase.storage.from(bucket),
             cache = fileCache,
             sdkLogger = sdkLogger,
+            backgroundScope = clientScope,
+            renderImagePath = renderImagePath,
         )
     }
 
     /* ───────────────────────────── Sync APIs ───────────────────────────── */
 
     override suspend fun syncAllPendingMutations(): Int =
-        mutationSyncer.syncAllTables()
+        inClientScope { mutationSyncer.syncAllTables() }
 
     override suspend fun syncPendingMutations(table: String): Int =
-        mutationSyncer.syncTable(table = table)
+        inClientScope { mutationSyncer.syncTable(table = table) }
 
-    override suspend fun pendingMutationCount(): Int =
-        store.pendingMutationCount()
+    override suspend fun pendingMutationCount(): Int {
+        ensureOpen()
+        return store.pendingMutationCount()
+    }
 
-    override fun pendingMutationCountFlow(): Flow<Int> =
-        store.pendingMutationCountFlow()
+    override fun pendingMutationCountFlow(): Flow<Int> {
+        ensureOpen()
+        return store.pendingMutationCountFlow()
+    }
 
-    override suspend fun pendingMutationCount(table: String): Int =
-        store.pendingMutationCountForTable(table)
+    override suspend fun pendingMutationCount(table: String): Int {
+        ensureOpen()
+        return store.pendingMutationCountForTable(table)
+    }
 
-    override fun pendingMutationCountFlow(table: String): Flow<Int> =
-        store.pendingMutationCountForTableFlow(table)
+    override fun pendingMutationCountFlow(table: String): Flow<Int> {
+        ensureOpen()
+        return store.pendingMutationCountForTableFlow(table)
+    }
 
     override suspend fun applyServerRecord(
         table: String,
         record: JsonObject,
         primaryKeys: List<String>,
     ) {
+        ensureOpen()
         val filterJson = primaryKeyFilterJson(record, primaryKeys)
         if (filterJson == null) {
             sdkLogger.warning {
@@ -421,6 +457,7 @@ internal class SupabaseOfflineClientImpl(
         oldRecord: JsonObject,
         primaryKeys: List<String>,
     ) {
+        ensureOpen()
         val filterJson = primaryKeyFilterJson(oldRecord, primaryKeys)
         if (filterJson == null) {
             sdkLogger.warning {
@@ -463,24 +500,55 @@ internal class SupabaseOfflineClientImpl(
     }
 
     override suspend fun clearAllCache() {
+        ensureOpen()
         // Room only holds storage-object metadata; the downloaded bytes live on disk under
         // <base>/storage/. The file cache wipes that tree too, under its own lock and in a new
         // generation, so cached objects (e.g. avatars) don't survive logout / account switch /
-        // account deletion, and a download still in flight can't write them back.
-        fileCache.clear { store.clearAll() }
+        // account deletion, and a download still in flight can't write them back. The scrub then
+        // rewrites the database, so the deleted rows cannot be read back from its files.
+        fileCache.clear {
+            store.clearAll()
+            scrubDatabase()
+        }
     }
 
-    override fun close() {
+    override suspend fun close() {
         if (!closed.compareAndSet(false, true)) return
-        clientScope.cancel()
+        val work = clientScope.coroutineContext.job
+        work.cancel()
+        // Let what was cancelled wind down — a replay recording what it sent — before the database
+        // it writes to closes; bounded, so a stuck call cannot hold close() forever.
+        withContext(NonCancellable) { withTimeoutOrNull(CLOSE_WIND_DOWN_MILLIS) { work.join() } }
         onClose()
     }
 
     private fun ensureOpen() {
-        check(!closed.load()) { "This SupabaseOfflineClient is closed" }
+        check(!closed.load()) { CLIENT_CLOSED_MESSAGE }
+    }
+
+    /**
+     * Runs [block] in the client's own scope, so [close] stops it: a replay that outlived the
+     * client would send writes whose bookkeeping could no longer be recorded, and the next client
+     * would send them again. When [close] cancels it, the caller gets [IllegalStateException].
+     */
+    private suspend fun <T> inClientScope(block: suspend () -> T): T {
+        ensureOpen()
+        val call = clientScope.async { block() }
+        try {
+            return call.await()
+        } catch (cancellation: CancellationException) {
+            if (currentCoroutineContext().isActive) throw IllegalStateException(CLIENT_CLOSED_MESSAGE, cancellation)
+            call.cancel()
+            throw cancellation
+        }
     }
 
     /* ───────────────────────────── Guards ───────────────────────────── */
+
+    private companion object {
+        /** How long [close] waits for the client's cancelled work to wind down. */
+        const val CLOSE_WIND_DOWN_MILLIS = 5_000L
+    }
 
     private fun ensurePostgrestInstalled() {
         runCatching { supabase.postgrest }.getOrElse {

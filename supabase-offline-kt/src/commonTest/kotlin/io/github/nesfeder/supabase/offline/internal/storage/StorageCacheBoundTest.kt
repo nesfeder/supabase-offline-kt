@@ -2,12 +2,14 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
 import okio.Path
+import okio.Path.Companion.toPath
 import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -16,10 +18,16 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * The file cache stays within its size bound by evicting the least recently used files — never
- * one a read is using, and never the one just downloaded.
+ * one a read is using, and never one used in the last minute: the one just downloaded, or a
+ * `CachedFile` handed to a caller who has yet to open it. Once over
+ * the bound it evicts down to a low-water mark below it, so a full cache does not rescan itself on
+ * every download.
+ *
+ * Uses are spaced minutes apart on the test clock, past that grace window.
  */
 class StorageCacheBoundTest {
 
@@ -65,10 +73,10 @@ class StorageCacheBoundTest {
     fun the_least_recently_used_file_is_evicted_to_stay_within_the_bound() = runTest {
         // Given
         val bucket = bucket(maxSizeBytes = 10)
-        download(bucket, "a.bin", size = 6, at = 1_000)
+        download(bucket, "a.bin", size = 6, at = 1 * MINUTE)
 
         // When — a second file takes the cache past the bound
-        download(bucket, "b.bin", size = 6, at = 2_000)
+        download(bucket, "b.bin", size = 6, at = 2 * MINUTE)
 
         // Then
         assertNull(bucket.api.cachedFile("a.bin"))
@@ -80,13 +88,13 @@ class StorageCacheBoundTest {
     fun a_file_that_was_used_outlives_one_that_was_not() = runTest {
         // Given — a is older than b, but used after it
         val bucket = bucket(maxSizeBytes = 10)
-        download(bucket, "a.bin", size = 4, at = 1_000)
-        download(bucket, "b.bin", size = 4, at = 2_000)
-        now = 3_000
+        download(bucket, "a.bin", size = 4, at = 1 * MINUTE)
+        download(bucket, "b.bin", size = 4, at = 2 * MINUTE)
+        now = 3 * MINUTE
         assertNotNull(bucket.api.cachedFile("a.bin"))
 
         // When
-        download(bucket, "c.bin", size = 4, at = 4_000)
+        download(bucket, "c.bin", size = 4, at = 4 * MINUTE)
 
         // Then — b is the least recently used
         assertNotNull(bucket.api.cachedFile("a.bin"))
@@ -98,18 +106,18 @@ class StorageCacheBoundTest {
     fun a_file_being_read_is_never_evicted() = runTest {
         // Given
         val bucket = bucket(maxSizeBytes = 10)
-        download(bucket, "a.bin", size = 6, at = 1_000)
+        download(bucket, "a.bin", size = 6, at = 1 * MINUTE)
         val entry = assertNotNull(bucket.cache.entryFor(BUCKET, "a.bin"))
 
         // When — while a read holds a, a download takes the cache past the bound
         bucket.cache.withPinned(entry) {
-            download(bucket, "b.bin", size = 6, at = 2_000)
+            download(bucket, "b.bin", size = 6, at = 2 * MINUTE)
             // Then — a stays for as long as it is being read
             assertNotNull(bucket.api.cachedFile("a.bin"))
         }
 
         // And once the read is done, the next download evicts it
-        download(bucket, "c.bin", size = 2, at = 3_000)
+        download(bucket, "c.bin", size = 2, at = 3 * MINUTE)
         assertNull(bucket.api.cachedFile("a.bin"))
         assertNotNull(bucket.api.cachedFile("b.bin"))
         assertNotNull(bucket.api.cachedFile("c.bin"))
@@ -121,13 +129,13 @@ class StorageCacheBoundTest {
         val bucket = bucket(maxSizeBytes = 5)
 
         // When
-        download(bucket, "big.bin", size = 8, at = 1_000)
+        download(bucket, "big.bin", size = 8, at = 1 * MINUTE)
 
         // Then — the download that was just made is never its own victim
         assertNotNull(bucket.api.cachedFile("big.bin"))
 
         // And the next download evicts it
-        download(bucket, "small.bin", size = 2, at = 2_000)
+        download(bucket, "small.bin", size = 2, at = 2 * MINUTE)
         assertNull(bucket.api.cachedFile("big.bin"))
         assertNotNull(bucket.api.cachedFile("small.bin"))
     }
@@ -138,14 +146,65 @@ class StorageCacheBoundTest {
         val bucket = bucket(maxSizeBytes = null)
 
         // When
-        repeat(5) { index -> download(bucket, "file-$index.bin", size = 100, at = index * 1_000L) }
+        repeat(5) { index -> download(bucket, "file-$index.bin", size = 100, at = index * MINUTE) }
 
         // Then
         assertEquals(500, store.totalStorageSizeBytes())
         repeat(5) { index -> assertNotNull(bucket.api.cachedFile("file-$index.bin")) }
     }
 
+    @Test
+    fun a_cached_file_handed_out_is_not_evicted_before_it_is_opened() = runTest {
+        // Given — a caller was just handed a's file
+        val bucket = bucket(maxSizeBytes = 10)
+        download(bucket, "a.bin", size = 6, at = 1 * MINUTE)
+        now = 5 * MINUTE
+        val handedOut = assertNotNull(bucket.api.cachedFile("a.bin"))
+
+        // When — the next download takes the cache past the bound moments later
+        download(bucket, "b.bin", size = 6, at = 5 * MINUTE + 1_000)
+
+        // Then — the caller can still open it
+        assertTrue(FileSystem.SYSTEM.exists(handedOut.path.toPath()), "a CachedFile handed out moments ago was evicted")
+    }
+
+    @Test
+    fun a_download_just_committed_is_not_evicted_before_it_is_delivered() = runTest {
+        // Given
+        val bucket = bucket(maxSizeBytes = 10)
+        download(bucket, "a.bin", size = 6, at = 1 * MINUTE)
+
+        // When — b commits, and c commits before b's caller has read it
+        download(bucket, "b.bin", size = 6, at = 5 * MINUTE)
+        download(bucket, "c.bin", size = 6, at = 5 * MINUTE + 500)
+
+        // Then — only the old file was evicted; both fresh ones stay until they have been used
+        assertNull(bucket.api.cachedFile("a.bin"))
+        assertNotNull(bucket.api.cachedFile("b.bin"))
+        assertNotNull(bucket.api.cachedFile("c.bin"))
+    }
+
+    @Test
+    fun a_full_cache_does_not_rescan_every_row_on_every_download() = runTest {
+        // Given — 100 files of 10 bytes, a bound of exactly 1,000
+        val dao = RecordingStorageDao()
+        store = newTestOfflineStore(storageDao = dao)
+        val bucket = bucket(maxSizeBytes = 1_000)
+        repeat(100) { index -> download(bucket, "fill-$index.bin", size = 10, at = index * MINUTE) }
+        dao.resetCounts()
+
+        // When — 50 more downloads, each taking the cache past the bound by one file
+        repeat(50) { index -> download(bucket, "new-$index.bin", size = 10, at = (100 + index) * MINUTE) }
+
+        // Then — it evicted down to a low-water mark, so only about one download in ten rescans,
+        // and the running total was never summed again
+        assertTrue(dao.scans <= 6, "the cache rescanned its rows ${dao.scans} times over 50 downloads")
+        assertEquals(0, dao.totalSizeQueries)
+        assertTrue(store.totalStorageSizeBytes() <= 1_000)
+    }
+
     private companion object {
         const val BUCKET = "media"
+        const val MINUTE = 60_000L
     }
 }

@@ -3,8 +3,12 @@ package io.github.nesfeder.supabase.offline.internal.storage
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.toByteArray
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
 import okio.Path
@@ -211,6 +215,110 @@ class StoragePathContainmentTest {
         assertFailsWith<Exception> { bucket().downloadAuthenticated("tampered.txt") { } }
 
         // Then
+        assertNothingEscaped()
+    }
+
+    /** A directory inside the bucket's cache directory that is a symlink to [root]/outside. */
+    private fun symlinkInsideTheCache(): Path {
+        val outside = root / "outside"
+        FileSystem.SYSTEM.createDirectories(outside)
+        FileSystem.SYSTEM.write(outside / "victim.txt") { writeUtf8(SENTINEL_CONTENT) }
+        val bucketDirectory = dataDirectory / "storage" / BUCKET
+        FileSystem.SYSTEM.createDirectories(bucketDirectory)
+        FileSystem.SYSTEM.createSymlink(bucketDirectory / "link", outside)
+        return outside
+    }
+
+    @Test
+    fun a_download_never_writes_through_a_symlink_out_of_the_cache() = runTest {
+        // Given — something with access to the app's storage left a symlink inside the cache
+        val outside = symlinkInsideTheCache()
+        delegate.onDownload = { "EVIL".encodeToByteArray() }
+
+        // When
+        val bytes = bucket().downloadAuthenticated("link/victim.txt") { }
+
+        // Then — the caller still gets its bytes; the file outside is untouched
+        assertContentEquals("EVIL".encodeToByteArray(), bytes)
+        assertEquals(SENTINEL_CONTENT, FileSystem.SYSTEM.read(outside / "victim.txt") { readUtf8() })
+    }
+
+    @Test
+    fun a_delete_never_follows_a_symlink_out_of_the_cache() = runTest {
+        // Given — a row for the object, as a download before the link appeared would have left
+        val outside = symlinkInsideTheCache()
+        store.addStorage(BUCKET, "link/victim.txt", dataDirectory / "storage" / BUCKET / "link" / "victim.txt", 8, null)
+
+        // When
+        bucket().delete(listOf("link/victim.txt"))
+
+        // Then
+        assertTrue(FileSystem.SYSTEM.exists(outside / "victim.txt"), "a delete followed a symlink out of the cache")
+    }
+
+    @Test
+    fun clearing_never_follows_a_symlink_out_of_the_cache() = runTest {
+        // Given
+        val outside = symlinkInsideTheCache()
+        val cache = newTestFileCache(baseDirectory = dataDirectory, store = store)
+
+        // When
+        cache.clear { store.clearAll() }
+
+        // Then
+        assertTrue(FileSystem.SYSTEM.exists(outside / "victim.txt"), "clearing followed a symlink out of the cache")
+    }
+
+    @Test
+    fun encoded_and_lookalike_climbs_stay_inside_the_bucket_directory() = runTest {
+        // Given — percent-encoded dots and slashes, fullwidth and other Unicode lookalikes
+        val paths = listOf(
+            "%2e%2e/%2e%2e/%2e%2e/sentinel.txt",
+            "%2E%2E%2F%2E%2E%2F%2E%2E%2Fsentinel.txt",
+            "\uFF0E\uFF0E/\uFF0E\uFF0E/\uFF0E\uFF0E/sentinel.txt",
+            "\uFF0E\uFF0E\uFF0F\uFF0E\uFF0E\uFF0Fsentinel.txt",
+            "\u2024\u2024/\u2024\u2024/sentinel.txt",
+            "\uFE52\uFE52/\uFE52\uFE52/sentinel.txt",
+            ".\u0307./x.txt",
+            "..\u200B/..\u200B/sentinel.txt",
+            "\u2025/\u2025/sentinel.txt",
+            "..%00/x.txt",
+        )
+        delegate.onDownload = { "EVIL".encodeToByteArray() }
+
+        // When
+        paths.forEach { path -> bucket().downloadAuthenticated(path) { } }
+
+        // Then — one file per path, every one inside the cache, nothing escaped
+        val written = FileSystem.SYSTEM.listRecursively(dataDirectory)
+            .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
+            .toList()
+        assertEquals(paths.size, written.size, "two lookalike paths shared one file")
+        assertTrue(written.all { it.isStrictlyInside(dataDirectory) })
+        assertNothingEscaped()
+    }
+
+    @Test
+    fun refused_paths_write_nothing_through_either_download() = runTest {
+        // Given
+        val refused = listOf("../escape.txt", "/abs.txt", "a/../b.txt", "a//b.txt", "a\\b.txt", "x/./y.txt", "nul\u0000.txt")
+        delegate.onDownload = { "BYTES".encodeToByteArray() }
+
+        // When — the byte-array and the channel downloads
+        refused.forEach { path ->
+            assertEquals("BYTES", bucket().downloadAuthenticated(path) { }.decodeToString())
+            val channel = ByteChannel()
+            val reader = async { channel.toByteArray() }
+            bucket().downloadAuthenticated(path, channel) { }
+            assertEquals("BYTES", reader.await().decodeToString())
+        }
+
+        // Then — no file anywhere and no row
+        assertEquals(
+            emptyList(),
+            FileSystem.SYSTEM.listRecursively(dataDirectory).filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.toList(),
+        )
+        assertTrue(store.allStorageRows().isEmpty())
         assertNothingEscaped()
     }
 

@@ -1,6 +1,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.storage.BucketApi
+import platform.Foundation.NSURL
 
 /**
  * The absolute path of the cached copy of [objectPath], downloading it first when none is cached.
@@ -35,7 +36,8 @@ public suspend fun BucketApi.localPathIfCached(objectPath: String): String? {
 }
 
 /**
- * [ensureLocalPath] as a `file://` URL string, for Swift's `URL(string:)`.
+ * [ensureLocalPath] as a `file://` URL string, for Swift's `URL(string:)`: percent-encoded, so a
+ * name with a space, `#`, `?` or `%` still parses back to the file.
  *
  * @param objectPath the object path within this bucket.
  * @param isPublic whether to download through the public URL rather than the authenticated one.
@@ -43,15 +45,18 @@ public suspend fun BucketApi.localPathIfCached(objectPath: String): String? {
  */
 @Throws(Exception::class)
 public suspend fun BucketApi.ensureLocalFileUrl(objectPath: String, isPublic: Boolean): String? =
-    ensureLocalPath(objectPath, isPublic)?.let { "file://$it" }
+    ensureLocalPath(objectPath, isPublic)?.let(::fileUrlOf)
 
 /**
- * [localPathIfCached] as a `file://` URL string, for Swift's `URL(string:)`; never touches the
- * network.
+ * [localPathIfCached] as a `file://` URL string, for Swift's `URL(string:)`, percent-encoded like
+ * [ensureLocalFileUrl]'s; never touches the network.
  *
  * @param objectPath the object path within this bucket.
  * @return the file URL, or `null` when nothing is cached.
  */
 @Throws(Exception::class)
 public suspend fun BucketApi.localFileUrlIfCached(objectPath: String): String? =
-    localPathIfCached(objectPath)?.let { "file://$it" }
+    localPathIfCached(objectPath)?.let(::fileUrlOf)
+
+/** The `file://` URL of the file at [path], percent-encoded by Foundation. */
+private fun fileUrlOf(path: String): String? = NSURL.fileURLWithPath(path).absoluteString

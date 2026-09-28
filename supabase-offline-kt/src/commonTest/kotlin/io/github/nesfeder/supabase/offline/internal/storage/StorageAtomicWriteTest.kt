@@ -2,7 +2,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.FaultyFileSystem
+import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -18,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 
 /**
  * Cache writes are atomic: a download is written to a temporary file beside its target and renamed
@@ -29,7 +30,7 @@ class StorageAtomicWriteTest {
     private lateinit var dataDirectory: Path
     private lateinit var store: OfflineStore
     private lateinit var delegate: FakeBucketApi
-    private val fileSystem = FaultyFileSystem()
+    private val fileSystem = FakeFailingFileSystem()
 
     @BeforeTest
     fun setUp() {
@@ -135,10 +136,12 @@ class StorageAtomicWriteTest {
 
     @Test
     fun a_temporary_file_a_crash_left_behind_is_swept_and_never_served() = runTest {
-        // Given — a previous process died mid-download, leaving a temporary file beside the target
+        // Given — a process died mid-download more than a day ago, leaving a temporary file beside
+        // the target
         primeWithOldCopy()
         val orphan = target.parent!! / ".supabase-offline-download-dead.tmp"
         FileSystem.SYSTEM.write(orphan) { write(NEW.copyOf(3)) }
+        markFileUsed(orphan, Clock.System.now().toEpochMilliseconds() - 25L * 60L * 60L * 1000L)
 
         // When — this process's first download through the cache
         delegate.onDownload = { "other".encodeToByteArray() }

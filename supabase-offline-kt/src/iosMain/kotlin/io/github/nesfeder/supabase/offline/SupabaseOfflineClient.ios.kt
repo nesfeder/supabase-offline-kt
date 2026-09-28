@@ -62,7 +62,10 @@ public object SupabaseFactory {
      * @param supabaseUrl  Your Supabase URL (e.g. "https://abc.supabase.co")
      * @param supabaseAnonKey  Anon/API key
      * @param accessTokenProvider Optional provider for access tokens
+     * @throws IllegalStateException when another open client already uses the same database or
+     *   data directory. Swift receives it as a thrown error.
      */
+    @Throws(IllegalStateException::class)
     public fun offlineClientKt(
         supabaseUrl: String,
         supabaseAnonKey: String,
@@ -97,8 +100,10 @@ public object SupabaseFactory {
  *
  * The database is `Documents/supabase_offline.db` and downloaded files live under
  * `Documents/supabase_offline`, or both in [SupabaseOfflineConfig.offlineStoragePath] when that is
- * set. The database and the file cache are excluded from iCloud and device backups: they are
- * re-creatable, and one user's.
+ * set. Earlier versions kept the database in `Documents` whatever the configuration said; the first
+ * client created with a configured directory moves it there, unsent writes and all. The database
+ * and the file cache are excluded from iCloud and device backups: they are re-creatable, and one
+ * user's.
  *
  * Create one client per database and keep it: while it is open, creating another on the same
  * database throws. [SupabaseOfflineClient.close] releases it.
@@ -133,8 +138,10 @@ public object SupabaseFactory {
  * let items = try JSONDecoder().decode([Asset].self, from: data)
  * ```
  *
- * @throws IllegalStateException when another open client already uses the same database.
+ * @throws IllegalStateException when another open client already uses the same database or data
+ *   directory. Swift receives it as a thrown error.
  */
+@Throws(IllegalStateException::class)
 public fun createSupabaseOfflineClient(
     supabase: SupabaseClient,
     config: SupabaseOfflineConfig,
@@ -150,14 +157,16 @@ public fun createSupabaseOfflineClient(
             // Best effort: the cache directories inside it are excluded on their own as well.
         }
     }
+    val defaultDatabasePath = IosDbPathProvider().dbPath()
     return openOfflineClient(
         supabase = supabase,
         config = config,
-        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: IosDbPathProvider().dbPath(),
+        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
         dataDirectory = dataDirectory,
         openDatabase = { databasePath ->
             getRoomDatabase(getDatabaseBuilder(databasePath.toString()).addCallback(BackupExclusionCallback(databasePath)))
         },
+        defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
     )
 }
 

@@ -12,7 +12,9 @@ import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirector
 /**
  * Creates the offline client for Android over [supabase], with its database in the app's database
  * directory (`supabase_offline.db`) and downloaded files under `<filesDir>/supabase_offline`, or
- * both in [SupabaseOfflineConfig.offlineStoragePath] when that is set.
+ * both in [SupabaseOfflineConfig.offlineStoragePath] when that is set. Earlier versions kept the
+ * database in the default directory whatever the configuration said; the first client created
+ * with a configured directory moves it there, unsent writes and all.
  *
  * Create one client per database and keep it: while it is open, creating another on the same
  * database throws. [SupabaseOfflineClient.close] releases it.
@@ -47,7 +49,8 @@ import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirector
  * @param supabase The supabase-kt client to wrap. Install PostgREST, and Storage if you use it.
  * @param config Cache sizes, data directory, logging and connectivity hint.
  * @return The offline client.
- * @throws IllegalStateException when another open client already uses the same database.
+ * @throws IllegalStateException when another open client already uses the same database or data
+ *   directory.
  */
 public fun createSupabaseOfflineClient(
     context: Context,
@@ -55,11 +58,13 @@ public fun createSupabaseOfflineClient(
     config: SupabaseOfflineConfig = SupabaseOfflineConfig(),
 ): SupabaseOfflineClient {
     val configuredDirectory = config.offlineStoragePath
+    val defaultDatabasePath = AndroidDbPathProvider(context).dbPath()
     return openOfflineClient(
         supabase = supabase,
         config = config,
-        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: AndroidDbPathProvider(context).dbPath(),
+        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
         dataDirectory = configuredDirectory ?: PlatformBaseDirectory(context).path,
         openDatabase = { databasePath -> getRoomDatabase(getDatabaseBuilder(context, databasePath.toString())) },
+        defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
     )
 }

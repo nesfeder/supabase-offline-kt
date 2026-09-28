@@ -201,14 +201,14 @@ class StorageCachedFileTest {
         // Given
         delegate.onDownload = { BYTES }
 
-        // When — setHeader returns the bucket the next calls go through
-        val withHeader = bucket().setHeader("x-trace", "1")
+        // When — setHeader, called through the public interface, returns the offline bucket
+        val offline: OfflineBucketApi = bucket()
+        val withHeader: OfflineBucketApi = offline.setHeader("x-trace", "1")
         withHeader.downloadAuthenticated(PATH) { }
 
-        // Then
-        assertIs<OfflineBucketApi>(withHeader)
+        // Then — its cache API is reachable without a cast
         assertEquals("1", delegate.headers["x-trace"])
-        assertNotNull(bucket().cachedFile(PATH))
+        assertNotNull(withHeader.cachedFile(PATH))
     }
 
     /** Waits, in real time, until a download has put a file under [directory]. */
@@ -226,6 +226,21 @@ class StorageCachedFileTest {
         } else {
             FileSystem.SYSTEM.listRecursively(directory).filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.toList()
         }
+
+    @Test
+    fun cachedFile_reports_the_size_of_the_file_on_disk() = runTest {
+        // Given — the file was replaced and the process died before the row caught up
+        delegate.onDownload = { BYTES }
+        val bucket = bucket()
+        val cached = bucket.ensureCachedFile(PATH)
+        FileSystem.SYSTEM.write(cached.path.toPath()) { writeUtf8("a longer replacement avatar") }
+
+        // When
+        val reported = assertNotNull(bucket.cachedFile(PATH))
+
+        // Then
+        assertEquals("a longer replacement avatar".length.toLong(), reported.sizeBytes)
+    }
 
     private companion object {
         const val BUCKET = "avatars"
