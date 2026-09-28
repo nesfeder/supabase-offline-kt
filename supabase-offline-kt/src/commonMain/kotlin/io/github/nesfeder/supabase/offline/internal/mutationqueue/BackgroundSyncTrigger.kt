@@ -1,4 +1,4 @@
-package io.github.nesfeder.supabase.offline.internal.outbox
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.SdkLogger
 import kotlinx.coroutines.CancellationException

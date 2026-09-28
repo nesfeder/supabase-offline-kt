@@ -31,7 +31,7 @@ internal const val MAX_REJECTED_TEXT_CHARS: Int = 4 * 1024
 internal const val MAX_REJECTED_LIST_CHARS: Int = 512 * 1024
 
 /** Version written into every reserved row, so a later format can recognise this one. */
-private const val OUTBOX_STATE_FORMAT_VERSION: Int = 1
+private const val MUTATION_QUEUE_STATE_FORMAT_VERSION: Int = 1
 
 /**
  * What the server said when it refused a write, as persisted.
@@ -52,8 +52,8 @@ internal data class StoredServerError(
 )
 
 /**
- * One rejected mutation as persisted: everything its queue row held, so it can be re-queued exactly,
- * plus why it was refused.
+ * One rejected mutation as persisted: everything its mutation row held, so it can be re-queued
+ * exactly, plus why it was refused.
  *
  * @property id The id it had in the queue.
  * @property table [MutationRow.table].
@@ -91,8 +91,8 @@ internal data class StoredRejection(
     val bodyOmittedChars: Int? = null,
 ) {
     /**
-     * The queue row this rejection re-queues as: every stored field, a fresh id (`0`, so the queue
-     * assigns the next one and the write goes to the tail) and a new creation time.
+     * The mutation row this rejection re-queues as: every stored field, a fresh id (`0`, so the
+     * queue assigns the next one and the write goes to the tail) and a new creation time.
      *
      * @param createdAtMs When it is re-queued.
      * @return A pending row, or `null` when the body was not kept.
@@ -122,7 +122,7 @@ internal data class StoredRejection(
  */
 @Serializable
 internal data class StoredRejectionList(
-    @EncodeDefault val version: Int = OUTBOX_STATE_FORMAT_VERSION,
+    @EncodeDefault val version: Int = MUTATION_QUEUE_STATE_FORMAT_VERSION,
     val entries: List<StoredRejection> = emptyList(),
     val droppedCount: Long = 0,
 )
@@ -130,7 +130,7 @@ internal data class StoredRejectionList(
 /** The persisted owner of each queued mutation, by mutation id. */
 @Serializable
 private data class StoredMutationOwners(
-    @EncodeDefault val version: Int = OUTBOX_STATE_FORMAT_VERSION,
+    @EncodeDefault val version: Int = MUTATION_QUEUE_STATE_FORMAT_VERSION,
     val owners: Map<Long, String> = emptyMap(),
 )
 
@@ -150,13 +150,13 @@ internal sealed interface MutationOwners {
 }
 
 /**
- * The outbox's persisted state — who owns each queued write, and the rejected-mutation list — kept in
- * reserved `object_cache` rows (see [RESERVED_TABLE_NAME]) so that no schema change is needed. Both
- * are cached in memory after the first read; every change goes through this class.
+ * The mutation queue's persisted state — who owns each queued write, and the rejected-mutation
+ * list — kept in reserved `object_cache` rows (see [RESERVED_TABLE_NAME]) so that no schema change
+ * is needed. Both are cached in memory after the first read; every change goes through this class.
  *
  * **Callers serialize.** This class takes no lock of its own: the store calls it only while holding
- * its outbox lock, and computes each new row here *before* opening a database transaction, so no
- * transaction ever waits on a coroutine lock.
+ * its mutation-queue lock, and computes each new row here *before* opening a database transaction,
+ * so no transaction ever waits on a coroutine lock.
  *
  * An unreadable rejected list is moved aside under its own reserved key, logged at ERROR, and a fresh
  * list started, so the queue never wedges on its bookkeeping and the old payload is kept, not
@@ -168,7 +168,7 @@ internal sealed interface MutationOwners {
  * @param nowMillis The store's clock, stamped on each row.
  * @param logger The store's logger, read at each use.
  */
-internal class OutboxStateStore(
+internal class MutationQueueStateStore(
     private val objectDao: ObjectDao,
     private val json: Json,
     private val nowMillis: () -> Long,
@@ -204,7 +204,7 @@ internal class OutboxStateStore(
 
     /**
      * The owners row with [changes] applied, ready to write in the caller's transaction; commit it
-     * with [ownersWritten] afterwards. Caller holds the store's outbox lock.
+     * with [ownersWritten] afterwards. Caller holds the store's mutation-queue lock.
      *
      * @param changes Turns the current map into the new one.
      * @return The row and the new owners, or `null` when the owners cannot be read.
@@ -257,7 +257,7 @@ internal class OutboxStateStore(
      */
     suspend fun droppedCount(): Long = rejectedList().droppedCount
 
-    /** Resets [droppedCount] to zero. Caller holds the store's outbox lock. */
+    /** Resets [droppedCount] to zero. Caller holds the store's mutation-queue lock. */
     suspend fun resetDroppedCount() {
         val current = rejectedList()
         writeRejected(current.copy(droppedCount = 0))
@@ -301,7 +301,7 @@ internal class OutboxStateStore(
      * same id) and the entry with [removeId] removed, bounded to [MAX_REJECTED_MUTATIONS] entries and
      * [MAX_REJECTED_LIST_CHARS] characters. Oversized bodies and server texts are trimmed first; each
      * entry that has to go is logged and counted. Write the row in the caller's transaction, then
-     * commit it with [rejectedWritten]. Caller holds the store's outbox lock.
+     * commit it with [rejectedWritten]. Caller holds the store's mutation-queue lock.
      *
      * @param add An entry to add, or `null`.
      * @param removeId An entry to remove, or `null`.

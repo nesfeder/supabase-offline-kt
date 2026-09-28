@@ -1,9 +1,9 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.internal.outbox.MutationOperation as OutboxOperation
-import io.github.nesfeder.supabase.offline.internal.outbox.ServerError
-import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationOperation as MutationQueueOperation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.ServerError
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
@@ -63,7 +63,7 @@ class RejectedMutationListTest {
         val rejected = report.rejected.single()
         assertEquals(id, rejected.id)
         assertEquals(TABLE, rejected.table)
-        assertEquals(OutboxOperation.Insert, rejected.operation)
+        assertEquals(MutationQueueOperation.Insert, rejected.operation)
         assertEquals(Instant.fromEpochMilliseconds(1_000L), rejected.createdAt)
         assertEquals(Instant.fromEpochMilliseconds(5_000L), rejected.rejectedAt)
         assertEquals(rows("""[{"id":"t1","title":""}]"""), rejected.body)
@@ -92,8 +92,8 @@ class RejectedMutationListTest {
         val restarted = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
 
         // Then
-        assertEquals(listOf(id), restarted.outboxState.rejections().map { it.id })
-        assertEquals(422, restarted.outboxState.rejections().single().serverError?.status)
+        assertEquals(listOf(id), restarted.mutationQueueState.rejections().map { it.id })
+        assertEquals(422, restarted.mutationQueueState.rejections().single().serverError?.status)
     }
 
     @Test
@@ -126,7 +126,7 @@ class RejectedMutationListTest {
         val report = syncer.sync()
 
         // Then
-        assertEquals(OutboxOperation.Update, report.rejected.single().operation)
+        assertEquals(MutationQueueOperation.Update, report.rejected.single().operation)
         assertNull(report.rejected.single().serverError)
         assertTrue(server.requests.isEmpty())
     }
@@ -141,7 +141,7 @@ class RejectedMutationListTest {
         syncer.sync()
 
         // Then — the oldest five went first
-        val ids = store.outboxState.rejections().map { it.id }
+        val ids = store.mutationQueueState.rejections().map { it.id }
         assertEquals(MAX_REJECTED_MUTATIONS, ids.size)
         assertEquals((6L..105L).toList(), ids)
     }
@@ -158,8 +158,8 @@ class RejectedMutationListTest {
 
         // Then
         assertTrue(dismissed)
-        assertEquals(emptyList(), store.outboxState.rejections())
-        assertEquals(emptyList(), store.outboxState.rejectionsFlow().first())
+        assertEquals(emptyList(), store.mutationQueueState.rejections())
+        assertEquals(emptyList(), store.mutationQueueState.rejectionsFlow().first())
     }
 
     @Test
@@ -179,7 +179,7 @@ class RejectedMutationListTest {
         assertTrue(newId > rejectedId)
         assertEquals(2, report.syncedCount)
         assertEquals(listOf("""[{"title":"second"}]""", """[{"title":"first"}]"""), server.requests.takeLast(2).map { it.body })
-        assertEquals(emptyList(), store.outboxState.rejections())
+        assertEquals(emptyList(), store.mutationQueueState.rejections())
     }
 
     @Test
@@ -190,7 +190,7 @@ class RejectedMutationListTest {
         objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "not a list")
 
         // When
-        val rejections = store.outboxState.rejections()
+        val rejections = store.mutationQueueState.rejections()
 
         // Then — read as a fresh list, the old payload kept under its own key, and said at ERROR
         assertEquals(emptyList(), rejections)
@@ -214,7 +214,7 @@ class RejectedMutationListTest {
         // Then — the pass stopped with the write still queued rather than losing it
         assertIs<SyncStop.TransientFailure>(report.stop)
         assertEquals(1, store.allPendingMutations().size)
-        assertEquals(emptyList(), store.outboxState.rejections())
+        assertEquals(emptyList(), store.mutationQueueState.rejections())
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

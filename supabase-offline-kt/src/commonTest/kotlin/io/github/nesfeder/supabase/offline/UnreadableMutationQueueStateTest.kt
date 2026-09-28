@@ -6,8 +6,8 @@ import io.github.nesfeder.supabase.offline.internal.db.MUTATION_OWNERS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
-import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
@@ -26,11 +26,12 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
- * The outbox's own bookkeeping — who owns which write, and the rejected list — lives in reserved
- * cache rows. If one cannot be read (corruption, or a later build's format after a downgrade), the
- * engine degrades instead of turning the app's writes into internal exceptions or wedging the queue.
+ * The mutation queue's own bookkeeping — who owns which write, and the rejected list — lives in
+ * reserved cache rows. If one cannot be read (corruption, or a later build's format after a
+ * downgrade), the engine degrades instead of turning the app's writes into internal exceptions or
+ * wedging the queue.
  */
-class UnreadableOutboxStateTest {
+class UnreadableMutationQueueStateTest {
 
     private val objectDao = FakeObjectDao()
     private val store = newTestOfflineStore(objectDao = objectDao)
@@ -95,7 +96,7 @@ class UnreadableOutboxStateTest {
         val refused = store.allPendingMutations().single()
         store.rejectMutation(refused, "refused", serverError = null)
         objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
-        store.outboxState.resetCaches()
+        store.mutationQueueState.resetCaches()
 
         // When
         val retried = runCatching { store.retryRejectedMutation(refused.id, "user:user-a") }
@@ -121,7 +122,7 @@ class UnreadableOutboxStateTest {
         // Then — the refusal is recorded on a fresh list, the next write went out, and the old
         // payload was kept aside rather than discarded
         assertEquals(1, report.syncedCount)
-        assertEquals(1, store.outboxState.rejections().size)
+        assertEquals(1, store.mutationQueueState.rejections().size)
         assertTrue(objectDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
     }
 

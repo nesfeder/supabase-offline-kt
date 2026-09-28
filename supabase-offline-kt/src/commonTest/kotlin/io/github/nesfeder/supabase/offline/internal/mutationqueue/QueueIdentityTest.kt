@@ -1,4 +1,4 @@
-package io.github.nesfeder.supabase.offline.internal.outbox
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.jan.supabase.auth.status.RefreshFailureCause
 import io.github.jan.supabase.auth.status.SessionStatus

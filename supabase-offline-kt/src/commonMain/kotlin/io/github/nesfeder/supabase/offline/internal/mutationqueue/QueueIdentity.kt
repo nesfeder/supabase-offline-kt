@@ -1,4 +1,4 @@
-package io.github.nesfeder.supabase.offline.internal.outbox
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth

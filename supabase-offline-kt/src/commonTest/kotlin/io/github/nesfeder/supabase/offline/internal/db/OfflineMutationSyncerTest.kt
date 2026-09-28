@@ -130,7 +130,7 @@ class OfflineMutationSyncerTest {
         assertEquals(1, synced)
         assertEquals(2, wrapper.recordedInsertBodies.size, "both mutations were attempted")
         assertEquals(0, store.pendingMutationCount())
-        assertEquals(listOf(403), store.outboxState.rejections().map { it.serverError?.status })
+        assertEquals(listOf(403), store.mutationQueueState.rejections().map { it.serverError?.status })
     }
 
     @Test
@@ -312,7 +312,7 @@ class OfflineMutationSyncerTest {
         assertEquals(0, synced)
         assertEquals(0, wrapper.recordedDeleteCount, "unfiltered DELETE must never execute")
         assertEquals(0, store.pendingMutationCount(), "the legacy null-filter row leaves the queue")
-        assertEquals(1, store.outboxState.rejections().size)
+        assertEquals(1, store.mutationQueueState.rejections().size)
     }
 
     @Test

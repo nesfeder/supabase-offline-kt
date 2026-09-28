@@ -163,8 +163,8 @@ internal suspend fun OfflineDatabase.writeReservedRows() {
         mutationDao = mutationDao(),
         nowMillis = { 1_600_000_000_000 },
     )
-    val (ownersRow, owners) = checkNotNull(store.outboxState.ownersRowWith { ON_DISK_OWNERS })
+    val (ownersRow, owners) = checkNotNull(store.mutationQueueState.ownersRowWith { ON_DISK_OWNERS })
     objectDao().upsert(ownersRow)
-    store.outboxState.ownersWritten(owners)
-    store.outboxState.addRejection(ON_DISK_REJECTION)
+    store.mutationQueueState.ownersWritten(owners)
+    store.mutationQueueState.addRejection(ON_DISK_REJECTION)
 }

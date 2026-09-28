@@ -1,12 +1,12 @@
-package io.github.nesfeder.supabase.offline.internal.outbox
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Instant
 
 /*
- * The outbox's own vocabulary, named after the offline API sheet so a later change can expose these
- * types publicly under the same names. They stay internal until then.
+ * The mutation queue's own vocabulary, named after the offline API sheet so a later change can
+ * expose these types publicly under the same names. They stay internal until then.
  */
 
 /** The PostgREST write a queued mutation performs. */
@@ -27,8 +27,8 @@ internal enum class MutationOperation {
 /**
  * One write waiting in the queue.
  *
- * @property id The mutation's stable id: the queue row's autoincrement id. It survives process death
- *   and is carried by a [RejectedMutation] when the server refuses the write.
+ * @property id The mutation's stable id: the mutation row's autoincrement id. It survives process
+ * death and is carried by a [RejectedMutation] when the server refuses the write.
  * @property table The table the write targets.
  * @property operation What the write does.
  * @property createdAt When the write was queued, by the device clock. Replay order is [id], not this.

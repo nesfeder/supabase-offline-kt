@@ -3,8 +3,8 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
-import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -57,7 +57,7 @@ class HeadSendTest {
         // When / Then — the caller gets the refusal; nothing is queued or put on the rejected list
         assertFailsWith<PostgrestRestException> { rename("A") }
         assertEquals(0, store.allPendingMutations().size)
-        assertEquals(emptyList(), store.outboxState.rejections())
+        assertEquals(emptyList(), store.mutationQueueState.rejections())
     }
 
     @Test

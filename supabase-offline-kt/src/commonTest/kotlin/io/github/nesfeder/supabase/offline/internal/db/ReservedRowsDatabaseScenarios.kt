@@ -48,8 +48,8 @@ internal class ReservedRowsDatabaseScenarios(
         try {
             assertEquals(SHIPPED_FIXTURE_CONTENTS, reopened.readShippedFixtureContents())
             val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
-            assertEquals(emptyList(), store.outboxState.rejections())
-            assertEquals(MutationOwners.Known(emptyMap()), store.outboxState.owners())
+            assertEquals(emptyList(), store.mutationQueueState.rejections())
+            assertEquals(MutationOwners.Known(emptyMap()), store.mutationQueueState.owners())
         } finally {
             reopened.close()
         }
@@ -74,7 +74,7 @@ internal class ReservedRowsDatabaseScenarios(
         val reopened = open(path, callback)
         val (contents, rejections, owners) = try {
             val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
-            Triple(reopened.readShippedFixtureContents(), store.outboxState.rejections(), store.outboxState.owners())
+            Triple(reopened.readShippedFixtureContents(), store.mutationQueueState.rejections(), store.mutationQueueState.owners())
         } finally {
             reopened.close()
         }
@@ -134,7 +134,7 @@ internal class ReservedRowsDatabaseScenarios(
             val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
             assertEquals(
                 MutationOwners.Known(mapOf(1L to "user:user-a", 2L to "user:user-a", 3L to "user:user-a", 4L to "user:user-a")),
-                store.outboxState.owners(),
+                store.mutationQueueState.owners(),
             )
             assertEquals(listOf(1L, 2L, 3L, 4L), store.pendingMutationsOf("user:user-a")?.map { row -> row.id })
             assertEquals(emptyList(), store.pendingMutationsOf("user:user-b")?.map { row -> row.id })
@@ -144,10 +144,10 @@ internal class ReservedRowsDatabaseScenarios(
     }
 
     /**
-     * The outbox's multi-row changes run in one Room transaction: when one fails part-way, none of
-     * its writes land — the rejected list, the queue and the owners stay as they were.
+     * The mutation queue's multi-row changes run in one Room transaction: when one fails part-way,
+     * none of its writes land — the rejected list, the queue and the owners stay as they were.
      */
-    suspend fun aFailedOutboxTransactionChangesNothing(path: String) {
+    suspend fun aFailedMutationQueueTransactionChangesNothing(path: String) {
         // Given
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
@@ -155,7 +155,7 @@ internal class ReservedRowsDatabaseScenarios(
             val objectDao = database.objectDao()
             val mutationDao = database.mutationDao()
             val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
-            val (rejectedRow, _) = store.outboxState.rejectedRowWith(add = ON_DISK_REJECTION)
+            val (rejectedRow, _) = store.mutationQueueState.rejectedRowWith(add = ON_DISK_REJECTION)
 
             // When — a transaction that writes the rejection and deletes the write, then fails
             val failure = runCatching {

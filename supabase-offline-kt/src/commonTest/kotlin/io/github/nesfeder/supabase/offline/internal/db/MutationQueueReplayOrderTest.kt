@@ -27,7 +27,7 @@ import kotlin.test.assertEquals
  * a later write can never overtake an earlier one — not in its own table, and not in a table it
  * depends on through a foreign key or a row-level-security policy.
  */
-class OutboxReplayOrderTest {
+class MutationQueueReplayOrderTest {
 
     private val mutationDao = FakeMutationDao()
     private var clock = 1_000L

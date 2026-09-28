@@ -9,14 +9,14 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
-import io.github.nesfeder.supabase.offline.internal.outbox.DefaultPrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.outbox.PrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.outbox.SyncReport
-import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
-import io.github.nesfeder.supabase.offline.internal.outbox.currentReplayIdentity
-import io.github.nesfeder.supabase.offline.internal.outbox.everyRowCarriesPrimaryKey
-import io.github.nesfeder.supabase.offline.internal.outbox.toRejectedMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.applyTo
@@ -52,9 +52,9 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * ### One queue per identity, in insertion order
  * Each write records the identity that made it. A pass replays only the current identity's writes,
- * across every table, in the order they were made (the queue row's id); another identity's writes
- * neither block it nor are sent by it. The identity is checked again before **every** request, so a
- * sign-out or an account switch stops a pass before its next request.
+ * across every table, in the order they were made (the mutation row's id); another identity's
+ * writes neither block it nor are sent by it. The identity is checked again before **every**
+ * request, so a sign-out or an account switch stops a pass before its next request.
  *
  * A pass stops at the first write that cannot go through for a reason that may pass — no
  * connectivity, a `401`, `408`, `429` or `5xx`, or an unexpected error — so a later write never

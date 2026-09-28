@@ -4,8 +4,8 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
-import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -96,7 +96,7 @@ class QueueOwnershipTest {
         // Then — B's write is queued as B's, and A's stays A's
         assertEquals(MutationOutcome.Queued, outcome)
         val pending = store.allPendingMutations()
-        val owners = assertIs<MutationOwners.Known>(store.outboxState.owners()).byId
+        val owners = assertIs<MutationOwners.Known>(store.mutationQueueState.owners()).byId
         assertEquals(listOf(USER_A.storedValue, USER_B.storedValue), pending.map { owners[it.id] })
     }
 

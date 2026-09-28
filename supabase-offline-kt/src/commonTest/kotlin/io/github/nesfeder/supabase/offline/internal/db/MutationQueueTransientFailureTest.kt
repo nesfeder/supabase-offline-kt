@@ -17,7 +17,7 @@ import kotlin.test.assertEquals
  * deletes a queued write, however many times it recurs. Only the server refusing the write itself
  * (a permanent 4xx) takes it out of the queue.
  */
-class OutboxTransientFailureTest {
+class MutationQueueTransientFailureTest {
 
     private val store = newTestOfflineStore()
 

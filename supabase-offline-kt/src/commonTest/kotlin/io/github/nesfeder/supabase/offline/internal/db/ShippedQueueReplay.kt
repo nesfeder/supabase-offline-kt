@@ -37,8 +37,8 @@ internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgre
  * `done_count` 6 + (5 - 4) = 7 and `minutes_spent` 40 + (45 - 30) = 55, written as integers because
  * the queued body wrote them as integers, while `title` replays as queued.
  *
- * Before the outbox changes the same queue replayed table by table (`todos` 1, 3, 4, then
- * `list_members` 2), the INSERT as a plain insert, and the rebased values as `7.0` and `55.0`.
+ * Before the mutation queue was reworked, the same queue replayed table by table (`todos` 1, 3, 4,
+ * then `list_members` 2), the INSERT as a plain insert, and the rebased values as `7.0` and `55.0`.
  */
 internal val SHIPPED_QUEUE_REPLAY: List<RecordedRequest> = listOf(
     RecordedRequest(

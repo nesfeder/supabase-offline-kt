@@ -40,7 +40,7 @@ class ReservedRowsTest {
             settings = OfflineCacheSettings(maxDbSizeBytes = 100, evictionBatchSize = 1, minRetainedBytes = 0),
         )
         store.queueOwnedWrite("user:user-a")
-        store.outboxState.addRejection(rejection(id = 1))
+        store.mutationQueueState.addRejection(rejection(id = 1))
         objectDao.seedPayload("todos", "todos", "[" + "\"x\",".repeat(60) + "\"x\"]", updatedAt = 10L)
         val reservedBytes = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)).payload.length
 
@@ -59,7 +59,7 @@ class ReservedRowsTest {
     fun reserved_rows_are_never_returned_by_a_read() = runTest {
         // Given
         val store = newTestOfflineStore(objectDao = objectDao)
-        store.outboxState.addRejection(rejection(id = 1))
+        store.mutationQueueState.addRejection(rejection(id = 1))
 
         // When / Then — no read path serves them, even asked for them by name
         assertNull(store.getPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
@@ -72,7 +72,7 @@ class ReservedRowsTest {
     fun reserved_rows_are_never_touched_by_a_write_or_an_overlay() = runTest {
         // Given
         val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
-        store.outboxState.addRejection(rejection(id = 1))
+        store.mutationQueueState.addRejection(rejection(id = 1))
         val before = objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)
 
         // When / Then — every write path refuses the reserved table
@@ -104,7 +104,7 @@ class ReservedRowsTest {
         // Given
         val store = newTestOfflineStore(objectDao = objectDao)
         store.queueOwnedWrite("user:user-a")
-        store.outboxState.addRejection(rejection(id = 1))
+        store.mutationQueueState.addRejection(rejection(id = 1))
 
         // When
         store.clearAll()
@@ -112,8 +112,8 @@ class ReservedRowsTest {
         // Then
         assertNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE))
         assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
-        assertEquals(emptyList(), store.outboxState.rejections())
-        assertEquals(MutationOwners.Known(emptyMap()), store.outboxState.owners())
+        assertEquals(emptyList(), store.mutationQueueState.rejections())
+        assertEquals(MutationOwners.Known(emptyMap()), store.mutationQueueState.owners())
     }
 
     @Test
@@ -122,7 +122,7 @@ class ReservedRowsTest {
         val store = newTestOfflineStore(objectDao = objectDao)
 
         // When
-        store.outboxState.addRejection(rejection(id = 1))
+        store.mutationQueueState.addRejection(rejection(id = 1))
         store.queueOwnedWrite("user:user-a")
 
         // Then — a later build can tell which format it is reading

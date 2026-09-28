@@ -28,7 +28,7 @@ import kotlin.test.assertIs
  * Two are not, and are pinned here as such: an INSERT whose key the server generates is inserted
  * twice, and an UPDATE with numeric delta columns applies its delta twice.
  */
-class OutboxIdempotentReplayTest {
+class MutationQueueIdempotentReplayTest {
 
     private val store = newTestOfflineStore()
 

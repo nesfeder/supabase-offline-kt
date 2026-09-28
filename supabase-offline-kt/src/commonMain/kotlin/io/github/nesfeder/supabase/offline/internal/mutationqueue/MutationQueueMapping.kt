@@ -1,4 +1,4 @@
-package io.github.nesfeder.supabase.offline.internal.outbox
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.StoredRejection
@@ -27,7 +27,7 @@ internal fun mutationOperationOf(stored: String): MutationOperation? = when (sto
 }
 
 /**
- * This queue row as a [PendingMutation].
+ * This mutation row as a [PendingMutation].
  *
  * @param json The engine's [Json].
  * @param primaryKeys Where the table's key columns come from, for [PendingMutation.rowKeys].

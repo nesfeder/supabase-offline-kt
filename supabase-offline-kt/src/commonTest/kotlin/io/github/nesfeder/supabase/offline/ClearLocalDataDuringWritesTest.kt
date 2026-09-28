@@ -80,7 +80,7 @@ class ClearLocalDataDuringWritesTest {
         sweep.join()
 
         // Then — the pass was stopped before it could record the outgoing user's write on the list
-        assertEquals(emptyList(), store.outboxState.rejections())
+        assertEquals(emptyList(), store.mutationQueueState.rejections())
         assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
     }
 

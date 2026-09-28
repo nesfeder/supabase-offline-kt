@@ -1,4 +1,4 @@
-package io.github.nesfeder.supabase.offline.internal.outbox
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement

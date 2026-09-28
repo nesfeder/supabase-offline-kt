@@ -8,14 +8,14 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
-import io.github.nesfeder.supabase.offline.internal.outbox.BackgroundSyncTrigger
-import io.github.nesfeder.supabase.offline.internal.outbox.DefaultPrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.outbox.PendingMutation
-import io.github.nesfeder.supabase.offline.internal.outbox.RejectedMutation
-import io.github.nesfeder.supabase.offline.internal.outbox.SyncReport
-import io.github.nesfeder.supabase.offline.internal.outbox.currentQueueIdentity
-import io.github.nesfeder.supabase.offline.internal.outbox.toPendingMutation
-import io.github.nesfeder.supabase.offline.internal.outbox.toRejectedMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.BackgroundSyncTrigger
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
@@ -499,11 +499,11 @@ internal class SupabaseOfflineClientImpl(
         deleteRecursivelyIfExists(baseDirectoryProvider() / "storage")
     }
 
-    /* ─────────────────────────── Outbox (internal) ─────────────────────────── */
+    /* ──────────────────────── Mutation queue (internal) ──────────────────────── */
 
     /*
-     * The outbox's ids, rejected list, identity and sync report, for the change that exposes them
-     * publicly under the offline API sheet's names. Internal until then.
+     * The mutation queue's ids, rejected list, identity and sync report, for the change that
+     * exposes them publicly under the offline API sheet's names. Internal until then.
      */
 
     /**
@@ -533,7 +533,7 @@ internal class SupabaseOfflineClientImpl(
      * @return A flow of rejected mutations; it fails if the persisted list cannot be decoded.
      */
     internal fun rejectedMutations(): Flow<List<RejectedMutation>> =
-        store.outboxState.rejectionsFlow().map { entries ->
+        store.mutationQueueState.rejectionsFlow().map { entries ->
             entries.map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
         }
 
@@ -543,7 +543,7 @@ internal class SupabaseOfflineClientImpl(
      * @return The list; it throws if the persisted list cannot be decoded.
      */
     internal suspend fun rejectedMutationList(): List<RejectedMutation> =
-        store.outboxState.rejections().map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+        store.mutationQueueState.rejections().map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
 
     /**
      * Removes a rejected mutation from the list.

@@ -7,8 +7,8 @@ import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.outbox.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
@@ -597,7 +597,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      */
     private sealed interface QueueCapture {
 
-        /** The write can be queued; [enqueue] inserts its queue row and returns the id. */
+        /** The write can be queued; [enqueue] inserts its mutation row and returns the id. */
         class Queueable(val enqueue: suspend OfflineStore.() -> Long) : QueueCapture
 
         /** The write cannot be queued faithfully, for [reason]. */

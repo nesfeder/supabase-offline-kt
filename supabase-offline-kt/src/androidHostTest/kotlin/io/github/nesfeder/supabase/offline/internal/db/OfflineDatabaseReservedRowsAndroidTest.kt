@@ -62,7 +62,7 @@ class OfflineDatabaseReservedRowsAndroidTest {
     }
 
     @Test
-    fun a_failed_outbox_transaction_changes_nothing() = runTest {
-        scenarios.aFailedOutboxTransactionChangesNothing(dbPath)
+    fun a_failed_mutation_queue_transaction_changes_nothing() = runTest {
+        scenarios.aFailedMutationQueueTransactionChangesNothing(dbPath)
     }
 }

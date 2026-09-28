@@ -1,10 +1,10 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.outbox.DefaultPrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.outbox.MutationOperation as OutboxOperation
-import io.github.nesfeder.supabase.offline.internal.outbox.PendingMutation
-import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
-import io.github.nesfeder.supabase.offline.internal.outbox.toPendingMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationOperation as MutationQueueOperation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -26,7 +26,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
- * Every queued mutation has a stable id — the queue row's autoincrement id — and a replay pass
+ * Every queued mutation has a stable id — the mutation row's autoincrement id — and a replay pass
  * reports what it did.
  *
  * The id serves because SQLite's `AUTOINCREMENT` never reuses a value, even after rows are deleted
@@ -85,7 +85,7 @@ class MutationIdAndSyncReportTest {
                 PendingMutation(
                     id = insertId,
                     table = TABLE,
-                    operation = OutboxOperation.Insert,
+                    operation = MutationQueueOperation.Insert,
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("a")),
                     body = rows("""[{"id":"a","title":"x"},{"title":"no key"}]"""),
@@ -93,7 +93,7 @@ class MutationIdAndSyncReportTest {
                 PendingMutation(
                     id = updateId,
                     table = TABLE,
-                    operation = OutboxOperation.Update,
+                    operation = MutationQueueOperation.Update,
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("b")),
                     body = Json.parseToJsonElement("""{"done":true}"""),
