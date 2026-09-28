@@ -14,12 +14,19 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
+import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApiImpl
+import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
+import io.github.jan.supabase.storage.BucketApi
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
+import kotlinx.coroutines.CoroutineScope
+import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
+import okio.SYSTEM
+import kotlin.time.Clock
 
 /*
  * The one place the engine's tests build the offline stack. Start here when writing a test:
@@ -116,6 +123,8 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  * @param store the offline store.
  * @param baseDirectoryProvider base directory for downloaded storage files.
  * @param sdkLogger the SDK logger.
+ * @param onClose what the client's `close()` releases, as the factories wire the database.
+ * @param coordinatorScope the scope the client's own scope is a child of, or `null` for a fresh one.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -123,9 +132,75 @@ internal fun newTestOfflineClient(
     store: OfflineStore = newTestOfflineStore(),
     baseDirectoryProvider: () -> Path = { "/tmp".toPath() },
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
-    supabase = supabase,
+    onClose: () -> Unit = {},
+    coordinatorScope: CoroutineScope? = null,
+): SupabaseOfflineClientImpl = if (coordinatorScope == null) {
+    SupabaseOfflineClientImpl(
+        supabase = supabase,
+        store = store,
+        baseDirectoryProvider = baseDirectoryProvider,
+        sdkLogger = sdkLogger,
+        onClose = onClose,
+    )
+} else {
+    SupabaseOfflineClientImpl(
+        supabase = supabase,
+        store = store,
+        baseDirectoryProvider = baseDirectoryProvider,
+        sdkLogger = sdkLogger,
+        coordinatorScope = coordinatorScope,
+        onClose = onClose,
+    )
+}
+
+/**
+ * Builds the Storage file cache over [store], under [baseDirectory] (a real directory: the storage
+ * tests run against the real file system).
+ *
+ * @param baseDirectory the offline data directory; files land under `<baseDirectory>/storage`.
+ * @param store the offline store holding the cache rows.
+ * @param sdkLogger the SDK logger.
+ * @param fileSystem the file system; pass a [FaultyFileSystem] to make it fail.
+ * @param maxSizeBytes the size bound, or `null` for none.
+ * @param nowMillis the clock use times are stamped from.
+ * @return the cache.
+ */
+internal fun newTestFileCache(
+    baseDirectory: Path,
+    store: OfflineStore = newTestOfflineStore(),
+    sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    fileSystem: FileSystem = FileSystem.SYSTEM,
+    maxSizeBytes: Long? = null,
+    nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+): StorageFileCache = StorageFileCache(
     store = store,
-    baseDirectoryProvider = baseDirectoryProvider,
+    dataDirectoryProvider = { baseDirectory },
+    maxSizeBytes = maxSizeBytes,
+    sdkLogger = sdkLogger,
+    fileSystem = fileSystem,
+    nowMillis = nowMillis,
+)
+
+/**
+ * Builds the offline bucket over [delegate], caching under [baseDirectory] (a real directory: the
+ * storage tests run against the real file system).
+ *
+ * @param delegate the bucket the offline one forwards to: a [FakeBucketApi], or a real one from a
+ *   [RecordingStorageServer] client.
+ * @param baseDirectory the offline data directory; files land under `<baseDirectory>/storage`.
+ * @param store the offline store holding the cache rows.
+ * @param sdkLogger the SDK logger.
+ * @param cache the file cache; by default one over [baseDirectory], [store] and [sdkLogger].
+ * @return the offline bucket.
+ */
+internal fun newTestBucketApi(
+    delegate: BucketApi,
+    baseDirectory: Path,
+    store: OfflineStore = newTestOfflineStore(),
+    sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    cache: StorageFileCache = newTestFileCache(baseDirectory = baseDirectory, store = store, sdkLogger = sdkLogger),
+): OfflineBucketApiImpl = OfflineBucketApiImpl(
+    delegate = delegate,
+    cache = cache,
     sdkLogger = sdkLogger,
 )

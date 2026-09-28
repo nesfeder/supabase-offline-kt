@@ -16,38 +16,63 @@ import io.github.jan.supabase.storage.StorageListFilter
 import io.github.jan.supabase.storage.UploadData
 import io.github.jan.supabase.storage.UploadOptionBuilder
 import io.github.jan.supabase.storage.UploadSignedUrl
+import io.github.jan.supabase.network.HttpRequestOverride
 import io.github.jan.supabase.storage.resumable.ResumableClient
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.url
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.writeFully
 import kotlin.time.Duration
 
 /**
- * Scriptable [BucketApi] test double for exercising [io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApi].
+ * Scriptable [BucketApi] test double for exercising the offline bucket.
  *
- * The byte-array download overrides (`downloadAuthenticated` / `downloadPublic`) route through
+ * Every download — byte array or byte channel, authenticated or public — gets its bytes from
  * [onDownload], which a test can point at a success or a specific failure (transport error, a
- * `NotFoundRestException`, or `awaitCancellation`) per case. `delete`, `move` and `copy` succeed
- * and record their arguments ([deletedPaths], [moves], [copies]) so cache-maintenance tests can
- * assert the wrapper forwarded them. Every other [BucketApi] member is [unsupported]: the offline
- * wrapper under test never reaches them, and the byte-channel download variants delegate to the
- * byte-array ones inside the wrapper, so they are never invoked here either.
+ * `NotFoundRestException`, or `awaitCancellation`) per case. A channel download writes those bytes
+ * in [channelChunkSize] pieces through [onChannelChunk] (a test can park or fail between pieces),
+ * then closes the channel, as supabase-kt does.
+ *
+ * Like supabase-kt, every download runs the request overrides in its options against the request
+ * it would send: an untransformed object URL, since this double cannot see an image transform
+ * (a test that needs transforms uses [RecordingStorageServer] and the real bucket).
+ *
+ * `delete`, `move`, `copy`, `upload`, `update` and `uploadToSignedUrl` succeed and record their
+ * arguments so cache-maintenance tests can assert the wrapper forwarded them; [onWrite] can make
+ * them fail. Every other [BucketApi] member is [unsupported].
  *
  * @property bucketId Bucket identifier the wrapper reads via `BucketApi by delegate`.
- * @property onDownload Suspending behavior invoked for every byte-array download; defaults to a
- *   failure so a test must opt into success explicitly.
+ * @property onDownload Suspending behavior invoked for every download; defaults to a failure so a
+ *   test must opt into success explicitly.
  */
 internal class FakeBucketApi(
     override val bucketId: String = "test-bucket",
     var onDownload: suspend (path: String) -> ByteArray = { error("onDownload not scripted") },
 ) : BucketApi {
 
-    /** Number of byte-array download calls received — for network-vs-cache assertions. */
+    /** Size of the pieces a channel download writes. */
+    var channelChunkSize: Int = 4
+
+    /** Runs after each piece a channel download writes, with the count of bytes written so far. */
+    var onChannelChunk: suspend (bytesWritten: Int) -> Unit = { }
+
+    /** Runs before every write operation (upload, update, delete, move, copy); throw to fail it. */
+    var onWrite: suspend (operation: String) -> Unit = { }
+
+    /** Paths passed to the channel downloads, in call order. */
+    val channelDownloadPaths: MutableList<String> = mutableListOf()
+
+    /** `(operation, path)` of every upload, update and signed-URL upload, in call order. */
+    val uploads: MutableList<Pair<String, String>> = mutableListOf()
+
+    /** Number of download calls received, of every kind — for network-vs-cache assertions. */
     var downloadInvocations: Int = 0
         private set
 
-    /** Paths passed to the byte-array `downloadPublic`, in call order. */
+    /** Paths passed to either `downloadPublic`, in call order. */
     val publicDownloadPaths: MutableList<String> = mutableListOf()
 
-    /** Paths passed to the byte-array `downloadAuthenticated`, in call order. */
+    /** Paths passed to either `downloadAuthenticated`, in call order. */
     val authenticatedDownloadPaths: MutableList<String> = mutableListOf()
 
     /** Path collections passed to [delete], in call order. */
@@ -66,36 +91,79 @@ internal class FakeBucketApi(
 
     override val resumable: ResumableClient get() = unsupported("resumable")
 
-    override fun setHeader(name: String, value: String): BucketApi = unsupported("setHeader")
+    /** Headers set through [setHeader]. */
+    val headers: MutableMap<String, String> = mutableMapOf()
+
+    override fun setHeader(name: String, value: String): BucketApi {
+        headers[name] = value
+        return this
+    }
 
     override suspend fun upload(
         path: String,
         data: UploadData,
         options: UploadOptionBuilder.() -> Unit,
-    ): FileUploadResponse = unsupported("upload")
+    ): FileUploadResponse = recordUpload("upload", path)
 
     override suspend fun uploadToSignedUrl(
         path: String,
         token: String,
         data: UploadData,
         options: UploadOptionBuilder.() -> Unit,
-    ): FileUploadResponse = unsupported("uploadToSignedUrl")
+    ): FileUploadResponse = recordUpload("uploadToSignedUrl", path)
 
     override suspend fun update(
         path: String,
         data: UploadData,
         options: UploadOptionBuilder.() -> Unit,
-    ): FileUploadResponse = unsupported("update")
+    ): FileUploadResponse = recordUpload("update", path)
+
+    private suspend fun recordUpload(operation: String, path: String): FileUploadResponse {
+        onWrite(operation)
+        uploads += operation to path
+        return FileUploadResponse(id = "id-${uploads.size}", path = path, key = "$bucketId/$path")
+    }
+
+    /**
+     * Runs the request overrides in [options] against the request supabase-kt would send for an
+     * untransformed download of [path], as the real bucket does before it sends anything.
+     */
+    private fun runRequestOverrides(path: String, isPublic: Boolean, options: DownloadOptionBuilder.() -> Unit) {
+        val overrides = mutableListOf<HttpRequestOverride>()
+        DownloadOptionBuilder(httpRequestOverrides = overrides).apply(options)
+        val access = if (isPublic) "public" else "authenticated"
+        val request = HttpRequestBuilder().apply {
+            url("$TEST_SUPABASE_URL/storage/v1/object/$access/$bucketId/$path")
+        }
+        overrides.forEach { override -> request.override() }
+    }
+
+    private suspend fun writeToChannel(path: String, channel: ByteWriteChannel) {
+        channelDownloadPaths += path
+        val bytes = onDownload(path)
+        var written = 0
+        while (written < bytes.size) {
+            val end = minOf(written + channelChunkSize, bytes.size)
+            channel.writeFully(bytes, written, end)
+            channel.flush()
+            written = end
+            onChannelChunk(written)
+        }
+        channel.flushAndClose()
+    }
 
     override suspend fun delete(paths: Collection<String>) {
+        onWrite("delete")
         deletedPaths += paths
     }
 
     override suspend fun move(from: String, to: String, destinationBucket: String?) {
+        onWrite("move")
         moves += Triple(from, to, destinationBucket)
     }
 
     override suspend fun copy(from: String, to: String, destinationBucket: String?) {
+        onWrite("copy")
         copies += Triple(from, to, destinationBucket)
     }
 
@@ -120,6 +188,7 @@ internal class FakeBucketApi(
     ): ByteArray {
         downloadInvocations++
         authenticatedDownloadPaths += path
+        runRequestOverrides(path, isPublic = false, options)
         return onDownload(path)
     }
 
@@ -127,7 +196,12 @@ internal class FakeBucketApi(
         path: String,
         channel: ByteWriteChannel,
         options: DownloadOptionBuilder.() -> Unit,
-    ): Unit = unsupported("downloadAuthenticated(channel)")
+    ) {
+        downloadInvocations++
+        authenticatedDownloadPaths += path
+        runRequestOverrides(path, isPublic = false, options)
+        writeToChannel(path, channel)
+    }
 
     override suspend fun downloadPublic(
         path: String,
@@ -135,6 +209,7 @@ internal class FakeBucketApi(
     ): ByteArray {
         downloadInvocations++
         publicDownloadPaths += path
+        runRequestOverrides(path, isPublic = true, options)
         return onDownload(path)
     }
 
@@ -142,7 +217,12 @@ internal class FakeBucketApi(
         path: String,
         channel: ByteWriteChannel,
         options: DownloadOptionBuilder.() -> Unit,
-    ): Unit = unsupported("downloadPublic(channel)")
+    ) {
+        downloadInvocations++
+        publicDownloadPaths += path
+        runRequestOverrides(path, isPublic = true, options)
+        writeToChannel(path, channel)
+    }
 
     override suspend fun list(
         prefix: String,

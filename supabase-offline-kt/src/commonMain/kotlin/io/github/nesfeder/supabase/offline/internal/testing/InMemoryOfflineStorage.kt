@@ -108,6 +108,13 @@ internal open class InMemoryStorageDao : StorageDao {
     override suspend fun deleteAll() {
         rows.clear()
     }
+
+    override suspend fun forObject(bucketId: String, path: String, variantPrefix: String): List<StorageRow> =
+        rows.values.filter { it.bucketId == bucketId && (it.path == path || it.path.startsWith(variantPrefix)) }
+
+    override suspend fun all(): List<StorageRow> = rows.values.toList()
+
+    override suspend fun totalSizeBytes(): Long = rows.values.sumOf { it.sizeBytes ?: 0L }
 }
 
 /** In-memory [MutationDao] mirroring Room's autoGenerate id and reactive per-table queue. */

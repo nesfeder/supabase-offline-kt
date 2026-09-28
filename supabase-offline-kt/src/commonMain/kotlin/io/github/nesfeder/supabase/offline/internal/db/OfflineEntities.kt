@@ -132,6 +132,29 @@ internal interface StorageDao {
     /** Deletes every cached storage-object metadata row across all buckets. */
     @Query("DELETE FROM storage_objects")
     suspend fun deleteAll()
+
+    /**
+     * The rows of one object in [bucketId]: its own row, whose `path` is [path], and the rows of its
+     * image-transform variants, whose `path` starts with [variantPrefix].
+     *
+     * @param bucketId the bucket.
+     * @param path the object path.
+     * @param variantPrefix [path] followed by the variant separator.
+     * @return the matching rows.
+     */
+    @Query(
+        "SELECT * FROM storage_objects WHERE bucketId = :bucketId AND " +
+            "(path = :path OR substr(path, 1, length(:variantPrefix)) = :variantPrefix)"
+    )
+    suspend fun forObject(bucketId: String, path: String, variantPrefix: String): List<StorageRow>
+
+    /** Every cached storage-object row, for the size bound's least-recently-used pass. */
+    @Query("SELECT * FROM storage_objects")
+    suspend fun all(): List<StorageRow>
+
+    /** The summed size of every cached file whose size is recorded, in bytes; `0` when none is. */
+    @Query("SELECT COALESCE(SUM(sizeBytes), 0) FROM storage_objects")
+    suspend fun totalSizeBytes(): Long
 }
 
 /* ───────────────────────── Mutation queue ───────────────────────── */

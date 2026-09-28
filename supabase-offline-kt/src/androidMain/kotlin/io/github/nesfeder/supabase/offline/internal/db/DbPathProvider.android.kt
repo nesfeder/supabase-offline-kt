@@ -14,7 +14,7 @@ internal class AndroidDbPathProvider(
 
     override fun dbPath(): Path {
         val appContext = context.applicationContext
-        val dbFile = appContext.getDatabasePath("supabase_offline.db")
+        val dbFile = appContext.getDatabasePath(OFFLINE_DATABASE_FILE_NAME)
         return dbFile.absolutePath.toPath()
     }
 }

@@ -1,0 +1,144 @@
+package io.github.nesfeder.supabase.offline.internal.storage
+
+import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.FaultyFileSystem
+import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlinx.coroutines.test.runTest
+import kotlinx.io.IOException
+import okio.FileSystem
+import okio.Path
+import okio.SYSTEM
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * Cache writes are atomic: a download is written to a temporary file beside its target and renamed
+ * over it, so a reader — including a later process after a crash — sees the old copy or the new
+ * one, never part of either.
+ */
+class StorageAtomicWriteTest {
+
+    private lateinit var dataDirectory: Path
+    private lateinit var store: OfflineStore
+    private lateinit var delegate: FakeBucketApi
+    private val fileSystem = FaultyFileSystem()
+
+    @BeforeTest
+    fun setUp() {
+        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-atomic-${Random.nextLong().toULong()}"
+        store = newTestOfflineStore()
+        delegate = FakeBucketApi(bucketId = BUCKET)
+    }
+
+    @AfterTest
+    fun tearDown() {
+        FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
+    }
+
+    private fun bucket() = newTestBucketApi(
+        delegate = delegate,
+        baseDirectory = dataDirectory,
+        store = store,
+        cache = newTestFileCache(baseDirectory = dataDirectory, store = store, fileSystem = fileSystem),
+    )
+
+    private val target: Path get() = objectFilePathOrNull(dataDirectory, BUCKET, PATH) ?: error("uncacheable fixture path")
+
+    private suspend fun primeWithOldCopy() {
+        delegate.onDownload = { OLD }
+        bucket().downloadAuthenticated(PATH) { }
+    }
+
+    private suspend fun readOffline(): ByteArray {
+        delegate.onDownload = { throw IOException("network unreachable") }
+        return bucket().downloadAuthenticated(PATH) { }
+    }
+
+    @Test
+    fun a_write_that_fails_part_way_leaves_the_previous_copy_whole() = runTest {
+        // Given — the disk fills up part-way through the new copy
+        primeWithOldCopy()
+        fileSystem.failWritesAfterBytes = 3
+        delegate.onDownload = { NEW }
+
+        // When
+        val downloaded = bucket().downloadAuthenticated(PATH) { }
+
+        // Then — the caller has the new bytes; the cache still has the whole old copy and no fragment
+        assertContentEquals(NEW, downloaded)
+        fileSystem.failWritesAfterBytes = null
+        assertContentEquals(OLD, FileSystem.SYSTEM.read(target) { readByteArray() })
+        assertContentEquals(OLD, readOffline())
+        assertEquals(listOf(target), regularFiles())
+    }
+
+    @Test
+    fun a_new_copy_is_written_beside_the_target_then_renamed_over_it() = runTest {
+        // Given
+        primeWithOldCopy()
+        fileSystem.sinksOpened.clear()
+        delegate.onDownload = { NEW }
+
+        // When
+        bucket().downloadAuthenticated(PATH) { }
+
+        // Then — the only file written was a temporary one in the target's directory
+        val written = fileSystem.sinksOpened.single()
+        assertEquals(target.parent, written.parent)
+        assertTrue(written != target, "the target was written in place")
+        assertContentEquals(NEW, FileSystem.SYSTEM.read(target) { readByteArray() })
+        assertEquals(listOf(target), regularFiles())
+    }
+
+    @Test
+    fun a_rename_the_file_system_refuses_leaves_the_previous_copy_and_no_fragment() = runTest {
+        // Given
+        primeWithOldCopy()
+        fileSystem.failMoves = true
+        delegate.onDownload = { NEW }
+
+        // When
+        val downloaded = bucket().downloadAuthenticated(PATH) { }
+
+        // Then
+        assertContentEquals(NEW, downloaded)
+        assertContentEquals(OLD, FileSystem.SYSTEM.read(target) { readByteArray() })
+        assertEquals(listOf(target), regularFiles())
+    }
+
+    @Test
+    fun a_temporary_file_a_crash_left_behind_is_swept_and_never_served() = runTest {
+        // Given — a previous process died mid-download, leaving a temporary file beside the target
+        primeWithOldCopy()
+        val orphan = target.parent!! / ".supabase-offline-download-dead.tmp"
+        FileSystem.SYSTEM.write(orphan) { write(NEW.copyOf(3)) }
+
+        // When — this process's first download through the cache
+        delegate.onDownload = { "other".encodeToByteArray() }
+        bucket().downloadAuthenticated("u-1/other.png") { }
+
+        // Then — the orphan is gone and the cached copy was never replaced by it
+        assertTrue(!FileSystem.SYSTEM.exists(orphan), "the orphaned temporary file survived")
+        assertContentEquals(OLD, readOffline())
+    }
+
+    private fun regularFiles(): List<Path> =
+        FileSystem.SYSTEM.listRecursively(dataDirectory)
+            .filter { FileSystem.SYSTEM.metadata(it).isRegularFile && it.name != "other.png" }
+            .toList()
+
+    private companion object {
+        const val BUCKET = "avatars"
+        const val PATH = "u-1/me.png"
+        val OLD = "old-avatar-bytes".encodeToByteArray()
+        val NEW = "new-avatar-bytes-that-are-longer".encodeToByteArray()
+    }
+}

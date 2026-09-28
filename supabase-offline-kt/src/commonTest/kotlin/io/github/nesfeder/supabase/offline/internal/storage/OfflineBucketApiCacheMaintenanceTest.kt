@@ -2,6 +2,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
@@ -19,9 +20,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * How [OfflineBucketApi] keeps its disk cache in step with the bucket operations it forwards:
+ * How [OfflineBucketApiImpl] keeps its disk cache in step with the bucket operations it forwards:
  * `delete` removes the cached file and its row, `move` carries both across, `copy` leaves the cache
- * alone, and `localPathIfPresent` answers only for a tracked file that is still on disk.
+ * alone, and `cachedFile` answers only for a tracked file that is still on disk.
  *
  * Runs against the real okio [FileSystem.SYSTEM] in a per-test temporary directory, over the
  * in-memory offline-store fakes.
@@ -31,18 +32,14 @@ class OfflineBucketApiCacheMaintenanceTest {
     private lateinit var baseDir: Path
     private lateinit var store: OfflineStore
     private lateinit var delegate: FakeBucketApi
-    private lateinit var api: OfflineBucketApi
+    private lateinit var api: OfflineBucketApiImpl
 
     @BeforeTest
     fun setUp() {
         baseDir = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-bucket-maintenance-${Random.nextLong()}"
         store = newTestOfflineStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
-        api = OfflineBucketApi(
-            delegate = delegate,
-            offlineStore = store,
-            baseDirectoryProvider = { baseDir },
-        )
+        api = newTestBucketApi(delegate = delegate, baseDirectory = baseDir, store = store)
     }
 
     @AfterTest
@@ -130,28 +127,28 @@ class OfflineBucketApiCacheMaintenanceTest {
     }
 
     @Test
-    fun localPathIfPresent_checksStoreAndDisk() = runTest {
+    fun cachedFile_checksStoreAndDisk() = runTest {
         // Given
         val path = "foo_localPath.jpg"
         primeCache(path, "cached-local-path".encodeToByteArray())
 
         // When
-        val localPath = api.localPathIfPresent(path)
+        val cached = api.cachedFile(path)
 
         // Then
-        assertNotNull(localPath)
-        assertTrue(FileSystem.SYSTEM.exists(localPath))
+        assertNotNull(cached)
+        assertTrue(FileSystem.SYSTEM.exists(cached.path.toPath()))
     }
 
     @Test
-    fun localPathIfPresent_returnsNullWhenNotTracked() = runTest {
+    fun cachedFile_returnsNullWhenNotTracked() = runTest {
         // Given — nothing cached
 
         // When
-        val localPath = api.localPathIfPresent("non-existent.jpg")
+        val cached = api.cachedFile("non-existent.jpg")
 
         // Then
-        assertNull(localPath)
+        assertNull(cached)
     }
 
     private companion object {

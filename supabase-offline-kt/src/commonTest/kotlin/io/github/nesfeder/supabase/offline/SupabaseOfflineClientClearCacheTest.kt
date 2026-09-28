@@ -2,7 +2,6 @@
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.storage.writeBytes
 import io.ktor.client.engine.mock.MockEngine
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
@@ -44,7 +43,8 @@ class SupabaseOfflineClientClearCacheTest {
             baseDirectoryProvider = { baseDir },
         )
         val storageFile = baseDir / "storage" / "avatars" / "me.png"
-        writeBytes(storageFile, "cached-bytes".encodeToByteArray(), overwrite = true)
+        FileSystem.SYSTEM.createDirectories(storageFile.parent!!)
+        FileSystem.SYSTEM.write(storageFile) { write("cached-bytes".encodeToByteArray()) }
         assertTrue(FileSystem.SYSTEM.exists(storageFile), "precondition: storage file on disk")
 
         // When the entire local cache is cleared (logout / account switch / account deletion)

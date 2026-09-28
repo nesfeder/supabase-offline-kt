@@ -1,18 +1,18 @@
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
-import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
-import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
-import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApi
-import io.github.nesfeder.supabase.offline.internal.storage.deleteRecursivelyIfExists
+import io.github.nesfeder.supabase.offline.internal.newEngineScope
+import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApiImpl
+import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.auth
@@ -21,14 +21,16 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okio.Path
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * Entry point for the Supabase Offline SDK.
@@ -38,8 +40,11 @@ import okio.Path
  * - Offline-aware Storage bucket access (`storage(...)`)
  * - Manual mutation sync APIs (`syncAllPendingMutations`, `syncPendingMutations`)
  * - Introspection helpers for pending mutations (counts)
+ *
+ * Create one client per database and keep it for as long as the app uses it: a second client on
+ * the same database fails to open until the first is [close]d.
  */
-public interface SupabaseOfflineClient {
+public interface SupabaseOfflineClient : AutoCloseable {
 
     /** Underlying online Supabase client. */
     public val supabase: SupabaseClient
@@ -63,11 +68,13 @@ public interface SupabaseOfflineClient {
         from(schema, table)
 
     /**
-     * Returns an offline-aware [BucketApi] wrapper for [bucket].
+     * Returns the offline view of the Storage bucket [bucket]: every [BucketApi] operation, with
+     * downloads cached on the device and served when offline. See [OfflineBucketApi].
      *
-     * Downloads are cached to disk and reused when offline.
+     * @param bucket the bucket identifier.
+     * @return the bucket.
      */
-    public fun storage(bucket: String): BucketApi
+    public fun storage(bucket: String): OfflineBucketApi
 
     /* ───────────────────────────── Sync APIs ───────────────────────────── */
 
@@ -215,8 +222,20 @@ public interface SupabaseOfflineClient {
      * rows, un-synced offline writes, and downloaded objects (e.g. avatars) never carry over
      * to the next user on the same device, and no personal data survives on disk after an
      * account is deleted.
+     *
+     * A Storage download still in flight when this runs may hand its bytes to the caller that asked
+     * for them, but it is not written back into the cache.
      */
     public suspend fun clearAllCache()
+
+    /**
+     * Releases the client: stops its background refreshes and closes its database, so another
+     * client can open the same database. Nothing is deleted. Calls made after `close()` fail.
+     *
+     * The client returned by `createSupabaseOfflineClient` implements this; the default does
+     * nothing, so a test double need not.
+     */
+    override fun close() {}
 }
 
 /**
@@ -237,34 +256,38 @@ internal class SupabaseOfflineClientImpl(
      */
     private val networkAvailability: Flow<Boolean>? = null,
     /**
-     * Scope hosting the client-scoped single-flight refresh loops. Defaults to a process-lifetime
-     * supervised scope; injectable so tests can supply a controlled scope.
+     * Scope the client's own scope is made a child of. Defaults to a process-lifetime supervised
+     * scope; injectable so tests can supply a controlled scope. [close] cancels only the client's
+     * child scope, never this one.
      */
-    coordinatorScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    coordinatorScope: CoroutineScope = newEngineScope(sdkLogger),
+    /** Size bound of the Storage file cache in bytes, or `null` for none. */
+    fileCacheMaxBytes: Long? = SupabaseOfflineConfig.DEFAULT_FILE_CACHE_SIZE_BYTES,
+    /**
+     * Whether to create the file cache's directories now and exclude them from backups. The
+     * platform factories do; tests and the in-memory client, whose data directory is not theirs to
+     * write into, do not.
+     */
+    prepareFileCacheDirectories: Boolean = false,
+    /** Releases what the factory opened — the database and its registration — on [close]. */
+    private val onClose: () -> Unit = {},
 ) : SupabaseOfflineClient {
 
-    constructor(
-        supabase: SupabaseClient,
-        db: OfflineDatabase,
-        dbPathProvider: DbPathProvider,
-        settings: OfflineCacheSettings,
-        baseDirectoryProvider: () -> Path,
-        sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-        networkAvailability: Flow<Boolean>? = null,
-        coordinatorScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
-    ) : this(
-        supabase = supabase,
-        store = OfflineStore(
-            objectDao = db.objectDao(),
-            storageDao = db.storageDao(),
-            mutationDao = db.mutationDao(),
-            settings = settings,
-            dbPathProvider = dbPathProvider
-        ),
-        baseDirectoryProvider = baseDirectoryProvider,
+    /**
+     * The client's own scope: a child of the injected one carrying the engine's exception handler,
+     * so nothing that fails in the background escapes to the process, and [close] can stop
+     * everything the client started without touching the caller's scope.
+     */
+    private val clientScope: CoroutineScope = newEngineScope(sdkLogger, parent = coordinatorScope.coroutineContext[Job])
+
+    private val closed = AtomicBoolean(false)
+
+    /** The Storage file cache every bucket of this client shares. */
+    private val fileCache = StorageFileCache(
+        store = store,
+        dataDirectoryProvider = baseDirectoryProvider,
+        maxSizeBytes = fileCacheMaxBytes,
         sdkLogger = sdkLogger,
-        networkAvailability = networkAvailability,
-        coordinatorScope = coordinatorScope,
     )
 
     private val mutationSyncer = OfflineMutationSyncer(store, supabase, sdkLogger = sdkLogger)
@@ -277,7 +300,7 @@ internal class SupabaseOfflineClientImpl(
      * sharing per `(table, signature)` plus the live-signature registry that backs
      * materialize-on-write in [OfflineStore.applyLocalMutationToCache].
      */
-    private val refreshCoordinator = RefreshCoordinator(coordinatorScope)
+    private val refreshCoordinator = RefreshCoordinator(clientScope)
 
     /**
      * SDK-internal recovery accelerator merging auth-session-restored and connectivity-regained
@@ -286,6 +309,7 @@ internal class SupabaseOfflineClientImpl(
     private val refreshAccelerator: Flow<Unit> = buildRefreshAccelerator(supabase, networkAvailability)
 
     init {
+        if (prepareFileCacheDirectories) fileCache.prepareDirectories()
         // Let the store see which signatures are live so a server-successful mutation materializes
         // into a real cache row for a cache-less-but-observed subscription.
         store.liveSignatureProvider = refreshCoordinator::liveSignaturesFor
@@ -295,6 +319,7 @@ internal class SupabaseOfflineClientImpl(
         from(supabase.postgrest.config.defaultSchema, table)
 
     override fun from(schema: String, table: String): OfflinePostgrestQueryBuilder {
+        ensureOpen()
         ensurePostgrestInstalled()
         val delegate = supabase.postgrest.from(schema, table)
         return OfflinePostgrestQueryBuilderImpl(
@@ -339,13 +364,13 @@ internal class SupabaseOfflineClientImpl(
         }
     }.getOrDefault(AuthSessionState.UNAUTHENTICATED)
 
-    override fun storage(bucket: String): BucketApi {
+    override fun storage(bucket: String): OfflineBucketApi {
+        ensureOpen()
         ensureStorageInstalled()
-        return OfflineBucketApi(
+        return OfflineBucketApiImpl(
             delegate = supabase.storage.from(bucket),
-            offlineStore = store,
+            cache = fileCache,
             sdkLogger = sdkLogger,
-            baseDirectoryProvider = baseDirectoryProvider,
         )
     }
 
@@ -438,11 +463,21 @@ internal class SupabaseOfflineClientImpl(
     }
 
     override suspend fun clearAllCache() {
-        store.clearAll()
         // Room only holds storage-object metadata; the downloaded bytes live on disk under
-        // <base>/storage/. Wipe that tree too so cached objects (e.g. avatars) don't survive
-        // logout / account switch / account deletion.
-        deleteRecursivelyIfExists(baseDirectoryProvider() / "storage")
+        // <base>/storage/. The file cache wipes that tree too, under its own lock and in a new
+        // generation, so cached objects (e.g. avatars) don't survive logout / account switch /
+        // account deletion, and a download still in flight can't write them back.
+        fileCache.clear { store.clearAll() }
+    }
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        clientScope.cancel()
+        onClose()
+    }
+
+    private fun ensureOpen() {
+        check(!closed.load()) { "This SupabaseOfflineClient is closed" }
     }
 
     /* ───────────────────────────── Guards ───────────────────────────── */
