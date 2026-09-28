@@ -152,6 +152,25 @@ class SupabaseOfflineClientTest {
         assertEquals(0, client.pendingMutationCount())
     }
 
+    @Test
+    fun syncPendingMutations_replays_only_that_table() = runTest {
+        // Given — one write queued for each of two tables while the network is down
+        val client = newTestOfflineClient(supabase = server.supabaseClient())
+        server.answer = { connectivityFailure() }
+        client.from("todos").insertJson(ROWS)
+        client.from("projects").insertJson(ROWS)
+        server.answer = { okJson("[]") }
+        server.requests.clear()
+
+        // When
+        val synced = client.syncPendingMutations("todos")
+
+        // Then
+        assertEquals(1, synced)
+        assertEquals(listOf("todos"), server.requests.map { it.table })
+        assertEquals(0 to 1, client.pendingMutationCount("todos") to client.pendingMutationCount("projects"))
+    }
+
     private companion object {
         val ROWS: JsonArray = Json.parseToJsonElement("""[{"id":1}]""") as JsonArray
     }

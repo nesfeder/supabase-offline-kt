@@ -9,10 +9,12 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.coroutines.CompletableDeferred
@@ -23,12 +25,13 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 
 /**
  * Read-strategy semantics of [OfflineSelectResolver], one strategy and one failure class at a time:
@@ -43,7 +46,8 @@ class OfflineSelectResolverStrategyTest {
     private val postgrest: Postgrest = newTestSupabaseClient().postgrest
 
     private var currentTime: Long = 1_000_000L
-    private val store = newTestOfflineStore(objectDao = FakeObjectDao(), nowMillis = { currentTime })
+    private val mutationDao = FakeMutationDao()
+    private val store = newTestOfflineStore(objectDao = FakeObjectDao(), mutationDao = mutationDao, nowMillis = { currentTime })
 
     /** What the scripted network SELECT answers; defaults to a failure so a test opts in. */
     private var networkAnswer: suspend () -> PostgrestResult = { error("network SELECT not scripted") }
@@ -115,6 +119,37 @@ class OfflineSelectResolverStrategyTest {
 
         // Then
         assertEquals(CACHED_DATA, result.data)
+    }
+
+    @Test
+    fun networkFirst_success_overlaysPendingWrites_andRetiresSyncedOnes() = runTest {
+        // Given — one pending INSERT and one already synced
+        answerWith(NETWORK_DATA)
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":2,"name":"pending"}]"""))
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":3,"name":"synced"}]"""))
+        store.markMutationSynced(id = mutationDao.inserted.last().id, table = TABLE)
+
+        // When
+        val result = resolver(backgroundScope).select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+        // Then — the pending row is overlaid, the synced one is left to the server, and retired
+        assertEquals("""[{"id":1,"name":"network"},{"id":2,"name":"pending"}]""", result.data)
+        assertEquals(listOf("""[{"id":2,"name":"pending"}]"""), mutationDao.inserted.map { it.bodyJson })
+    }
+
+    @Test
+    fun networkFirst_networkFailure_cacheFallback_overlaysSyncedWritesToo() = runTest {
+        // Given — a cache older than a write that has since synced
+        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":3,"name":"synced"}]"""))
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        failNetwork()
+
+        // When
+        val result = resolver(backgroundScope).select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+        // Then — the cached snapshot predates the sync, so the synced write is re-applied
+        assertEquals("""[{"id":1,"name":"cached"},{"id":3,"name":"synced"}]""", result.data)
     }
 
     @Test
@@ -448,6 +483,8 @@ class OfflineSelectResolverStrategyTest {
         assertEquals(1, errors.size)
         assertTrue(errors[0].message.contains("SELECT items no cached data available"))
     }
+
+    private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
 
     private companion object {
         const val TABLE = "items"

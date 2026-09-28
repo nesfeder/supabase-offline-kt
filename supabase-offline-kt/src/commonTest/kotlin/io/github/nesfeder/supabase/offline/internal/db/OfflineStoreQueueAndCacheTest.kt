@@ -111,6 +111,35 @@ class OfflineStoreQueueAndCacheTest {
         assertEquals(listOf(null, PAYLOAD), emissions)
     }
 
+    // ─────────────────────────── Overlays ───────────────────────────
+
+    @Test
+    fun applyPendingMutations_delegatesToOverlay() = runTest {
+        // Given
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+
+        // When
+        val overlaid = store.applyPendingMutations(TABLE, SIGNATURE, "[]")
+
+        // Then
+        assertEquals("""[{"id":1}]""", overlaid)
+    }
+
+    @Test
+    fun applyAllMutationsForOfflineFallback_includesSyncedMutations() = runTest {
+        // Given — a write that has already synced
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+
+        // When
+        val fresh = store.applyPendingMutations(TABLE, SIGNATURE, "[]")
+        val offlineFallback = store.applyAllMutationsForOfflineFallback(TABLE, "[]")
+
+        // Then — a fresh payload already reflects it; a cached one may predate it, so it is re-applied
+        assertEquals("[]", fresh)
+        assertEquals("""[{"id":1}]""", offlineFallback)
+    }
+
     // ─────────────────────────── Storage rows ───────────────────────────
 
     @Test
@@ -295,6 +324,31 @@ class OfflineStoreQueueAndCacheTest {
         // Then
         assertEquals(listOf(0, 1, 2, 1), counts)
     }
+
+    /**
+     * Pins today's behaviour: the per-table count re-emits its unchanged value when another table's
+     * queue changes, because the query is invalidated per database table (Room's tracker, mirrored
+     * by the in-memory DAO), not per `table_name`. The previous standalone engine asserted no such
+     * emission. A later change that de-duplicates the count flows is expected to drop the repeated
+     * value.
+     */
+    @Test
+    fun pendingMutationCountForTableFlow_emitsUpdatedCount_andExcludesSyncedWrites() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given
+            val counts = mutableListOf<Int>()
+            val collector = launch { store.pendingMutationCountForTableFlow(TABLE).collect { counts += it } }
+
+            // When
+            store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+            store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
+            store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
+            store.markMutationSynced(id = mutationDao.inserted.first().id, table = TABLE)
+            collector.cancel()
+
+            // Then — the second 2 is the other table's write
+            assertEquals(listOf(0, 1, 2, 2, 1), counts)
+        }
 
     @Test
     fun pendingMutationCountForTableFlow_onlyCountsSpecifiedTable() = runTest {

@@ -140,6 +140,22 @@ class OfflineBucketApiDownloadTest {
         assertEquals(listOf(PATH), delegate.authenticatedDownloadPaths)
     }
 
+    @Test
+    fun downloadAuthenticatedToChannel_fallsBackToCacheOnFailure() = runTest {
+        // Given — cached by a first download, then the network fails
+        delegate.onDownload = { BYTES }
+        api.downloadAuthenticated(PATH) { }
+        delegate.onDownload = { throw IOException("network unreachable") }
+        val channel = ByteChannel()
+
+        // When
+        api.downloadAuthenticated(PATH, channel) { }
+        channel.flushAndClose()
+
+        // Then
+        assertContentEquals(BYTES, channel.readRemaining().readByteArray())
+    }
+
     // ─────────────────────────── Logging ───────────────────────────
 
     @Test
