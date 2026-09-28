@@ -79,6 +79,9 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     /** Look up a row without going through the suspend contract. */
     fun getRow(table: String, signature: String): ObjectRow? = rows[table to signature]
 
+    /** Every row of [table], without going through the suspend contract. */
+    fun rowsOf(table: String): List<ObjectRow> = rows.values.filter { row -> row.table == table }
+
     override suspend fun allForTable(table: String): List<ObjectRow> {
         val snapshot = super.allForTable(table)
         onAllForTableSnapshot?.invoke(table)

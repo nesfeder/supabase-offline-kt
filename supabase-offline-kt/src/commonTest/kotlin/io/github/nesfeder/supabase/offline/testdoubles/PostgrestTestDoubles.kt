@@ -37,6 +37,11 @@ internal class FakePostgrestQueryBuilderWrapper(
     private val onUpsert: (suspend (JsonArray) -> PostgrestResult)? = null,
     private val onUpdate: (suspend (JsonElement) -> PostgrestResult)? = null,
     private val onDelete: (suspend () -> PostgrestResult)? = null,
+    /**
+     * What [requestsRollback] answers. A scripted handle builds no HTTP request, so it cannot see a
+     * dry run; by default it reports "not a dry run", and `null` scripts a handle that cannot tell.
+     */
+    private val dryRunVerdict: Boolean? = false,
 ) : PostgrestQueryBuilderWrapper {
 
     /** Bodies passed to [insert], in call order — lets tests assert what the builder encoded. */
@@ -91,8 +96,8 @@ internal class FakePostgrestQueryBuilderWrapper(
         return onDelete?.invoke() ?: unsupported("delete")
     }
 
-    /** A scripted handle builds no HTTP request, so it cannot tell a dry run; the write is not run. */
-    override suspend fun requestsRollback(write: suspend () -> PostgrestResult): Boolean? = null
+    /** Answers [dryRunVerdict] without running [write]. */
+    override suspend fun requestsRollback(write: suspend () -> PostgrestResult): Boolean? = dryRunVerdict
 }
 
 /**

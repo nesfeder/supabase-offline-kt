@@ -1,0 +1,89 @@
+package io.github.nesfeder.supabase.offline.internal.db
+
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+/**
+ * A replayed write is kept, marked synced, so the overlay can go on showing it on cached queries
+ * fetched before it replayed. It must never be overlaid onto a query fetched after it replayed: that
+ * query already holds the server's version, so the overlay would show an inserted row twice, or put
+ * back the user's older value over an edit another device made since.
+ */
+class SyncedOverlayScopeTest {
+
+    private val objectDao = FakeObjectDao()
+    private val mutationDao = FakeMutationDao()
+    private var tick = 0L
+    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, monotonicTick = { tick })
+
+    @Test
+    fun a_refreshed_query_does_not_show_a_retained_synced_insert_twice() = runTest {
+        // Given — two cached queries, an offline insert of x, then its replay
+        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
+        tick = 10L
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        tick = 20L
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+
+        // When — only ALL refreshes, and the server's rows include x
+        tick = 30L
+        val started = store.monotonicTickNow()
+        tick = 40L
+        store.addPayload(TABLE, ALL, """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""", requestStartedAtTick = started)
+        store.clearSyncedMutationsForTable(TABLE, started)
+
+        // Then — ALL shows x once, and L (fetched before the replay) still shows it
+        assertEquals(
+            """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
+            store.cachePayloadWithOverlayFlow(TABLE, ALL).first(),
+        )
+        assertEquals(
+            """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
+            store.cachePayloadWithOverlayFlow(TABLE, LIST_L).first(),
+        )
+    }
+
+    @Test
+    fun a_refreshed_query_is_not_overwritten_by_a_retained_synced_update() = runTest {
+        // Given — two cached queries, an offline rename to A, then its replay
+        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L","title":"orig"}]""")
+        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"orig"}]""")
+        tick = 10L
+        store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
+        tick = 20L
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+
+        // When — another device renamed it to C; ALL refreshes and brings back C
+        tick = 30L
+        val started = store.monotonicTickNow()
+        tick = 40L
+        store.addPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"C"}]""", requestStartedAtTick = started)
+        store.clearSyncedMutationsForTable(TABLE, started)
+
+        // Then — ALL shows the server's C
+        assertEquals("""[{"id":"a","list_id":"L","title":"C"}]""", store.cachePayloadWithOverlayFlow(TABLE, ALL).first())
+    }
+
+    private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
+
+    private fun element(json: String): JsonElement = Json.parseToJsonElement(json)
+
+    private fun byId(id: String): FilterDescriptor =
+        FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))
+
+    private companion object {
+        const val TABLE = "tasks"
+        const val LIST_L = "tasks?list_id=eq.L"
+        const val ALL = "tasks"
+    }
+}

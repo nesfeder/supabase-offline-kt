@@ -116,6 +116,19 @@ class ReservedRowsTest {
         assertNull(store.outboxState.queueOwner())
     }
 
+    @Test
+    fun reserved_rows_record_their_format_version() = runTest {
+        // Given
+        val store = newTestOfflineStore(objectDao = objectDao)
+
+        // When
+        store.outboxState.addRejection(rejection(id = 1))
+
+        // Then — a later build can tell which format it is reading
+        val payload = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)).payload
+        assertTrue(payload.contains("\"version\":1"), payload)
+    }
+
     private fun rejection(id: Long): StoredRejection = StoredRejection(
         id = id,
         table = "todos",

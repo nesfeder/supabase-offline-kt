@@ -103,6 +103,22 @@ class OverlayMutationIsolationTest {
         assertTrue(logger.entries.none { it.message.contains(PRIVATE_VALUE) })
     }
 
+    @Test
+    fun a_mutation_that_keeps_failing_is_logged_once_not_on_every_emission() = runTest {
+        // Given
+        val logger = RecordingOfflineLogger()
+        val mutationDao = FakeMutationDao()
+        val store = newTestOfflineStore(mutationDao = mutationDao)
+        store.sdkLogger = logger.asSdkLogger()
+        mutationDao.insert(mutation(id = 0, operation = MutationOperation.INSERT, body = "not json"))
+
+        // When — the overlay is recomputed three times
+        repeat(3) { store.applyAllMutationsForOfflineFallback("todos", "[]") }
+
+        // Then
+        assertEquals(1, logger.entriesAt(OfflineLogLevel.WARNING).size)
+    }
+
     private fun mutation(id: Long, operation: String, body: String, filter: FilterDescriptor? = null): MutationRow =
         MutationRow(
             id = id,

@@ -10,6 +10,7 @@ import io.ktor.client.request.HttpResponseData
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.headers
 import io.ktor.http.headersOf
 import kotlinx.io.IOException
 import kotlinx.serialization.json.buildJsonObject
@@ -78,12 +79,20 @@ internal class RecordingPostgrestServer(
     }
 
     companion object {
-        /** A `200 OK` JSON response carrying [body]. */
-        fun MockRequestHandleScope.okJson(body: String): HttpResponseData = respond(
-            content = body,
-            status = HttpStatusCode.OK,
-            headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-        )
+        /**
+         * A `200 OK` JSON response carrying [body].
+         *
+         * @param extraHeaders further response headers, e.g. `Preference-Applied`.
+         */
+        fun MockRequestHandleScope.okJson(body: String, extraHeaders: Map<String, String> = emptyMap()): HttpResponseData =
+            respond(
+                content = body,
+                status = HttpStatusCode.OK,
+                headers = headers {
+                    append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                    extraHeaders.forEach { (name, value) -> append(name, value) }
+                },
+            )
 
         /**
          * A PostgREST error response: [status] with PostgREST's error body, which supabase-kt raises
