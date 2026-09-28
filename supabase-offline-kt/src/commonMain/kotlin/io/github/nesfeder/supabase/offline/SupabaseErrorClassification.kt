@@ -1,6 +1,5 @@
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull as internalHttpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure as internalIsNetworkOrConnectivityFailure
 
 /**
@@ -24,11 +23,3 @@ import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivity
  * @return `true` for connectivity/transport failures, `false` otherwise.
  */
 public fun Throwable.isNetworkOrConnectivityFailure(): Boolean = internalIsNetworkOrConnectivityFailure()
-
-/**
- * Returns the HTTP status code associated with this throwable if it (or a link in its cause chain)
- * represents an HTTP failure, or `null` when no status can be determined.
- *
- * @return The HTTP status code, or `null` if this failure carries none.
- */
-public fun Throwable.httpStatusOrNull(): Int? = internalHttpStatusOrNull()
