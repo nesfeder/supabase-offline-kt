@@ -4,7 +4,6 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
@@ -14,10 +13,9 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /**
  * Emission-dedup contract of [OfflineStore.cachePayloadWithOverlayFlow]: identical payloads and
@@ -113,18 +111,10 @@ class OfflineStoreEmissionDedupTest {
         mutationDao: MutationDao,
         nowMillis: () -> Long,
     ): OfflineStore =
-        OfflineStore(
+        newTestOfflineStore(
             objectDao = objectDao,
-            storageDao = FakeStorageDao(),
             mutationDao = mutationDao,
-            dbPathProvider = object : DbPathProvider { override fun dbPath(): Path = "/tmp/test.db".toPath() },
-            settings = OfflineCacheSettings(
-                maxDbSizeBytes = null,
-                evictionBatchSize = 0,
-                minRetainedBytes = 0,
-            ),
             nowMillis = nowMillis,
-            dbSizeProvider = { null },
         )
 
     private companion object {

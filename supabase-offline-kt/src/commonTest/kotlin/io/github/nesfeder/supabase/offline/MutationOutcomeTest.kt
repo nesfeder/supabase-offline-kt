@@ -2,20 +2,13 @@
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.serialization.json.JsonArray
@@ -23,13 +16,13 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 
 /**
  * Behavioral contract for the mutation verbs on [OfflinePostgrestQueryBuilderImpl], which return a
@@ -297,27 +290,9 @@ class MutationOutcomeTest {
         store = buildStore(mutationDao),
     )
 
-    private fun buildStore(mutationDao: MutationDao): OfflineStore = OfflineStore(
-        objectDao = FakeObjectDao(),
-        storageDao = FakeStorageDao(),
+    private fun buildStore(mutationDao: MutationDao): OfflineStore = newTestOfflineStore(
         mutationDao = mutationDao,
-        dbPathProvider = object : DbPathProvider {
-            override fun dbPath(): Path = "/tmp/test.db".toPath()
-        },
-        settings = OfflineCacheSettings(
-            maxDbSizeBytes = null,
-            evictionBatchSize = 0,
-            minRetainedBytes = 0,
-        ),
-        nowMillis = { 0L },
-        dbSizeProvider = { null },
     )
 
-    private fun testPostgrest(): Postgrest = createSupabaseClient(
-        supabaseUrl = "https://unit-test.supabase.co",
-        supabaseKey = "unit-test-anon-key",
-    ) {
-        httpEngine = MockEngine { respondOk("[]") }
-        install(Postgrest)
-    }.postgrest
+    private fun testPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 }

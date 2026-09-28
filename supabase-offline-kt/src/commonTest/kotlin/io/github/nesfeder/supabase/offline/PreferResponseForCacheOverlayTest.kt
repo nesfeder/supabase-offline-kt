@@ -2,15 +2,9 @@
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -22,6 +16,7 @@ import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /**
  * Regression coverage for the "saved but empty" bug where a live `selectAsFlow` collector
@@ -136,16 +131,6 @@ private data class NoteDtoForTest(
 )
 
 private fun PreferResponseForCacheOverlayTest.buildStore(objectDao: FakeObjectDao): OfflineStore =
-    OfflineStore(
+    newTestOfflineStore(
         objectDao = objectDao,
-        storageDao = FakeStorageDao(),
-        mutationDao = FakeMutationDao(),
-        dbPathProvider = object : DbPathProvider { override fun dbPath(): Path = "/tmp/test.db".toPath() },
-        settings = OfflineCacheSettings(
-            maxDbSizeBytes = null,
-            evictionBatchSize = 0,
-            minRetainedBytes = 0,
-        ),
-        nowMillis = { 0L },
-        dbSizeProvider = { null },
     )

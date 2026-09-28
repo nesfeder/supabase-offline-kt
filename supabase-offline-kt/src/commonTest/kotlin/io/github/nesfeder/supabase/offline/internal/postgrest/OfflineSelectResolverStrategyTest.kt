@@ -1,6 +1,5 @@
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
-import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
@@ -15,8 +14,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respondOk
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +28,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 
 /**
  * Read-strategy semantics of [OfflineSelectResolver], one strategy and one failure class at a time:
@@ -42,13 +40,7 @@ import kotlin.time.Duration.Companion.hours
  */
 class OfflineSelectResolverStrategyTest {
 
-    private val postgrest: Postgrest = createSupabaseClient(
-        supabaseUrl = "https://unit-test.supabase.co",
-        supabaseKey = "unit-test-anon-key",
-    ) {
-        httpEngine = MockEngine { respondOk("[]") }
-        install(Postgrest)
-    }.postgrest
+    private val postgrest: Postgrest = newTestSupabaseClient().postgrest
 
     private var currentTime: Long = 1_000_000L
     private val store = newTestOfflineStore(objectDao = FakeObjectDao(), nowMillis = { currentTime })

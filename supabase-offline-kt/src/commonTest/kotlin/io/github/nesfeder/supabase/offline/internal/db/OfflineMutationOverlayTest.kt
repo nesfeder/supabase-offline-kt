@@ -4,8 +4,6 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationOverlay.ap
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -49,11 +47,7 @@ class OfflineMutationOverlayTest {
         }
 
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(
-            objectDao = FakeObjectDao(),
-            storageDao = FakeStorageDao(),
-            mutationDao = mutationDao,
-        )
+        val store = newTestOfflineStore(mutationDao = mutationDao)
 
         // We use enqueueInsert to construct MutationRow correctly
         store.enqueueInsert(table = "assets", body = body, filter = null)
@@ -73,11 +67,7 @@ class OfflineMutationOverlayTest {
     fun applyUpsertMutation_mergesOrInserts() = runTest {
         // Given
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(
-            objectDao = FakeObjectDao(),
-            storageDao = FakeStorageDao(),
-            mutationDao = mutationDao,
-        )
+        val store = newTestOfflineStore(mutationDao = mutationDao)
 
         val upsertBody = buildJsonArray {
             add(
@@ -125,11 +115,7 @@ class OfflineMutationOverlayTest {
     fun applyUpdateMutation_patchesMatchingRows() = runTest {
         // Given
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(
-            objectDao = FakeObjectDao(),
-            storageDao = FakeStorageDao(),
-            mutationDao = mutationDao,
-        )
+        val store = newTestOfflineStore(mutationDao = mutationDao)
 
         val patchBody: JsonElement = buildJsonObject {
             put("status", "active")
@@ -168,11 +154,7 @@ class OfflineMutationOverlayTest {
     fun applyDeleteMutation_removesMatchingRows() = runTest {
         // Given
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(
-            objectDao = FakeObjectDao(),
-            storageDao = FakeStorageDao(),
-            mutationDao = mutationDao,
-        )
+        val store = newTestOfflineStore(mutationDao = mutationDao)
 
         val descriptor = FilterDescriptor(
             mode = FilterDescriptor.Mode.AND,
@@ -203,11 +185,7 @@ class OfflineMutationOverlayTest {
         // Given
         val serverJson = """{"not":"an array"}""" // not a JsonArray
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(
-            objectDao = FakeObjectDao(),
-            storageDao = FakeStorageDao(),
-            mutationDao = mutationDao,
-        )
+        val store = newTestOfflineStore(mutationDao = mutationDao)
         val body: JsonArray = buildJsonArray { add(buildJsonObject { put("id", "1") }) }
         store.enqueueInsert("assets", body)
         val pending = mutationDao.pendingForTable("assets")

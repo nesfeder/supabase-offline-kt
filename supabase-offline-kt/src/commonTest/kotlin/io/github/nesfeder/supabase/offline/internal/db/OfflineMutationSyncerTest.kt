@@ -4,18 +4,14 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.util.awaitReplaySafeSession
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondError
-import io.ktor.client.engine.mock.respondOk
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.request.get
@@ -27,11 +23,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 
 /**
  * Behavioural pins for [OfflineMutationSyncer] — the replay path that pushes queued offline
@@ -606,28 +602,10 @@ class OfflineMutationSyncerTest {
         awaitSessionSettled = awaitSessionSettled ?: { client.awaitReplaySafeSession() },
     )
 
-    private fun testClient(): SupabaseClient = createSupabaseClient(
-        supabaseUrl = "https://unit-test.supabase.co",
-        supabaseKey = "unit-test-anon-key",
-    ) {
-        httpEngine = MockEngine { respondOk("[]") }
-        install(Postgrest)
-    }
+    private fun testClient(): SupabaseClient = newTestSupabaseClient()
 
-    private fun buildStore(mutationDao: FakeMutationDao): OfflineStore = OfflineStore(
-        objectDao = FakeObjectDao(),
-        storageDao = FakeStorageDao(),
+    private fun buildStore(mutationDao: FakeMutationDao): OfflineStore = newTestOfflineStore(
         mutationDao = mutationDao,
-        dbPathProvider = object : DbPathProvider {
-            override fun dbPath(): Path = "/tmp/test.db".toPath()
-        },
-        settings = OfflineCacheSettings(
-            maxDbSizeBytes = null,
-            evictionBatchSize = 0,
-            minRetainedBytes = 0,
-        ),
-        nowMillis = { 0L },
-        dbSizeProvider = { null },
     )
 
     /**

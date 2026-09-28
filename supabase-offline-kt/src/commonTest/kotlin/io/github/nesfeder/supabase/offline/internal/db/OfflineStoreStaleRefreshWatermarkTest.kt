@@ -7,14 +7,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -23,12 +18,12 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 
 /**
  * Tests for the stale-refresh watermark in [OfflineStore.addPayload] — the guard that refuses a
@@ -487,13 +482,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         ),
     )
 
-    private fun deltaTestClient(): SupabaseClient = createSupabaseClient(
-        supabaseUrl = "https://unit-test.supabase.co",
-        supabaseKey = "unit-test-anon-key",
-    ) {
-        httpEngine = MockEngine { respondOk("[]") }
-        install(Postgrest)
-    }
+    private fun deltaTestClient(): SupabaseClient = newTestSupabaseClient()
 
     /** Applies the online-success insert of `project-2` — the write the stale response would erase. */
     private suspend fun OfflineStore.insertProjectTwo(liveSignatures: Set<String>? = null) {
@@ -515,20 +504,9 @@ class OfflineStoreStaleRefreshWatermarkTest {
         objectDao: ObjectDao,
         mutationDao: MutationDao = FakeMutationDao(),
         tick: () -> Long,
-    ): OfflineStore = OfflineStore(
+    ): OfflineStore = newTestOfflineStore(
         objectDao = objectDao,
-        storageDao = FakeStorageDao(),
         mutationDao = mutationDao,
-        dbPathProvider = object : DbPathProvider {
-            override fun dbPath(): Path = "/tmp/test.db".toPath()
-        },
-        settings = OfflineCacheSettings(
-            maxDbSizeBytes = null,
-            evictionBatchSize = 0,
-            minRetainedBytes = 0,
-        ),
-        nowMillis = { 0L },
-        dbSizeProvider = { null },
         monotonicTick = tick,
     )
 }

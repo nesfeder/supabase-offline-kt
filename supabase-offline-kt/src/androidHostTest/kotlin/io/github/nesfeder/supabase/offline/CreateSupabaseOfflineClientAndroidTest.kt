@@ -4,16 +4,13 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respondOk
 import okio.Path.Companion.toPath
 import org.junit.runner.RunWith
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 
 /**
  * The Android factory builds a client over the real Room database builder for every supported
@@ -23,13 +20,7 @@ import kotlin.test.assertSame
 class CreateSupabaseOfflineClientAndroidTest {
 
     /** A Supabase client with PostgREST installed; its mock engine is never reached here. */
-    private fun testSupabaseClient(): SupabaseClient = createSupabaseClient(
-        supabaseUrl = "https://unit-test.supabase.co",
-        supabaseKey = "unit-test-anon-key",
-    ) {
-        httpEngine = MockEngine { respondOk("[]") }
-        install(Postgrest)
-    }
+    private fun testSupabaseClient(): SupabaseClient = newTestSupabaseClient()
 
     @Test
     fun `createSupabaseOfflineClient returns non-null client with default config`() {

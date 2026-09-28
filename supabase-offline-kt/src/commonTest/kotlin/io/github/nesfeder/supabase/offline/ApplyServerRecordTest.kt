@@ -2,16 +2,8 @@
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -22,13 +14,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 
 /**
  * Tests for [SupabaseOfflineClient.applyServerRecord] / [SupabaseOfflineClient.applyServerDelete]
@@ -320,32 +312,8 @@ class ApplyServerRecordTest {
     private fun buildClient(
         objectDao: FakeObjectDao,
         sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-    ): SupabaseOfflineClientImpl {
-        val store = OfflineStore(
-            objectDao = objectDao,
-            storageDao = FakeStorageDao(),
-            mutationDao = FakeMutationDao(),
-            dbPathProvider = object : DbPathProvider { override fun dbPath(): Path = "/tmp/test.db".toPath() },
-            settings = OfflineCacheSettings(
-                maxDbSizeBytes = null,
-                evictionBatchSize = 0,
-                minRetainedBytes = 0,
-            ),
-            nowMillis = { 0L },
-            dbSizeProvider = { null },
-        )
-        val supabase = createSupabaseClient(
-            supabaseUrl = "https://unit-test.supabase.co",
-            supabaseKey = "unit-test-anon-key",
-        ) {
-            httpEngine = MockEngine { respondOk("[]") }
-            install(Postgrest)
-        }
-        return SupabaseOfflineClientImpl(
-            supabase = supabase,
-            store = store,
-            baseDirectoryProvider = { "/tmp".toPath() },
-            sdkLogger = sdkLogger,
-        )
-    }
+    ): SupabaseOfflineClientImpl = newTestOfflineClient(
+        store = newTestOfflineStore(objectDao = objectDao),
+        sdkLogger = sdkLogger,
+    )
 }

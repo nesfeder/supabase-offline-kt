@@ -6,21 +6,16 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
-import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,14 +35,14 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 
 /**
  * Integration tests across the real resolver stack: [OfflineSelectResolver] +
@@ -1100,30 +1095,13 @@ class OfflineSelectResolverRecoveryTest {
      * resolver reads its config for signature building and stamps it on results. The [MockEngine]
      * is never hit; the fake wrapper intercepts all SELECT traffic.
      */
-    private fun testPostgrest(): Postgrest = createSupabaseClient(
-        supabaseUrl = "https://unit-test.supabase.co",
-        supabaseKey = "unit-test-anon-key",
-    ) {
-        httpEngine = MockEngine { respondOk("[]") }
-        install(Postgrest)
-    }.postgrest
+    private fun testPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 
     private fun buildStore(
         objectDao: FakeObjectDao = FakeObjectDao(),
         mutationDao: FakeMutationDao = FakeMutationDao(),
-    ): OfflineStore = OfflineStore(
+    ): OfflineStore = newTestOfflineStore(
         objectDao = objectDao,
-        storageDao = FakeStorageDao(),
         mutationDao = mutationDao,
-        dbPathProvider = object : DbPathProvider {
-            override fun dbPath(): Path = "/tmp/test.db".toPath()
-        },
-        settings = OfflineCacheSettings(
-            maxDbSizeBytes = null,
-            evictionBatchSize = 0,
-            minRetainedBytes = 0,
-        ),
-        nowMillis = { 0L },
-        dbSizeProvider = { null },
     )
 }

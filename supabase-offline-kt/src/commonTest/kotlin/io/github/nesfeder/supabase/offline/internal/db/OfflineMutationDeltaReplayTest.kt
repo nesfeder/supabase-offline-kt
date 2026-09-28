@@ -4,17 +4,10 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respondOk
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -23,11 +16,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 
 /**
  * Behavioural pins for the delta-encoded UPDATE mutation kind — the read-before-write replay that
@@ -361,27 +354,7 @@ class OfflineMutationDeltaReplayTest {
         postgrestFactory = { _, _ -> wrapper },
     )
 
-    private fun testClient(): SupabaseClient = createSupabaseClient(
-        supabaseUrl = "https://unit-test.supabase.co",
-        supabaseKey = "unit-test-anon-key",
-    ) {
-        httpEngine = MockEngine { respondOk("[]") }
-        install(Postgrest)
-    }
+    private fun testClient(): SupabaseClient = newTestSupabaseClient()
 
-    private fun buildStore(): OfflineStore = OfflineStore(
-        objectDao = FakeObjectDao(),
-        storageDao = FakeStorageDao(),
-        mutationDao = FakeMutationDao(),
-        dbPathProvider = object : DbPathProvider {
-            override fun dbPath(): Path = "/tmp/test.db".toPath()
-        },
-        settings = OfflineCacheSettings(
-            maxDbSizeBytes = null,
-            evictionBatchSize = 0,
-            minRetainedBytes = 0,
-        ),
-        nowMillis = { 0L },
-        dbSizeProvider = { null },
-    )
+    private fun buildStore(): OfflineStore = newTestOfflineStore()
 }

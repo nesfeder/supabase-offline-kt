@@ -2,13 +2,8 @@
 
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.UnauthorizedRestException
 import io.ktor.client.HttpClient
@@ -28,7 +23,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import okio.FileSystem
 import okio.Path
-import okio.Path.Companion.toPath
 import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -42,6 +36,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /**
  * Behavioral tests for [OfflineBucketApi]'s download-with-disk-cache path: successful caching,
@@ -73,19 +68,7 @@ class OfflineBucketApiTest {
     fun setUp() {
         baseDir = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-bucket-test-${Random.nextLong()}"
         createdDirs += baseDir
-        store = OfflineStore(
-            objectDao = FakeObjectDao(),
-            storageDao = FakeStorageDao(),
-            mutationDao = FakeMutationDao(),
-            dbPathProvider = object : DbPathProvider { override fun dbPath(): Path = "/tmp/test.db".toPath() },
-            settings = OfflineCacheSettings(
-                maxDbSizeBytes = null,
-                evictionBatchSize = 0,
-                minRetainedBytes = 0,
-            ),
-            nowMillis = { 0L },
-            dbSizeProvider = { null },
-        )
+        store = newTestOfflineStore()
         fake = FakeBucketApi(bucketId = BUCKET)
         offlineApi = OfflineBucketApi(
             delegate = fake,

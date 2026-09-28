@@ -2,16 +2,13 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import kotlinx.coroutines.test.runTest
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /**
  * Tests for the empty-clobber guard in [OfflineStore.addPayload]: **an unattributed empty never
@@ -273,19 +270,8 @@ class OfflineStoreAddPayloadGuardTest {
         objectDao: ObjectDao,
         nowMillis: () -> Long = { 0L },
     ): OfflineStore =
-        OfflineStore(
+        newTestOfflineStore(
             objectDao = objectDao,
-            storageDao = FakeStorageDao(),
-            mutationDao = FakeMutationDao(),
-            dbPathProvider = object : DbPathProvider {
-                override fun dbPath(): Path = "/tmp/test.db".toPath()
-            },
-            settings = OfflineCacheSettings(
-                maxDbSizeBytes = null,
-                evictionBatchSize = 0,
-                minRetainedBytes = 0,
-            ),
             nowMillis = nowMillis,
-            dbSizeProvider = { null },
         )
 }

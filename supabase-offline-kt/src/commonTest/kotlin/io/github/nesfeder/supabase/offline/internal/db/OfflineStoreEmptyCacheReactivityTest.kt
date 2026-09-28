@@ -4,7 +4,6 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -14,13 +13,12 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /**
  * Part B substrate + materialize-on-write semantics that replace the old fabricated empty-array
@@ -119,17 +117,8 @@ class OfflineStoreEmptyCacheReactivityTest {
     }
 
     private fun buildStore(objectDao: ObjectDao, mutationDao: MutationDao): OfflineStore =
-        OfflineStore(
+        newTestOfflineStore(
             objectDao = objectDao,
-            storageDao = FakeStorageDao(),
             mutationDao = mutationDao,
-            dbPathProvider = object : DbPathProvider { override fun dbPath(): Path = "/tmp/test.db".toPath() },
-            settings = OfflineCacheSettings(
-                maxDbSizeBytes = null,
-                evictionBatchSize = 0,
-                minRetainedBytes = 0,
-            ),
-            nowMillis = { 0L },
-            dbSizeProvider = { null },
         )
 }

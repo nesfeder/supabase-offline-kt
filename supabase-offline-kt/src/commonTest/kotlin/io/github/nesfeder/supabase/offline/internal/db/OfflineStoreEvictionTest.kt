@@ -2,18 +2,15 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /**
  * Tests for [OfflineStore]'s size-based eviction — the loop that keeps the object cache within
@@ -326,20 +323,14 @@ class OfflineStoreEvictionTest {
         minRetainedBytes: Long = 0L,
         nowMillis: () -> Long = { 0L },
     ): OfflineStore =
-        OfflineStore(
+        newTestOfflineStore(
             objectDao = objectDao,
-            storageDao = FakeStorageDao(),
-            mutationDao = FakeMutationDao(),
-            dbPathProvider = object : DbPathProvider {
-                override fun dbPath(): Path = "/tmp/test.db".toPath()
-            },
             settings = OfflineCacheSettings(
                 maxDbSizeBytes = maxDbSizeBytes,
                 evictionBatchSize = evictionBatchSize,
                 minRetainedBytes = minRetainedBytes,
             ),
             nowMillis = nowMillis,
-            dbSizeProvider = { null },
         )
 
     /** A monotonically increasing clock so each write receives a distinct, ordered timestamp. */

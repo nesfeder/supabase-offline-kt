@@ -6,18 +6,16 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeStorageDao
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import okio.Path
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /**
  * Tests for [OfflineStore.applyLocalMutationToCache] — the online-success overlay path that
@@ -601,17 +599,8 @@ class OfflineStoreApplyLocalMutationTest {
     // ── Fixtures ──────────────────────────────────────────────────────────────
 
     private fun buildStore(objectDao: ObjectDao, mutationDao: MutationDao): OfflineStore =
-        OfflineStore(
+        newTestOfflineStore(
             objectDao = objectDao,
-            storageDao = FakeStorageDao(),
             mutationDao = mutationDao,
-            dbPathProvider = object : DbPathProvider { override fun dbPath(): Path = "/tmp/test.db".toPath() },
-            settings = OfflineCacheSettings(
-                maxDbSizeBytes = null,
-                evictionBatchSize = 0,
-                minRetainedBytes = 0,
-            ),
-            nowMillis = { 0L },
-            dbSizeProvider = { null },
         )
 }
