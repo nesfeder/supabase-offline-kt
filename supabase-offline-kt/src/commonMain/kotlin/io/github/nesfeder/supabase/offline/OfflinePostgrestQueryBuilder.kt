@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResolver
@@ -24,9 +25,6 @@ import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.KSerializer
@@ -485,9 +483,9 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     // Refuse to queue a mutation whose filter we cannot capture faithfully:
                     // replaying it would target a broader row set than the caller wrote. Fail
                     // the original write instead so the caller sees it did not succeed.
-                    sdkLogger.error {
-                        "Refusing to queue offline UPDATE for $table: ${lossy.message}"
-                    }
+                    // The reason quotes the filter's value, so it stays at DEBUG.
+                    sdkLogger.error { "Refusing to queue offline UPDATE for $table: its filter cannot be captured exactly" }
+                    sdkLogger.debug { "Offline UPDATE for $table not queued: ${lossy.message}" }
                     throw originalFailure
                 }
                 store.enqueueUpdate(
@@ -549,9 +547,9 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     // Refuse to queue a DELETE whose filter we cannot capture faithfully:
                     // replaying it would delete a broader row set than the caller wrote. Fail
                     // the original call instead so the caller sees it did not succeed.
-                    sdkLogger.error {
-                        "Refusing to queue offline DELETE for $table: ${lossy.message}"
-                    }
+                    // The reason quotes the filter's value, so it stays at DEBUG.
+                    sdkLogger.error { "Refusing to queue offline DELETE for $table: its filter cannot be captured exactly" }
+                    sdkLogger.debug { "Offline DELETE for $table not queued: ${lossy.message}" }
                     throw originalFailure
                 }
                 store.enqueueDelete(
@@ -621,12 +619,11 @@ internal class OfflinePostgrestQueryBuilderImpl(
         /**
          * A fresh, standalone [RefreshCoordinator] for direct/test construction only — the real
          * client always injects its client-scoped instance so single-flight refresh spans every
-         * builder. The scope is a plain [SupervisorJob] on [Dispatchers.Default]; because the
+         * builder. The scope is a supervised engine scope on `Dispatchers.Default`; because the
          * coordinator's shares use `WhileSubscribed(0, 0)`, no coroutine outlives an active
          * collection, so a short-lived subscription leaves nothing running behind it.
          */
-        private fun defaultRefreshCoordinator(): RefreshCoordinator =
-            RefreshCoordinator(CoroutineScope(SupervisorJob() + Dispatchers.Default))
+        private fun defaultRefreshCoordinator(): RefreshCoordinator = RefreshCoordinator(newEngineScope(sdkLogger = null))
     }
 }
 
