@@ -8,21 +8,15 @@ on:
 
 jobs:
   shared-tests:
-    name: Shared Unit Tests
+    name: Library checks
     runs-on: macos-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+      - uses: ./.github/actions/setup-project
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Run Shared Unit Tests
-        run: ./gradlew :supabase-offline-kt:allTests --stacktrace
+      # check runs the Android host tests (Robolectric) and the iOS simulator tests of both modules.
+      - name: Run library checks
+        run: ./gradlew :supabase-offline-kt:check :supabase-offline-kt-testing:check --stacktrace
