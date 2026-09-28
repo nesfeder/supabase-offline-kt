@@ -1,26 +1,30 @@
 # Configuration & Logging
 
+> **Written for an earlier engine.** This page describes the library as it was before 0.1.0: an
+> earlier engine, API and release process. Parts of it contradict what 0.1.0 will ship. It is
+> being rewritten for 0.1.0; until then, do not rely on it.
+
 The SDK is configured at construction time via `SupabaseOfflineConfig`. Both knobs that exist
 today — cache sizing and the optional logger — are wired in
-[SupabaseOfflineConfig.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineConfig.kt).
+[SupabaseOfflineConfig.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineConfig.kt).
 
 ## Contents
 
 - [`SupabaseOfflineConfig`](#supabaseofflineconfig)
-  - [`cacheSizeBytes`](#cachesizebytes)
-  - [`offlineStoragePath`](#offlinestoragepath)
-  - [`logger`](#logger)
-  - [`minLogLevel`](#minloglevel)
+    - [`cacheSizeBytes`](#cachesizebytes)
+    - [`offlineStoragePath`](#offlinestoragepath)
+    - [`logger`](#logger)
+    - [`minLogLevel`](#minloglevel)
 - [Logging deep-dive](#logging-deep-dive)
-  - [Setup (Android)](#setup-android)
-  - [Setup (iOS)](#setup-ios)
-  - [Log levels](#log-levels)
-  - [Production safety](#production-safety)
-  - [Disabling logging](#disabling-logging)
+    - [Setup (Android)](#setup-android)
+    - [Setup (iOS)](#setup-ios)
+    - [Log levels](#log-levels)
+    - [Production safety](#production-safety)
+    - [Disabling logging](#disabling-logging)
 
 ## `SupabaseOfflineConfig`
 
-```14:56:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineConfig.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineConfig.kt" linenums="14"
 data class SupabaseOfflineConfig(
     /**
      * Maximum size in bytes for the offline database file.
@@ -75,7 +79,7 @@ data class SupabaseOfflineConfig(
 
 The limit applies to the on-disk size of the offline database (only `object_cache`, since the
 mutation queue and storage metadata are durable user state). See
-[architecture.md](./architecture.md#cache-eviction) for how eviction is paced.
+[architecture.md](../project/internals.md#cache-eviction) for how eviction is paced.
 
 ### `offlineStoragePath`
 
@@ -95,9 +99,9 @@ An `OfflineLogger` (`fun interface`) that the SDK calls with `(level, message)`.
 `null` — when null, no log message is ever constructed, so there is zero runtime cost.
 
 The interface is in
-[OfflineLogger.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflineLogger.kt):
+[OfflineLogger.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflineLogger.kt):
 
-```30:32:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflineLogger.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflineLogger.kt" linenums="30"
 fun interface OfflineLogger {
     fun log(level: OfflineLogLevel, message: String)
 }
@@ -136,7 +140,7 @@ val offline = createSupabaseOfflineClient(
 ```
 
 The Android demo wires this in
-[MainActivity.kt](../composeApp/src/androidMain/kotlin/io/github/nesfeder/supabase/MainActivity.kt).
+[MainActivity.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/composeApp/src/androidMain/kotlin/io/github/nesfeder/supabase/demo/MainActivity.kt).
 
 ### Setup (iOS)
 
@@ -165,7 +169,7 @@ let offlineClient = SupabaseFactory.offlineClient(
 ```
 
 The iOS demo wires this in
-[ContentView.swift](../iosApp/iosApp/ContentView.swift).
+[ContentView.swift](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/iosApp/iosApp/ContentView.swift).
 
 ### Log levels
 

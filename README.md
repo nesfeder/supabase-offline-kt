@@ -12,19 +12,19 @@ This README is the entry point. Deep dives live in [docs/](./docs).
 
 ## Documentation index
 
-- [docs/architecture.md](./docs/architecture.md) — SDK internals: caching, signatures, subset
+- [docs/architecture.md](./docs/project/internals.md) — SDK internals: caching, signatures, subset
   resolution, mutation overlay, sync orchestration, error classification, eviction.
-- [docs/api-reference.md](./docs/api-reference.md) — Every public type with behavior tables and
+- [docs/api-reference.md](./docs/reference/supported-features.md) — Every public type with behavior tables and
   the full exception reference.
-- [docs/configuration.md](./docs/configuration.md) — `SupabaseOfflineConfig` and the
+- [docs/configuration.md](./docs/reference/configuration.md) — `SupabaseOfflineConfig` and the
   `OfflineLogger` setup for both platforms.
-- [docs/storage.md](./docs/storage.md) — Storage download cache, path helpers, client-driven
+- [docs/storage.md](./docs/behaviours/storage.md) — Storage download cache, path helpers, client-driven
   staleness model.
-- [docs/persistence.md](./docs/persistence.md) — Room schema for `object_cache`,
+- [docs/persistence.md](./docs/reference/on-device-data.md) — Room schema for `object_cache`,
   `mutation_cache`, `storage_objects` and DB locations per platform.
-- [docs/release.md](./docs/release.md) — Release runbook: CI flow, Android + iOS steps, manual
+- [docs/release.md](./docs/project/releasing.md) — Release runbook: CI flow, Android + iOS steps, manual
   XCFramework rebuild, consumer integration.
-- [docs/test-apps.md](./docs/test-apps.md) — Walkthrough of the Android (Compose) and iOS
+- [docs/test-apps.md](./docs/samples/index.md) — Walkthrough of the Android (Compose) and iOS
   (SwiftUI + TCA) TODO demo apps with cited code.
 
 ## Project layout
@@ -120,7 +120,7 @@ SUPABASE_ANON_KEY=YOUR-ANON-KEY
 
 Both files are listed in [`.gitignore`](./.gitignore); they will never be committed.
 
-Details: [docs/test-apps.md → Secrets setup](./docs/test-apps.md#secrets-setup).
+Details: [docs/test-apps.md → Secrets setup](./docs/samples/index.md#secrets-setup).
 
 ### 5. Build & run
 
@@ -140,7 +140,7 @@ to a physical device (the simulator works without it).
 > The iOS demo embeds the KMP framework directly via the Gradle task above — it does **not**
 > consume the SDK through `Package.swift`. `Package.swift` is purely for downstream SwiftPM
 > consumers and resolves binary targets from GitHub Releases (see
-> [docs/release.md → iOS release](./docs/release.md#ios-release)).
+> [docs/release.md → iOS release](./docs/project/releasing.md#ios-release)).
 
 ### 6. Try the offline behavior
 
@@ -160,8 +160,8 @@ Once the app is running and connected to your Supabase project:
 
 The two snippets below are the smallest end-to-end examples — pulled straight from the demos.
 For the full API surface (read strategies, mutation strategies, flow observation, storage cache
-helpers), see [docs/api-reference.md](./docs/api-reference.md) and
-[docs/test-apps.md](./docs/test-apps.md).
+helpers), see [docs/api-reference.md](./docs/reference/supported-features.md) and
+[docs/test-apps.md](./docs/samples/index.md).
 
 ### Minimal Android usage
 
@@ -223,21 +223,21 @@ _ = try await offline.syncAllPendingMutations()
 
 - **`ReadStrategy`** — `NetworkOnly`, `NetworkFirst(cacheDuration?)`, `CacheFirst(cacheDuration?)`,
   `CacheOnly(cacheDuration?)`. TTL is evaluated at **read** time against the cached row's
-  timestamp. See [docs/architecture.md → Read path](./docs/architecture.md#read-path-caching-deep-dive).
+  timestamp. See [docs/architecture.md → Read path](./docs/project/internals.md#read-path-caching-deep-dive).
 - **`FlowReadStrategy`** — `CacheFirstThenNetwork`, `NetworkFirstThenCache`, `CacheOnly` for
   reactive `selectAsFlow`.
 - **`MutationStrategy`** — `QueueIfOffline` (default) queues writes locally on connectivity
   failure; `OnlineOnly` rethrows. Server-side 4xx/5xx are **never** queued.
 - **Sync is manual.** Call `syncAllPendingMutations()` / `syncPendingMutations(table)` yourself —
   typically when connectivity returns. See
-  [docs/test-apps.md → Connectivity-driven sync](./docs/test-apps.md#connectivity-driven-sync).
+  [docs/test-apps.md → Connectivity-driven sync](./docs/samples/index.md#connectivity-driven-sync).
 - **Storage downloads** are cached to disk and served from there when offline. Use
   `bucket.ensureLocalFile` / `ensureLocalPath` to skip the bytes-in-memory step.
 
 ## Consumer integration
 
 Library coordinates and SPM setup live in
-[docs/release.md → Consumer integration](./docs/release.md#consumer-integration). Short version:
+[docs/release.md → Consumer integration](./docs/project/releasing.md#consumer-integration). Short version:
 
 - **Android (Gradle):** `io.github.nesfeder.supabase-offline-kt:shared-android:X.Y.Z` from the
   GitHub Packages Maven repo at `https://maven.pkg.github.com/nesfeder/supabase-offline-kt`.
@@ -246,7 +246,7 @@ Library coordinates and SPM setup live in
 
 ## Release
 
-See [docs/release.md](./docs/release.md) for the full runbook. TL;DR: cut a `release/vX.Y.Z`
+See [docs/release.md](./docs/project/releasing.md) for the full runbook. TL;DR: cut a `release/vX.Y.Z`
 branch, bump `version` in [shared/build.gradle.kts](shared/build.gradle.kts), push the branch,
 let CI publish the Android AAR and commit the iOS XCFrameworks, then merge and tag.
 

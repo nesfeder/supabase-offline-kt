@@ -1,0 +1,172 @@
+# Documentation site for supabase-offline-kt, built with MkDocs and Material for MkDocs.
+#
+# Build (from the repository root):
+#   pip install -r .github/workflows/docs-requirements.txt
+#   mkdocs build --strict
+# Preview:
+#   mkdocs serve    then open http://127.0.0.1:8000/supabase-offline-kt/
+#
+# Some pages pull files from the repository root in at build time with pymdownx.snippets
+# (`--8<-- "CHANGELOG.md"`), so nothing is copied into docs/. Snippet paths are relative to the
+# directory mkdocs runs in, which must be the repository root.
+#
+# Keep this file within the dialect Zensical also reads: no hooks, no not_in_nav, no exclude_docs
+# and no third-party plugins. Switching to Zensical is then a change of pins, not of this file.
+
+site_name: supabase-offline-kt
+site_description: >-
+  Offline-first PostgREST and Storage for supabase-kt, for Kotlin Multiplatform apps on Android
+  and iOS.
+site_author: nesfeder
+site_url: https://nesfeder.github.io/supabase-offline-kt/
+repo_name: nesfeder/supabase-offline-kt
+repo_url: https://github.com/nesfeder/supabase-offline-kt
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 nesfeder. MIT licence. Not affiliated with Supabase.
+
+theme:
+  name: material
+  # Ignored by Material for MkDocs; tells Zensical to keep the Material look.
+  variant: classic
+  language: en
+  icon:
+    logo: material/cloud-sync-outline
+    repo: fontawesome/brands/github
+  favicon: assets/favicon.svg
+  # The colours behind "custom" are set in docs/assets/extra.css.
+  palette:
+    - media: "(prefers-color-scheme)"
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  # System fonts: no request to Google Fonts or any other font host.
+  font: false
+  features:
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+    - content.code.select
+    - content.tabs.link
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+extra_css:
+  - assets/extra.css
+
+# A pinned copy of Mermaid. Material for MkDocs uses it instead of fetching mermaid@11 from
+# unpkg.com, so no page loads a script from a third-party host. Version, source and checksum:
+# docs/assets/javascripts/mermaid/README.txt.
+extra_javascript:
+  - assets/javascripts/mermaid/mermaid.min.js
+
+plugins:
+  - search
+
+# With --strict every warning fails the build: a broken link or anchor, a nav entry with no page,
+# a page missing from the nav, or a missing snippet file.
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: info
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: info
+    unrecognized_links: warn
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Project setup: getting-started/setup.md
+      - iOS apps in Swift: getting-started/swift.md
+      - Migrating from supabase-kt: getting-started/migrating.md
+      - Testing your app: getting-started/testing.md
+  - Behaviours:
+      - behaviours/index.md
+      - One-shot reads: behaviours/read-strategies.md
+      - Reactive reads: behaviours/reactive-reads.md
+      - Refresh lifecycle: behaviours/refresh-lifecycle.md
+      - Writes and the offline queue: behaviours/mutations.md
+      - Optimistic overlay: behaviours/overlay.md
+      - Replaying the queue: behaviours/sync.md
+      - Conflicts and failures: behaviours/failures.md
+      - Cache size and eviction: behaviours/eviction.md
+      - Signing out and switching users: behaviours/sign-out.md
+      - Storage caching: behaviours/storage.md
+      - Applying Realtime events: behaviours/realtime.md
+  - Reference:
+      - Supported features: reference/supported-features.md
+      - Configuration: reference/configuration.md
+      - On-device data: reference/on-device-data.md
+  - Sample apps:
+      - samples/index.md
+      - Set up Supabase: samples/supabase-setup.md
+      - Run the Android sample: samples/android.md
+      - Run the iOS sample: samples/ios.md
+      - Guided tour: samples/tour.md
+  - Help:
+      - FAQ and troubleshooting: help/faq.md
+      - Security and privacy: help/security.md
+  - Project:
+      - Changelog: project/changelog.md
+      - Contributing: project/contributing.md
+      - Releasing: project/releasing.md
+      - Internals: project/internals.md
+  # A placeholder page until the Dokka reference is generated into docs/api/. That change replaces
+  # this entry with `api/index.html`, deletes docs/api/index.md and gitignores docs/api/.
+  - API: api/index.md
