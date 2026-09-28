@@ -1,10 +1,14 @@
 # Persistence
 
+> **Written for an earlier engine.** This page describes the library as it was before 0.1.0: an
+> earlier engine, API and release process. Parts of it contradict what 0.1.0 will ship. It is
+> being rewritten for 0.1.0; until then, do not rely on it.
+
 The SDK stores everything in a single AndroidX Room (KMP) database file named
 `supabase_offline.db`. There are three tables. Schema is defined in
-[OfflineEntities.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt)
+[OfflineEntities.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt)
 and the database itself in
-[OfflineDatabase.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineDatabase.kt).
+[OfflineDatabase.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineDatabase.kt).
 
 ## Contents
 
@@ -52,9 +56,9 @@ erDiagram
 ## `object_cache`
 
 Caches SELECT results, keyed by the deterministic
-[signature](./architecture.md#cache-key-the-select-signature) of the request.
+[signature](../project/internals.md#cache-key-the-select-signature) of the request.
 
-```19:29:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt" linenums="19"
 @Entity(
     tableName = "object_cache",
     primaryKeys = ["table_name", "signature"]
@@ -72,7 +76,7 @@ internal data class ObjectRow(
 - **`payload`:** raw JSON string returned by PostgREST (typically a JSON array).
 - **`updated_at`:** epoch ms when the row was last written. Used for TTL comparisons (TTL itself
   is supplied per request — see
-  [`cacheDuration`](./architecture.md#cacheduration-is-ttl-at-read-not-ttl-at-write)).
+  [`cacheDuration`](../project/internals.md#cacheduration-is-ttl-at-read-not-ttl-at-write)).
 - **DAO:** `ObjectDao` exposes `get`, `observe` (Flow), `upsert`, `delete`, `getAllForTable`,
   `observeAllForTable`, `deleteTable`, and the size-eviction helper
   `deleteOldestPayloadRows(limit)`.
@@ -82,7 +86,7 @@ internal data class ObjectRow(
 Pending mutations awaiting sync, plus already-synced mutations kept around for read-time overlay
 until the corresponding SELECT is refreshed.
 
-```119:205:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt" linenums="119"
 @Entity(tableName = "mutation_cache")
 internal data class MutationRow(
     @PrimaryKey(autoGenerate = true)
@@ -177,7 +181,7 @@ internal data class MutationRow(
 - **`bodyJson`:** the raw request body. INSERT/UPSERT use a JSON array string; UPDATE uses an
   object string; DELETE typically uses `"{}"`.
 - **`filterJson`:** serialized `FilterDescriptor` (see
-  [OfflineFilters.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt))
+  [OfflineFilters.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt))
   describing the WHERE clause for UPDATE / DELETE.
 - **`syncedAtMs`:** `NULL` means **pending**. After a successful sync, the row is marked synced
   but not immediately deleted — it stays around to participate in mutation overlay until the
@@ -194,7 +198,7 @@ created_at_ms ASC`), reactive count Flows (`countPendingFlow`, `countPendingForT
 
 Tracks every file the storage download cache has on disk.
 
-```75:87:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt" linenums="75"
 @Entity(
     tableName = "storage_objects",
     indices = [Index(value = ["bucketId", "path"], unique = true)]
@@ -213,13 +217,13 @@ internal data class StorageRow(
 - **`key`:** `"$bucketId::$path"` — the primary key.
 - **`localPath`:** absolute path on the device.
 - **`lastFetchedEpochMs`:** exposed publicly through
-  [`StorageCacheMetadata`](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt)
-  for client-driven staleness checks. See [storage.md](./storage.md#client-driven-staleness).
+  [`StorageCacheMetadata`](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt)
+  for client-driven staleness checks. See [storage.md](../behaviours/storage.md#client-driven-staleness).
 - **`eTag`:** reserved for future HTTP revalidation; not used today.
 
 ## Database bootstrap
 
-```12:41:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineDatabase.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineDatabase.kt" linenums="12"
 @ConstructedBy(OfflineDatabaseConstructor::class)
 @Database(
     entities = [ObjectRow::class, StorageRow::class, MutationRow::class],
@@ -261,10 +265,10 @@ internal fun getRoomDatabase(
 ## DB file locations
 
 The path resolver `expect interface DbPathProvider` (in
-[OfflineCacheSettings.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineCacheSettings.kt))
+[OfflineCacheSettings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineCacheSettings.kt))
 has two platform implementations:
 
-```11:20:shared/src/androidMain/kotlin/io/github/nesfeder/supabase/internal/db/DbPathProvider.android.kt
+```kotlin title="shared/src/androidMain/kotlin/io/github/nesfeder/supabase/internal/db/DbPathProvider.android.kt" linenums="11"
 internal class AndroidDbPathProvider(
     private val context: Context,
 ) : DbPathProvider {
@@ -277,7 +281,7 @@ internal class AndroidDbPathProvider(
 }
 ```
 
-```14:28:shared/src/iosMain/kotlin/io/github/nesfeder/supabase/internal/db/DbPathProvider.ios.kt
+```kotlin title="shared/src/iosMain/kotlin/io/github/nesfeder/supabase/internal/db/DbPathProvider.ios.kt" linenums="14"
 internal class IosDbPathProvider : DbPathProvider {
 
     @OptIn(ExperimentalForeignApi::class)
@@ -301,7 +305,7 @@ internal class IosDbPathProvider : DbPathProvider {
 | iOS | `Documents/supabase_offline.db` |
 
 You can override the base directory (which contains both the DB and the storage file tree) by
-setting [`SupabaseOfflineConfig.offlineStoragePath`](./configuration.md#offlinestoragepath).
+setting [`SupabaseOfflineConfig.offlineStoragePath`](configuration.md#offlinestoragepath).
 
 ## Migration policy
 
@@ -316,6 +320,6 @@ changes:
    recoverable cache).
 
 The Room compiler is configured with `exportSchema = false` (see
-[shared/build.gradle.kts](../shared/build.gradle.kts) `room { schemaDirectory(...) }`) — schemas
+[shared/build.gradle.kts](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/build.gradle.kts) `room { schemaDirectory(...) }`) — schemas
 are not currently checked into the repo. If you start writing real migrations, flip
 `exportSchema` to true so the JSON schemas can be diffed in PRs.

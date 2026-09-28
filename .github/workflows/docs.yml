@@ -1,0 +1,195 @@
+name: Docs
+
+# Pull requests (and pushes to main) that touch the documentation: strict build, link checks, and
+# the built site uploaded as the `docs-site` artifact so it can be downloaded and previewed.
+# Nothing is published.
+#
+# Publishing to GitHub Pages happens only when this workflow runs with `deploy: true`: by hand
+# (workflow_dispatch) or from the release workflow (workflow_call). The Pages jobs are gated on
+# that input alone. `inputs` is empty on push and pull_request events, so they can never deploy;
+# `github.event_name` is no use as a gate, because inside a called workflow it is the caller's
+# event.
+#
+# Before the first deploy:
+# - Settings > Pages > Source: GitHub Actions. That creates the `github-pages` environment.
+# - Restrict that environment's deployment branches to `main`, plus the release tag pattern if the
+#   release workflow runs on tags. The environment's branch policy is what stops anyone with write
+#   access from dispatching `deploy: true` from an unmerged branch.
+# - A workflow that calls this one with `deploy: true` must grant `pages: write` and
+#   `id-token: write` to the calling job, and must not use a concurrency group starting with
+#   `docs-`, which this workflow uses for itself.
+
+on:
+  pull_request:
+    paths: &docs-paths
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'CHANGELOG.md'
+      - 'CONTRIBUTING.md'
+      - 'demo/supabase/**'
+      - '.github/workflows/docs.yml'
+      - '.github/workflows/docs-requirements.txt'
+  push:
+    branches: [main]
+    paths: *docs-paths
+  workflow_call:
+    inputs:
+      deploy:
+        description: Publish the site to GitHub Pages
+        type: boolean
+        default: false
+      ref:
+        description: Git ref to build (defaults to the caller's ref)
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Publish the site to GitHub Pages
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}-${{ inputs.deploy && 'deploy' || 'check' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: '3.14'
+  # Silences the MkDocs 2.0 banner Material for MkDocs prints on every run.
+  NO_MKDOCS_2_WARNING: 'true'
+
+jobs:
+  check:
+    name: Strict build and link check
+    if: ${{ !inputs.deploy }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: .github/workflows/docs-requirements.txt
+
+      - name: Verify the vendored Mermaid
+        working-directory: docs/assets/javascripts/mermaid
+        run: sha256sum --check --strict mermaid.min.js.sha256
+
+      - name: Install the pinned toolchain
+        run: pip install -r .github/workflows/docs-requirements.txt
+
+      # --strict fails on broken internal links and anchors in the Markdown, nav entries with no
+      # page, pages left out of the nav, and missing snippet files.
+      - name: Build the site in strict mode
+        id: build
+        run: mkdocs build --strict
+
+      - name: Upload the built site for preview
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-site
+          path: site/
+          if-no-files-found: error
+          retention-days: 14
+
+      # 404.html links to assets by absolute path under the site_url path (/supabase-offline-kt/),
+      # because it is served at any depth. Map that path onto site/ so those links are checked too.
+      - name: Map the site path for absolute links
+        run: |
+          mkdir -p "$RUNNER_TEMP/linkcheck-root"
+          ln -s "$GITHUB_WORKSPACE/site" "$RUNNER_TEMP/linkcheck-root/supabase-offline-kt"
+
+      - name: Check internal links and anchors in the built site
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --no-progress
+            --offline
+            --include-fragments
+            --index-files index.html
+            --root-dir ${{ runner.temp }}/linkcheck-root
+            'site/**/*.html'
+          output: ${{ runner.temp }}/lychee-internal.md
+          fail: true
+
+      # Reported in the job summary but not blocking: a third-party site being down should not
+      # fail a pull request. Self-links are skipped while the repository is private, because they
+      # 404 for an anonymous checker; drop the two --exclude lines at launch.
+      - name: Check external links in the source pages
+        continue-on-error: true
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --no-progress
+            --scheme https --scheme http
+            --max-retries 3
+            --accept '200..=299,429'
+            --exclude-loopback
+            --exclude '^https://github\.com/nesfeder/supabase-offline-kt'
+            --exclude '^https://nesfeder\.github\.io/supabase-offline-kt'
+            'docs/**/*.md' CHANGELOG.md CONTRIBUTING.md
+          output: ${{ runner.temp }}/lychee-external.md
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-for-pages:
+    name: Build the site for GitHub Pages
+    if: ${{ inputs.deploy }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: .github/workflows/docs-requirements.txt
+
+      - name: Verify the vendored Mermaid
+        working-directory: docs/assets/javascripts/mermaid
+        run: sha256sum --check --strict mermaid.min.js.sha256
+
+      - name: Install the pinned toolchain
+        run: pip install -r .github/workflows/docs-requirements.txt
+
+      - name: Build the site in strict mode
+        run: mkdocs build --strict
+
+      # No configure-pages step: nothing here reads its outputs (site_url is fixed in mkdocs.yml),
+      # and its Pages API call would need `pages: read` on this job.
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build-for-pages
+    if: ${{ inputs.deploy }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
