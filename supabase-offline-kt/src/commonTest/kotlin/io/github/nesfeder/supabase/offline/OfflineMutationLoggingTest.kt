@@ -1,0 +1,150 @@
+package io.github.nesfeder.supabase.offline
+
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+/**
+ * What each mutation verb logs, ported from the previous standalone engine's builder tests. A
+ * success logs its request and response at DEBUG only, and a write queued while offline logs one
+ * INFO line that names the verb and the table and carries no row data.
+ */
+class OfflineMutationLoggingTest {
+
+    private val server = RecordingPostgrestServer(answer = { okJson(RESPONSE) })
+    private val logger = RecordingOfflineLogger()
+    private val builder = OfflinePostgrestQueryBuilderImpl(
+        delegate = server.supabaseClient().postgrest.from(TABLE),
+        store = newTestOfflineStore(),
+        sdkLogger = logger.asSdkLogger(),
+    )
+
+    private fun messagesAt(level: OfflineLogLevel): List<String> = logger.entriesAt(level).map { it.message }
+
+    // ─────────────────────────── Success ───────────────────────────
+
+    @Test
+    fun insertJson_success_logsDebugWithRequestAndResponseJson() = runTest {
+        // Given — the default server accepts the write
+
+        // When
+        builder.insertJson(ROWS)
+
+        // Then
+        assertEquals(
+            listOf("INSERT $TABLE request body: $ROWS", "INSERT $TABLE response: $RESPONSE"),
+            messagesAt(OfflineLogLevel.DEBUG),
+        )
+        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+    }
+
+    @Test
+    fun upsertJson_success_logsDebugWithJson() = runTest {
+        // Given — the default server accepts the write
+
+        // When
+        builder.upsertJson(ROWS) { onConflict = "id" }
+
+        // Then
+        assertEquals(
+            listOf("UPSERT $TABLE request body: $ROWS", "UPSERT $TABLE response: $RESPONSE"),
+            messagesAt(OfflineLogLevel.DEBUG),
+        )
+        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+    }
+
+    @Test
+    fun updateJson_success_logsDebugWithJson() = runTest {
+        // Given — the default server accepts the write
+
+        // When
+        builder.updateJson(PATCH) { filter { eq("id", 1) } }
+
+        // Then
+        assertEquals(
+            listOf("UPDATE $TABLE request body: $PATCH", "UPDATE $TABLE response: $RESPONSE"),
+            messagesAt(OfflineLogLevel.DEBUG),
+        )
+        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+    }
+
+    @Test
+    fun delete_success_logsDebugWithResponseJson() = runTest {
+        // Given — the default server accepts the write
+
+        // When
+        builder.delete { filter { eq("id", 1) } }
+
+        // Then
+        assertEquals(
+            listOf("DELETE $TABLE attempting network", "DELETE $TABLE response: $RESPONSE"),
+            messagesAt(OfflineLogLevel.DEBUG),
+        )
+        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+    }
+
+    // ─────────────────────────── Queued offline ───────────────────────────
+
+    @Test
+    fun insertJson_queuedOffline_logsInfoQueued() = runTest {
+        // Given
+        server.answer = { connectivityFailure() }
+
+        // When
+        builder.insertJson(ROWS, MutationStrategy.QueueIfOffline)
+
+        // Then
+        assertEquals(listOf("INSERT $TABLE queued offline (network unavailable)"), messagesAt(OfflineLogLevel.INFO))
+    }
+
+    @Test
+    fun upsertJson_queuedOffline_logsInfoQueued() = runTest {
+        // Given
+        server.answer = { connectivityFailure() }
+
+        // When
+        builder.upsertJson(ROWS, MutationStrategy.QueueIfOffline) { onConflict = "id" }
+
+        // Then
+        assertEquals(listOf("UPSERT $TABLE queued offline (network unavailable)"), messagesAt(OfflineLogLevel.INFO))
+    }
+
+    @Test
+    fun updateJson_queuedOffline_logsInfoQueued() = runTest {
+        // Given
+        server.answer = { connectivityFailure() }
+
+        // When
+        builder.updateJson(PATCH, MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
+
+        // Then
+        assertEquals(listOf("UPDATE $TABLE queued offline (network unavailable)"), messagesAt(OfflineLogLevel.INFO))
+    }
+
+    @Test
+    fun delete_queuedOffline_logsInfoQueued() = runTest {
+        // Given
+        server.answer = { connectivityFailure() }
+
+        // When
+        builder.delete(MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
+
+        // Then
+        assertEquals(listOf("DELETE $TABLE queued offline (network unavailable)"), messagesAt(OfflineLogLevel.INFO))
+    }
+
+    private companion object {
+        const val TABLE = "todos"
+        const val RESPONSE = """[{"id":1,"created":true}]"""
+        val ROWS: JsonArray = Json.parseToJsonElement("""[{"id":1,"title":"Buy milk"}]""") as JsonArray
+        val PATCH = Json.parseToJsonElement("""{"title":"Buy oat milk"}""")
+    }
+}
