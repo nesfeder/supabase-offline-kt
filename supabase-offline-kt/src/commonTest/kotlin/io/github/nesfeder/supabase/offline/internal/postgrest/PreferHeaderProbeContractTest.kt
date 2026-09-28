@@ -7,6 +7,7 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_URL
 import io.ktor.client.request.post
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -65,8 +66,16 @@ class PreferHeaderProbeContractTest {
         // Given — a client nothing has installed the probe on yet
         val supabase = server.supabaseClient()
 
-        // When — many first uses at once
-        val installs = (1..64).map { async(Dispatchers.Default) { supabase.installPreferHeaderProbe() } }.awaitAll()
+        // When — many first uses at once, released together
+        val start = CompletableDeferred<Unit>()
+        val racers = (1..64).map {
+            async(Dispatchers.Default) {
+                start.await()
+                supabase.installPreferHeaderProbe()
+            }
+        }
+        start.complete(Unit)
+        val installs = racers.awaitAll()
 
         // Then — exactly one of them put the interceptor on the pipeline
         assertEquals(1, installs.count { installed -> installed })
