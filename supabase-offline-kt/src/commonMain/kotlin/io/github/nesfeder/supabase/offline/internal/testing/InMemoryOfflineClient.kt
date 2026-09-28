@@ -1,7 +1,8 @@
 @file:OptIn(kotlin.time.ExperimentalTime::class)
 
-package io.github.nesfeder.supabase.offline.testing
+package io.github.nesfeder.supabase.offline.internal.testing
 
+import io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
@@ -32,22 +33,20 @@ import okio.Path.Companion.toPath
  *
  * The client is wired exactly like the production one (real [SupabaseOfflineClientImpl] over a real
  * [OfflineStore]); only the storage substrate is swapped for in-memory maps that mirror Room's
- * per-table invalidation semantics. Size-based eviction is disabled (unlimited cache). This is the
- * public test seam the offline SDK exposes so consuming modules can exercise the
- * offline stack against their own APIs without reaching into the SDK's `internal` construction
- * details.
+ * per-table invalidation semantics. Size-based eviction is disabled (unlimited cache).
  *
- * Because the SDK ships as its own module, the `OfflineStore` /
- * `SupabaseOfflineClientImpl` constructors are invisible to consumer test code; this factory restores
- * that capability through the public boundary. It is the seed of a standalone in-memory
- * test-fixtures artifact, which will move it out of the `main` source set.
+ * This is the hook behind `buildInMemorySupabaseOfflineClient` in the `supabase-offline-kt-testing`
+ * artifact. It lives here because the in-memory DAOs implement the SDK's internal storage
+ * interfaces, which stay internal; the testing artifact is the supported entry point.
  *
  * @param supabase the (typically mock-engine) Supabase client the offline client wraps.
  * @param coordinatorScope scope hosting the client-scoped refresh loops; pass a test-dispatcher
  *   scope so refresh hops are driven by the test scheduler.
  * @param nowMillis clock used for cache-row timestamps; defaults to a fixed `0L` for determinism.
+ * @return an offline client whose cache, storage metadata and mutation queue live in memory.
  */
-public fun buildInMemorySupabaseOfflineClient(
+@InternalOfflineTestingApi
+public fun createInMemorySupabaseOfflineClient(
     supabase: SupabaseClient,
     coordinatorScope: CoroutineScope,
     nowMillis: () -> Long = { 0L },

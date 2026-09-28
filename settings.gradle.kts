@@ -28,3 +28,4 @@ dependencyResolutionManagement {
 }
 
 include(":supabase-offline-kt")
+include(":supabase-offline-kt-testing")
