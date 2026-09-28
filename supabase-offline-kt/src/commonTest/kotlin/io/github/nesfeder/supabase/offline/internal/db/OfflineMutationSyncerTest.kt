@@ -488,6 +488,40 @@ class OfflineMutationSyncerTest {
         assertEquals(1, wrapper.recordedUpdateBodies.size, "a fully captured filter still replays")
     }
 
+    @Test
+    fun fully_replayable_descriptor_delete_still_executes() = runTest {
+        // Given a queued DELETE whose stored filter replays in full — the success path the
+        // previous standalone engine pinned with an unfiltered row, which this engine refuses
+        // (see null_descriptor_delete_is_refused_and_never_executed)
+        val dao = FakeMutationDao()
+        dao.insert(
+            MutationRow(
+                table = table,
+                operation = MutationOperation.DELETE,
+                bodyJson = "{}",
+                filterJson = REPLAYABLE_FILTER_JSON,
+                createdAtMs = createdAtCounter++,
+                syncedAtMs = null,
+            ),
+        )
+        val store = buildStore(dao)
+        val client = testClient()
+        val wrapper = FakePostgrestQueryBuilderWrapper(
+            table = table,
+            postgrest = client.postgrest,
+            onDelete = { postgrestResultOf("[]", client.postgrest) },
+        )
+        val syncer = syncer(store, client, wrapper)
+
+        // When
+        val synced = syncer.syncTable(table = table)
+
+        // Then: the DELETE replays once, counts as synced and leaves nothing pending
+        assertEquals(1, synced)
+        assertEquals(1, wrapper.recordedDeleteCount, "a fully captured filter still replays")
+        assertEquals(0, store.pendingMutationCount())
+    }
+
     // ── Test helpers ──────────────────────────────────────────────────────────────
 
     private fun insertRow(body: String): MutationRow = MutationRow(

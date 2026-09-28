@@ -23,12 +23,13 @@ import kotlin.time.Duration
 /**
  * Scriptable [BucketApi] test double for exercising [io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApi].
  *
- * Only the byte-array download overrides (`downloadAuthenticated` / `downloadPublic`) carry
- * behavior — both route through [onDownload], which a test can point at a success or a specific
- * failure (transport error, a `NotFoundRestException`, or `awaitCancellation`) per case. Every
- * other [BucketApi] member is [unsupported] (mirrors the `ThrowingSupabaseOfflineClient` style):
- * the offline wrapper under test never reaches them, and the byte-channel download variants
- * delegate to the byte-array ones inside the wrapper, so they are never invoked here either.
+ * The byte-array download overrides (`downloadAuthenticated` / `downloadPublic`) route through
+ * [onDownload], which a test can point at a success or a specific failure (transport error, a
+ * `NotFoundRestException`, or `awaitCancellation`) per case. `delete`, `move` and `copy` succeed
+ * and record their arguments ([deletedPaths], [moves], [copies]) so cache-maintenance tests can
+ * assert the wrapper forwarded them. Every other [BucketApi] member is [unsupported]: the offline
+ * wrapper under test never reaches them, and the byte-channel download variants delegate to the
+ * byte-array ones inside the wrapper, so they are never invoked here either.
  *
  * @property bucketId Bucket identifier the wrapper reads via `BucketApi by delegate`.
  * @property onDownload Suspending behavior invoked for every byte-array download; defaults to a
@@ -42,6 +43,21 @@ internal class FakeBucketApi(
     /** Number of byte-array download calls received — for network-vs-cache assertions. */
     var downloadInvocations: Int = 0
         private set
+
+    /** Paths passed to the byte-array `downloadPublic`, in call order. */
+    val publicDownloadPaths: MutableList<String> = mutableListOf()
+
+    /** Paths passed to the byte-array `downloadAuthenticated`, in call order. */
+    val authenticatedDownloadPaths: MutableList<String> = mutableListOf()
+
+    /** Path collections passed to [delete], in call order. */
+    val deletedPaths: MutableList<Collection<String>> = mutableListOf()
+
+    /** `(from, to, destinationBucket)` of every [move], in call order. */
+    val moves: MutableList<Triple<String, String, String?>> = mutableListOf()
+
+    /** `(from, to, destinationBucket)` of every [copy], in call order. */
+    val copies: MutableList<Triple<String, String, String?>> = mutableListOf()
 
     private fun unsupported(member: String): Nothing =
         error("FakeBucketApi.$member must not be called in this test")
@@ -71,13 +87,17 @@ internal class FakeBucketApi(
         options: UploadOptionBuilder.() -> Unit,
     ): FileUploadResponse = unsupported("update")
 
-    override suspend fun delete(paths: Collection<String>): Unit = unsupported("delete")
+    override suspend fun delete(paths: Collection<String>) {
+        deletedPaths += paths
+    }
 
-    override suspend fun move(from: String, to: String, destinationBucket: String?): Unit =
-        unsupported("move")
+    override suspend fun move(from: String, to: String, destinationBucket: String?) {
+        moves += Triple(from, to, destinationBucket)
+    }
 
-    override suspend fun copy(from: String, to: String, destinationBucket: String?): Unit =
-        unsupported("copy")
+    override suspend fun copy(from: String, to: String, destinationBucket: String?) {
+        copies += Triple(from, to, destinationBucket)
+    }
 
     override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
         unsupported("createSignedUploadUrl")
@@ -99,6 +119,7 @@ internal class FakeBucketApi(
         options: DownloadOptionBuilder.() -> Unit,
     ): ByteArray {
         downloadInvocations++
+        authenticatedDownloadPaths += path
         return onDownload(path)
     }
 
@@ -113,6 +134,7 @@ internal class FakeBucketApi(
         options: DownloadOptionBuilder.() -> Unit,
     ): ByteArray {
         downloadInvocations++
+        publicDownloadPaths += path
         return onDownload(path)
     }
 
