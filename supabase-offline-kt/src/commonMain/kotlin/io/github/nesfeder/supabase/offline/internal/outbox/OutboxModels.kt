@@ -118,8 +118,8 @@ internal sealed interface SyncStop {
 
     /**
      * The pending writes were queued under another identity (another user, or signed out) than the
-     * one signed in now, so nothing was sent. They replay when that identity signs back in, or go
-     * when local data is cleared.
+     * one signed in now — or the current identity cannot be told — so nothing was sent. They replay
+     * when that identity signs back in, or go when local data is cleared.
      */
     data object QueueOwnedByAnotherIdentity : SyncStop
 

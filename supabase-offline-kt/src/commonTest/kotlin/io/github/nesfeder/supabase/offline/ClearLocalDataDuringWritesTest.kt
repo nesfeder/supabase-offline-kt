@@ -1,13 +1,17 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.HttpRequestException
+import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -16,6 +20,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -55,6 +60,28 @@ class ClearLocalDataDuringWritesTest {
         // Then — the second write never went out, and nothing is left queued
         assertEquals(1, server.requests.size)
         assertEquals(0, mutationDao.countAll())
+    }
+
+    @Test
+    fun a_refusal_that_arrives_after_clearing_is_not_recorded_for_the_next_user() = runTest {
+        // Given — the server holds the outgoing user's replay open, then refuses it
+        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"outgoing user's write"}]"""))
+        server.answer = {
+            parked.complete(Unit)
+            release.await()
+            postgrestError(HttpStatusCode.Forbidden)
+        }
+        val sweep = launch { client.syncAllPendingMutations() }
+        parked.await()
+
+        // When — local data is cleared while the replay is in flight, then the refusal comes back
+        client.clearAllCache()
+        release.complete(Unit)
+        sweep.join()
+
+        // Then — the pass was stopped before it could record the outgoing user's write on the list
+        assertEquals(emptyList(), store.outboxState.rejections())
+        assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
     }
 
     @Test
