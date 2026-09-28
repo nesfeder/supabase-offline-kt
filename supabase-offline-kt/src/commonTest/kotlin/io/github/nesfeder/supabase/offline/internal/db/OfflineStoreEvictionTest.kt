@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -10,7 +11,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.time.ExperimentalTime
 
 /**
@@ -95,6 +95,24 @@ class OfflineStoreEvictionTest {
 
         // Then the loop was bounded by the hard iteration cap (belt-and-braces backstop)
         assertEquals(1_000, objectDao.deleteCallCount, "loop must be bounded by the iteration cap")
+    }
+
+    @Test
+    fun eviction_does_nothing_when_the_cache_is_exactly_at_its_limit() = runTest {
+        // Given a cache whose measured size equals the limit
+        val objectDao = FakeObjectDao()
+        objectDao.fixedTotalPayloadBytes = 1_000L
+        val store = buildStore(
+            objectDao = objectDao,
+            maxDbSizeBytes = 1_000L,
+            evictionBatchSize = 5,
+        )
+
+        // When enforcement runs
+        store.enforceDbSizeLimitIfNeeded()
+
+        // Then nothing is deleted: eviction starts only above the limit
+        assertEquals(0, objectDao.deleteCallCount)
     }
 
     @Test
