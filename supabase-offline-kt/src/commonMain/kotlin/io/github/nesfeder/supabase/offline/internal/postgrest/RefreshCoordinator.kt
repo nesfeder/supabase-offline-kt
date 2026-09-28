@@ -2,23 +2,36 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * Client-scoped coordinator for `CacheFirstThenNetwork` subscriptions, keyed by
  * `(table, signature)`. Owns two responsibilities that both need a single client-wide instance:
  *
  * 1. **Single-flight refresh.** When N subscriptions share a signature, exactly one refresh loop
- *    runs and every subscriber observes its outcome. Implemented by memoizing a hot [shareIn]-backed
- *    flow per key: the first collector starts the shared upstream (and its refresh loop), later
- *    collectors attach to it, and the upstream is torn down once the last collector leaves. Today
- *    N collectors would otherwise each run their own refresh ladder — wasteful and stampede-prone.
+ *    runs and every subscriber observes its outcome. Implemented by a hot [shareIn]-backed flow per
+ *    live key: the first collector starts the shared upstream (and its refresh loop), later
+ *    collectors attach to it, and the entry — sharing coroutine included — is torn down once the
+ *    last collector leaves. N collectors would otherwise each run their own refresh ladder —
+ *    wasteful and stampede-prone.
  *
  * 2. **Live-signature registry.** Tracks which `(table, signature)` pairs currently have a live
  *    `selectAsFlow` collector, so [io.github.nesfeder.supabase.offline.internal.db.OfflineStore] can materialize
@@ -34,41 +47,96 @@ internal class RefreshCoordinator(
 
     private data class Key(val table: String, val signature: String)
 
+    /** What the shared upstream hands its collectors: a value, or the failure that ended it. */
+    private sealed interface Emission {
+        class Value(val result: OfflineReadResult) : Emission
+        class Failure(val cause: Throwable) : Emission
+    }
+
+    /**
+     * One live shared refresh: the flow, the child scope its sharing coroutine runs in, and how
+     * many collectors hold it. Guarded by [sharedFlowsMutex].
+     */
+    private class SharedEntry(val scope: CoroutineScope, val flow: Flow<Emission>) {
+        var collectors: Int = 0
+    }
+
     private val sharedFlowsMutex = Mutex()
-    private val sharedFlows = mutableMapOf<Key, Flow<OfflineReadResult>>()
+    private val sharedFlows = mutableMapOf<Key, SharedEntry>()
 
     /** Table → (signature → live-collector count). A signature is "live" while its count is > 0. */
     private val liveSignatures = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
 
     /**
-     * Returns the shared, single-flight read flow for [table]/[signature], starting it from
-     * [upstream] on first use and memoizing it so concurrent subscribers share one refresh loop.
+     * Returns the shared, single-flight read flow for [table]/[signature]. Collectors that overlap
+     * share one upstream — started from [upstream] by the first of them — and one refresh loop.
      *
-     * The shared flow uses [SharingStarted.WhileSubscribed] with zero stop timeout and zero replay
-     * expiration: the upstream (and its single refresh loop) runs only while there is at least one
-     * collector, a concurrently-joining collector still receives the latest value via `replay = 1`,
-     * and once every collector has left the replayed value is dropped so a later re-subscription
-     * starts a genuinely fresh refresh instead of replaying a stale (possibly cross-session) row.
+     * - A joining collector receives the latest value (`replay = 1`).
+     * - When the last collector leaves, the entry is removed and its sharing coroutine cancelled,
+     *   so nothing keeps running, and nothing keeps the first collector's [upstream] (and whatever
+     *   its request captured) alive. A later collector starts a genuinely fresh refresh instead of
+     *   replaying a stale, possibly cross-session, row.
+     * - A failure in the upstream — a Room read failing on a malformed database, say — reaches
+     *   every collector of that entry as their own exception, instead of escaping from the sharing
+     *   coroutine to the process. The entry ends with it; the next collector starts afresh.
+     * - When [scope] ends (the client was closed), every collection completes.
      *
      * @param table Table of the query.
      * @param signature Canonical signature of the query.
-     * @param upstream Factory for the per-signature read flow; invoked at most once per live key.
-     * @return The memoized shared read flow.
+     * @param upstream Factory for the per-signature read flow; invoked once per live entry.
+     * @return The shared read flow.
      */
-    suspend fun sharedReadFlow(
+    fun sharedReadFlow(
         table: String,
         signature: String,
         upstream: () -> Flow<OfflineReadResult>,
-    ): Flow<OfflineReadResult> = sharedFlowsMutex.withLock {
-        sharedFlows.getOrPut(Key(table, signature)) {
-            upstream().shareIn(
-                scope = scope,
-                started = SharingStarted.WhileSubscribed(
-                    stopTimeoutMillis = 0,
-                    replayExpirationMillis = 0,
-                ),
-                replay = 1,
-            )
+    ): Flow<OfflineReadResult> = channelFlow {
+        val key = Key(table, signature)
+        val entry = acquire(key, upstream)
+        // When the client closes, its scope — and with it this entry's sharing coroutine — is
+        // cancelled. End the collection then, instead of leaving it waiting on a flow that will
+        // never emit again.
+        val closedWatcher = launch {
+            scope.coroutineContext.job.join()
+            this@channelFlow.close()
+        }
+        try {
+            entry.flow.collect { emission ->
+                when (emission) {
+                    is Emission.Value -> send(emission.result)
+                    is Emission.Failure -> throw emission.cause
+                }
+            }
+        } finally {
+            closedWatcher.cancel()
+            withContext(NonCancellable) { release(key, entry) }
+        }
+    }.buffer(Channel.RENDEZVOUS)
+
+    private suspend fun acquire(key: Key, upstream: () -> Flow<OfflineReadResult>): SharedEntry =
+        sharedFlowsMutex.withLock {
+            val entry = sharedFlows.getOrPut(key) {
+                val entryScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+                val shared = upstream()
+                    .map<OfflineReadResult, Emission> { result -> Emission.Value(result) }
+                    .catch { failure -> emit(Emission.Failure(failure)) }
+                    .shareIn(
+                        scope = entryScope,
+                        started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 0, replayExpirationMillis = 0),
+                        replay = 1,
+                    )
+                SharedEntry(entryScope, shared)
+            }
+            entry.collectors++
+            entry
+        }
+
+    private suspend fun release(key: Key, entry: SharedEntry) {
+        sharedFlowsMutex.withLock {
+            entry.collectors--
+            if (entry.collectors > 0) return@withLock
+            if (sharedFlows[key] === entry) sharedFlows.remove(key)
+            entry.scope.cancel()
         }
     }
 
