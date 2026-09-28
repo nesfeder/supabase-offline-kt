@@ -23,12 +23,13 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The sweep for temporary files a crash left behind removes only files that are old, and never a
- * file a cache row names: a fresh one may be another cache's download still in flight, and an
- * object may be named like a temporary file.
+ * The sweep for temporary files a crash left behind removes only files a day old, and never a file
+ * a cache row names: a fresh one may be another cache's download still in flight, and an object may
+ * be named like a temporary file.
  */
 class StorageSweepTest {
 
@@ -49,11 +50,12 @@ class StorageSweepTest {
 
     @Test
     fun an_object_named_like_a_temporary_file_survives_the_next_process() = runTest {
-        // Given
+        // Given — cached two days ago under a name a crash leftover could have, and not used since
         val name = ".supabase-offline-download-1234.tmp"
         val delegate = FakeBucketApi(bucketId = BUCKET)
         delegate.onDownload = { "REAL".encodeToByteArray() }
         newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store).downloadAuthenticated(name) { }
+        markFileUsed(dataDirectory / "storage" / BUCKET / name, Clock.System.now().toEpochMilliseconds() - 2L * DAY_MILLIS)
 
         // When — the next process's first write sweeps crash leftovers
         val next = newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
@@ -108,5 +110,6 @@ class StorageSweepTest {
 
     private companion object {
         const val BUCKET = "media"
+        const val DAY_MILLIS = 24L * 60L * 60L * 1000L
     }
 }

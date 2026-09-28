@@ -126,6 +126,43 @@ class StorageContainerMoveTest {
         assertEquals("PLAIN", bucketIn(dataDirectory).downloadAuthenticated("x.txt") { }.decodeToString())
     }
 
+    @Test
+    fun a_legacy_row_is_dropped_with_the_file_nothing_else_can_own() = runTest {
+        // Given — an earlier version stored a non-ASCII name verbatim; this one hashes it
+        val dataDirectory = root / "data"
+        val legacyFile = dataDirectory / "storage" / BUCKET / "caf\u00E9.txt"
+        FileSystem.SYSTEM.createDirectories(legacyFile.parent!!)
+        FileSystem.SYSTEM.write(legacyFile) { writeUtf8("OLD") }
+        store.addStorage(BUCKET, "caf\u00E9.txt", legacyFile, 3, null)
+
+        // When
+        val cached = bucketIn(dataDirectory).cachedFile("caf\u00E9.txt")
+
+        // Then — a miss, and neither the row nor the file outlives it untracked
+        assertNull(cached)
+        assertNull(store.getStorageByKey(BUCKET, "caf\u00E9.txt"))
+        assertFalse(FileSystem.SYSTEM.exists(legacyFile), "the legacy file was left behind, untracked")
+    }
+
+    @Test
+    fun a_legacy_file_another_cached_object_owns_is_kept() = runTest {
+        // Given — the bucket-prefix legacy row for "media/x.txt", and "x.txt" cached in that file
+        val dataDirectory = root / "data"
+        val sharedFile = dataDirectory / "storage" / BUCKET / "x.txt"
+        store.addStorage(BUCKET, "$BUCKET/x.txt", sharedFile, 8, null)
+        delegate.onDownload = { "PLAIN".encodeToByteArray() }
+        bucketIn(dataDirectory).downloadAuthenticated("x.txt") { }
+
+        // When
+        val cached = bucketIn(dataDirectory).cachedFile("$BUCKET/x.txt")
+
+        // Then — the legacy row is gone; x.txt keeps its file and its row
+        assertNull(cached)
+        assertNull(store.getStorageByKey(BUCKET, "$BUCKET/x.txt"))
+        assertEquals("PLAIN", FileSystem.SYSTEM.read(sharedFile) { readUtf8() })
+        assertNotNull(bucketIn(dataDirectory).cachedFile("x.txt"))
+    }
+
     private companion object {
         const val BUCKET = "media"
     }
