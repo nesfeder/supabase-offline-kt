@@ -181,7 +181,8 @@ internal fun parseSignatureFilters(signature: String): SignatureFilters? {
 
 /**
  * Interpret a single `key=op.value` param exactly as [buildDescriptorFromBuilder] does: the value
- * must be `operator.operand` where `operator` is a recognized [FilterOperator].
+ * must be `operator.operand` where `operator` is an operator the engine models (resolved through
+ * [offlineFilterOperatorOrNull], like every other identifier lookup).
  *
  * @param key The param key (the row column).
  * @param rawParamValue The raw `op.value` param value.
@@ -195,7 +196,7 @@ private fun parseCondition(key: String, rawParamValue: String): FilterDescriptor
 
     val operatorId = parts[0]
     val operand = parts[1]
-    val operator = FilterOperator.entries.firstOrNull { it.identifier == operatorId } ?: return null
+    val operator = offlineFilterOperatorOrNull(operatorId) ?: return null
 
     val normalizedValue = operand.trim().trim('"', '\'')
     return FilterDescriptor.Condition(
