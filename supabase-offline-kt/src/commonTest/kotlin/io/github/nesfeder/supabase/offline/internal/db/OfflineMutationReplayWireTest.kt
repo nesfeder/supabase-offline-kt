@@ -33,6 +33,10 @@ class OfflineMutationReplayWireTest {
     private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock++ })
     private val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
 
+    /**
+     * Changed with idempotent replay: the rows carry their primary key, so the stored body is posted
+     * as an upsert on that key that ignores duplicates rather than as a plain insert.
+     */
     @Test
     fun a_replayed_insert_posts_the_stored_body() = runTest {
         // Given
@@ -47,8 +51,8 @@ class OfflineMutationReplayWireTest {
             listOf(
                 write(
                     method = "POST",
-                    query = mapOf("columns" to "id,title"),
-                    prefer = "return=minimal",
+                    query = mapOf("on_conflict" to "id", "columns" to "id,title"),
+                    prefer = "resolution=ignore-duplicates,return=minimal",
                     body = """[{"id":1,"title":"Buy milk"}]""",
                 ),
             ),
@@ -64,8 +68,9 @@ class OfflineMutationReplayWireTest {
         // When
         syncer.syncTable(table = TABLE)
 
-        // Then — missing columns take their database default, as the caller asked
-        assertEquals("missing=default,return=minimal", server.requests.single().prefer)
+        // Then — missing columns take their database default, as the caller asked (the key it
+        // carries makes the replay an upsert that ignores duplicates)
+        assertEquals("resolution=ignore-duplicates,missing=default,return=minimal", server.requests.single().prefer)
     }
 
     @Test
@@ -180,16 +185,16 @@ class OfflineMutationReplayWireTest {
         // When
         val synced = syncer.syncTable(table = TABLE)
 
-        // Then — all four replayed in order with their options, and marked synced (kept until a
-        // later successful read retires them)
+        // Then — all four replayed in order with their options. Nothing caches or observes the table,
+        // so none of them is kept once synced (inverted: they used to stay until a later read).
         assertEquals(4, synced)
         assertEquals(listOf("POST", "POST", "PATCH", "DELETE"), server.requests.map { it.method })
-        assertEquals("missing=default,return=minimal", server.requests[0].prefer)
+        assertEquals("resolution=ignore-duplicates,missing=default,return=minimal", server.requests[0].prefer)
         assertEquals("id", server.requests[1].query["on_conflict"])
         assertEquals("resolution=ignore-duplicates,missing=default,return=minimal", server.requests[1].prefer)
         assertEquals(mapOf("id" to "eq.2", "user_id" to "eq.u-1"), server.requests[2].query)
         assertEquals(mapOf("id" to "eq.2", "user_id" to "eq.u-1"), server.requests[3].query)
-        assertEquals(4, mutationDao.allForTable(TABLE).size)
+        assertEquals(0, mutationDao.allForTable(TABLE).size)
         assertEquals(0, store.pendingMutationCount())
     }
 
@@ -260,8 +265,13 @@ class OfflineMutationReplayWireTest {
         assertTrue(server.requests.isEmpty())
     }
 
+    /**
+     * Inverted: a server error on one table used to be isolated to that table, and the next table
+     * replayed. With one global queue the pass stops there instead, so a later write — which may
+     * depend on the failed one — never overtakes it.
+     */
     @Test
-    fun syncAllTables_unknownErrorOnOneTable_doesNotStopOtherTables() = runTest {
+    fun syncAllTables_serverErrorOnOneTable_stopsThePassWithLaterTablesQueued() = runTest {
         // Given — one write per table; the server fails the first table with a 500
         store.enqueueInsert(table = FAILING_TABLE, body = rows("""[{"id":1}]"""))
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
@@ -272,10 +282,10 @@ class OfflineMutationReplayWireTest {
         // When
         val synced = syncer.syncAllTables()
 
-        // Then — the healthy table still replays; the failed write stays queued for a retry
-        assertEquals(1, synced)
-        assertEquals(listOf(FAILING_TABLE, TABLE), server.requests.map { it.table })
-        assertEquals(listOf(FAILING_TABLE), store.allPendingMutations().map { it.table })
+        // Then — nothing after the failure is sent; both writes stay queued for a retry
+        assertEquals(0, synced)
+        assertEquals(listOf(FAILING_TABLE), server.requests.map { it.table })
+        assertEquals(listOf(FAILING_TABLE, TABLE), store.allPendingMutations().map { it.table })
     }
 
     private fun write(method: String, query: Map<String, String>, prefer: String, body: String): RecordedRequest =

@@ -439,8 +439,12 @@ class OfflineFilterTest {
         assertNull(descriptor)
     }
 
+    /**
+     * Inverted: the capture used to trim quotes (and whitespace) from values, so a queued write
+     * replayed a different value than the caller sent. It now stores the value exactly as encoded.
+     */
     @Test
-    fun buildDescriptorFromBuilder_trimsQuotesFromValues() {
+    fun buildDescriptorFromBuilder_keepsQuotesInValues() {
         // Given
         val builder =
             requestBuilder().apply {
@@ -456,8 +460,8 @@ class OfflineFilterTest {
         // Then
         assertNotNull(descriptor)
         val map = descriptor.conditions.associateBy({ it.column }, { it.value })
-        assertEquals("123", map["id"])
-        assertEquals("foo%", map["title"])
+        assertEquals("\"123\"", map["id"])
+        assertEquals("'foo%'", map["title"])
     }
 
     /**

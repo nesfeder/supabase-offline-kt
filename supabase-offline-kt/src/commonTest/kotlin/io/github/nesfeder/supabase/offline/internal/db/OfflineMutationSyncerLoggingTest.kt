@@ -72,7 +72,7 @@ class OfflineMutationSyncerLoggingTest {
 
         // Then
         assertEquals(
-            listOf("Permanent failure for INSERT on $TABLE, dropping mutation"),
+            listOf("Permanent failure for INSERT on $TABLE (409); moved to the rejected list"),
             messagesAt(OfflineLogLevel.WARNING),
         )
     }

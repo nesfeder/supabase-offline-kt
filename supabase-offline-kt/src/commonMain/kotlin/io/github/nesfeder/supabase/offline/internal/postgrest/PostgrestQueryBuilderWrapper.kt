@@ -8,6 +8,8 @@ import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 
@@ -89,6 +91,15 @@ internal interface PostgrestQueryBuilderWrapper {
     suspend fun delete(
         request: PostgrestRequestBuilder.() -> Unit
     ): PostgrestResult
+
+    /**
+     * Builds the request [write] would send, **without sending it**, and reports whether it asks
+     * PostgREST to roll the transaction back — a write built with `dryRun()`.
+     *
+     * @param write Issues one write through this handle.
+     * @return Whether it is a dry run, or `null` when this handle cannot tell.
+     */
+    suspend fun requestsRollback(write: suspend () -> PostgrestResult): Boolean?
 }
 
 /**
@@ -100,6 +111,10 @@ internal interface PostgrestQueryBuilderWrapper {
 internal class PostgrestQueryBuilderWrapperImpl(
     private val builder: PostgrestQueryBuilder
 ) : PostgrestQueryBuilderWrapper {
+
+    init {
+        builder.postgrest.supabaseClient.installPreferHeaderProbe()
+    }
 
     /**
      * @see PostgrestQueryBuilderWrapper.table
@@ -166,5 +181,24 @@ internal class PostgrestQueryBuilderWrapperImpl(
         request: PostgrestRequestBuilder.() -> Unit
     ): PostgrestResult {
         return builder.delete(request)
+    }
+
+    /**
+     * Runs [write] under a short-circuiting [PreferHeaderProbe]: the request is built and stopped at
+     * the client's HTTP pipeline, before it reaches the network.
+     *
+     * @see PostgrestQueryBuilderWrapper.requestsRollback
+     */
+    override suspend fun requestsRollback(write: suspend () -> PostgrestResult): Boolean? {
+        val probe = PreferHeaderProbe(shortCircuit = true)
+        try {
+            withContext(probe) { write() }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            // The short circuit surfaces as a failed request; any other failure means the request
+            // was never built far enough to be read, and was not sent either.
+        }
+        return if (probe.observed) probe.requestedRollback else null
     }
 }

@@ -31,8 +31,11 @@ import kotlinx.serialization.json.JsonObject
  *     - apply an insert / upsert / patch / delete in memory
  *  3. Serialize the modified array back into a JSON string.
  *
- * If parsing fails at any point, or the payload isn't an array, we simply
- * return [serverJson] unchanged to avoid surprising the caller.
+ * If the payload does not parse, or isn't an array, we return [serverJson] unchanged. A mutation
+ * that cannot be applied — its stored body no longer parses, or its filter cannot be evaluated
+ * against a row — is skipped **on its own**: the other mutations still apply, and the skip is
+ * reported through `onMutationFailure`. One bad mutation used to discard the whole batch, hiding
+ * every pending write of the table from every screen until the next sync.
  *
  * Note on filters
  * ---------------
@@ -68,52 +71,68 @@ internal object OfflineMutationOverlay {
      *                      `null` (the default) preserves the legacy always-append behavior, as do
      *                      non-exhaustive signatures — we never under-apply a row the server would
      *                      return. UPDATE/DELETE targeting is unaffected.
+     * @param onMutationFailure Told about each mutation that was skipped because applying it threw,
+     *                      so the caller can log it. Never given the mutation's body to log.
      *
-     * @return A JSON string representing the original payload **plus** any
-     *         applied local mutations, or [serverJson] unchanged if something
-     *         goes wrong.
+     * @return A JSON string representing the original payload **plus** every
+     *         local mutation that could be applied, or [serverJson] unchanged when
+     *         it is not a JSON array.
      */
     fun applyPendingMutations(
         json: Json,
         serverJson: String,
         pending: List<MutationRow>,
-        targetFilters: SignatureFilters? = null
+        targetFilters: SignatureFilters? = null,
+        onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> },
     ): String {
         if (pending.isEmpty()) return serverJson
 
-        return runCatching {
-            // 1) Parse server payload as JSON array; if not an array, bail.
-            val parsed = json.parseToJsonElement(serverJson)
-            val array = parsed as? JsonArray ?: return serverJson
+        // 1) Parse server payload as JSON array; if it does not parse or is not an array, bail.
+        val array = try {
+            json.parseToJsonElement(serverJson) as? JsonArray
+        } catch (_: IllegalArgumentException) {
+            null
+        } ?: return serverJson
 
-            // Copy rows into a mutable buffer we can modify.
-            val rows = array.toMutableList()
+        // Copy rows into a mutable buffer we can modify.
+        var rows = array.toMutableList()
 
-            // 2) Apply each mutation in creation order (oldest → newest).
-            pending.forEach { mutation ->
-
-                val descriptor = FilterEngine.decodeOrNull(mutation.filterJson, json)
-
-                when (mutation.operation) {
-                    MutationOperation.INSERT ->
-                        applyInsertMutation(json, rows, mutation, targetFilters)
-
-                    MutationOperation.UPSERT ->
-                        applyUpsertMutation(json, rows, mutation, descriptor, targetFilters)
-
-                    MutationOperation.UPDATE ->
-                        applyUpdateMutation(json, rows, mutation, descriptor)
-
-                    MutationOperation.DELETE ->
-                        applyDeleteMutation(rows, descriptor)
-                }
+        // 2) Apply each mutation in queue order (oldest → newest), each to its own working copy so
+        // a mutation that throws half-way leaves no partial change behind.
+        pending.forEach { mutation ->
+            val working = rows.toMutableList()
+            try {
+                applyMutation(json, working, mutation, targetFilters)
+                rows = working
+            } catch (failure: Exception) {
+                onMutationFailure(mutation, failure)
             }
+        }
 
-            // 3) Serialize back to a JSON string.
-            json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
-        }.getOrElse {
-            // On any failure, fall back to the original payload.
-            serverJson
+        // 3) Serialize back to a JSON string.
+        return json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
+    }
+
+    private fun applyMutation(
+        json: Json,
+        rows: MutableList<JsonElement>,
+        mutation: MutationRow,
+        targetFilters: SignatureFilters?,
+    ) {
+        val descriptor = FilterEngine.decodeOrNull(mutation.filterJson, json)
+
+        when (mutation.operation) {
+            MutationOperation.INSERT ->
+                applyInsertMutation(json, rows, mutation, targetFilters)
+
+            MutationOperation.UPSERT ->
+                applyUpsertMutation(json, rows, mutation, descriptor, targetFilters)
+
+            MutationOperation.UPDATE ->
+                applyUpdateMutation(json, rows, mutation, descriptor)
+
+            MutationOperation.DELETE ->
+                applyDeleteMutation(rows, descriptor)
         }
     }
 

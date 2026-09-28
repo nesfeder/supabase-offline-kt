@@ -7,6 +7,14 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
+import io.github.nesfeder.supabase.offline.internal.outbox.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.outbox.PendingMutation
+import io.github.nesfeder.supabase.offline.internal.outbox.RejectedMutation
+import io.github.nesfeder.supabase.offline.internal.outbox.SyncReport
+import io.github.nesfeder.supabase.offline.internal.outbox.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.outbox.toPendingMutation
+import io.github.nesfeder.supabase.offline.internal.outbox.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
@@ -20,10 +28,13 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -82,17 +93,21 @@ public interface SupabaseOfflineClient {
      *   failure. If no authenticated session arrives within the bound, the call
      *   returns 0 and leaves the queue intact for the next trigger. Clients
      *   without the Auth plugin skip the gate entirely (fail-open).
-     * - Mutations are replayed in creation order per table.
-     * - A network / connectivity failure while syncing a table stops processing
-     *   further mutations **for that table only**, leaving the remaining
-     *   mutations in the queue.
-     * - An unknown server / application error while syncing a specific table is
-     *   isolated to that table; other tables will still be attempted. Those
-     *   table-level errors are generally swallowed by this method, so callers
-     *   only observe the count of successfully synced mutations.
+     * - Every table's mutations form one queue, replayed in the order they were
+     *   made, whatever the table.
+     * - A failure that may pass — no connectivity, a `401`, `408`, `429`, `5xx` or
+     *   an unexpected error — stops the whole pass and keeps every remaining
+     *   mutation queued, so a later write never overtakes an earlier one (a child
+     *   row never replays ahead of its parent). Nothing transient ever removes a
+     *   mutation. Errors are not thrown from this method.
+     * - A mutation the server refuses for good (another `4xx`) is taken out of the
+     *   queue and kept on a rejected list with the server's reason, and the pass
+     *   continues. A `403` or `409` on a mutation that has an earlier one still
+     *   pending is held instead.
+     * - Mutations queued under another identity than the current session's are
+     *   not replayed.
      *
-     * @return The number of mutations that were successfully synced (and removed
-     *         from the local queue).
+     * @return The number of mutations that were successfully synced.
      *
      * This function may still throw in truly unexpected situations (for
      * example, if the underlying Supabase client or plugins are misconfigured).
@@ -106,14 +121,17 @@ public interface SupabaseOfflineClient {
      *
      * - Awaits an authenticated session first, exactly like
      *   [syncAllPendingMutations]; anything else defers the replay and returns 0.
-     * - Mutations for this [table] are replayed in creation order.
-     * - A network / connectivity failure stops syncing for this table and the
-     *   current (and remaining) mutations stay in the queue.
-     * - Permanent failures (e.g. permission or constraint violations) cause the
-     *   failing mutation to be dropped, but syncing continues with subsequent
-     *   mutations.
-     * - Unknown server / application errors are propagated to the caller while
-     *   keeping the failing mutation in the queue so it can be retried.
+     * - Mutations for this [table] are replayed in the order they were made.
+     * - A network / connectivity failure stops syncing and the current (and
+     *   remaining) mutations stay in the queue.
+     * - Permanent failures (e.g. permission or constraint violations) move the
+     *   failing mutation to the rejected list, and syncing continues with
+     *   subsequent mutations. A `403` or `409` on a mutation that has an earlier
+     *   mutation pending in another table is held instead: that earlier write may
+     *   be the row it depends on.
+     * - Other server / application errors (`401`, `408`, `429`, `5xx`, unexpected)
+     *   are propagated to the caller while keeping the failing mutation in the
+     *   queue so it can be retried.
      *
      * @return The number of mutations that were successfully synced for [table].
      *
@@ -215,6 +233,10 @@ public interface SupabaseOfflineClient {
      * rows, un-synced offline writes, and downloaded objects (e.g. avatars) never carry over
      * to the next user on the same device, and no personal data survives on disk after an
      * account is deleted.
+     *
+     * A sync in progress is cancelled first, and nothing it queued is sent once this has begun.
+     * A write whose request was already in flight is neither overlaid onto the cache nor queued
+     * when it returns.
      */
     public suspend fun clearAllCache()
 }
@@ -269,6 +291,9 @@ internal class SupabaseOfflineClientImpl(
 
     private val mutationSyncer = OfflineMutationSyncer(store, supabase, sdkLogger = sdkLogger)
 
+    /** Hosts replay passes the engine starts on its own; see [requestSync]. */
+    private val syncScope = coordinatorScope
+
     /** Encodes the primary-key [FilterDescriptor] built for realtime records. */
     private val json = OfflineJson
 
@@ -289,6 +314,7 @@ internal class SupabaseOfflineClientImpl(
         // Let the store see which signatures are live so a server-successful mutation materializes
         // into a real cache row for a cache-less-but-observed subscription.
         store.liveSignatureProvider = refreshCoordinator::liveSignaturesFor
+        store.sdkLogger = sdkLogger
     }
 
     override fun from(table: String): OfflinePostgrestQueryBuilder =
@@ -296,6 +322,7 @@ internal class SupabaseOfflineClientImpl(
 
     override fun from(schema: String, table: String): OfflinePostgrestQueryBuilder {
         ensurePostgrestInstalled()
+        require(!isReservedTable(table)) { "The table name is reserved by the offline engine" }
         val delegate = supabase.postgrest.from(schema, table)
         return OfflinePostgrestQueryBuilderImpl(
             delegate = delegate,
@@ -304,7 +331,25 @@ internal class SupabaseOfflineClientImpl(
             authSessionState = ::authSessionState,
             refreshCoordinator = refreshCoordinator,
             accelerator = refreshAccelerator,
+            queueIdentity = { supabase.currentQueueIdentity() },
+            requestSync = ::requestSync,
         )
+    }
+
+    /**
+     * Starts a replay pass in the background. Used when a write made online joined the queue behind
+     * pending writes; a pass already running finishes first, then this one replays the rest.
+     */
+    private fun requestSync() {
+        syncScope.launch {
+            try {
+                mutationSyncer.sync()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                sdkLogger.warning { "Background mutation replay failed: ${failure::class.simpleName}" }
+            }
+        }
     }
 
     /**
@@ -438,11 +483,80 @@ internal class SupabaseOfflineClientImpl(
     }
 
     override suspend fun clearAllCache() {
-        store.clearAll()
+        // Cancels a replay pass in flight and runs the wipe under the sync lock, so no queued write
+        // of the outgoing identity reaches the server afterwards.
+        mutationSyncer.clearLocalData { store.clearAll() }
         // Room only holds storage-object metadata; the downloaded bytes live on disk under
         // <base>/storage/. Wipe that tree too so cached objects (e.g. avatars) don't survive
         // logout / account switch / account deletion.
         deleteRecursivelyIfExists(baseDirectoryProvider() / "storage")
+    }
+
+    /* ─────────────────────────── Outbox (internal) ─────────────────────────── */
+
+    /*
+     * The outbox's ids, rejected list, identity and sync report, for the change that exposes them
+     * publicly under the offline API sheet's names. Internal until then.
+     */
+
+    /**
+     * Runs one replay pass and reports what it did; returns promptly when offline.
+     *
+     * @param table The table to replay, or `null` for the whole queue.
+     * @return What the pass synced, rejected and left pending.
+     */
+    internal suspend fun syncPendingMutationsReport(table: String? = null): SyncReport =
+        mutationSyncer.sync(table = table)
+
+    /**
+     * The pending mutations — of [table], or of every table — in replay order, as they change.
+     *
+     * @param table The table to observe, or `null` for the whole queue.
+     * @return A flow of pending mutations.
+     */
+    internal fun pendingMutations(table: String? = null): Flow<List<PendingMutation>> =
+        store.pendingMutationsFlow(table).map { rows ->
+            rows.mapNotNull { row -> row.toPendingMutation(store.json, DefaultPrimaryKeys) }
+        }
+
+    /**
+     * The persisted rejected mutations, oldest first, as they change. The list keeps the newest 100.
+     *
+     * @return A flow of rejected mutations; it fails if the persisted list cannot be decoded.
+     */
+    internal fun rejectedMutations(): Flow<List<RejectedMutation>> =
+        store.outboxState.rejectionsFlow().map { entries ->
+            entries.map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+        }
+
+    /**
+     * The persisted rejected mutations, oldest first.
+     *
+     * @return The list; it throws if the persisted list cannot be decoded.
+     */
+    internal suspend fun rejectedMutationList(): List<RejectedMutation> =
+        store.outboxState.rejections().map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+
+    /**
+     * Removes a rejected mutation from the list.
+     *
+     * @param id The rejected mutation's id.
+     * @return `true` when it was on the list.
+     */
+    internal suspend fun dismissRejectedMutation(id: Long): Boolean = store.dismissRejectedMutation(id)
+
+    /**
+     * Puts a rejected mutation back at the tail of the queue and requests a replay pass.
+     *
+     * @param id The rejected mutation's id.
+     * @return The new pending mutation's id, or `null` when there is no such rejection, or it —
+     *   or the pending queue — belongs to another identity than the current session's.
+     */
+    internal suspend fun retryRejectedMutation(id: Long): Long? {
+        val identity = supabase.currentQueueIdentity() ?: return null
+        val newId = store.retryRejectedMutation(id, identity.storedValue) ?: return null
+        requestSync()
+        return newId
     }
 
     /* ───────────────────────────── Guards ───────────────────────────── */

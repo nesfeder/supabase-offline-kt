@@ -5,6 +5,7 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.db.StorageRow
 import kotlinx.coroutines.flow.Flow
@@ -48,6 +49,9 @@ internal open class InMemoryObjectDao : ObjectDao {
     override suspend fun allForTable(table: String): List<ObjectRow> =
         rows.values.filter { it.table == table }
 
+    override suspend fun signaturesForTable(table: String): List<String> =
+        rows.values.filter { it.table == table }.map { it.signature }
+
     override suspend fun upsert(row: ObjectRow) {
         rows[row.table to row.signature] = row
         observers
@@ -73,11 +77,12 @@ internal open class InMemoryObjectDao : ObjectDao {
         keys.forEach { observers[it]?.value = null }
     }
 
-    override suspend fun totalPayloadBytes(): Long = rows.values.sumOf { it.payload.length.toLong() }
+    override suspend fun totalPayloadBytes(): Long =
+        rows.values.filter { it.table != RESERVED_TABLE_NAME }.sumOf { it.payload.length.toLong() }
 
     override suspend fun deleteOldestPayloadRows(limit: Int): Int {
         if (limit <= 0) return 0
-        val oldest = rows.values.sortedBy { it.updatedAt }.take(limit)
+        val oldest = rows.values.filter { it.table != RESERVED_TABLE_NAME }.sortedBy { it.updatedAt }.take(limit)
         oldest.forEach { row ->
             rows.remove(row.table to row.signature)
             observers[row.table to row.signature]?.value = null
@@ -110,22 +115,33 @@ internal open class InMemoryStorageDao : StorageDao {
     }
 }
 
-/** In-memory [MutationDao] mirroring Room's autoGenerate id and reactive per-table queue. */
+/**
+ * In-memory [MutationDao] mirroring Room's `AUTOINCREMENT` id (never reused, even after a delete)
+ * and its reactive queue, ordered by id as the Room queries are.
+ */
 internal open class InMemoryMutationDao : MutationDao {
     /** Every queued row, pending and synced, in insertion order. */
     protected val mutations: MutableStateFlow<List<MutationRow>> = MutableStateFlow(emptyList())
     private var nextId: Long = 1L
 
-    override suspend fun insert(row: MutationRow) {
+    override suspend fun insert(row: MutationRow): Long {
         val stored = if (row.id == 0L) row.copy(id = nextId++) else row
-        mutations.update { current -> current + stored }
+        if (stored.id >= nextId) nextId = stored.id + 1
+        mutations.update { current -> current.filterNot { it.id == stored.id } + stored }
+        return stored.id
     }
 
     override suspend fun pendingForTable(table: String): List<MutationRow> =
-        mutations.value.filter { it.table == table && it.syncedAtMs == null }.sortedBy { it.createdAtMs }
+        mutations.value.filter { it.table == table && it.syncedAtMs == null }.sortedBy { it.id }
 
     override suspend fun pendingAll(): List<MutationRow> =
-        mutations.value.filter { it.syncedAtMs == null }.sortedBy { it.createdAtMs }
+        mutations.value.filter { it.syncedAtMs == null }.sortedBy { it.id }
+
+    override fun pendingAllFlow(): Flow<List<MutationRow>> =
+        mutations.map { all -> all.filter { it.syncedAtMs == null }.sortedBy { it.id } }
+
+    override suspend fun hasPendingBefore(id: Long): Boolean =
+        mutations.value.any { it.syncedAtMs == null && it.id < id }
 
     override suspend fun countAll(): Int = mutations.value.size
 
@@ -146,19 +162,15 @@ internal open class InMemoryMutationDao : MutationDao {
     }
 
     override suspend fun allForTable(table: String): List<MutationRow> =
-        mutations.value.filter { it.table == table }.sortedBy { it.createdAtMs }
+        mutations.value.filter { it.table == table }.sortedBy { it.id }
 
     override fun allForTableFlow(table: String): Flow<List<MutationRow>> =
-        mutations.map { all -> all.filter { it.table == table }.sortedBy { it.createdAtMs } }
+        mutations.map { all -> all.filter { it.table == table }.sortedBy { it.id } }
 
     override suspend fun markSynced(id: Long, syncedAtMs: Long) {
         mutations.update { current ->
             current.map { if (it.id == id) it.copy(syncedAtMs = syncedAtMs) else it }
         }
-    }
-
-    override suspend fun deleteSyncedForTable(table: String) {
-        mutations.update { current -> current.filterNot { it.table == table && it.syncedAtMs != null } }
     }
 
     override suspend fun deleteAll() {

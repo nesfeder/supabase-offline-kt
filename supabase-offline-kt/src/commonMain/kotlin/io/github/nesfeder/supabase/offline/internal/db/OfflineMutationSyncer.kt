@@ -1,8 +1,21 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.outbox.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.outbox.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.outbox.SyncReport
+import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
+import io.github.nesfeder.supabase.offline.internal.outbox.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.outbox.everyRowCarriesPrimaryKey
+import io.github.nesfeder.supabase.offline.internal.outbox.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.applyTo
@@ -10,44 +23,56 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decod
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapperImpl
 import io.github.nesfeder.supabase.offline.internal.util.awaitReplaySafeSession
+import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.util.isPermanentMutationFailure
-import io.github.nesfeder.supabase.offline.internal.util.isTransientAuthFailure
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Columns
-import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
+import io.ktor.client.plugins.ResponseException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Responsible for **pushing pending local mutations** from [OfflineStore] to Supabase
- * once connectivity is available.
+ * Replays the queue of offline writes from [OfflineStore] against Supabase.
  *
- * This class does **not** queue mutations itself — that is handled by [OfflineStore]
- * and the offline-aware PostgREST builder. Instead, it:
+ * ### One global queue
+ * Every table's writes form one queue, replayed in insertion order (the queue row's id). A pass
+ * replays it front to back and stops at the first write that cannot go through for a reason that
+ * may pass — no connectivity, a `401`, `408`, `429` or `5xx`, or an unexpected error — so a later
+ * write never overtakes an earlier one, in its own table or in a table it depends on through a
+ * foreign key or a row-level-security policy. Nothing transient ever removes a write.
  *
- * 1. Reads queued [MutationRow] records from [OfflineStore]
- * 2. Replays them against the remote Supabase PostgREST API
- * 3. Marks each mutation as synced (and later removes it) on successful sync
+ * ### Rejections
+ * A write the server refuses for good (any other `4xx`) moves to the persisted rejected list with
+ * the server's status, code, message, details and hint, and the pass continues. A `403` or `409` on
+ * a write that has an earlier write still pending, in any table, is *held* instead: the earlier write
+ * may be the parent row or the row a policy checks. A write the engine cannot send faithfully — a
+ * body that no longer parses, an UPDATE or DELETE whose filter is missing or no longer replays in
+ * full — is moved to the rejected list without a request.
  *
- * Typical usage:
+ * ### Identity
+ * The queue records the identity that queued into it. A pass made under another identity sends
+ * nothing and reports [SyncStop.QueueOwnedByAnotherIdentity].
  *
- * ```kotlin
- * val syncer = OfflineMutationSyncer(store, supabase)
+ * ### Teardown
+ * [clearLocalData] cancels a pass in flight and takes the sync lock, so no request goes out once it
+ * has begun.
  *
- * // Called when network becomes available again:
- * scope.launch {
- *     syncer.syncAllTables()
- * }
- * ```
+ * ### Idempotence
+ * An INSERT whose rows all carry the table's primary key replays as an upsert that ignores
+ * duplicates: a replay of a write that reached the server but whose response was lost is then a
+ * no-op instead of a duplicate row or a `409`.
  */
 internal class OfflineMutationSyncer(
     private val store: OfflineStore,
@@ -63,354 +88,376 @@ internal class OfflineMutationSyncer(
      * Gate awaited before any replay reaches the wire. Requests carry the user JWT only while
      * the session status is `Authenticated` — during cold-start restore, after sign-out, and in
      * the post-offline `RefreshFailure` window they go out on the anon key, so RLS 403s every
-     * owner-scoped write and the permanent-failure classification below would drop the queued
-     * mutation — silent data loss for a write that succeeds once the restore or refresh lands.
-     * `false` means no authenticated session arrived within the bounded wait: the sync entry
-     * points then return without replaying, keeping the queue intact for the next trigger.
-     * Injectable for tests; defaults to [awaitReplaySafeSession] on [supabase], which fails open
-     * for clients without the Auth plugin.
+     * owner-scoped write. `false` means no authenticated session arrived within the bounded wait:
+     * the pass then sends nothing and reports [SyncStop.SessionNotReady]. Injectable for tests;
+     * defaults to [awaitReplaySafeSession] on [supabase], which fails open for clients without the
+     * Auth plugin.
      */
     private val awaitSessionSettled: suspend () -> Boolean = { supabase.awaitReplaySafeSession() },
+    /**
+     * The identity a pass would replay as, compared with the queue's recorded owner; `null` when it
+     * cannot be told, in which case nothing is sent. Injectable for tests.
+     */
+    private val currentIdentity: suspend () -> QueueIdentity? = { supabase.currentQueueIdentity() },
+    /** Where the engine learns each table's primary key. */
+    private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
 ) {
 
     /**
-     * Serializes every public sync entry point ([syncAllTables] / [syncTable]) so two concurrent
-     * triggers cannot interleave their replay loops and push the same mutation twice before
-     * [OfflineStore.markMutationSynced] lands (which would create duplicate INSERTs server-side).
-     * Re-entrancy is avoided by having the locked bodies call the private `*Locked` helpers rather
-     * than the public (self-locking) methods.
+     * Serializes every pass, so two concurrent triggers cannot replay the same write twice, and is
+     * taken by [clearLocalData] so a wipe never interleaves with a pass.
      */
     private val syncMutex = Mutex()
 
-    /**
-     * Per-process replay-failure budget keyed by [MutationRow.id]. Incremented on each unknown-error
-     * replay; once a mutation reaches [MAX_REPLAY_FAILURES] it is dead-lettered (dropped) instead of
-     * retried forever. Guarded by [syncMutex] (only ever touched from the locked sync bodies).
-     * The budget is intentionally in-memory — a durable dead-letter store is a follow-up and would
-     * require a Room schema change, which this change deliberately avoids.
-     */
-    private val failureCounts = mutableMapOf<Long, Int>()
+    /** Bumped by [clearLocalData]; a pass that sees it move stops before its next request. */
+    private val clearGeneration = MutableStateFlow(0L)
+
+    /** Passes in flight, so [clearLocalData] can cancel them. */
+    private val activeSweeps = MutableStateFlow<Set<Job>>(emptySet())
 
     /**
-     * Syncs **all tables** that currently have pending mutations.
+     * Replays the whole queue.
      *
-     * Each table is synced independently; a failure while syncing one table
-     * must **not** prevent other tables from making progress.
-     *
-     * @return number of mutations successfully synced (and marked as such).
+     * @return The number of writes the server accepted.
      */
     suspend fun syncAllTables(
         schema: String = supabase.postgrest.config.defaultSchema
-    ): Int {
-        if (!awaitSessionSettled()) {
-            sdkLogger.info { "No authenticated session; deferring mutation replay" }
-            return 0
-        }
-        return syncMutex.withLock { syncAllTablesLocked(schema) }
-    }
+    ): Int = sync(table = null, schema = schema).syncedCount
 
     /**
-     * Locked body of [syncAllTables]. Must only be called while [syncMutex] is held.
-     */
-    private suspend fun syncAllTablesLocked(schema: String): Int {
-        var totalSynced = 0
-        val pending = store.allPendingMutations()
-        if (pending.isEmpty()) return totalSynced
-
-        // Distinct: a table with N pending mutations must be swept once, not N times — every
-        // [syncTableLocked] call already drains all of that table's pending mutations.
-        val tables = pending.map { it.table }.distinct()
-
-        // Sync each table independently so that a failure in one does not
-        // prevent others from syncing. This preserves global progress while
-        // still relying on per-table ordering + failure handling in
-        // [syncTableLocked].
-        for (table in tables) {
-            try {
-                totalSynced += syncTableLocked(schema, table)
-            } catch (_: Throwable) {
-                currentCoroutineContext().ensureActive()
-                // Unknown / unexpected failure while syncing this table.
-                // Per requirements we must *not* let this abort syncing of
-                // subsequent tables, and we leave the failing table's
-                // mutations untouched so they can be retried later.
-                //
-                // We intentionally swallow the exception here; callers only
-                // receive the count of successfully synced mutations.
-            }
-        }
-        return totalSynced
-    }
-
-    /**
-     * Syncs all queued mutations for a single [table] against Supabase.
+     * Replays [table]'s writes, in insertion order. A `403` or `409` on a write that has an earlier
+     * write pending in another table is held, not rejected.
      *
-     * Returns the number of mutations that were successfully applied on the
-     * server and marked as synced locally.
+     * Unlike [syncAllTables], a pass that stops on a server-side failure — a `401`, `408`, `429`,
+     * `5xx` or an unexpected error — rethrows it, as this entry point always has; the write stays
+     * queued. A connectivity failure returns normally.
      *
-     * An UPDATE that declared [io.github.nesfeder.supabase.offline.NumericDeltaColumn]s is replayed
-     * read-before-write: the targeted row is re-read and each declared column is rebased onto the
-     * server's current value before the PATCH goes out, so a change made elsewhere while the
-     * mutation sat in the queue survives instead of being clobbered by a stale absolute. See
-     * [rebaseDeltasAgainstServer].
-     *
-     * Before anything reaches the wire the call awaits [awaitSessionSettled]: replaying without
-     * an `Authenticated` session (cold-start restore in flight, signed out, or the post-offline
-     * `RefreshFailure` window) sends owner-scoped writes on the anon key, turning them into RLS
-     * 403s dropped via the permanent-failure branch below. No authenticated session within the
-     * bound defers the whole sweep (returns 0, queue untouched).
-     *
-     * Behaviour by failure type:
-     *
-     * - **Permanent mutation failures** (403 / 404 / 409 / 422 via
-     *   [isPermanentMutationFailure] — note 401 is *transient*, see
-     *   [io.github.nesfeder.supabase.offline.internal.util.isPermanentMutationFailureStatus]):
-     *      - offending mutation is removed from the queue
-     *      - subsequent mutations for the same table continue
-     *
-     * - **Network / connectivity failures** (timeouts, connection errors via
-     *   [isNetworkOrConnectivityFailure]):
-     *      - current mutation is kept pending
-     *      - syncing aborts for this table to preserve mutation ordering
-     *
-     * - **Transient auth failures** (401 via
-     *   [io.github.nesfeder.supabase.offline.internal.util.isTransientAuthFailure]):
-     *      - current mutation is kept pending and the error is rethrown
-     *      - **never** counted toward the dead-letter budget, so a token-refresh race after
-     *        reconnect (several rapid triggers in one bad-token window) can never drop the write
-     *
-     * - **Unknown / unexpected errors**:
-     *      - current mutation is kept pending and the error is rethrown, up to
-     *        [MAX_REPLAY_FAILURES] replays; on the final replay the mutation is
-     *        dead-lettered (dropped) instead of retrying forever.
+     * @return The number of writes the server accepted.
      */
     suspend fun syncTable(
         schema: String = supabase.postgrest.config.defaultSchema,
         table: String
     ): Int {
-        if (!awaitSessionSettled()) {
-            sdkLogger.info { "No authenticated session; deferring mutation replay for $table" }
-            return 0
+        val report = sync(table = table, schema = schema)
+        val stop = report.stop
+        if (stop is SyncStop.TransientFailure && !stop.cause.isNetworkOrConnectivityFailure()) {
+            throw stop.cause
         }
-        return syncMutex.withLock { syncTableLocked(schema, table) }
+        return report.syncedCount
     }
 
     /**
-     * Locked body of [syncTable]. Must only be called while [syncMutex] is held.
+     * Runs one replay pass and reports what it did. Returns promptly when offline: the first request
+     * fails for connectivity and the pass stops there.
+     *
+     * @param table The table to replay, or `null` for the whole queue.
+     * @param schema The schema the requests address.
+     * @return What the pass synced, rejected and left pending, and why it stopped early if it did.
      */
-    private suspend fun syncTableLocked(
-        schema: String,
-        table: String
-    ): Int {
-        var syncedCount = 0
-        val pending = store.pendingMutationsForTable(table)
-        if (pending.isEmpty()) return syncedCount
-
-        sdkLogger.info { "Syncing ${pending.size} pending mutations for $table" }
-
-        val tableApi = postgrestFactory(schema, table)
-        val json = store.json
-
-        for (mutation in pending) {
-            try {
-                when (mutation.operation) {
-                    MutationOperation.INSERT -> {
-                        val body = parseJsonArrayOrNull(json, mutation.bodyJson) ?: run {
-                            // Un-parseable payload; drop this mutation and continue.
-                            store.deleteMutation(mutation.id)
-                            continue
-                        }
-                        val filter = decodeOrNull(mutation.filterJson, json)
-                        applyInsert(
-                            tableApi = tableApi,
-                            body = body,
-                            defaultToNull = mutation.defaultToNull,
-                            filter = filter
-                        )
-                    }
-
-                    MutationOperation.UPSERT -> {
-                        val body = parseJsonArrayOrNull(json, mutation.bodyJson) ?: run {
-                            store.deleteMutation(mutation.id)
-                            continue
-                        }
-                        val filter = decodeOrNull(mutation.filterJson, json)
-                        applyUpsert(
-                            tableApi = tableApi,
-                            body = body,
-                            onConflict = mutation.onConflict,
-                            ignoreDuplicates = mutation.ignoreDuplicates,
-                            defaultToNull = mutation.defaultToNull,
-                            filter = filter
-                        )
-                    }
-
-                    MutationOperation.UPDATE -> {
-                        val body = parseJsonElementOrNull(json, mutation.bodyJson) ?: run {
-                            store.deleteMutation(mutation.id)
-                            continue
-                        }
-                        val filter = decodeOrNull(mutation.filterJson, json)
-                        if (filter == null) {
-                            // Refuse to replay an unfiltered UPDATE — it would rewrite every row RLS
-                            // lets the user touch. A captured filter queues faithfully and a lossy
-                            // one fails loudly at enqueue, so this is reached only by a genuinely
-                            // filter-free update or a legacy pre-strict row — both are dropped.
-                            sdkLogger.error {
-                                "refusing unfiltered UPDATE replay for $table; dropping mutation"
-                            }
-                            store.deleteMutation(mutation.id)
-                            failureCounts.remove(mutation.id)
-                            continue
-                        }
-                        if (!FilterEngine.replaysFully(filter)) {
-                            // The descriptor decoded, but at least one condition cannot be parsed
-                            // back into a filter — so the UPDATE would run scoped by the surviving
-                            // conditions alone. That is the same table-wide hazard as the null
-                            // case above, just harder to see, so it takes the same exit.
-                            sdkLogger.error {
-                                "refusing partially-replayable UPDATE filter for $table; " +
-                                    "dropping mutation"
-                            }
-                            store.deleteMutation(mutation.id)
-                            failureCounts.remove(mutation.id)
-                            continue
-                        }
-                        applyUpdate(
-                            tableApi = tableApi,
-                            body = rebaseDeltasAgainstServer(
-                                tableApi = tableApi,
-                                table = table,
-                                body = body,
-                                filter = filter,
-                                deltaColumns = decodeNumericDeltaColumns(mutation.deltaJson, json),
-                            ),
-                            filter = filter,
-                        )
-                    }
-
-                    MutationOperation.DELETE -> {
-                        val filter = decodeOrNull(mutation.filterJson, json)
-                        if (filter == null) {
-                            // Refuse to replay an unfiltered DELETE — it would delete every row RLS
-                            // lets the user touch. A captured filter queues faithfully and a lossy
-                            // one fails loudly at enqueue, so this is reached only by a genuinely
-                            // filter-free delete or a legacy pre-strict row — both are dropped.
-                            sdkLogger.error {
-                                "refusing unfiltered DELETE replay for $table; dropping mutation"
-                            }
-                            store.deleteMutation(mutation.id)
-                            failureCounts.remove(mutation.id)
-                            continue
-                        }
-                        if (!FilterEngine.replaysFully(filter)) {
-                            // Same hazard as the UPDATE branch, with a worse outcome: a DELETE
-                            // that loses a condition removes every row the surviving conditions
-                            // and RLS still admit. Drop it rather than execute it.
-                            sdkLogger.error {
-                                "refusing partially-replayable DELETE filter for $table; " +
-                                    "dropping mutation"
-                            }
-                            store.deleteMutation(mutation.id)
-                            failureCounts.remove(mutation.id)
-                            continue
-                        }
-                        applyDelete(tableApi, filter)
+    suspend fun sync(
+        table: String? = null,
+        schema: String = supabase.postgrest.config.defaultSchema,
+    ): SyncReport {
+        if (!awaitSessionSettled()) {
+            sdkLogger.info {
+                if (table == null) "No authenticated session; deferring mutation replay"
+                else "No authenticated session; deferring mutation replay for $table"
+            }
+            return SyncReport(0, emptyList(), remainingCount(table), SyncStop.SessionNotReady)
+        }
+        val generation = clearGeneration.value
+        return coroutineScope {
+            val sweep = async {
+                syncMutex.withLock {
+                    if (clearGeneration.value != generation) {
+                        SyncReport(0, emptyList(), remainingCount(table), SyncStop.LocalDataCleared)
+                    } else {
+                        sweepLocked(table, schema, generation)
                     }
                 }
+            }
+            activeSweeps.update { sweeps -> sweeps + sweep }
+            try {
+                sweep.await()
+            } catch (cancellation: CancellationException) {
+                // Rethrows when the caller itself was cancelled; otherwise only the pass was, by
+                // clearLocalData, and there is nothing left to report on.
+                currentCoroutineContext().ensureActive()
+                SyncReport(0, emptyList(), remainingCount(table), SyncStop.LocalDataCleared)
+            } finally {
+                activeSweeps.update { sweeps -> sweeps - sweep }
+            }
+        }
+    }
 
-                // If we reach here, the remote call succeeded — mark mutation as synced
-                // but keep it in the local queue so it can still participate in
-                // overlays when SELECT falls back to cached data while offline.
-                store.markMutationSynced(id = mutation.id, table = mutation.table)
-                failureCounts.remove(mutation.id)
-                syncedCount++
-                sdkLogger.debug { "Synced ${mutation.operation} mutation for $table" }
-            } catch (throwable: Throwable) {
-                when {
-                    // Permanent failures (permission/constraint). These will never
-                    // succeed on retry, so we drop the offending mutation but
-                    // continue processing subsequent ones.
-                    throwable.isPermanentMutationFailure() -> {
-                        sdkLogger.warning {
-                            "Permanent failure for ${mutation.operation} on $table, dropping mutation"
-                        }
-                        store.deleteMutation(mutation.id)
-                        failureCounts.remove(mutation.id)
-                        // continue to next mutation
-                    }
+    /**
+     * Wipes local data with [clear] once no pass can send anything more: a pass in flight is
+     * cancelled, and [clear] runs under the sync lock.
+     *
+     * @param clear The wipe.
+     */
+    suspend fun clearLocalData(clear: suspend () -> Unit) {
+        clearGeneration.update { generation -> generation + 1 }
+        activeSweeps.value.forEach { sweep -> sweep.cancel(CancellationException("Local data cleared")) }
+        syncMutex.withLock { clear() }
+    }
 
-                    // Network / connectivity failures are transient. We keep the
-                    // current mutation (and all remaining ones) in the queue and
-                    // abort syncing for this table to preserve strict ordering.
-                    throwable.isNetworkOrConnectivityFailure() -> {
-                        sdkLogger.warning { "Network unavailable, pausing sync for $table" }
-                        break
-                    }
+    private suspend fun remainingCount(table: String?): Int =
+        if (table == null) store.pendingMutationCount() else store.pendingMutationCountForTable(table)
 
-                    // Transient auth failure (401): the access token expired while offline and
-                    // supabase-kt's refresh has not landed yet. Keep the mutation and rethrow so
-                    // the table pauses, but never count it toward the dead-letter budget — a
-                    // bad-token window (several rapid reconnect triggers) must not drop the user's
-                    // queued write. A later sync retries once the refreshed token is in place.
-                    throwable.isTransientAuthFailure() -> {
-                        sdkLogger.warning {
-                            "Unauthorized (401) replaying ${mutation.operation} on $table; " +
-                                "keeping mutation for a later retry"
-                        }
-                        throw throwable
-                    }
+    /** The pass itself. Must only be called while [syncMutex] is held. */
+    private suspend fun sweepLocked(table: String?, schema: String, generation: Long): SyncReport {
+        val identity = currentIdentity()
+        if (identity == null || !store.mayReplayAs(identity.storedValue)) {
+            sdkLogger.warning {
+                "Pending mutations were queued under another identity than the current session; not replaying"
+            }
+            return SyncReport(0, emptyList(), remainingCount(table), SyncStop.QueueOwnedByAnotherIdentity)
+        }
 
-                    // Unknown server or application error (e.g. 500). Keep the mutation
-                    // in the queue and propagate the error, but bound the retries: after
-                    // MAX_REPLAY_FAILURES replays we dead-letter it instead of poisoning
-                    // every future sync trigger.
-                    else -> {
-                        val failures = (failureCounts[mutation.id] ?: 0) + 1
-                        if (failures >= MAX_REPLAY_FAILURES) {
-                            sdkLogger.error {
-                                "dead-lettering mutation ${mutation.id} for $table after " +
-                                    "$MAX_REPLAY_FAILURES failed replays"
-                            }
-                            store.deleteMutation(mutation.id)
-                            failureCounts.remove(mutation.id)
-                            // continue to next mutation
-                        } else {
-                            failureCounts[mutation.id] = failures
-                            throw throwable
-                        }
-                    }
+        val pending = if (table == null) store.allPendingMutations() else store.pendingMutationsForTable(table)
+        if (pending.isEmpty()) return SyncReport(0, emptyList(), 0, null)
+
+        sdkLogger.info {
+            if (table == null) "Syncing ${pending.size} pending mutations"
+            else "Syncing ${pending.size} pending mutations for $table"
+        }
+
+        val tableApis = mutableMapOf<String, PostgrestQueryBuilderWrapper>()
+        val syncedTables = mutableSetOf<String>()
+        val rejected = mutableListOf<StoredRejection>()
+        var syncedCount = 0
+        var stop: SyncStop? = null
+
+        for (mutation in pending) {
+            if (clearGeneration.value != generation) {
+                stop = SyncStop.LocalDataCleared
+                break
+            }
+            val tableApi = tableApis.getOrPut(mutation.table) { postgrestFactory(schema, mutation.table) }
+            when (val outcome = replay(mutation, tableApi)) {
+                ReplayOutcome.Synced -> {
+                    store.markMutationSynced(id = mutation.id, table = mutation.table)
+                    syncedTables += mutation.table
+                    syncedCount++
+                    sdkLogger.debug { "Synced ${mutation.operation} mutation for ${mutation.table}" }
+                }
+
+                is ReplayOutcome.Rejected -> {
+                    rejected += store.rejectMutation(mutation, outcome.message, outcome.serverError)
+                }
+
+                is ReplayOutcome.Held -> {
+                    stop = SyncStop.HeldBehindEarlierMutations(mutation.id, outcome.cause)
+                    break
+                }
+
+                is ReplayOutcome.Stopped -> {
+                    stop = SyncStop.TransientFailure(outcome.cause)
+                    break
                 }
             }
         }
 
-        sdkLogger.info { "Sync complete: $syncedCount mutations synced for $table" }
-        return syncedCount
+        // A table nothing caches or observes has no use for its synced writes; others keep them
+        // until every cached query has refreshed past them.
+        syncedTables.forEach { syncedTable -> store.clearSyncedMutationsForTable(syncedTable) }
+
+        sdkLogger.info {
+            if (table == null) "Sync complete: $syncedCount mutations synced"
+            else "Sync complete: $syncedCount mutations synced for $table"
+        }
+        return SyncReport(
+            syncedCount = syncedCount,
+            rejected = rejected.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) },
+            remainingCount = remainingCount(table),
+            stop = stop,
+        )
     }
 
-    private fun parseJsonArrayOrNull(json: Json, raw: String): JsonArray? =
-        runCatching {
-            val jsonElement = json.parseToJsonElement(raw)
-            jsonElement.jsonArray
-        }.getOrNull()
+    /** How one write's replay ended. */
+    private sealed interface ReplayOutcome {
+        data object Synced : ReplayOutcome
+        data class Rejected(val message: String, val serverError: StoredServerError?) : ReplayOutcome
+        data class Held(val cause: Throwable) : ReplayOutcome
+        data class Stopped(val cause: Throwable) : ReplayOutcome
+    }
 
-    private fun parseJsonElementOrNull(json: Json, raw: String): JsonElement? =
-        runCatching { json.parseToJsonElement(raw) }.getOrNull()
+    private suspend fun replay(mutation: MutationRow, tableApi: PostgrestQueryBuilderWrapper): ReplayOutcome =
+        when (val prepared = prepare(mutation)) {
+            is Prepared.Refused -> prepared.outcome
+            is Prepared.Ready -> try {
+                prepared.request(tableApi)
+                ReplayOutcome.Synced
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                classify(mutation, failure)
+            }
+        }
+
+    private suspend fun classify(mutation: MutationRow, failure: Exception): ReplayOutcome = when {
+        failure.isNetworkOrConnectivityFailure() -> {
+            sdkLogger.warning { "Network unavailable, pausing sync for ${mutation.table}" }
+            ReplayOutcome.Stopped(failure)
+        }
+
+        failure.isPermanentMutationFailure() -> {
+            val status = failure.httpStatusOrNull()
+            if ((status == HTTP_FORBIDDEN || status == HTTP_CONFLICT) && store.hasPendingMutationBefore(mutation.id)) {
+                sdkLogger.warning {
+                    "Holding ${mutation.operation} on ${mutation.table} ($status) behind an earlier pending mutation"
+                }
+                ReplayOutcome.Held(failure)
+            } else {
+                val serverError = serverErrorOf(failure)
+                sdkLogger.warning {
+                    "Permanent failure for ${mutation.operation} on ${mutation.table} ($status); " +
+                        "moved to the rejected list"
+                }
+                ReplayOutcome.Rejected(
+                    message = serverError?.message ?: "The server refused the write",
+                    serverError = serverError,
+                )
+            }
+        }
+
+        else -> {
+            val status = failure.httpStatusOrNull()
+            sdkLogger.warning {
+                "Replay of ${mutation.operation} on ${mutation.table} failed " +
+                    "(${status ?: failure::class.simpleName}); keeping it for a later sync"
+            }
+            ReplayOutcome.Stopped(failure)
+        }
+    }
+
+    /** A write ready to send, or refused before any request. */
+    private sealed interface Prepared {
+        class Ready(val request: suspend (PostgrestQueryBuilderWrapper) -> Unit) : Prepared
+        class Refused(val outcome: ReplayOutcome.Rejected) : Prepared
+    }
+
+    private fun refuse(mutation: MutationRow, reason: String, message: String): Prepared.Refused {
+        sdkLogger.warning { "Queued ${mutation.operation} on ${mutation.table} $reason; moving it to the rejected list" }
+        return Prepared.Refused(ReplayOutcome.Rejected(message = message, serverError = null))
+    }
+
+    private fun prepare(mutation: MutationRow): Prepared {
+        val json = store.json
+        val filter = decodeOrNull(mutation.filterJson, json)
+        return when (mutation.operation) {
+            MutationOperation.INSERT -> {
+                val body = parseJsonArrayOrNull(json, mutation.bodyJson)
+                    ?: return refuse(mutation, BODY_NO_LONGER_PARSES, "The queued body no longer parses")
+                Prepared.Ready { tableApi ->
+                    applyInsert(tableApi, mutation.table, body, mutation.defaultToNull, filter)
+                }
+            }
+
+            MutationOperation.UPSERT -> {
+                val body = parseJsonArrayOrNull(json, mutation.bodyJson)
+                    ?: return refuse(mutation, BODY_NO_LONGER_PARSES, "The queued body no longer parses")
+                Prepared.Ready { tableApi ->
+                    applyUpsert(
+                        tableApi = tableApi,
+                        body = body,
+                        onConflict = mutation.onConflict,
+                        ignoreDuplicates = mutation.ignoreDuplicates,
+                        defaultToNull = mutation.defaultToNull,
+                        filter = filter,
+                    )
+                }
+            }
+
+            MutationOperation.UPDATE -> {
+                val body = parseJsonElementOrNull(json, mutation.bodyJson)
+                    ?: return refuse(mutation, BODY_NO_LONGER_PARSES, "The queued body no longer parses")
+                val replayableFilter = replayableFilterOrNull(filter)
+                    ?: return refuseUnreplayableFilter(mutation, filter)
+                Prepared.Ready { tableApi ->
+                    applyUpdate(
+                        tableApi = tableApi,
+                        body = rebaseDeltasAgainstServer(
+                            tableApi = tableApi,
+                            table = mutation.table,
+                            body = body,
+                            filter = replayableFilter,
+                            deltaColumns = decodeNumericDeltaColumns(mutation.deltaJson, json),
+                        ),
+                        filter = replayableFilter,
+                    )
+                }
+            }
+
+            MutationOperation.DELETE -> {
+                val replayableFilter = replayableFilterOrNull(filter)
+                    ?: return refuseUnreplayableFilter(mutation, filter)
+                Prepared.Ready { tableApi -> applyDelete(tableApi, replayableFilter) }
+            }
+
+            else -> refuse(mutation, "has an unknown operation", "The queued operation is not recognised")
+        }
+    }
+
+    /**
+     * [filter] when replaying it reaches exactly the rows it captured. An UPDATE or DELETE with no
+     * filter would rewrite or remove every row RLS lets the user touch; one whose filter loses a
+     * condition on replay would reach more rows than the caller targeted. Neither is ever sent.
+     */
+    private fun replayableFilterOrNull(filter: FilterDescriptor?): FilterDescriptor? =
+        filter?.takeIf { descriptor -> FilterEngine.replaysFully(descriptor) }
+
+    private fun refuseUnreplayableFilter(mutation: MutationRow, filter: FilterDescriptor?): Prepared.Refused =
+        if (filter == null) {
+            refuse(mutation, "has no filter", "An ${mutation.operation} without a filter is never replayed")
+        } else {
+            refuse(
+                mutation,
+                "has a filter that no longer replays in full",
+                "The queued filter no longer replays in full",
+            )
+        }
+
+    private fun parseJsonArrayOrNull(json: Json, raw: String): JsonArray? = try {
+        json.parseToJsonElement(raw) as? JsonArray
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+
+    private fun parseJsonElementOrNull(json: Json, raw: String): JsonElement? = try {
+        json.parseToJsonElement(raw)
+    } catch (_: IllegalArgumentException) {
+        null
+    }
 
     /* ───────────────────────────── Remote calls ───────────────────────────── */
 
     /**
-     * Apply an INSERT mutation online.
+     * Apply an INSERT mutation online. When every row carries the table's primary key, it goes out
+     * as an upsert on that key that ignores duplicates, so replaying a write that already reached
+     * the server is a no-op.
      */
     private suspend fun applyInsert(
         tableApi: PostgrestQueryBuilderWrapper,
+        table: String,
         body: JsonArray,
         defaultToNull: Boolean?,
         filter: FilterDescriptor?
     ) {
-        tableApi.insert(body) {
-            this.defaultToNull = defaultToNull ?: true
-            if (filter != null) applyTo(this, filter)
+        val keyColumns = primaryKeys.of(table)
+        if (everyRowCarriesPrimaryKey(body, keyColumns)) {
+            tableApi.upsert(body) {
+                this.onConflict = keyColumns.joinToString(",")
+                this.ignoreDuplicates = true
+                this.defaultToNull = defaultToNull ?: true
+                if (filter != null) applyTo(this, filter)
+            }
+        } else {
+            tableApi.insert(body) {
+                this.defaultToNull = defaultToNull ?: true
+                if (filter != null) applyTo(this, filter)
+            }
         }
     }
 
@@ -436,7 +483,7 @@ internal class OfflineMutationSyncer(
     /**
      * Re-reads the row this UPDATE targets and rebases its delta-declared columns onto what the
      * server holds *now* — the read-before-write that turns a queued absolute into the caller's
-     * actual intent (see [io.github.nesfeder.supabase.offline.NumericDeltaColumn]).
+     * actual intent (see [NumericDeltaColumn]).
      *
      * The read reuses the mutation's own stored filter, so it resolves exactly the rows the UPDATE
      * is about to write, and it is only issued when the mutation declares delta columns: an
@@ -450,8 +497,8 @@ internal class OfflineMutationSyncer(
      * - **several rows**: per-row bases would need per-row UPDATEs, which is a different mutation
      *   than the one queued. Logged, because a delta-declared UPDATE is expected to be row-scoped.
      *
-     * Read failures are **not** swallowed: they propagate into [syncTableLocked]'s classifier, so a
-     * connectivity failure pauses the table with the mutation still pending (correct — the device
+     * Read failures are **not** swallowed: they propagate into the pass's classifier, so a
+     * connectivity failure stops the pass with the mutation still pending (correct — the device
      * went offline again mid-drain) rather than writing a stale absolute value.
      *
      * The rebase narrows the clobber window; it does not close it. A change landing between this
@@ -491,7 +538,7 @@ internal class OfflineMutationSyncer(
     }
 
     /**
-     * Apply an UPDATE mutation online, optionally with a stored [FilterDescriptor].
+     * Apply an UPDATE mutation online with its stored [FilterDescriptor].
      *
      * The filter is re-applied to a fresh [PostgrestRequestBuilder] via [FilterEngine],
      * so we target the same rows that the offline UPDATE intended to modify.
@@ -499,31 +546,56 @@ internal class OfflineMutationSyncer(
     private suspend fun applyUpdate(
         tableApi: PostgrestQueryBuilderWrapper,
         body: JsonElement,
-        filter: FilterDescriptor?
+        filter: FilterDescriptor
     ) {
         tableApi.update(body) {
-            if (filter != null) applyTo(this, filter)
+            applyTo(this, filter)
         }
     }
 
     /**
-     * Apply a DELETE mutation online, optionally with a stored [FilterDescriptor].
+     * Apply a DELETE mutation online with its stored [FilterDescriptor].
      */
     private suspend fun applyDelete(
         tableApi: PostgrestQueryBuilderWrapper,
-        filter: FilterDescriptor?
+        filter: FilterDescriptor
     ) {
         tableApi.delete {
-            if (filter != null) applyTo(this, filter)
+            applyTo(this, filter)
         }
     }
 
+    /**
+     * The server's refusal as data: PostgREST's fields from a [PostgrestRestException], or the bare
+     * status from any other HTTP failure in [failure]'s cause chain.
+     */
+    private fun serverErrorOf(failure: Throwable): StoredServerError? {
+        var current: Throwable? = failure
+        while (current != null) {
+            when (current) {
+                is PostgrestRestException -> return StoredServerError(
+                    status = current.statusCode,
+                    code = current.code,
+                    message = current.error,
+                    details = current.details?.let { details ->
+                        (details as? JsonPrimitive)?.takeIf { it.isString }?.content ?: details.toString()
+                    },
+                    hint = current.hint,
+                )
+
+                is ResponseException -> return StoredServerError(
+                    status = current.response.status.value,
+                    message = current.response.status.description,
+                )
+            }
+            current = current.cause
+        }
+        return null
+    }
+
     private companion object {
-        /**
-         * Number of unknown-error replays a single mutation is allowed before it is dead-lettered
-         * (dropped) rather than retried on every future sync trigger. The mutation is rethrown for
-         * the first `MAX_REPLAY_FAILURES - 1` replays and dropped on the final one.
-         */
-        const val MAX_REPLAY_FAILURES = 5
+        const val HTTP_FORBIDDEN = 403
+        const val HTTP_CONFLICT = 409
+        const val BODY_NO_LONGER_PARSES = "has a body that no longer parses"
     }
 }

@@ -90,6 +90,9 @@ internal class FakePostgrestQueryBuilderWrapper(
         recordedDeleteCount++
         return onDelete?.invoke() ?: unsupported("delete")
     }
+
+    /** A scripted handle builds no HTTP request, so it cannot tell a dry run; the write is not run. */
+    override suspend fun requestsRollback(write: suspend () -> PostgrestResult): Boolean? = null
 }
 
 /**
