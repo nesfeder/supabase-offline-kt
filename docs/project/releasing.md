@@ -1,5 +1,9 @@
 # Release Runbook
 
+> **Written for an earlier engine.** This page describes the library as it was before 0.1.0: an
+> earlier engine, API and release process. Parts of it contradict what 0.1.0 will ship. It is
+> being rewritten for 0.1.0; until then, do not rely on it.
+
 How to ship a new version of the SDK to Android (GitHub Packages) and iOS (Swift Package
 Manager, backed by binary XCFrameworks attached to **GitHub Releases**).
 
@@ -12,11 +16,11 @@ matching GitHub Release as `.zip` assets and `Package.swift` resolves via
 - [TL;DR](#tldr)
 - [CI overview](#ci-overview)
 - [Prerequisites](#prerequisites)
-  - [Local PAT setup (`github.properties`)](#local-pat-setup-githubproperties)
-  - [Required GitHub Actions secrets](#required-github-actions-secrets)
+    - [Local PAT setup (`github.properties`)](#local-pat-setup-githubproperties)
+    - [Required GitHub Actions secrets](#required-github-actions-secrets)
 - [Android release](#android-release)
 - [iOS release](#ios-release)
-- [Manual XCFramework rebuild (fallback)](#manual-xcframework-rebuild-fallback)
+- [Manual XCFramework rebuild (fallback)](#manual-release-fallback)
 - [Consumer integration](#consumer-integration)
 - [Notes and caveats](#notes-and-caveats)
 
@@ -59,12 +63,12 @@ flowchart LR
 
 Files involved:
 
-- Publish workflow: [.github/workflows/shared-publish.yml](../.github/workflows/shared-publish.yml)
-- Test workflow: [.github/workflows/shared-tests.yml](../.github/workflows/shared-tests.yml)
-- Composite setup action: [.github/actions/setup-project/action.yml](../.github/actions/setup-project/action.yml)
-- Gradle config: [shared/build.gradle.kts](../shared/build.gradle.kts)
-- SPM manifest: [Package.swift](../Package.swift)
-- Scripts: [scripts/](../scripts/)
+- Publish workflow: [.github/workflows/shared-publish.yml](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/.github/workflows/shared-publish.yml)
+- Test workflow: [.github/workflows/shared-tests.yml](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/.github/workflows/shared-tests.yml)
+- Composite setup action: [.github/actions/setup-project/action.yml](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/.github/actions/setup-project/action.yml)
+- Gradle config: [shared/build.gradle.kts](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/build.gradle.kts)
+- SPM manifest: [Package.swift](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/Package.swift)
+- Scripts: [scripts/](https://github.com/nesfeder/supabase-offline-kt/tree/9b014a795453590d7aecd704b01ca36ade8f67cb/scripts)
 
 ## Prerequisites
 
@@ -86,10 +90,10 @@ token=ghp_yourPATValue
 ```
 
 This file is gitignored. The publishing block in
-[shared/build.gradle.kts](../shared/build.gradle.kts) only configures the GH Packages repo when
+[shared/build.gradle.kts](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/build.gradle.kts) only configures the GH Packages repo when
 this file is present:
 
-```146:167:shared/build.gradle.kts
+```kotlin title="shared/build.gradle.kts" linenums="146"
 val githubProps = runCatching {
     Properties().apply {
         load(rootProject.file("github.properties").inputStream())
@@ -124,38 +128,38 @@ if (githubProps != null) {
 
 1. **Cut a release branch** off `main`. The name must match `release/v*.*`:
 
-   ```
-   git checkout main && git pull
-   git checkout -b release/v1.0.0
-   ```
+    ```
+    git checkout main && git pull
+    git checkout -b release/v1.0.0
+    ```
 
-2. **Bump the version** in [shared/build.gradle.kts](../shared/build.gradle.kts) (the field on
-   line 144):
+2. **Bump the version** in [shared/build.gradle.kts](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/build.gradle.kts) (the field on
+    line 144):
 
-   ```kotlin
-   group = "io.github.nesfeder.supabase-offline-kt"
-   version = "1.0.0"
-   ```
+    ```kotlin
+    group = "io.github.nesfeder.supabase-offline-kt"
+    version = "1.0.0"
+    ```
 
 3. **Commit and push:**
 
-   ```
-   git commit -am "Release v1.0.0"
-   git push -u origin release/v1.0.0
-   ```
+    ```
+    git commit -am "Release v1.0.0"
+    git push -u origin release/v1.0.0
+    ```
 
 4. **Wait for CI.** The `publish-release-android` job runs
-   `./scripts/check-maven-artifact-exists.sh` first; if `shared-android-1.0.0.pom` already exists
-   in GH Packages, the job short-circuits with `exit 78` (see
-   [Notes and caveats](#notes-and-caveats)). Otherwise it runs:
+    `./scripts/check-maven-artifact-exists.sh` first; if `shared-android-1.0.0.pom` already exists
+    in GH Packages, the job short-circuits with `exit 78` (see
+    [Notes and caveats](#notes-and-caveats)). Otherwise it runs:
 
-   ```
-   ./gradlew assembleRelease publishAndroidReleasePublicationToMavenRepository --stacktrace
-   ```
+    ```
+    ./gradlew assembleRelease publishAndroidReleasePublicationToMavenRepository --stacktrace
+    ```
 
 5. **Verify** the artifact at
-   `https://github.com/nesfeder/supabase-offline-kt/packages` —
-   `io.github.nesfeder.supabase-offline-kt:shared-android:1.0.0` should appear.
+    `https://github.com/nesfeder/supabase-offline-kt/packages` —
+    `io.github.nesfeder.supabase-offline-kt:shared-android:1.0.0` should appear.
 
 ## iOS release
 
@@ -163,37 +167,38 @@ The Android job above runs in parallel on the same release branch.
 
 1. The `publish-release-ios` job runs `./scripts/check-git-tag-exists.sh`, then:
 
-   ```
-   ./scripts/release-xcframeworks.sh --publish
-   ```
+    ```
+    ./scripts/release-xcframeworks.sh --publish
+    ```
 
-   That single script:
-   - builds the KMP framework via `./gradlew :shared:assembleSupabaseOfflineReleaseXCFramework`
-     (finalized by `buildSupportXCFramework` — see [shared/build.gradle.kts](../shared/build.gradle.kts)
-     lines 129–141 — which runs [scripts/build-support-xcframework.sh](../scripts/build-support-xcframework.sh)
-     to produce `SupabaseOfflineSupport.xcframework` from the Swift wrapper Xcode project),
-   - copies both XCFrameworks into `ios/distribution/` (gitignored),
-   - zips each one as `SupabaseOffline.xcframework.zip` /
-     `SupabaseOfflineSupport.xcframework.zip`,
-   - computes the SwiftPM-format SHA-256 checksum via `swift package compute-checksum`,
-   - rewrites the `version` / `kmpChecksum` / `supportChecksum` constants at the top of
-     [Package.swift](../Package.swift) in place,
-   - calls `gh release create $VERSION --generate-notes <zips>` to create the GitHub Release
-     and attach both zips (uses the workflow's `GITHUB_TOKEN`).
+    That single script:
+
+    - builds the KMP framework via `./gradlew :shared:assembleSupabaseOfflineReleaseXCFramework`
+      (finalized by `buildSupportXCFramework` — see [shared/build.gradle.kts](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/build.gradle.kts)
+      lines 129–141 — which runs [scripts/build-support-xcframework.sh](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/scripts/build-support-xcframework.sh)
+      to produce `SupabaseOfflineSupport.xcframework` from the Swift wrapper Xcode project),
+    - copies both XCFrameworks into `ios/distribution/` (gitignored),
+    - zips each one as `SupabaseOffline.xcframework.zip` /
+      `SupabaseOfflineSupport.xcframework.zip`,
+    - computes the SwiftPM-format SHA-256 checksum via `swift package compute-checksum`,
+    - rewrites the `version` / `kmpChecksum` / `supportChecksum` constants at the top of
+      [Package.swift](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/Package.swift) in place,
+    - calls `gh release create $VERSION --generate-notes <zips>` to create the GitHub Release
+      and attach both zips (uses the workflow's `GITHUB_TOKEN`).
 
 2. A follow-up step commits the patched `Package.swift` back to the release branch as the
-   CI bot.
+    CI bot.
 
 3. Once CI is green, **open a PR** from `release/v1.0.0` to `main`. The diff is only the
-   `Package.swift` checksum bump + the Android version bump.
+    `Package.swift` checksum bump + the Android version bump.
 
 4. After merging, **tag the merge commit** on `main`:
 
-   ```
-   git checkout main && git pull
-   git tag -a 1.0.0 -m "v1.0.0"
-   git push origin --tags
-   ```
+    ```
+    git checkout main && git pull
+    git tag -a 1.0.0 -m "v1.0.0"
+    git push origin --tags
+    ```
 
 SwiftPM consumers resolve `Package.swift` at the tagged commit, which contains the right URL +
 checksum for the just-published GitHub Release assets.
@@ -249,7 +254,7 @@ dependencies {
 
 ### iOS (Swift Package Manager)
 
-Depend on the repo's root [Package.swift](../Package.swift). It declares two
+Depend on the repo's root [Package.swift](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/Package.swift). It declares two
 `.binaryTarget(url:checksum:)` artifacts that resolve from the matching GitHub Release.
 
 Consumers depend on the package URL and pin to a tag:
@@ -271,8 +276,8 @@ Then in your app target:
 ## Notes and caveats
 
 - **`exit 78` shows as a red CI run.** Both guard scripts —
-  [check-maven-artifact-exists.sh](../scripts/check-maven-artifact-exists.sh) and
-  [check-git-tag-exists.sh](../scripts/check-git-tag-exists.sh) — exit with code 78 to mean
+  [check-maven-artifact-exists.sh](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/scripts/check-maven-artifact-exists.sh) and
+  [check-git-tag-exists.sh](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/scripts/check-git-tag-exists.sh) — exit with code 78 to mean
   "already published, skipping." GitHub Actions treats any non-zero exit as a step failure, so
   re-running publish on an already-published version produces a red workflow even though nothing
   actually failed. Read the step log to confirm the skip before treating it as a problem.
@@ -285,7 +290,7 @@ Then in your app target:
   references the previous release's URL and checksum — that's normal. SwiftPM consumers always
   pin to a tag, never `branch: "main"`, so this only affects you when running `swift build`
   locally on the package itself.
-- **Test workflow runs on `main` and PRs.** [.github/workflows/shared-tests.yml](../.github/workflows/shared-tests.yml)
+- **Test workflow runs on `main` and PRs.** [.github/workflows/shared-tests.yml](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/.github/workflows/shared-tests.yml)
   runs `./gradlew :shared:allTests` on every push to `main` and on every pull request. Coverage
   reporting is not wired up in this repo today — use `./gradlew :shared:koverHtmlReport`
   locally if you want a coverage report.

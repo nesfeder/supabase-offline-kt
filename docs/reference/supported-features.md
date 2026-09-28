@@ -1,8 +1,12 @@
 # API Reference
 
+> **Written for an earlier engine.** This page describes the library as it was before 0.1.0: an
+> earlier engine, API and release process. Parts of it contradict what 0.1.0 will ship. It is
+> being rewritten for 0.1.0; until then, do not rely on it.
+
 This document lists the public types, their behavior, and the exceptions you should expect to
-handle. For the *why* behind any of this, see [architecture.md](./architecture.md). For real
-usage examples in the test apps, see [test-apps.md](./test-apps.md).
+handle. For the *why* behind any of this, see [architecture.md](../project/internals.md). For real
+usage examples in the test apps, see [test-apps.md](../samples/index.md).
 
 ## Contents
 
@@ -12,18 +16,18 @@ usage examples in the test apps, see [test-apps.md](./test-apps.md).
 - [Mutation strategies (`MutationStrategy`)](#mutation-strategies-mutationstrategy)
 - [Exception types](#exception-types)
 - [Behavior reference](#behavior-reference)
-  - [SELECT (one-shot)](#select-one-shot)
-  - [SELECT as Flow](#select-as-flow)
-  - [Mutations (INSERT / UPSERT / UPDATE / DELETE)](#mutations-insert--upsert--update--delete)
-  - [Sync APIs](#sync-apis)
-  - [Storage downloads](#storage-downloads)
-  - [Storage path helpers](#storage-path-helpers)
-  - [Pending mutation count](#pending-mutation-count)
+    - [SELECT (one-shot)](#select-one-shot)
+    - [SELECT as Flow](#select-as-flow)
+    - [Mutations (INSERT / UPSERT / UPDATE / DELETE)](#mutations-insert-upsert-update-delete)
+    - [Sync APIs](#sync-apis)
+    - [Storage downloads](#storage-downloads)
+    - [Storage path helpers](#storage-path-helpers)
+    - [Pending mutation count](#pending-mutation-count)
 
 ## Client surface
 
 The entry point is the `SupabaseOfflineClient` interface, defined in
-[shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt).
+[shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt).
 
 | Member | Purpose |
 |--------|---------|
@@ -37,7 +41,7 @@ The entry point is the `SupabaseOfflineClient` interface, defined in
 | `pendingMutationCountFlow()` / `pendingMutationCountFlow(table)` | Reactive `Flow<Int>` |
 
 `OfflinePostgrestQueryBuilder` (in
-[OfflinePostgrestQueryBuilder.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt))
+[OfflinePostgrestQueryBuilder.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt))
 exposes:
 
 - `select` — one-shot, configurable via `ReadStrategy`
@@ -49,14 +53,14 @@ exposes:
 
 > **iOS note:** `selectAsFlow` is currently exposed only in the Kotlin/Android surface. iOS code
 > uses the Swift wrapper in
-> [ios/support/SupabaseOfflineSupport/](../ios/support/SupabaseOfflineSupport/), which provides
+> [ios/support/SupabaseOfflineSupport/](https://github.com/nesfeder/supabase-offline-kt/tree/9b014a795453590d7aecd704b01ca36ade8f67cb/ios/support/SupabaseOfflineSupport), which provides
 > `selectAll`, `selectRaw`, `selectColumns`, `insertOne`, `updateOne`, `deleteWhere`, etc., all
 > built on the one-shot Kotlin API.
 
 ## Read strategies (`ReadStrategy`)
 
 Defined as a sealed interface in
-[OperationOfflineStrategy.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt).
+[OperationOfflineStrategy.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt).
 
 | Variant | Behavior |
 |---------|----------|
@@ -68,7 +72,7 @@ Defined as a sealed interface in
 `cacheDuration` is a `kotlin.time.Duration?`. `null` means "no TTL — never stale by time". A
 millisecond constructor overload is provided for Swift convenience.
 
-See the [caching deep-dive](./architecture.md#read-path-caching-deep-dive) for how TTL is
+See the [caching deep-dive](../project/internals.md#read-path-caching-deep-dive) for how TTL is
 evaluated, signature generation, and the cache subset resolver.
 
 ## Reactive read strategies (`FlowReadStrategy`)
@@ -112,7 +116,7 @@ supabase-kt, Ktor, kotlinx, and Room. Catch by type at the call site.
 ### Network vs. server classification
 
 `isNetworkOrConnectivityFailure()` in
-[ThrowableExtensions.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt)
+[ThrowableExtensions.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt)
 drives all fallback and queuing behavior:
 
 - **Network/connectivity (transient):** `HttpRequestTimeoutException`, `ConnectTimeoutException`,
@@ -171,21 +175,21 @@ drives all fallback and queuing behavior:
 ### Storage path helpers
 
 Convenience extensions defined per platform — see
-[OfflineBucketApi.android.kt](../shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt)
+[OfflineBucketApi.android.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt)
 and
-[OfflineBucketApi.ios.kt](../shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt).
+[OfflineBucketApi.ios.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt).
 
 | Method | Behavior | Throws? | Possible exceptions |
 |---|---|---|---|
 | `ensureLocalPath(objectPath, isPublic)` (iOS) / `ensureLocalFile(objectPath, isPublic)` (Android) | Returns cached path if present. Otherwise downloads (download errors caught, returns `null`). | Yes | `IOException`, database errors |
 | `localPathIfCached(objectPath)` (iOS) / `localUriIfCached(objectPath)` (Android) | Returns cached path or `null`. Reads from local database directly. | Yes | Database errors |
-| `storageCacheMetadata(objectPath)` | Returns [`StorageCacheMetadata`](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt) when a cache row exists **and the file exists on disk**, otherwise returns `null`. Includes `lastFetchedEpochMs`. | Yes | Database errors |
+| `storageCacheMetadata(objectPath)` | Returns [`StorageCacheMetadata`](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt) when a cache row exists **and the file exists on disk**, otherwise returns `null`. Includes `lastFetchedEpochMs`. | Yes | Database errors |
 | `ensureLocalFileUrl(objectPath, isPublic)` (iOS) / `ensureLocalUri(objectPath, isPublic)` (Android) | Delegates to `ensureLocalPath` / `ensureLocalFile`, returns a `file://` URL / `Uri` | Yes | Same as `ensureLocalPath` |
 | `localFileUrlIfCached(objectPath)` (iOS) | Delegates to `localPathIfCached`, prepends `file://` | Yes | Same as `localPathIfCached` |
 
 **Client-driven staleness:** The SDK does not enforce a max age for storage files. Compare
 `StorageCacheMetadata.lastFetchedEpochMs` to your own cutoff to decide whether to use the cache
-or re-download. See [storage.md](./storage.md) for examples.
+or re-download. See [storage.md](../behaviours/storage.md) for examples.
 
 ### Pending mutation count
 
