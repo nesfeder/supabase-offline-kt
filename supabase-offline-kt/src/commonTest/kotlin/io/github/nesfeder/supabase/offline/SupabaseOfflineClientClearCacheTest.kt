@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline
 
@@ -15,6 +15,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import kotlin.time.ExperimentalTime
 
 /**
  * Verifies [SupabaseOfflineClientImpl.clearAllCache] wipes downloaded storage files from disk (not

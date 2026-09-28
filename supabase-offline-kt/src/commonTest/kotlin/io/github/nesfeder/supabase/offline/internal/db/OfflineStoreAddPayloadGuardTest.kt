@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
@@ -9,6 +9,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.time.ExperimentalTime
 
 /**
  * Tests for the empty-clobber guard in [OfflineStore.addPayload]: **an unattributed empty never

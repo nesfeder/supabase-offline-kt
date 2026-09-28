@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline
 
@@ -16,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import kotlin.time.ExperimentalTime
 
 /**
  * Locks the offline mutation encode path onto the SDK's shared [OfflineJson] configuration.

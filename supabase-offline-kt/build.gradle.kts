@@ -165,6 +165,16 @@ val extractHostSqliteNative = tasks.register<ExtractHostSqliteNative>("extractHo
     outputDirectory.set(layout.buildDirectory.dir("host-sqlite-native"))
 }
 
+/** Tells the schema-continuity test where the checked-in Room schemas are, whatever the working directory. */
+class SchemaDirectoryArgument(
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    val directory: File,
+) : CommandLineArgumentProvider {
+    override fun asArguments(): Iterable<String> =
+        listOf("-Dsupabase.offline.schemaDirectory=${directory.absolutePath}")
+}
+
 tasks.withType<Test>().matching { it.name == "testAndroidHostTest" }.configureEach {
     jvmArgumentProviders.add(
         HostSqliteNativeArguments(
@@ -172,6 +182,7 @@ tasks.withType<Test>().matching { it.name == "testAndroidHostTest" }.configureEa
             libraryName = hostSqliteNativeEntry().substringAfterLast('/'),
         ),
     )
+    jvmArgumentProviders.add(SchemaDirectoryArgument(layout.projectDirectory.dir("schemas").asFile))
 }
 
 room {

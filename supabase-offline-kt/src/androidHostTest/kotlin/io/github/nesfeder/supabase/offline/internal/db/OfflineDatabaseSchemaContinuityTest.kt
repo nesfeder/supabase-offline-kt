@@ -20,11 +20,16 @@ import kotlin.test.assertTrue
  * then takes the destructive fallback on the device — deleting those writes. The exported schema is
  * the record of what the build compiles; these cases fail the build if it drifts.
  *
- * Reads the checked-in `schemas/` directory, so it runs on the JVM host only.
+ * Reads the checked-in `schemas/` directory (its location is passed in by the build), so it runs on
+ * the JVM host only.
  */
 class OfflineDatabaseSchemaContinuityTest {
 
-    private val schemaDirectory = File("schemas/io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase")
+    /** The build passes the schemas directory; the relative fallback serves a run from the module directory. */
+    private val schemaDirectory = File(
+        System.getProperty("supabase.offline.schemaDirectory") ?: "schemas",
+        "io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase",
+    )
 
     private fun exportedSchema(version: Int): JsonObject {
         val file = File(schemaDirectory, "$version.json")

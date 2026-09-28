@@ -13,19 +13,22 @@ class MutationFailureStatusClassificationTest {
 
     @Test
     fun `401 unauthorized is transient not a permanent mutation failure`() {
-        // Right after reconnect the access token can be expired while supabase-kt's auto-refresh
-        // is still in flight; dropping the queued write here would silently lose it.
+        // Given / When / Then — right after reconnect the access token can be expired while
+        // supabase-kt's auto-refresh is still in flight; dropping the queued write here would
+        // silently lose it.
         assertFalse(401.isPermanentMutationFailureStatus())
     }
 
     @Test
     fun `408 and 429 are transient mutation failures`() {
+        // Given / When / Then
         assertFalse(408.isPermanentMutationFailureStatus())
         assertFalse(429.isPermanentMutationFailureStatus())
     }
 
     @Test
     fun `other 4xx client errors are permanent mutation failures`() {
+        // Given / When / Then
         assertTrue(403.isPermanentMutationFailureStatus())
         assertTrue(404.isPermanentMutationFailureStatus())
         assertTrue(409.isPermanentMutationFailureStatus())
@@ -34,6 +37,7 @@ class MutationFailureStatusClassificationTest {
 
     @Test
     fun `5xx and non-error statuses are not permanent mutation failures`() {
+        // Given / When / Then
         assertFalse(500.isPermanentMutationFailureStatus())
         assertFalse(503.isPermanentMutationFailureStatus())
         assertFalse(200.isPermanentMutationFailureStatus())

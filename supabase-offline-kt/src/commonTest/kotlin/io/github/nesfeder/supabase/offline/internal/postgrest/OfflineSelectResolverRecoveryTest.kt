@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
@@ -43,6 +43,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import kotlin.time.ExperimentalTime
 
 /**
  * Integration tests across the real resolver stack: [OfflineSelectResolver] +

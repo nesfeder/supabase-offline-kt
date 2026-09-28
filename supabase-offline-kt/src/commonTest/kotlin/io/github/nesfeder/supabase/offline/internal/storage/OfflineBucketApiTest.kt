@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.storage
 
@@ -37,6 +37,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.time.ExperimentalTime
 
 /**
  * Behavioral tests for [OfflineBucketApi]'s download-with-disk-cache path: successful caching,

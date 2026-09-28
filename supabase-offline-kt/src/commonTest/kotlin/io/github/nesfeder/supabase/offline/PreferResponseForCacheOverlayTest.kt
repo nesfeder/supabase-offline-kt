@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline
 
@@ -17,6 +17,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.time.ExperimentalTime
 
 /**
  * Regression coverage for the "saved but empty" bug where a live `selectAsFlow` collector
@@ -40,6 +41,7 @@ class PreferResponseForCacheOverlayTest {
 
     @Test
     fun prefers_response_when_it_is_a_non_empty_json_array() {
+        // Given
         val requestBody = buildJsonArray {
             add(buildJsonObject {
                 put("user_id", "u-1")
@@ -48,14 +50,16 @@ class PreferResponseForCacheOverlayTest {
         }
         val serverResponse = """[{"id":"server-assigned","user_id":"u-1","external_id":42}]"""
 
+        // When
         val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
 
+        // Then
         assertEquals(serverResponse, chosen)
     }
 
     @Test
     fun falls_back_to_request_body_when_response_is_empty_array() {
-        // Matches the INSERT-without-select() case where the server returns [].
+        // Given — the INSERT-without-select() case, where the server returns []
         val requestBody = buildJsonArray {
             add(buildJsonObject {
                 put("note_id", "log-1")
@@ -65,20 +69,25 @@ class PreferResponseForCacheOverlayTest {
         }
         val emptyResponse = "[]"
 
+        // When
         val chosen = preferResponseForCacheOverlay(requestBody, emptyResponse, json)
 
+        // Then
         assertEquals(requestBody.toString(), chosen)
     }
 
     @Test
     fun falls_back_to_request_body_when_response_is_malformed_json() {
+        // Given
         val requestBody = buildJsonArray {
             add(buildJsonObject { put("foo", "bar") })
         }
         val garbageResponse = "not json at all"
 
+        // When
         val chosen = preferResponseForCacheOverlay(requestBody, garbageResponse, json)
 
+        // Then
         assertEquals(requestBody.toString(), chosen)
     }
 
@@ -89,6 +98,8 @@ class PreferResponseForCacheOverlayTest {
         // materialized into a real cache row using the *response* body (server-assigned id) rather
         // than the id-less request body. Downstream decode + join round-trips the id — the thing
         // that silently broke before.
+
+        // Given
         val objectDao = FakeObjectDao()
         val store = buildStore(objectDao)
         val signature = "sig-notes-user-1"
@@ -104,6 +115,7 @@ class PreferResponseForCacheOverlayTest {
         val serverResponse =
             """[{"id":"server-log-id","user_id":"u-1","external_id":42,"notes":null}]"""
 
+        // When
         store.applyLocalMutationToCache(
             table = "notes",
             operation = MutationOperation.UPSERT,
@@ -113,6 +125,7 @@ class PreferResponseForCacheOverlayTest {
             liveSignatures = setOf(signature),
         )
 
+        // Then
         val cached = objectDao.getRow("notes", signature)
         assertNotNull(cached)
         val decoded = json.decodeFromString<List<NoteDtoForTest>>(cached.payload)

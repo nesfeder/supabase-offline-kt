@@ -20,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -81,11 +82,11 @@ class IsDistinctOperatorTest {
     @Test
     fun a_cached_query_filtered_on_isdistinct_is_not_exhaustive() {
         // Given / When
-        val filters = parseSignatureFilters("todos?status=isdistinct.done")
+        val filters = assertNotNull(parseSignatureFilters("todos?status=isdistinct.done"))
 
         // Then — the admit gate falls back to appending rather than hiding a row
-        assertFalse(filters?.exhaustive ?: true)
-        assertNull(filters?.descriptor)
+        assertFalse(filters.exhaustive)
+        assertNull(filters.descriptor)
     }
 
     @Test

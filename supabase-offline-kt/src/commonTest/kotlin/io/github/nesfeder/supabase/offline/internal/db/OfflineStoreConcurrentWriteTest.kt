@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
@@ -16,6 +16,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /**
  * Tests that the object cache's read-modify-write paths are serialized per table.
@@ -33,6 +35,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
  * Every test parks one writer between its read and its write with
  * [FakeObjectDao.onAllForTableSnapshot], so the interleaving is exact rather than timing-dependent.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class OfflineStoreConcurrentWriteTest {
 
     private val json = Json { ignoreUnknownKeys = true }
