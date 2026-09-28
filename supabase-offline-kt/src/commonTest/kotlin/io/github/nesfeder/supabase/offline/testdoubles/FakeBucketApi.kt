@@ -8,6 +8,7 @@ import io.github.jan.supabase.storage.FileObjectV2
 import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.jan.supabase.storage.ImageTransformation
 import io.github.jan.supabase.storage.PublicUrlBuilder
+import io.github.jan.supabase.storage.PurgeCacheOptions
 import io.github.jan.supabase.storage.SignedUrl
 import io.github.jan.supabase.storage.SignedUrlBuilder
 import io.github.jan.supabase.storage.SignedUrlsBuilder
@@ -132,6 +133,9 @@ internal class FakeBucketApi(
 
     override suspend fun changePublicStatusTo(public: Boolean): Unit =
         unsupported("changePublicStatusTo")
+
+    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
+        unsupported("purgeCache")
 
     override fun publicUrl(path: String, builder: PublicUrlBuilder.() -> Unit): String =
         unsupported("publicUrl")

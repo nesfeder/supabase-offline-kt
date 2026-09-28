@@ -54,9 +54,35 @@ internal data class FilterDescriptor(
         val value: String
     ) {
         val operator: FilterOperator?
-            get() = FilterOperator.entries.firstOrNull { it.identifier == operatorId }
+            get() = offlineFilterOperatorOrNull(operatorId)
     }
 }
+
+/**
+ * Operators supabase-kt defines that the offline engine has no semantics for.
+ *
+ * [FilterOperator.ISDISTINCT] arrived in supabase-kt 3.8.0. The engine cannot evaluate it against
+ * a cached row, and it was never captured or replayed before that release, so it stays in the
+ * "unrecognised operator" class it was in when its identifier was not an enum value at all.
+ */
+private val OPERATORS_WITHOUT_OFFLINE_SEMANTICS: Set<FilterOperator> = setOf(FilterOperator.ISDISTINCT)
+
+/**
+ * Resolves a PostgREST operator [identifier] to the [FilterOperator] the offline engine models,
+ * or `null` when it models none.
+ *
+ * Every capture path and the stored-condition lookup resolve through here, so an operator in
+ * [OPERATORS_WITHOUT_OFFLINE_SEMANTICS] is handled consistently as unrecognised: strict capture
+ * refuses to queue it, lenient capture skips it, the overlay never matches it and replay never
+ * applies it.
+ *
+ * @param identifier The operator prefix of a PostgREST filter value, e.g. `"eq"`.
+ * @return The modelled operator, or `null` when the identifier is unknown or unmodelled.
+ */
+internal fun offlineFilterOperatorOrNull(identifier: String): FilterOperator? =
+    FilterOperator.entries.firstOrNull { operator ->
+        operator.identifier == identifier && operator !in OPERATORS_WITHOUT_OFFLINE_SEMANTICS
+    }
 
 /**
  * Extract a best-effort [FilterDescriptor] from a [PostgrestRequestBuilder].
@@ -98,7 +124,7 @@ internal fun buildDescriptorFromBuilder(
         val opIdentifier = parts[0]
         val rawValue = parts[1]
 
-        val operator = FilterOperator.entries.firstOrNull { it.identifier == opIdentifier }
+        val operator = offlineFilterOperatorOrNull(opIdentifier)
             ?: return@forEach
 
         val normalizedValue = rawValue.trim().trim('"', '\'')
@@ -197,7 +223,7 @@ internal fun buildDescriptorStrict(
         val parts = first.split('.', limit = 2)
         val operatorId = parts.firstOrNull()
         val operator = operatorId?.let { candidate ->
-            FilterOperator.entries.firstOrNull { it.identifier == candidate }
+            offlineFilterOperatorOrNull(candidate)
         }
         if (operator == null || parts.size < 2) {
             throw UnsupportedOfflineFilterException(
@@ -447,6 +473,10 @@ internal object FilterEngine {
             FilterOperator.PLFTS -> textSearch(cond.column, rawValue, TextSearchType.PLAINTO)
             FilterOperator.PHFTS -> textSearch(cond.column, rawValue, TextSearchType.PHRASETO)
             FilterOperator.WFTS -> textSearch(cond.column, rawValue, TextSearchType.WEBSEARCH)
+
+            // Never reached: offlineFilterOperatorOrNull does not resolve an operator without
+            // offline semantics. Listed so the `when` stays exhaustive without an `else`.
+            FilterOperator.ISDISTINCT -> return false
         }
         return true
     }
@@ -831,7 +861,8 @@ internal object FilterEngine {
             FilterOperator.FTS,
             FilterOperator.PLFTS,
             FilterOperator.PHFTS,
-            FilterOperator.WFTS -> false
+            FilterOperator.WFTS,
+            FilterOperator.ISDISTINCT -> false
         }
     }
 }
