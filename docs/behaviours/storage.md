@@ -1,12 +1,14 @@
 # Storage
 
+--8<-- "docs/.snippets/legacy-notice.md"
+
 The SDK wraps a Supabase Storage `BucketApi` with an offline-aware layer that caches successful
 downloads to disk, falls back to those files when the network is down, and tracks metadata in the
 local Room database.
 
 For internals (`OfflineBucketApi` + Okio file IO), see
-[architecture.md](./architecture.md#storage-cache). For exception behavior, see
-[api-reference.md](./api-reference.md#storage-downloads).
+[architecture.md](../project/internals.md#storage-cache). For exception behavior, see
+[api-reference.md](../reference/supported-features.md#storage-downloads).
 
 ## Contents
 
@@ -24,7 +26,7 @@ val bucket = offline.storage("public")
 ```
 
 `SupabaseOfflineClient.storage(bucket)` returns a `BucketApi` (the supabase-kt type) backed by
-[OfflineBucketApi.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt).
+[OfflineBucketApi.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt).
 You can use every method `BucketApi` provides; the wrapper transparently caches downloads and
 mirrors writes locally.
 
@@ -50,9 +52,9 @@ Cached files live under the offline base directory at:
 ```
 
 The path resolver is in
-[FileIO.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.kt):
+[FileIO.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.kt):
 
-```19:25:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.kt" linenums="19"
 internal fun resolveLocalPath(baseDir: Path, bucketId: String, objectPath: String): Path {
     val clean = objectPath
         .removePrefix("/$bucketId/")
@@ -70,7 +72,7 @@ internal fun resolveLocalPath(baseDir: Path, bucketId: String, objectPath: Strin
   `shared/src/iosMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.ios.kt`.
 
 You can override the base by passing `offlineStoragePath` in
-[`SupabaseOfflineConfig`](./configuration.md).
+[`SupabaseOfflineConfig`](../reference/configuration.md).
 
 ## Path helpers
 
@@ -80,7 +82,7 @@ Convenient extensions on `BucketApi` (which under the hood downcast to the inter
 ### Android
 
 Defined in
-[shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt](../shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt):
+[shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt):
 
 | Function | Returns | Behavior |
 |----------|---------|----------|
@@ -92,7 +94,7 @@ Defined in
 ### iOS
 
 Defined in
-[shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt](../shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt):
+[shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt):
 
 | Function | Returns | Behavior |
 |----------|---------|----------|
@@ -128,9 +130,9 @@ if (metadata == null || metadata.lastFetchedEpochMs < cutoff) {
 ```
 
 The metadata type lives at
-[shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt):
+[shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt):
 
-```11:19:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt" linenums="11"
 data class StorageCacheMetadata(
     val bucketId: String,
     /** Object key within the bucket (same string passed to download / path helpers). */

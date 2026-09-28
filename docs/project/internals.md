@@ -1,22 +1,24 @@
 # SDK Architecture
 
+--8<-- "docs/.snippets/legacy-notice.md"
+
 This document explains how the Supabase Offline SDK (Kotlin Multiplatform) is structured internally — how
 caching, mutation queueing, sync, and error classification are implemented across the Kotlin
 Multiplatform module.
 
 If you are looking for the **how to use it** surface (strategies, exception tables, etc.), see
-[api-reference.md](./api-reference.md). For the persistence layer details, see
-[persistence.md](./persistence.md).
+[api-reference.md](../reference/supported-features.md). For the persistence layer details, see
+[persistence.md](../reference/on-device-data.md).
 
 ## Contents
 
 - [Module map](#module-map)
 - [Read path (caching deep-dive)](#read-path-caching-deep-dive)
-  - [Cache key: the SELECT signature](#cache-key-the-select-signature)
-  - [`cacheDuration` is TTL-at-read, not TTL-at-write](#cacheduration-is-ttl-at-read-not-ttl-at-write)
-  - [Subset derivation](#subset-derivation)
-  - [Mutation overlay during reads](#mutation-overlay-during-reads)
-  - [Read strategy state machines](#read-strategy-state-machines)
+    - [Cache key: the SELECT signature](#cache-key-the-select-signature)
+    - [`cacheDuration` is TTL-at-read, not TTL-at-write](#cacheduration-is-ttl-at-read-not-ttl-at-write)
+    - [Subset derivation](#subset-derivation)
+    - [Mutation overlay during reads](#mutation-overlay-during-reads)
+    - [Read strategy state machines](#read-strategy-state-machines)
 - [Write path (mutation queueing)](#write-path-mutation-queueing)
 - [Sync orchestration](#sync-orchestration)
 - [Network vs. server error classification](#network-vs-server-error-classification)
@@ -82,26 +84,26 @@ flowchart TB
 
 | Layer | File |
 |-------|------|
-| Public client interface | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt) |
-| Public query builder | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt) |
-| Read/mutation/flow strategies | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt) |
-| Read resolver | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt) |
-| Signature builder | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/SignatureBuilder.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/SignatureBuilder.kt) |
-| Subset resolver | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt) |
-| Filter engine (overlay + replay) | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt) |
-| Central Room store | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineStore.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineStore.kt) |
-| Mutation overlay | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationOverlay.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationOverlay.kt) |
-| Mutation sync | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationSyncer.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationSyncer.kt) |
-| Storage bucket wrapper | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt) |
-| Error classification | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt) |
+| Public client interface | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt) |
+| Public query builder | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt) |
+| Read/mutation/flow strategies | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt) |
+| Read resolver | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt) |
+| Signature builder | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/SignatureBuilder.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/SignatureBuilder.kt) |
+| Subset resolver | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt) |
+| Filter engine (overlay + replay) | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt) |
+| Central Room store | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineStore.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineStore.kt) |
+| Mutation overlay | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationOverlay.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationOverlay.kt) |
+| Mutation sync | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationSyncer.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationSyncer.kt) |
+| Storage bucket wrapper | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt) |
+| Error classification | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt) |
 
 ## Read path (caching deep-dive)
 
 Every cached SELECT result is stored as a row in the Room `object_cache` table, keyed by
 `(table_name, signature)` and carrying the raw JSON payload plus an `updated_at` timestamp. The
-relevant entity definition is in [OfflineEntities.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt):
+relevant entity definition is in [OfflineEntities.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt):
 
-```19:29:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt" linenums="19"
 @Entity(
     tableName = "object_cache",
     primaryKeys = ["table_name", "signature"]
@@ -125,7 +127,7 @@ the same cache row regardless of how the call site spelled them.
 order, select column list, logical groups), sorts the keys, and appends the canonicalized Range
 header:
 
-```22:59:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/SignatureBuilder.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/SignatureBuilder.kt" linenums="22"
 internal object SignatureBuilder {
 
     fun build(
@@ -201,9 +203,9 @@ Sometimes a narrower SELECT can be answered from a broader cached payload that a
 LIMIT 50`, and now the detail screen asks for `SELECT * FROM assets WHERE id = '…'`. We have the
 row in memory — we should not need the network just to filter the cached list.
 
-This is handled by [CacheSubsetResolver.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt),
+This is handled by [CacheSubsetResolver.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt),
 which (a) parses the signature back into a structured `SelectQueryMetadata` via
-[SelectQueryMetadataParser.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/parser/SelectQueryMetadataParser.kt),
+[SelectQueryMetadataParser.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/parser/SelectQueryMetadataParser.kt),
 (b) decides via `canProvideSubsetFor` whether a candidate cached payload could satisfy the new
 request, and (c) `deriveSubsetPayload` applies the requested filters/order in memory.
 
@@ -218,9 +220,9 @@ pending mutations are applied to the JSON payload **before it is returned to the
 preserves the optimistic-UI illusion across reads: insert a row offline, navigate to a list, and
 the new row shows up.
 
-The overlay is implemented in [OfflineMutationOverlay.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationOverlay.kt)
+The overlay is implemented in [OfflineMutationOverlay.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationOverlay.kt)
 (`applyPendingMutations`), driven by the filter engine in
-[OfflineFilters.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt):
+[OfflineFilters.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt):
 
 - INSERT → row appended to the payload
 - UPSERT → row appended or replaced based on `onConflict`
@@ -233,9 +235,9 @@ Matching uses `FilterEngine.matchesRow`, which re-runs the same logical operator
 ### Read strategy state machines
 
 All four `ReadStrategy` variants are dispatched from
-[OfflineSelectResolver.select](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt):
+[OfflineSelectResolver.select](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt):
 
-```51:97:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt" linenums="51"
     suspend fun select(
         columns: Columns,
         readStrategy: ReadStrategy,
@@ -320,7 +322,7 @@ and `networkFirstThenCacheFlow`. They observe `object_cache` rows reactively via
 ## Write path (mutation queueing)
 
 Mutations are processed by the `OfflinePostgrestQueryBuilderImpl` in
-[OfflinePostgrestQueryBuilder.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt).
+[OfflinePostgrestQueryBuilder.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt).
 The rule is symmetric across `insert`, `upsert`, `update`, `delete`:
 
 1. Try the network call against PostgREST.
@@ -336,7 +338,7 @@ The rule is symmetric across `insert`, `upsert`, `update`, `delete`:
 Queued mutations carry enough state to be replayed faithfully later — the raw JSON body, the
 serialized filter descriptor for the WHERE clause (UPDATE/DELETE), and any insert/upsert options
 (`defaultToNull`, `onConflict`, `ignoreDuplicates`). See
-[OfflineEntities.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt)
+[OfflineEntities.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt)
 for the `MutationRow` entity.
 
 Once queued, the mutation also participates in [overlay during reads](#mutation-overlay-during-reads)
@@ -346,7 +348,7 @@ until it is synced and the original row gets refreshed.
 
 The SDK **never syncs in the background by itself**. Sync happens only when the application
 calls one of the sync APIs on `SupabaseOfflineClient`. Both routes lead to
-[OfflineMutationSyncer.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationSyncer.kt):
+[OfflineMutationSyncer.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationSyncer.kt):
 
 - `syncAllPendingMutations()` → `OfflineMutationSyncer.syncAllTables()` — iterates every table
   with pending mutations, syncing each table independently. Errors in one table don't block
@@ -365,19 +367,19 @@ Per-table behavior:
 | Unknown error in `syncAllPendingMutations()` | Swallowed per-table; other tables continue |
 
 "Permanent failure" is decided by `Throwable.isPermanentMutationFailure()` in
-[ThrowableExtensions.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt),
+[ThrowableExtensions.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt),
 which inspects the HTTP status of `PostgrestRestException` / `ResponseException`.
 
 Typical app pattern (from the test apps): subscribe to platform connectivity and call
 `syncAllPendingMutations()` whenever the device transitions to online. See
-[test-apps.md](./test-apps.md) for concrete snippets.
+[test-apps.md](../samples/index.md) for concrete snippets.
 
 ## Network vs. server error classification
 
 Almost every fallback decision in the SDK gates on a single helper —
 `Throwable.isNetworkOrConnectivityFailure()`:
 
-```79:101:shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt
+```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt" linenums="79"
 internal fun Throwable.isNetworkOrConnectivityFailure(): Boolean {
     // Cancellation is never treated as a network error.
     if (this is CancellationException) return false
@@ -416,7 +418,7 @@ constraint violations).
 ## Storage cache
 
 Storage downloads (`bucket.downloadAuthenticated` / `downloadPublic`) get the same treatment as
-SELECT. The wrapper is [OfflineBucketApi.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt):
+SELECT. The wrapper is [OfflineBucketApi.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt):
 
 - Successful downloads are written to disk at `<offlineStoragePath>/storage/<bucket>/<path>`.
 - The location is tracked in the Room `storage_objects` table as a `StorageRow` keyed
@@ -426,14 +428,14 @@ SELECT. The wrapper is [OfflineBucketApi.kt](../shared/src/commonMain/kotlin/io/
 - `delete(paths)` removes both the remote object and the local cache row + file.
 - `move(from, to)` keeps the local cache pointing at the new path.
 
-See [storage.md](./storage.md) for the user-facing API around `ensureLocalPath`,
+See [storage.md](../behaviours/storage.md) for the user-facing API around `ensureLocalPath`,
 `storageCacheMetadata`, and client-driven staleness.
 
 ## Cache eviction
 
 `SupabaseOfflineConfig.cacheSizeBytes` (default 100 MB) caps the size of the Room database file.
 Eviction is implemented in `OfflineStore.enforceDbSizeLimitIfNeeded()` and uses the settings in
-[OfflineCacheSettings.kt](../shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineCacheSettings.kt):
+[OfflineCacheSettings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineCacheSettings.kt):
 
 - `maxDbSizeBytes` — hard cap. `null` (when `cacheSizeBytes == CACHE_SIZE_UNLIMITED`) disables
   eviction entirely.

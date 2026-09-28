@@ -1,7 +1,9 @@
 # Test Apps
 
+--8<-- "docs/.snippets/legacy-notice.md"
+
 The repo ships two demo apps that exercise the SDK end-to-end against the schema in
-[demo/supabase/schema.sql](../demo/supabase/schema.sql):
+[demo/supabase/schema.sql](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/demo/supabase/schema.sql):
 
 - **Android (`composeApp/`)** — Jetpack Compose + ViewModels
 - **iOS (`iosApp/`)** — SwiftUI + The Composable Architecture (TCA)
@@ -15,7 +17,7 @@ a real consumer should look like.
 
 - [Provision Supabase](#provision-supabase)
 - [Secrets setup](#secrets-setup)
-- [Building & running](#building--running)
+- [Building & running](#building-running)
 - [SDK surface used by the demos](#sdk-surface-used-by-the-demos)
 - [Connectivity-driven sync](#connectivity-driven-sync)
 - [Pending mutation count](#pending-mutation-count)
@@ -25,7 +27,7 @@ a real consumer should look like.
 ## Provision Supabase
 
 Open the Supabase Dashboard → SQL Editor → New query → paste
-[demo/supabase/schema.sql](../demo/supabase/schema.sql) → Run. The file is idempotent; you can
+[demo/supabase/schema.sql](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/demo/supabase/schema.sql) → Run. The file is idempotent; you can
 re-run it any time.
 
 It creates:
@@ -43,7 +45,7 @@ It creates:
 
 ### Android: `local.properties` → `BuildConfig`
 
-Copy [local.properties.example](../local.properties.example) to `local.properties` at the repo
+Copy [local.properties.example](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/local.properties.example) to `local.properties` at the repo
 root and fill in:
 
 ```properties
@@ -51,12 +53,12 @@ SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 SUPABASE_ANON_KEY=YOUR-ANON-KEY
 ```
 
-[composeApp/build.gradle.kts](../composeApp/build.gradle.kts) reads them at build time and
+[composeApp/build.gradle.kts](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/composeApp/build.gradle.kts) reads them at build time and
 generates `BuildConfig.SUPABASE_URL` / `BuildConfig.SUPABASE_ANON_KEY`.
 
 ### iOS: `Secrets.xcconfig` → `Info.plist` → `AppSecrets`
 
-Copy [iosApp/Configuration/Secrets.xcconfig.example](../iosApp/Configuration/Secrets.xcconfig.example)
+Copy [iosApp/Configuration/Secrets.xcconfig.example](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/iosApp/Configuration/Secrets.xcconfig.example)
 to `iosApp/Configuration/Secrets.xcconfig` and fill in:
 
 ```properties
@@ -67,8 +69,8 @@ SUPABASE_ANON_KEY=YOUR-ANON-KEY
 > The iOS URL has **no** `https://` prefix.
 
 The file is `#include?`-d by `Config.xcconfig`, injected into
-[iosApp/iosApp/Info.plist](../iosApp/iosApp/Info.plist), then read back in
-[AppSecrets.swift](../iosApp/iosApp/AppSecrets.swift).
+[iosApp/iosApp/Info.plist](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/iosApp/iosApp/Info.plist), then read back in
+[AppSecrets.swift](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/iosApp/iosApp/AppSecrets.swift).
 
 ## Building & running
 
@@ -88,7 +90,7 @@ First generate the KMP framework that the iOS app embeds:
 ./gradlew :shared:assembleSupabaseOfflineReleaseXCFramework
 ```
 
-Then open [iosApp/iosApp.xcodeproj](../iosApp/iosApp.xcodeproj), set a valid Team and `TEAM_ID`
+Then open [iosApp/iosApp.xcodeproj](https://github.com/nesfeder/supabase-offline-kt/tree/9b014a795453590d7aecd704b01ca36ade8f67cb/iosApp/iosApp.xcodeproj), set a valid Team and `TEAM_ID`
 under **Signing & Capabilities** (the bundle id pattern in
 `iosApp/Configuration/Config.xcconfig` includes `$(TEAM_ID)`), and run on a simulator or
 device.
@@ -172,7 +174,7 @@ URL, which means an offline launch can still display previously downloaded photo
   needs WorkManager or `BGTaskScheduler` to flush mutations when the app isn't running, you'll
   have to write that yourself — the SDK does not start any timers or schedulers.
 - **No storage staleness check.** The apps download once and reuse forever. If you want a max
-  age, follow the [client-driven staleness pattern](./storage.md#client-driven-staleness).
+  age, follow the [client-driven staleness pattern](../behaviours/storage.md#client-driven-staleness).
 - **Uploads happen online-only.** The offline bucket wrapper caches *downloads*; uploads are
   not queued. If the device is offline when a photo is added, both apps surface the error and
   the row is not persisted.

@@ -1,0 +1,36 @@
+/*
+ * Site colours for the "custom" primary and accent in mkdocs.yml: a green in the family of
+ * Supabase's, deep enough that white header text and green link text both stay above a 4.5:1
+ * contrast ratio.
+ */
+
+[data-md-color-primary="custom"] {
+  --md-primary-fg-color: #1e7b52;
+  --md-primary-fg-color--light: #3ecf8e;
+  --md-primary-fg-color--dark: #145a3b;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+}
+
+[data-md-color-accent="custom"] {
+  --md-accent-fg-color: #00875a;
+  --md-accent-fg-color--transparent: rgba(0, 135, 90, 0.1);
+  --md-accent-bg-color: #ffffff;
+  --md-accent-bg-color--light: rgba(255, 255, 255, 0.7);
+}
+
+[data-md-color-scheme="slate"] {
+  /* A green-grey dark background instead of the default blue-grey. */
+  --md-hue: 160deg;
+}
+
+[data-md-color-scheme="slate"][data-md-color-primary="custom"] {
+  --md-primary-fg-color: #175c3f;
+  --md-primary-fg-color--dark: #104630;
+  --md-typeset-a-color: #3ecf8e;
+}
+
+[data-md-color-scheme="slate"][data-md-color-accent="custom"] {
+  --md-accent-fg-color: #6ee7b7;
+  --md-accent-fg-color--transparent: rgba(110, 231, 183, 0.1);
+}
