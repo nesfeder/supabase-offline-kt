@@ -56,9 +56,8 @@ theme:
       toggle:
         icon: material/brightness-4
         name: Switch to system preference
-  font:
-    text: Inter
-    code: JetBrains Mono
+  # System fonts: no request to Google Fonts or any other font host.
+  font: false
   features:
     - content.action.edit
     - content.action.view
@@ -163,7 +162,6 @@ nav:
       - Contributing: project/contributing.md
       - Releasing: project/releasing.md
       - Internals: project/internals.md
-      - Discussions ⏏: https://github.com/nesfeder/supabase-offline-kt/discussions
   # A placeholder page until the Dokka reference is generated into docs/api/. That change replaces
   # this entry with `api/index.html`, deletes docs/api/index.md and gitignores docs/api/.
   - API: api/index.md

@@ -10,8 +10,14 @@ name: Docs
 # `github.event_name` is no use as a gate, because inside a called workflow it is the caller's
 # event.
 #
-# Before the first deploy: Settings > Pages > Source: GitHub Actions. A workflow that calls this
-# one with `deploy: true` must grant `pages: write` and `id-token: write` to the calling job.
+# Before the first deploy:
+# - Settings > Pages > Source: GitHub Actions. That creates the `github-pages` environment.
+# - Restrict that environment's deployment branches to `main`, plus the release tag pattern if the
+#   release workflow runs on tags. The environment's branch policy is what stops anyone with write
+#   access from dispatching `deploy: true` from an unmerged branch.
+# - A workflow that calls this one with `deploy: true` must grant `pages: write` and
+#   `id-token: write` to the calling job, and must not use a concurrency group starting with
+#   `docs-`, which this workflow uses for itself.
 
 on:
   pull_request:
@@ -111,9 +117,11 @@ jobs:
           output: ${{ runner.temp }}/lychee-internal.md
           fail: true
 
-      # Self-links are skipped while the repository is private: they 404 for an anonymous
-      # checker. Drop the two --exclude lines at launch.
+      # Reported in the job summary but not blocking: a third-party site being down should not
+      # fail a pull request. Self-links are skipped while the repository is private, because they
+      # 404 for an anonymous checker; drop the two --exclude lines at launch.
       - name: Check external links in the source pages
+        continue-on-error: true
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
           args: >-
@@ -153,8 +161,8 @@ jobs:
       - name: Build the site in strict mode
         run: mkdocs build --strict
 
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-
+      # No configure-pages step: nothing here reads its outputs (site_url is fixed in mkdocs.yml),
+      # and its Pages API call would need `pages: read` on this job.
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site/
