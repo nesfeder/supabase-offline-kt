@@ -1,5 +1,4 @@
 rootProject.name = "supabase-offline-kt"
-enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {
     repositories {
