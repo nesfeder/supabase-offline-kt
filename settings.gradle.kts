@@ -1,5 +1,4 @@
 rootProject.name = "supabase-offline-kt"
-enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {
     repositories {
@@ -28,5 +27,5 @@ dependencyResolutionManagement {
     }
 }
 
-include(":composeApp")
-include(":shared")
+include(":supabase-offline-kt")
+include(":supabase-offline-kt-testing")

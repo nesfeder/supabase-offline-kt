@@ -8,21 +8,26 @@ on:
 
 jobs:
   shared-tests:
-    name: Shared Unit Tests
+    name: Library checks
     runs-on: macos-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+      # Internal code stays out of the public surface. The self-test runs first, so a check that
+      # has stopped seeing violations fails loudly instead of passing quietly.
+      - name: Check API visibility
+        run: |
+          bash scripts/check-api-visibility.sh --self-test
+          bash scripts/check-api-visibility.sh
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - uses: ./.github/actions/setup-project
 
-      - name: Run Shared Unit Tests
-        run: ./gradlew :shared:allTests --stacktrace
+      # check runs the Android host tests (Robolectric) and the iOS simulator tests of both modules.
+      - name: Run library checks
+        run: ./gradlew :supabase-offline-kt:check :supabase-offline-kt-testing:check --stacktrace
+
+      # check never compiles the iOS device target or links the SKIE framework; this does.
+      - name: Link the iOS device framework
+        run: ./gradlew :supabase-offline-kt:linkReleaseFrameworkIosArm64 --stacktrace

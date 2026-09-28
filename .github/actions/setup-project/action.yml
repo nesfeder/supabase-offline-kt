@@ -3,8 +3,9 @@ description: Checkout, setup JDK, Gradle and publishing properties
 
 inputs:
   publishing_properties_base64:
-    description: Base64 encoded github.properties
-    required: true
+    description: Base64 encoded github.properties. Only publishing jobs need it.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -19,6 +20,7 @@ runs:
       uses: gradle/actions/setup-gradle@v4
 
     - name: Create github.properties from Base64
+      if: ${{ inputs.publishing_properties_base64 != '' }}
       shell: bash
       run: |
         echo "${{ inputs.publishing_properties_base64 }}" | base64 -d > github.properties
