@@ -25,4 +25,4 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run Shared Unit Tests
-        run: ./gradlew :shared:allTests --stacktrace
+        run: ./gradlew :supabase-offline-kt:allTests --stacktrace
