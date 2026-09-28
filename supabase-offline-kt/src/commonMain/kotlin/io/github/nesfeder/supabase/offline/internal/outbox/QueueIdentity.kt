@@ -18,7 +18,7 @@ import kotlin.io.encoding.Base64
  */
 internal sealed interface QueueIdentity {
 
-    /** How the identity is persisted in the queue-owner reserved row. */
+    /** How the identity is persisted in the mutation-owner records. */
     val storedValue: String
 
     /**

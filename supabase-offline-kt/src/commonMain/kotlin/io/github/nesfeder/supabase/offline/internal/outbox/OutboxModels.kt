@@ -141,7 +141,8 @@ internal sealed interface SyncStop {
 
     /**
      * The next write is being sent right now by the call that made it, so the pass stopped rather
-     * than send it twice or overtake it. That call starts another pass if more is pending.
+     * than send it twice or overtake it. That call asks for another pass when it lands with more
+     * pending.
      */
     data object HeadInFlight : SyncStop
 

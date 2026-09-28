@@ -99,7 +99,7 @@ internal interface ObjectDao {
      * Used by [OfflineStore.enforceDbSizeLimitIfNeeded] to evict old cache entries when the
      * summed payload size grows beyond the configured limit. The engine's reserved rows (see
      * [RESERVED_TABLE_NAME]) are never candidates: they hold the rejected-mutation list and the
-     * queue owner, which no refetch can restore.
+     * owner of each queued mutation, which no refetch can restore.
      *
      * @param limit maximum number of rows to delete in this batch.
      * @return the number of rows actually deleted; `0` once the table is empty, which the

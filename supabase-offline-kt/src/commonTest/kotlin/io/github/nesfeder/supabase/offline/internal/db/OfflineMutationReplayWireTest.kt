@@ -267,7 +267,7 @@ class OfflineMutationReplayWireTest {
 
     /**
      * Inverted: a server error on one table used to be isolated to that table, and the next table
-     * replayed. With one global queue the pass stops there instead, so a later write — which may
+     * replayed. With one queue across tables the pass stops there instead, so a later write — which may
      * depend on the failed one — never overtakes it.
      */
     @Test
