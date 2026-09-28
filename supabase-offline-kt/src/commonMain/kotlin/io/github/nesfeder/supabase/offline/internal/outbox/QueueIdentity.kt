@@ -95,6 +95,36 @@ private fun userOf(session: UserSession): QueueIdentity? {
     return QueueIdentity.User(userId)
 }
 
+/**
+ * The identity a replay sent now would go out as, or `null` when the session is not settled.
+ *
+ * Unlike [currentQueueIdentity], a restoring or refreshing session is not the stored user here:
+ * its requests would carry the anon key, so neither that user's writes nor the anonymous
+ * identity's may be sent under it.
+ *
+ * @return The identity, or `null` while the session restores or refreshes, or names no user.
+ */
+internal fun SupabaseClient.currentReplayIdentity(): QueueIdentity? {
+    val authPlugin: Auth = try {
+        auth
+    } catch (_: IllegalStateException) {
+        return QueueIdentity.Anonymous
+    }
+    return replayIdentityFor(authPlugin.sessionStatus.value)
+}
+
+/**
+ * The pure mapping behind [currentReplayIdentity].
+ *
+ * @param status The session status, read once.
+ * @return The identity a request made under [status] goes out as, or `null` when unsettled.
+ */
+internal fun replayIdentityFor(status: SessionStatus): QueueIdentity? = when (status) {
+    is SessionStatus.Authenticated -> userOf(status.session)
+    is SessionStatus.NotAuthenticated -> QueueIdentity.Anonymous
+    is SessionStatus.Initializing, is SessionStatus.RefreshFailure -> null
+}
+
 /** Base64url without padding, as JWT segments are encoded. */
 private val JwtSegmentBase64: Base64 = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT_OPTIONAL)
 

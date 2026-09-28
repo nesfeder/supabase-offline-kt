@@ -21,6 +21,8 @@ import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import okio.Path
 import okio.Path.Companion.toPath
 
@@ -136,3 +138,12 @@ internal fun newTestOfflineClient(
     sdkLogger = sdkLogger,
     coordinatorScope = coordinatorScope,
 )
+
+/**
+ * A scope whose coroutines never run: nothing ever advances its scheduler. Pass it as a client's
+ * `coordinatorScope` in a test that drives every replay pass itself, so a pass the engine starts on
+ * its own cannot race the one under test.
+ *
+ * @return the scope.
+ */
+internal fun idleCoroutineScope(): CoroutineScope = CoroutineScope(StandardTestDispatcher(TestCoroutineScheduler()))

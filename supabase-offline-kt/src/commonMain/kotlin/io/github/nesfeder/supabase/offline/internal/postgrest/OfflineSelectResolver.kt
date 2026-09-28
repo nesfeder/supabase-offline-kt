@@ -710,6 +710,7 @@ internal class OfflineSelectResolver(
         val finalJson = if (applyOverlay) {
             store.applyAllMutationsForOfflineFallback(
                 table = table,
+                signature = signature,
                 cachedJson = payload
             )
         } else {

@@ -146,9 +146,15 @@ internal val ON_DISK_REJECTION: StoredRejection = StoredRejection(
 )
 
 /**
- * Writes the engine's reserved rows — a queue owner and a rejected list — into this database through
- * its own DAOs, as this build does at run time. The clock is the shipped fixture's era, older than
- * every fixture row, so an eviction that did not exclude reserved rows would take them first.
+ * Owners for two of the shipped fixture's pending writes; the other two stay unowned, as an earlier
+ * build left them.
+ */
+internal val ON_DISK_OWNERS: Map<Long, String> = mapOf(1L to "user:user-a", 2L to "user:user-b")
+
+/**
+ * Writes the engine's reserved rows — the mutation owners and a rejected list — into this database
+ * through its own DAOs, as this build does at run time. The clock is the shipped fixture's era, older
+ * than every fixture row, so an eviction that did not exclude reserved rows would take them first.
  */
 internal suspend fun OfflineDatabase.writeReservedRows() {
     val store = newTestOfflineStore(
@@ -157,6 +163,8 @@ internal suspend fun OfflineDatabase.writeReservedRows() {
         mutationDao = mutationDao(),
         nowMillis = { 1_600_000_000_000 },
     )
-    store.outboxState.setQueueOwner("user:user-a")
+    val (ownersRow, owners) = checkNotNull(store.outboxState.ownersRowWith { ON_DISK_OWNERS })
+    objectDao().upsert(ownersRow)
+    store.outboxState.ownersWritten(owners)
     store.outboxState.addRejection(ON_DISK_REJECTION)
 }

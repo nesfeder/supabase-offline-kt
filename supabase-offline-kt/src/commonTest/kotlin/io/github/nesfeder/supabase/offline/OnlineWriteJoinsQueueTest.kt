@@ -17,10 +17,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * Under `QueueIfOffline`, a write made while online joins the queue when its table already has
- * pending writes, so it cannot overtake them. Sent straight away, it would land first and the older
- * offline write would replay over it — the user's latest edit lost, and the screen flipped back to
- * the older value the moment the online write returned.
+ * Under `QueueIfOffline`, a write made while online waits in the queue when any earlier write of the
+ * same identity is pending, in any table, so it cannot overtake them. Sent straight away, it would
+ * land first and the older offline write would replay over it — the user's latest edit lost, and the
+ * screen flipped back to the older value the moment the online write returned.
  */
 class OnlineWriteJoinsQueueTest {
 
@@ -88,7 +88,7 @@ class OnlineWriteJoinsQueueTest {
     }
 
     @Test
-    fun an_online_write_to_a_table_without_pending_writes_is_applied_at_once() = runTest {
+    fun an_online_write_waits_behind_a_pending_write_in_another_table() = runTest {
         // Given — another table has a pending write, this one has none
         server.answer = { connectivityFailure() }
         OfflinePostgrestQueryBuilderImpl(delegate = server.supabaseClient().postgrest.from("other"), store = store)
@@ -96,10 +96,26 @@ class OnlineWriteJoinsQueueTest {
 
         // When
         server.answer = { okJson("[]") }
+        val requestsBefore = server.requests.size
         val outcome = rename("B")
 
-        // Then
+        // Then — it waits its turn: the other table's write may be the row this one depends on
+        assertEquals(MutationOutcome.Queued, outcome)
+        assertEquals(requestsBefore, server.requests.size)
+    }
+
+    @Test
+    fun an_online_write_with_nothing_pending_is_applied_at_once_and_leaves_no_queue_row() = runTest {
+        // Given — nothing pending
+        objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
+
+        // When
+        val outcome = rename("B")
+
+        // Then — applied, overlaid, and gone from the queue
         assertEquals(MutationOutcome.Applied::class, outcome::class)
+        assertEquals(0, store.allPendingMutations().size)
+        assertEquals("""[{"id":1,"title":"B"}]""", objectDao.getRow(TABLE, SIGNATURE)?.payload)
     }
 
     @Test

@@ -19,14 +19,15 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
- * A write built with `dryRun()` asks PostgREST to roll the transaction back (`Prefer: tx=rollback`),
- * so it changes nothing on the server. The engine treats it as `OnlineOnly` whatever strategy the
- * caller passed: it is never queued (a queued dry run replayed as a real write, since the queue does
- * not carry `Prefer`) and never overlaid onto the cache.
+ * A write built with `dryRun()` asks PostgREST to roll the transaction back (`Prefer: tx=rollback`).
+ * The engine never queues one — the queue does not carry `Prefer`, so a queued dry run would replay
+ * as a real write — and does not overlay one the server says it rolled back
+ * (`Preference-Applied: tx=rollback`). Here the server honours the preference, as a PostgREST that
+ * allows the transaction override does.
  */
 class DryRunWriteTest {
 
-    private val server = RecordingPostgrestServer()
+    private val server = RecordingPostgrestServer(answer = { okJson("[]", mapOf(PREFERENCE_APPLIED to "tx=rollback")) })
     private val objectDao = FakeObjectDao()
     private val mutationDao = FakeMutationDao()
     private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
@@ -46,7 +47,7 @@ class DryRunWriteTest {
             dryRun()
         }
 
-        // Then — the server saw a dry run and the cache still shows the committed row
+        // Then — the server saw a dry run, rolled it back, and the cache still shows the committed row
         assertIs<MutationOutcome.Applied>(outcome)
         assertTrue(server.requests.single().prefer.orEmpty().contains("tx=rollback"))
         assertEquals(ORIGINAL, objectDao.getRow(TABLE, SIGNATURE)?.payload)
@@ -58,7 +59,7 @@ class DryRunWriteTest {
         objectDao.seedPayload(TABLE, SIGNATURE, ORIGINAL)
 
         // When
-        builder.insertJson(Json.parseToJsonElement("""[{"id":1,"title":"never committed"}]""") as JsonArray) {
+        builder.insertJson(Json.parseToJsonElement("""[{"id":2,"title":"never committed"}]""") as JsonArray) {
             dryRun()
         }
 
@@ -86,7 +87,7 @@ class DryRunWriteTest {
         // Given — an earlier write to the table is still queued
         server.answer = { connectivityFailure() }
         builder.updateJson(patch(), MutationStrategy.QueueIfOffline) { filter { eq("id", 2) } }
-        server.answer = { okJson("[]") }
+        server.answer = { okJson("[]", mapOf(PREFERENCE_APPLIED to "tx=rollback")) }
 
         // When
         val outcome = builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
@@ -106,5 +107,6 @@ class DryRunWriteTest {
         const val TABLE = "todos"
         const val SIGNATURE = "todos?id=eq.1"
         const val ORIGINAL = """[{"id":1,"title":"committed"}]"""
+        const val PREFERENCE_APPLIED = "Preference-Applied"
     }
 }

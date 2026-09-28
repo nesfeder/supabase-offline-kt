@@ -2,13 +2,15 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.internal.db.MUTATION_OWNERS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
-import io.github.nesfeder.supabase.offline.internal.db.QUEUE_OWNER_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -42,7 +44,7 @@ class UnreadableOutboxStateTest {
     @Test
     fun unreadable_ownership_does_not_make_an_online_write_throw() = runTest {
         // Given — a pending write, and ownership bookkeeping that does not decode
-        objectDao.seedPayload(RESERVED_TABLE_NAME, QUEUE_OWNER_SIGNATURE, "{not json")
+        objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
         store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"old"}"""), byId("2"))
 
         // When — online, the app edits another row
@@ -55,7 +57,7 @@ class UnreadableOutboxStateTest {
     @Test
     fun unreadable_ownership_makes_an_offline_write_fail_with_its_own_connectivity_error() = runTest {
         // Given
-        objectDao.seedPayload(RESERVED_TABLE_NAME, QUEUE_OWNER_SIGNATURE, "{not json")
+        objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
         server.answer = { connectivityFailure() }
 
         // When
@@ -63,6 +65,27 @@ class UnreadableOutboxStateTest {
 
         // Then — never an IllegalStateException
         assertIs<HttpRequestException>(outcome.exceptionOrNull(), "offline write failed with ${outcome.exceptionOrNull()}")
+    }
+
+    @Test
+    fun unreadable_ownership_stops_replay_without_sending_and_says_so_once() = runTest {
+        // Given — a pending write, and ownership bookkeeping that does not decode
+        val logger = RecordingOfflineLogger()
+        store.sdkLogger = logger.asSdkLogger()
+        objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
+        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"whose?"}]"""))
+        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient(), currentIdentity = { QueueIdentity.User("user-a") })
+
+        // When — two passes
+        val first = syncer.sync()
+        val second = syncer.sync()
+
+        // Then — nothing was sent, the write is still there, and one ERROR says why
+        assertEquals(SyncStop.OwnershipUnreadable, first.stop)
+        assertEquals(SyncStop.OwnershipUnreadable, second.stop)
+        assertTrue(server.requests.isEmpty())
+        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, logger.entriesAt(OfflineLogLevel.ERROR).count { "owner records" in it.message })
     }
 
     @Test

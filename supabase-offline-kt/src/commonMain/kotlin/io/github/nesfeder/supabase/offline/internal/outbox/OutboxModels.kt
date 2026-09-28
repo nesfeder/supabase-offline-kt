@@ -73,11 +73,14 @@ internal data class ServerError(
  * @property operation What the write did.
  * @property createdAt When the write was queued.
  * @property rowKeys As for [PendingMutation.rowKeys].
- * @property body The write's body, or `null` for a DELETE or a body that no longer parses.
+ * @property body The write's body, or `null` for a DELETE, a body that no longer parses, or a body
+ *   too large to keep on the rejected list (see [bodyOmittedChars]).
  * @property serverError The server's refusal, or `null` when the engine refused it locally (a body
  *   that no longer parses, or a filter that cannot be replayed faithfully).
  * @property message A human-readable reason.
  * @property rejectedAt When the write was refused.
+ * @property bodyOmittedChars The size of the body when it was too large to keep on the rejected list
+ *   and was dropped from it, or `null` when it was kept. Such a write cannot be retried.
  */
 internal data class RejectedMutation(
     val id: Long,
@@ -89,15 +92,17 @@ internal data class RejectedMutation(
     val serverError: ServerError?,
     val message: String,
     val rejectedAt: Instant,
+    val bodyOmittedChars: Int? = null,
 )
 
 /**
- * The result of one replay pass.
+ * The result of one replay pass. Every count is the current identity's: another identity's writes
+ * are neither sent nor counted.
  *
  * @property syncedCount Writes the server accepted in this pass.
  * @property rejected Writes refused in this pass, now on the rejected list.
- * @property remainingCount Writes still pending once the pass ended, within its scope (one table or
- *   the whole queue).
+ * @property remainingCount The current identity's writes still pending once the pass ended, within
+ *   its scope (one table or every table). When the identity could not be told, every pending write.
  * @property stop Why the pass ended before the queue was empty, or `null` when it ran to the end.
  */
 internal data class SyncReport(
@@ -111,17 +116,34 @@ internal data class SyncReport(
 internal sealed interface SyncStop {
 
     /**
-     * No authenticated session arrived within the bounded wait, so nothing was sent: a replay now
-     * would go out on the anon key and be refused by row-level security.
+     * The session did not settle (signed in, or signed out) within the bounded wait, so nothing was
+     * sent: a replay now could go out as the wrong identity.
      */
     data object SessionNotReady : SyncStop
 
     /**
-     * The pending writes were queued under another identity (another user, or signed out) than the
-     * one signed in now — or the current identity cannot be told — so nothing was sent. They replay
-     * when that identity signs back in, or go when local data is cleared.
+     * The identity a request would go out as could not be told (the session restoring or
+     * refreshing), at the start of the pass or before a request, so nothing more was sent.
      */
-    data object QueueOwnedByAnotherIdentity : SyncStop
+    data object IdentityUnknown : SyncStop
+
+    /**
+     * The session changed identity during the pass — a sign-out, a sign-in, or another account — so
+     * the pass stopped before its next request. The new identity's writes go in the next pass.
+     */
+    data object SessionChanged : SyncStop
+
+    /**
+     * The record of which identity made each write could not be read, so no write was sent: sending
+     * one could send it as someone who did not make it. They stay until local data is cleared.
+     */
+    data object OwnershipUnreadable : SyncStop
+
+    /**
+     * The next write is being sent right now by the call that made it, so the pass stopped rather
+     * than send it twice or overtake it. That call starts another pass if more is pending.
+     */
+    data object HeadInFlight : SyncStop
 
     /** Local data was cleared while the pass was running; nothing was sent after that. */
     data object LocalDataCleared : SyncStop
@@ -135,9 +157,9 @@ internal sealed interface SyncStop {
     data class TransientFailure(val cause: Throwable) : SyncStop
 
     /**
-     * The server refused a write with `403` or `409` while an earlier write — in any table — was
-     * still pending. The earlier write may be the parent row or the row a policy checks, so the
-     * refusal is not taken as final: the write is kept and the pass stops.
+     * The server refused a write with `403` or `409` while an earlier write of the same identity — in
+     * any table — was still pending. The earlier write may be the parent row or the row a policy
+     * checks, so the refusal is not taken as final: the write is kept and the pass stops.
      *
      * @property mutationId The held write.
      * @property cause The refusal.

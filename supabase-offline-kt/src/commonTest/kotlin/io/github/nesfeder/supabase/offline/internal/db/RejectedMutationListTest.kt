@@ -1,10 +1,12 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.outbox.MutationOperation as OutboxOperation
 import io.github.nesfeder.supabase.offline.internal.outbox.ServerError
 import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
@@ -18,7 +20,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -27,7 +28,8 @@ import kotlin.time.Instant
 
 /**
  * A write the server refuses for good is not lost: it leaves the queue for a persisted list — the
- * newest 100 — that carries the write and the server's reason until the app dismisses or retries it.
+ * newest 100, within a size budget — that carries the write and the server's reason until the app
+ * dismisses or retries it.
  */
 class RejectedMutationListTest {
 
@@ -181,19 +183,29 @@ class RejectedMutationListTest {
     }
 
     @Test
-    fun an_unreadable_rejected_list_is_never_read_as_empty() = runTest {
+    fun an_unreadable_rejected_list_is_kept_aside_and_a_fresh_one_started() = runTest {
         // Given — the reserved row holds something this build cannot decode
+        val logger = RecordingOfflineLogger()
+        store.sdkLogger = logger.asSdkLogger()
         objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "not a list")
 
-        // When / Then
-        assertFailsWith<IllegalStateException> { store.outboxState.rejections() }
+        // When
+        val rejections = store.outboxState.rejections()
+
+        // Then — read as a fresh list, the old payload kept under its own key, and said at ERROR
+        assertEquals(emptyList(), rejections)
+        val keptAside = objectDao.rowsOf(RESERVED_TABLE_NAME).filter { row ->
+            row.signature.startsWith("$REJECTED_MUTATIONS_SIGNATURE.unreadable.")
+        }
+        assertEquals(listOf("not a list"), keptAside.map { row -> row.payload })
+        assertEquals(1, logger.entriesAt(OfflineLogLevel.ERROR).size)
     }
 
     @Test
     fun a_rejection_that_cannot_be_recorded_keeps_the_write_queued() = runTest {
-        // Given — an unreadable list, and a write the server refuses
-        objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "not a list")
+        // Given — a write the server refuses, and a rejected list that cannot be written
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
+        objectDao.failUpsertOf = { row -> row.table == RESERVED_TABLE_NAME && row.signature == REJECTED_MUTATIONS_SIGNATURE }
         server.answer = { postgrestError(HttpStatusCode.BadRequest) }
 
         // When
@@ -201,8 +213,8 @@ class RejectedMutationListTest {
 
         // Then — the pass stopped with the write still queued rather than losing it
         assertIs<SyncStop.TransientFailure>(report.stop)
-        assertEquals(1, store.pendingMutationCount())
-        assertEquals("not a list", objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)?.payload)
+        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(emptyList(), store.outboxState.rejections())
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

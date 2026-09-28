@@ -5,6 +5,7 @@ import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
+import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
@@ -13,7 +14,7 @@ import io.github.nesfeder.supabase.offline.internal.outbox.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.outbox.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.outbox.SyncReport
 import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
-import io.github.nesfeder.supabase.offline.internal.outbox.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.outbox.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.outbox.everyRowCarriesPrimaryKey
 import io.github.nesfeder.supabase.offline.internal.outbox.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -29,6 +30,7 @@ import io.github.nesfeder.supabase.offline.internal.util.isPermanentMutationFail
 import io.ktor.client.plugins.ResponseException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -37,6 +39,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -44,35 +47,39 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Replays the queue of offline writes from [OfflineStore] against Supabase.
+ * Sends the queue of writes from [OfflineStore] to Supabase: replay passes, and the immediate send of
+ * a write that is at the head of the queue when it is made.
  *
- * ### One global queue
- * Every table's writes form one queue, replayed in insertion order (the queue row's id). A pass
- * replays it front to back and stops at the first write that cannot go through for a reason that
- * may pass — no connectivity, a `401`, `408`, `429` or `5xx`, or an unexpected error — so a later
- * write never overtakes an earlier one, in its own table or in a table it depends on through a
- * foreign key or a row-level-security policy. Nothing transient ever removes a write.
+ * ### One queue per identity, in insertion order
+ * Each write records the identity that made it. A pass replays only the current identity's writes,
+ * across every table, in the order they were made (the queue row's id); another identity's writes
+ * neither block it nor are sent by it. The identity is checked again before **every** request, so a
+ * sign-out or an account switch stops a pass before its next request.
+ *
+ * A pass stops at the first write that cannot go through for a reason that may pass — no
+ * connectivity, a `401`, `408`, `429` or `5xx`, or an unexpected error — so a later write never
+ * overtakes an earlier one. Nothing transient ever removes a write. One pass is one attempt at the
+ * head.
  *
  * ### Rejections
- * A write the server refuses for good (any other `4xx`) moves to the persisted rejected list with
- * the server's status, code, message, details and hint, and the pass continues. A `403` or `409` on
- * a write that has an earlier write still pending, in any table, is *held* instead: the earlier write
- * may be the parent row or the row a policy checks. A write the engine cannot send faithfully — a
- * body that no longer parses, an UPDATE or DELETE whose filter is missing or no longer replays in
- * full — is moved to the rejected list without a request.
+ * A write the server refuses for good (any other `4xx`) moves to the persisted rejected list, and the
+ * pass continues. A `403` or `409` on a write that has an earlier write of the same identity pending,
+ * in any table, is *held* instead. A write the engine cannot send faithfully is moved to the rejected
+ * list without a request.
  *
- * ### Identity
- * The queue records the identity that queued into it. A pass made under another identity sends
- * nothing and reports [SyncStop.QueueOwnedByAnotherIdentity].
+ * ### One sender at a time per write
+ * Choosing the next write and recording its outcome happen under a short send lock; the request
+ * itself does not hold it. A write being sent is marked in flight, so a pass never sends a write the
+ * builder is sending at the head (it stops there instead), and two passes never send the same write.
  *
  * ### Teardown
- * [clearLocalData] cancels a pass in flight and takes the sync lock, so no request goes out once it
- * has begun.
+ * [clearLocalData] cancels passes in flight and wipes under the send lock; an outcome that arrives
+ * afterwards is discarded.
  *
  * ### Idempotence
  * An INSERT whose rows all carry the table's primary key replays as an upsert that ignores
- * duplicates: a replay of a write that reached the server but whose response was lost is then a
- * no-op instead of a duplicate row or a `409`.
+ * duplicates. UPSERT, absolute UPDATE and DELETE are idempotent as sent. A keyless INSERT and an
+ * UPDATE with numeric delta columns are not: replaying one whose response was lost applies it twice.
  */
 internal class OfflineMutationSyncer(
     private val store: OfflineStore,
@@ -85,38 +92,36 @@ internal class OfflineMutationSyncer(
             )
         },
     /**
-     * Gate awaited before any replay reaches the wire. Requests carry the user JWT only while
-     * the session status is `Authenticated` — during cold-start restore, after sign-out, and in
-     * the post-offline `RefreshFailure` window they go out on the anon key, so RLS 403s every
-     * owner-scoped write. `false` means no authenticated session arrived within the bounded wait:
-     * the pass then sends nothing and reports [SyncStop.SessionNotReady]. Injectable for tests;
-     * defaults to [awaitReplaySafeSession] on [supabase], which fails open for clients without the
-     * Auth plugin.
+     * Gate awaited before a pass: the session must be settled (signed in, or signed out) so the
+     * requests go out as a definite identity. `false` means it did not settle within the bounded
+     * wait: the pass sends nothing and reports [SyncStop.SessionNotReady]. Injectable for tests;
+     * defaults to [awaitReplaySafeSession] on [supabase], which fails open without the Auth plugin.
      */
     private val awaitSessionSettled: suspend () -> Boolean = { supabase.awaitReplaySafeSession() },
     /**
-     * The identity a pass would replay as, compared with the queue's recorded owner; `null` when it
-     * cannot be told, in which case nothing is sent. Injectable for tests.
+     * The identity a request sent now would go out as, or `null` when that cannot be told (the
+     * session restoring or refreshing). Read at the start of a pass and again before every request.
+     * Injectable for tests.
      */
-    private val currentIdentity: suspend () -> QueueIdentity? = { supabase.currentQueueIdentity() },
+    private val currentIdentity: suspend () -> QueueIdentity? = { supabase.currentReplayIdentity() },
     /** Where the engine learns each table's primary key. */
     private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
 ) {
 
-    /**
-     * Serializes every pass, so two concurrent triggers cannot replay the same write twice, and is
-     * taken by [clearLocalData] so a wipe never interleaves with a pass.
-     */
-    private val syncMutex = Mutex()
+    /** Guards choosing a write to send and recording its outcome. Never held across a request. */
+    private val sendLock = Mutex()
 
-    /** Bumped by [clearLocalData]; a pass that sees it move stops before its next request. */
+    /** Ids of the writes being sent right now, by a pass or at the head. Guarded by [sendLock]. */
+    private val inFlight = mutableSetOf<Long>()
+
+    /** Bumped by [clearLocalData]; an outcome recorded after it moved is discarded. */
     private val clearGeneration = MutableStateFlow(0L)
 
     /** Passes in flight, so [clearLocalData] can cancel them. */
     private val activeSweeps = MutableStateFlow<Set<Job>>(emptySet())
 
     /**
-     * Replays the whole queue.
+     * Replays the current identity's writes, across every table.
      *
      * @return The number of writes the server accepted.
      */
@@ -125,12 +130,12 @@ internal class OfflineMutationSyncer(
     ): Int = sync(table = null, schema = schema).syncedCount
 
     /**
-     * Replays [table]'s writes, in insertion order. A `403` or `409` on a write that has an earlier
-     * write pending in another table is held, not rejected.
+     * Replays the current identity's writes to [table], in insertion order. A `403` or `409` on a
+     * write that has an earlier write of the same identity pending in another table is held.
      *
-     * Unlike [syncAllTables], a pass that stops on a server-side failure — a `401`, `408`, `429`,
-     * `5xx` or an unexpected error — rethrows it, as this entry point always has; the write stays
-     * queued. A connectivity failure returns normally.
+     * A pass that stops on a server-side failure — a `401`, `408`, `429`, `5xx` or an unexpected
+     * error — rethrows it, as this entry point always has; the write stays queued. A connectivity
+     * failure returns normally.
      *
      * @return The number of writes the server accepted.
      */
@@ -147,10 +152,10 @@ internal class OfflineMutationSyncer(
     }
 
     /**
-     * Runs one replay pass and reports what it did. Returns promptly when offline: the first request
-     * fails for connectivity and the pass stops there.
+     * Runs one replay pass for the current identity and reports what it did. Returns promptly when
+     * offline: the first request fails for connectivity and the pass stops there.
      *
-     * @param table The table to replay, or `null` for the whole queue.
+     * @param table The table to replay, or `null` for every table.
      * @param schema The schema the requests address.
      * @return What the pass synced, rejected and left pending, and why it stopped early if it did.
      */
@@ -160,22 +165,14 @@ internal class OfflineMutationSyncer(
     ): SyncReport {
         if (!awaitSessionSettled()) {
             sdkLogger.info {
-                if (table == null) "No authenticated session; deferring mutation replay"
-                else "No authenticated session; deferring mutation replay for $table"
+                if (table == null) "Session not settled; deferring mutation replay"
+                else "Session not settled; deferring mutation replay for $table"
             }
-            return SyncReport(0, emptyList(), remainingCount(table), SyncStop.SessionNotReady)
+            return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.SessionNotReady)
         }
         val generation = clearGeneration.value
         return coroutineScope {
-            val sweep = async {
-                syncMutex.withLock {
-                    if (clearGeneration.value != generation) {
-                        SyncReport(0, emptyList(), remainingCount(table), SyncStop.LocalDataCleared)
-                    } else {
-                        sweepLocked(table, schema, generation)
-                    }
-                }
-            }
+            val sweep = async { runPass(table, schema, generation) }
             activeSweeps.update { sweeps -> sweeps + sweep }
             try {
                 sweep.await()
@@ -183,7 +180,7 @@ internal class OfflineMutationSyncer(
                 // Rethrows when the caller itself was cancelled; otherwise only the pass was, by
                 // clearLocalData, and there is nothing left to report on.
                 currentCoroutineContext().ensureActive()
-                SyncReport(0, emptyList(), remainingCount(table), SyncStop.LocalDataCleared)
+                SyncReport(0, emptyList(), 0, SyncStop.LocalDataCleared)
             } finally {
                 activeSweeps.update { sweeps -> sweeps - sweep }
             }
@@ -191,93 +188,213 @@ internal class OfflineMutationSyncer(
     }
 
     /**
-     * Wipes local data with [clear] once no pass can send anything more: a pass in flight is
-     * cancelled, and [clear] runs under the sync lock.
+     * Wipes local data with [clear] once no pass can send anything more: passes in flight are
+     * cancelled, and [clear] runs under the send lock. An outcome of a request already on the wire
+     * is discarded when it arrives.
      *
      * @param clear The wipe.
      */
     suspend fun clearLocalData(clear: suspend () -> Unit) {
         clearGeneration.update { generation -> generation + 1 }
         activeSweeps.value.forEach { sweep -> sweep.cancel(CancellationException("Local data cleared")) }
-        syncMutex.withLock { clear() }
+        sendLock.withLock { clear() }
     }
 
-    private suspend fun remainingCount(table: String?): Int =
-        if (table == null) store.pendingMutationCount() else store.pendingMutationCountForTable(table)
+    /** What happened to a write offered for sending at the head of the queue. */
+    sealed interface HeadSendOutcome {
 
-    /** The pass itself. Must only be called while [syncMutex] is held. */
-    private suspend fun sweepLocked(table: String?, schema: String, generation: Long): SyncReport {
-        val identity = currentIdentity()
-        val mayReplay = try {
-            identity != null && store.mayReplayAs(identity.storedValue)
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (unreadableOwner: Exception) {
-            // The recorded owner cannot be decoded. Sending nothing is the only safe answer.
-            sdkLogger.error { "The queue owner cannot be read; not replaying (${unreadableOwner::class.simpleName})" }
-            return SyncReport(0, emptyList(), remainingCount(table), SyncStop.TransientFailure(unreadableOwner))
+        /**
+         * It stays queued unsent: something of the same identity is pending ahead of it, it is
+         * already being sent, or the session is no longer (or not yet) the identity that made it.
+         */
+        data object NotAtHead : HeadSendOutcome
+
+        /**
+         * The server accepted it; it has left the queue.
+         *
+         * @property result The server's response.
+         */
+        data class Sent(val result: PostgrestResult) : HeadSendOutcome
+
+        /**
+         * It could not reach the server; it stays queued.
+         *
+         * @property cause The connectivity failure.
+         */
+        data class Offline(val cause: Exception) : HeadSendOutcome
+
+        /**
+         * The server refused it, or a failure other than connectivity ended the request; it has left
+         * the queue, and the caller reports the failure.
+         *
+         * @property cause The failure.
+         */
+        data class Refused(val cause: Exception) : HeadSendOutcome
+
+        /**
+         * Local data was cleared while it was being sent; nothing about it was recorded.
+         *
+         * @property result The server's response, when it accepted the write.
+         * @property cause The failure, when it did not.
+         */
+        data class Cleared(val result: PostgrestResult?, val cause: Exception?) : HeadSendOutcome
+    }
+
+    /**
+     * Sends the queued write [mutationId] now, if it is at the head of [identity]'s queue, nobody
+     * else is sending it, and the session is still [identity] — the path every `QueueIfOffline`
+     * write takes right after it is queued.
+     *
+     * While the write is being sent it is marked in flight, so no pass sends it too. On success
+     * [onAccepted] runs (the caller patches the cache with the response) before the write leaves the
+     * queue, still marked in flight: removing it first would drop it from the overlay for one
+     * emission before the patched cache shows it.
+     *
+     * A connectivity failure leaves it queued. Any other failure — a refusal, or a `5xx` — removes
+     * it and is handed back for the caller to throw, as a write sent online always has been.
+     *
+     * @param mutationId The queued write.
+     * @param identity The identity that made it.
+     * @param send Sends it and returns the server's response.
+     * @param onAccepted Runs with the response once the server accepted it.
+     * @return What happened.
+     */
+    suspend fun sendAtHead(
+        mutationId: Long,
+        identity: QueueIdentity,
+        send: suspend () -> PostgrestResult,
+        onAccepted: suspend (PostgrestResult) -> Unit,
+    ): HeadSendOutcome {
+        val generation = clearGeneration.value
+        val claimed = sendLock.withLock {
+            val available = clearGeneration.value == generation &&
+                mutationId !in inFlight &&
+                currentIdentity() == identity &&
+                store.isAtHead(mutationId, identity.storedValue)
+            if (available) inFlight += mutationId
+            available
         }
-        if (!mayReplay) {
-            sdkLogger.warning {
-                "Pending mutations were queued under another identity than the current session; not replaying"
+        if (!claimed) return HeadSendOutcome.NotAtHead
+        try {
+            val result = try {
+                send()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                return sendLock.withLock {
+                    when {
+                        clearGeneration.value != generation -> HeadSendOutcome.Cleared(result = null, cause = failure)
+                        failure.isNetworkOrConnectivityFailure() -> HeadSendOutcome.Offline(failure)
+                        else -> {
+                            store.abandonSentMutation(mutationId)
+                            HeadSendOutcome.Refused(failure)
+                        }
+                    }
+                }
             }
-            return SyncReport(0, emptyList(), remainingCount(table), SyncStop.QueueOwnedByAnotherIdentity)
+            if (clearGeneration.value != generation) return HeadSendOutcome.Cleared(result = result, cause = null)
+            onAccepted(result)
+            store.completeSentMutation(mutationId)
+            return HeadSendOutcome.Sent(result)
+        } finally {
+            withContext(NonCancellable) { sendLock.withLock { inFlight -= mutationId } }
+        }
+    }
+
+    /**
+     * Discards the pending write [id] of [identity] without sending it. A write being sent cannot be
+     * discarded.
+     *
+     * @param id The queued write.
+     * @param identity The asking identity, or `null` to skip the ownership check.
+     * @return `true` when it was pending, not in flight, and [identity]'s.
+     */
+    suspend fun discardPendingMutation(id: Long, identity: QueueIdentity?): Boolean = sendLock.withLock {
+        if (id in inFlight) false else store.discardPendingMutation(id, identity?.storedValue)
+    }
+
+    private suspend fun remainingFor(identity: QueueIdentity?, table: String?): Int {
+        if (identity == null) {
+            return store.allPendingMutations().count { row -> table == null || row.table == table }
+        }
+        return store.pendingMutationsOf(identity.storedValue, table)?.size ?: 0
+    }
+
+    /** The next step of a pass, chosen under [sendLock]. */
+    private sealed interface Claim {
+        data class Send(val mutation: MutationRow) : Claim
+        data class Stop(val stop: SyncStop?) : Claim
+    }
+
+    /** Chooses the next write of [identity] to send, or why the pass ends. Caller holds [sendLock]. */
+    private suspend fun claimNext(identity: QueueIdentity, table: String?, generation: Long): Claim {
+        if (clearGeneration.value != generation) return Claim.Stop(SyncStop.LocalDataCleared)
+        val now = currentIdentity() ?: return Claim.Stop(SyncStop.IdentityUnknown)
+        if (now != identity) return Claim.Stop(SyncStop.SessionChanged)
+        val pending = store.pendingMutationsOf(identity.storedValue, table)
+            ?: return Claim.Stop(SyncStop.OwnershipUnreadable)
+        val next = pending.firstOrNull() ?: return Claim.Stop(null)
+        if (next.id in inFlight) return Claim.Stop(SyncStop.HeadInFlight)
+        inFlight += next.id
+        return Claim.Send(next)
+    }
+
+    /** One pass. */
+    private suspend fun runPass(table: String?, schema: String, generation: Long): SyncReport {
+        val identity = currentIdentity()
+        if (identity == null) {
+            sdkLogger.warning { "The session's identity cannot be told; not replaying" }
+            return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.IdentityUnknown)
+        }
+        val ready = sendLock.withLock {
+            if (clearGeneration.value != generation) return SyncReport(0, emptyList(), 0, SyncStop.LocalDataCleared)
+            store.retireAgedSyncedMutations()
+            store.adoptUnownedMutations(identity.storedValue)
+        }
+        if (!ready) {
+            return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.OwnershipUnreadable)
         }
 
-        val pending = if (table == null) store.allPendingMutations() else store.pendingMutationsForTable(table)
-        if (pending.isEmpty()) return SyncReport(0, emptyList(), 0, null)
-
+        val pendingAtStart = remainingFor(identity, table)
+        if (pendingAtStart == 0) return SyncReport(0, emptyList(), 0, null)
         sdkLogger.info {
-            if (table == null) "Syncing ${pending.size} pending mutations"
-            else "Syncing ${pending.size} pending mutations for $table"
+            if (table == null) "Syncing $pendingAtStart pending mutations"
+            else "Syncing $pendingAtStart pending mutations for $table"
         }
 
         val tableApis = mutableMapOf<String, PostgrestQueryBuilderWrapper>()
         val syncedTables = mutableSetOf<String>()
         val rejected = mutableListOf<StoredRejection>()
         var syncedCount = 0
-        var stop: SyncStop? = null
+        var stop: SyncStop?
 
-        for (mutation in pending) {
-            if (clearGeneration.value != generation) {
-                stop = SyncStop.LocalDataCleared
-                break
+        while (true) {
+            val mutation = when (val claim = sendLock.withLock { claimNext(identity, table, generation) }) {
+                is Claim.Stop -> {
+                    stop = claim.stop
+                    break
+                }
+                is Claim.Send -> claim.mutation
             }
-            val tableApi = tableApis.getOrPut(mutation.table) { postgrestFactory(schema, mutation.table) }
-            when (val outcome = replay(mutation, tableApi)) {
-                ReplayOutcome.Synced -> {
-                    store.markMutationSynced(id = mutation.id, table = mutation.table)
-                    syncedTables += mutation.table
-                    syncedCount++
-                    sdkLogger.debug { "Synced ${mutation.operation} mutation for ${mutation.table}" }
-                }
-
-                is ReplayOutcome.Rejected -> {
-                    try {
-                        rejected += store.rejectMutation(mutation, outcome.message, outcome.serverError)
-                    } catch (cancellation: CancellationException) {
-                        throw cancellation
-                    } catch (unrecorded: Exception) {
-                        // The rejected list cannot be written (it cannot be decoded). The write
-                        // stays queued rather than vanish, and the pass stops here.
-                        sdkLogger.error {
-                            "Could not record the rejection of ${mutation.operation} on ${mutation.table}; " +
-                                "keeping it queued (${unrecorded::class.simpleName})"
-                        }
-                        stop = SyncStop.TransientFailure(unrecorded)
-                        break
-                    }
-                }
-
-                is ReplayOutcome.Held -> {
-                    stop = SyncStop.HeldBehindEarlierMutations(mutation.id, outcome.cause)
-                    break
-                }
-
-                is ReplayOutcome.Stopped -> {
-                    stop = SyncStop.TransientFailure(outcome.cause)
-                    break
-                }
+            val outcome = try {
+                val tableApi = tableApis.getOrPut(mutation.table) { postgrestFactory(schema, mutation.table) }
+                replay(mutation, tableApi, identity)
+            } catch (cancellation: CancellationException) {
+                withContext(NonCancellable) { sendLock.withLock { inFlight -= mutation.id } }
+                throw cancellation
+            }
+            val recorded = sendLock.withLock {
+                inFlight -= mutation.id
+                if (clearGeneration.value != generation) return@withLock SyncStop.LocalDataCleared
+                record(mutation, outcome, rejected, syncedTables)
+            }
+            when (outcome) {
+                ReplayOutcome.Synced -> if (recorded == null) syncedCount++
+                else -> Unit
+            }
+            if (recorded != null) {
+                stop = recorded
+                break
             }
         }
 
@@ -292,9 +409,45 @@ internal class OfflineMutationSyncer(
         return SyncReport(
             syncedCount = syncedCount,
             rejected = rejected.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) },
-            remainingCount = remainingCount(table),
+            remainingCount = remainingFor(identity, table),
             stop = stop,
         )
+    }
+
+    /**
+     * Records the [outcome] of replaying [mutation]. Caller holds [sendLock].
+     *
+     * @return Why the pass stops here, or `null` to go on.
+     */
+    private suspend fun record(
+        mutation: MutationRow,
+        outcome: ReplayOutcome,
+        rejected: MutableList<StoredRejection>,
+        syncedTables: MutableSet<String>,
+    ): SyncStop? = when (outcome) {
+        ReplayOutcome.Synced -> {
+            store.markMutationSynced(id = mutation.id, table = mutation.table)
+            syncedTables += mutation.table
+            sdkLogger.debug { "Synced ${mutation.operation} mutation for ${mutation.table}" }
+            null
+        }
+
+        is ReplayOutcome.Rejected -> try {
+            rejected += store.rejectMutation(mutation, outcome.message, outcome.serverError)
+            null
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (unrecorded: Exception) {
+            // The write stays queued rather than vanish, and the pass stops here.
+            sdkLogger.error {
+                "Could not record the rejection of ${mutation.operation} on ${mutation.table}; " +
+                    "keeping it queued (${unrecorded::class.simpleName})"
+            }
+            SyncStop.TransientFailure(unrecorded)
+        }
+
+        is ReplayOutcome.Held -> SyncStop.HeldBehindEarlierMutations(mutation.id, outcome.cause)
+        is ReplayOutcome.Stopped -> SyncStop.TransientFailure(outcome.cause)
     }
 
     /** How one write's replay ended. */
@@ -305,20 +458,23 @@ internal class OfflineMutationSyncer(
         data class Stopped(val cause: Throwable) : ReplayOutcome
     }
 
-    private suspend fun replay(mutation: MutationRow, tableApi: PostgrestQueryBuilderWrapper): ReplayOutcome =
-        when (val prepared = prepare(mutation)) {
-            is Prepared.Refused -> prepared.outcome
-            is Prepared.Ready -> try {
-                prepared.request(tableApi)
-                ReplayOutcome.Synced
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: Exception) {
-                classify(mutation, failure)
-            }
+    private suspend fun replay(
+        mutation: MutationRow,
+        tableApi: PostgrestQueryBuilderWrapper,
+        identity: QueueIdentity,
+    ): ReplayOutcome = when (val prepared = prepare(mutation)) {
+        is Prepared.Refused -> prepared.outcome
+        is Prepared.Ready -> try {
+            prepared.request(tableApi)
+            ReplayOutcome.Synced
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            classify(mutation, failure, identity)
         }
+    }
 
-    private suspend fun classify(mutation: MutationRow, failure: Exception): ReplayOutcome = when {
+    private suspend fun classify(mutation: MutationRow, failure: Exception, identity: QueueIdentity): ReplayOutcome = when {
         failure.isNetworkOrConnectivityFailure() -> {
             sdkLogger.warning { "Network unavailable, pausing sync for ${mutation.table}" }
             ReplayOutcome.Stopped(failure)
@@ -326,7 +482,8 @@ internal class OfflineMutationSyncer(
 
         failure.isPermanentMutationFailure() -> {
             val status = failure.httpStatusOrNull()
-            if ((status == HTTP_FORBIDDEN || status == HTTP_CONFLICT) && store.hasPendingMutationBefore(mutation.id)) {
+            val mayDependOnEarlierWrite = status == HTTP_FORBIDDEN || status == HTTP_CONFLICT
+            if (mayDependOnEarlierWrite && store.hasEarlierPendingMutation(mutation.id, identity.storedValue)) {
                 sdkLogger.warning {
                     "Holding ${mutation.operation} on ${mutation.table} ($status) behind an earlier pending mutation"
                 }

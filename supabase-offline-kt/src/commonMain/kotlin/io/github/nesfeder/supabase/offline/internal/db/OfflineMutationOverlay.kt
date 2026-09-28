@@ -1,5 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.outbox.DEFAULT_PRIMARY_KEY
+import io.github.nesfeder.supabase.offline.internal.outbox.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.SignatureFilters
@@ -8,6 +10,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Utilities for overlaying **pending offline mutations** on top of a SELECT
@@ -71,6 +74,10 @@ internal object OfflineMutationOverlay {
      *                      `null` (the default) preserves the legacy always-append behavior, as do
      *                      non-exhaustive signatures — we never under-apply a row the server would
      *                      return. UPDATE/DELETE targeting is unaffected.
+     * @param keyColumns    The table's primary-key columns. An INSERT (or keyless UPSERT) row that
+     *                      carries the key is not appended when a row with the same key is already
+     *                      there — the server would not add a second one either — so a write the
+     *                      payload already holds is never shown twice.
      * @param onMutationFailure Told about each mutation that was skipped because applying it threw,
      *                      so the caller can log it. Never given the mutation's body to log.
      *
@@ -83,6 +90,7 @@ internal object OfflineMutationOverlay {
         serverJson: String,
         pending: List<MutationRow>,
         targetFilters: SignatureFilters? = null,
+        keyColumns: List<String> = DEFAULT_PRIMARY_KEY,
         onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> },
     ): String {
         if (pending.isEmpty()) return serverJson
@@ -102,7 +110,7 @@ internal object OfflineMutationOverlay {
         pending.forEach { mutation ->
             val working = rows.toMutableList()
             try {
-                applyMutation(json, working, mutation, targetFilters)
+                applyMutation(json, working, mutation, targetFilters, keyColumns)
                 rows = working
             } catch (failure: Exception) {
                 onMutationFailure(mutation, failure)
@@ -118,15 +126,16 @@ internal object OfflineMutationOverlay {
         rows: MutableList<JsonElement>,
         mutation: MutationRow,
         targetFilters: SignatureFilters?,
+        keyColumns: List<String>,
     ) {
         val descriptor = FilterEngine.decodeOrNull(mutation.filterJson, json)
 
         when (mutation.operation) {
             MutationOperation.INSERT ->
-                applyInsertMutation(json, rows, mutation, targetFilters)
+                applyInsertMutation(json, rows, mutation, targetFilters, keyColumns)
 
             MutationOperation.UPSERT ->
-                applyUpsertMutation(json, rows, mutation, descriptor, targetFilters)
+                applyUpsertMutation(json, rows, mutation, descriptor, targetFilters, keyColumns)
 
             MutationOperation.UPDATE ->
                 applyUpdateMutation(json, rows, mutation, descriptor)
@@ -148,19 +157,20 @@ internal object OfflineMutationOverlay {
      * - Otherwise: ignore.
      *
      * Each candidate row is gated by [appendIfAdmitted] so a row an exhaustive-filter query
-     * excludes never lands in that cached payload. We intentionally do **not** try to
-     * de-duplicate here; if you need "upsert-like" semantics offline, use the UPSERT path with
-     * filters.
+     * excludes never lands in that cached payload. A row that carries the table's primary key is
+     * not appended when the payload already holds that key — the server keeps one row per key — so
+     * a write the payload already reflects is never shown twice. Keyless rows are always appended.
      */
     private fun applyInsertMutation(
         json: Json,
         rows: MutableList<JsonElement>,
         mutation: MutationRow,
-        targetFilters: SignatureFilters?
+        targetFilters: SignatureFilters?,
+        keyColumns: List<String>,
     ) {
         when (val bodyElement = json.parseToJsonElement(mutation.bodyJson)) {
-            is JsonArray -> bodyElement.forEach { element -> appendIfAdmitted(rows, element, targetFilters) }
-            is JsonObject -> appendIfAdmitted(rows, bodyElement, targetFilters)
+            is JsonArray -> bodyElement.forEach { element -> appendIfAdmitted(rows, element, targetFilters, keyColumns) }
+            is JsonObject -> appendIfAdmitted(rows, bodyElement, targetFilters, keyColumns)
             else -> Unit
         }
     }
@@ -173,7 +183,9 @@ internal object OfflineMutationOverlay {
      * Apply an UPSERT mutation.
      *
      * Offline we approximate PostgREST behaviour as:
-     *  - If [descriptor] is null: treat as a pure INSERT and append the body.
+     *  - If [descriptor] is null: each body row that carries the table's primary key and matches a
+     *    row already in the payload by that key is merged into it (left untouched with
+     *    `ignoreDuplicates`); every other row is appended, as for an INSERT.
      *  - If [descriptor] matches existing rows:
      *      - with `ignoreDuplicates` set: leave them untouched (ON CONFLICT DO NOTHING)
      *      - otherwise: shallow-merge the UPSERT body into each matching row
@@ -189,13 +201,29 @@ internal object OfflineMutationOverlay {
         rows: MutableList<JsonElement>,
         mutation: MutationRow,
         descriptor: FilterDescriptor?,
-        targetFilters: SignatureFilters?
+        targetFilters: SignatureFilters?,
+        keyColumns: List<String>,
     ) {
         val bodyElement = json.parseToJsonElement(mutation.bodyJson)
 
-        // No target filter → treat as INSERT offline.
+        // No target filter → the conflict target is the primary key: merge by key, else append.
         if (descriptor == null) {
-            applyInsertMutation(json, rows, mutation, targetFilters)
+            val bodyRows = when (bodyElement) {
+                is JsonArray -> bodyElement
+                is JsonObject -> listOf(bodyElement)
+                else -> return
+            }
+            bodyRows.forEach { element ->
+                val index = indexOfKey(rows, element, keyColumns)
+                if (index == null) {
+                    appendIfAdmitted(rows, element, targetFilters, keyColumns)
+                    return@forEach
+                }
+                if (mutation.ignoreDuplicates == true) return@forEach
+                val current = rows[index] as? JsonObject ?: return@forEach
+                val patch = element as? JsonObject ?: return@forEach
+                rows[index] = mergeObjects(current, patch)
+            }
             return
         }
 
@@ -208,7 +236,7 @@ internal object OfflineMutationOverlay {
         val indices = matchingIndices(rows, descriptor)
         if (indices.isEmpty()) {
             // No match → append as a new row, subject to the cached query's own visibility filter.
-            appendIfAdmitted(rows, patchObj, targetFilters)
+            appendIfAdmitted(rows, patchObj, targetFilters, keyColumns)
             return
         }
 
@@ -296,17 +324,37 @@ internal object OfflineMutationOverlay {
      * @param rows          The mutable buffer of cached rows.
      * @param element       The candidate row to append.
      * @param targetFilters Parsed filters of the cached query, or `null` for legacy always-append.
+     * @param keyColumns    The table's primary key; a row whose key is already present is not added.
      */
     private fun appendIfAdmitted(
         rows: MutableList<JsonElement>,
         element: JsonElement,
-        targetFilters: SignatureFilters?
+        targetFilters: SignatureFilters?,
+        keyColumns: List<String>,
     ) {
         val rowObject = element as? JsonObject
-        if (rowObject == null || targetFilters == null || targetFilters.admits(rowObject)) {
-            rows.add(element)
-        }
+        if (rowObject != null && targetFilters != null && !targetFilters.admits(rowObject)) return
+        if (indexOfKey(rows, element, keyColumns) != null) return
+        rows.add(element)
     }
+
+    /**
+     * The index of the row in [rows] with [element]'s primary key, or `null` when [element] carries
+     * no whole key or no row has it.
+     */
+    private fun indexOfKey(rows: List<JsonElement>, element: JsonElement, keyColumns: List<String>): Int? {
+        val key = primaryKeyOf(element, keyColumns) ?: return null
+        val index = rows.indexOfFirst { existing ->
+            val existingKey = primaryKeyOf(existing, keyColumns)
+            existingKey != null && sameKey(key, existingKey)
+        }
+        return index.takeIf { it >= 0 }
+    }
+
+    /** Whether two primary keys name the same row, comparing values by their JSON content. */
+    private fun sameKey(first: JsonObject, second: JsonObject): Boolean =
+        first.keys == second.keys &&
+            first.all { (column, value) -> (value as? JsonPrimitive)?.content == (second[column] as? JsonPrimitive)?.content }
 
     /**
      * Returns the indices of all rows that satisfy [descriptor] according to

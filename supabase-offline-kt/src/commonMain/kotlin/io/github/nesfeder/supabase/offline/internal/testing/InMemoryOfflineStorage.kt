@@ -145,6 +145,11 @@ internal open class InMemoryMutationDao : MutationDao {
 
     override suspend fun countAll(): Int = mutations.value.size
 
+    override suspend fun allIds(): List<Long> = mutations.value.map { it.id }
+
+    override suspend fun syncedBefore(syncedBeforeMs: Long): List<MutationRow> =
+        mutations.value.filter { it.syncedAtMs != null && it.syncedAtMs < syncedBeforeMs }.sortedBy { it.id }
+
     override suspend fun countPending(): Int = mutations.value.count { it.syncedAtMs == null }
 
     override fun countPendingFlow(): Flow<Int> = mutations.map { all -> all.count { it.syncedAtMs == null } }

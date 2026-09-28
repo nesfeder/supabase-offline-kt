@@ -63,6 +63,12 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     var onAllForTableSnapshot: (suspend (table: String) -> Unit)? = null
 
     /**
+     * When it returns `true` for a row, [upsert] of that row fails with an [IllegalStateException]
+     * instead of writing it, as a full disk or a corrupt page would. `null` (the default) never fails.
+     */
+    var failUpsertOf: ((ObjectRow) -> Boolean)? = null
+
+    /**
      * Seed a cached payload without bumping the [writes] counter or notifying observers.
      * [updatedAt] controls the row's age so eviction tests can assert oldest-first ordering; it
      * defaults to `0L` for callers that don't care about age.
@@ -89,6 +95,7 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     }
 
     override suspend fun upsert(row: ObjectRow) {
+        check(failUpsertOf?.invoke(row) != true) { "Scripted write failure" }
         writes++
         super.upsert(row)
     }
@@ -110,7 +117,7 @@ internal class FakeObjectDao : InMemoryObjectDao() {
 /**
  * [InMemoryMutationDao] that exposes the queue for assertions. The in-memory DAO already mirrors
  * Room's mutation-queue semantics: an auto-incrementing id on insert (like `autoGenerate`), rows
- * with a null `syncedAtMs` treated as pending, ordering by `createdAtMs`, and reactive per-table
+ * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and reactive per-table
  * flows that re-emit on every queue change. Syncer tests drive a real `OfflineStore` over it and
  * observe replay, mark-synced, drop and dead-letter transitions.
  */

@@ -34,12 +34,12 @@ class ReservedRowsTest {
 
     @Test
     fun reserved_rows_are_never_evicted_and_never_counted() = runTest {
-        // Given — a cache over its limit, holding a rejected list and a queue owner as its oldest rows
+        // Given — a cache over its limit, holding a rejected list and the owner records as its oldest rows
         val store = newTestOfflineStore(
             objectDao = objectDao,
             settings = OfflineCacheSettings(maxDbSizeBytes = 100, evictionBatchSize = 1, minRetainedBytes = 0),
         )
-        store.outboxState.setQueueOwner("user:user-a")
+        store.queueOwnedWrite("user:user-a")
         store.outboxState.addRejection(rejection(id = 1))
         objectDao.seedPayload("todos", "todos", "[" + "\"x\",".repeat(60) + "\"x\"]", updatedAt = 10L)
         val reservedBytes = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)).payload.length
@@ -49,7 +49,7 @@ class ReservedRowsTest {
 
         // Then — the cache row went; the reserved rows stayed and never counted towards the size
         assertNull(objectDao.getRow("todos", "todos"))
-        assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, QUEUE_OWNER_SIGNATURE))
+        assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE))
         assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
         assertTrue(reservedBytes > 0)
         assertEquals(0L, objectDao.totalPayloadBytes())
@@ -103,17 +103,17 @@ class ReservedRowsTest {
     fun clearing_local_data_removes_the_reserved_rows() = runTest {
         // Given
         val store = newTestOfflineStore(objectDao = objectDao)
-        store.outboxState.setQueueOwner("user:user-a")
+        store.queueOwnedWrite("user:user-a")
         store.outboxState.addRejection(rejection(id = 1))
 
         // When
         store.clearAll()
 
         // Then
-        assertNull(objectDao.getRow(RESERVED_TABLE_NAME, QUEUE_OWNER_SIGNATURE))
+        assertNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE))
         assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
         assertEquals(emptyList(), store.outboxState.rejections())
-        assertNull(store.outboxState.queueOwner())
+        assertEquals(MutationOwners.Known(emptyMap()), store.outboxState.owners())
     }
 
     @Test
@@ -123,10 +123,18 @@ class ReservedRowsTest {
 
         // When
         store.outboxState.addRejection(rejection(id = 1))
+        store.queueOwnedWrite("user:user-a")
 
         // Then — a later build can tell which format it is reading
-        val payload = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)).payload
-        assertTrue(payload.contains("\"version\":1"), payload)
+        val rejected = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)).payload
+        val owners = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE)).payload
+        assertTrue(rejected.contains("\"version\":1"), rejected)
+        assertTrue(owners.contains("\"version\":1"), owners)
+    }
+
+    /** Queues a write owned by [owner], which writes the owner records. */
+    private suspend fun OfflineStore.queueOwnedWrite(owner: String) {
+        enqueueOwnedBy(owner) { enqueueInsert("todos", Json.parseToJsonElement("""[{"title":"x"}]""") as JsonArray) }
     }
 
     private fun rejection(id: Long): StoredRejection = StoredRejection(

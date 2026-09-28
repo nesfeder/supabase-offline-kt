@@ -1,6 +1,5 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
@@ -18,13 +17,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
- * The queue records the identity that queued into it, and a pass made under another identity sends
- * nothing — so an app that switches accounts without clearing local data never replays one user's
- * offline writes as another user.
+ * Each queued write records the identity that made it, and a pass sends only the current identity's
+ * writes — so an app that switches accounts without clearing local data never replays one user's
+ * offline writes as another user, and neither user's queue blocks the other's.
  */
 class QueueOwnershipTest {
 
@@ -60,11 +59,12 @@ class QueueOwnershipTest {
         // When
         val report = syncer.sync()
 
-        // Then — nothing is sent, and the pass says why
+        // Then — nothing is sent: B has nothing pending, and A's write waits for A
         assertEquals(requestsBefore, server.requests.size)
-        assertEquals(SyncStop.QueueOwnedByAnotherIdentity, report.stop)
-        assertEquals(1, report.remainingCount)
-        assertEquals(1, store.pendingMutationCount())
+        assertEquals(null, report.stop)
+        assertEquals(0, report.syncedCount)
+        assertEquals(0, report.remainingCount)
+        assertEquals(1, store.allPendingMutations().size)
     }
 
     @Test
@@ -85,48 +85,62 @@ class QueueOwnershipTest {
     }
 
     @Test
-    fun another_user_cannot_queue_behind_a_pending_queue_that_is_not_theirs() = runTest {
+    fun another_user_queues_beside_a_pending_queue_that_is_not_theirs() = runTest {
         // Given — user A's write is pending
         writeOffline("A's note")
 
         // When — user B writes offline
         session = USER_B
+        val outcome = writeOffline("B's note")
 
-        // Then — B's write is refused rather than attributed to A or sent as A
-        assertFailsWith<HttpRequestException> { writeOffline("B's note") }
-        assertEquals(listOf("""[{"title":"A's note"}]"""), store.allPendingMutations().map { it.bodyJson })
+        // Then — B's write is queued as B's, and A's stays A's
+        assertEquals(MutationOutcome.Queued, outcome)
+        val pending = store.allPendingMutations()
+        val owners = assertIs<MutationOwners.Known>(store.outboxState.owners()).byId
+        assertEquals(listOf(USER_A.storedValue, USER_B.storedValue), pending.map { owners[it.id] })
     }
 
     @Test
-    fun a_drained_queue_passes_to_the_next_user() = runTest {
-        // Given — user A's queue replayed completely
+    fun each_user_replays_only_their_own_writes() = runTest {
+        // Given — one write from each of A and B
         writeOffline("A's note")
-        server.answer = { okJson("[]") }
-        syncer.sync()
-
-        // When — user B writes offline and later syncs
         session = USER_B
-        val outcome = writeOffline("B's note")
+        writeOffline("B's note")
         server.answer = { okJson("[]") }
-        val report = syncer.sync()
+        val requestsBefore = server.requests.size
+
+        // When — B syncs, then A
+        val asB = syncer.sync()
+        session = USER_A
+        val asA = syncer.sync()
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
-        assertEquals(1, report.syncedCount)
-        assertEquals(USER_B.storedValue, store.outboxState.queueOwner())
+        assertEquals(1, asB.syncedCount)
+        assertEquals(1, asA.syncedCount)
+        assertEquals(
+            listOf("""[{"title":"B's note"}]""", """[{"title":"A's note"}]"""),
+            server.requests.drop(requestsBefore).map { it.body },
+        )
     }
 
     @Test
-    fun a_queue_written_before_owners_were_recorded_is_adopted() = runTest {
+    fun a_queue_written_before_owners_were_recorded_is_adopted_by_the_first_identity_to_replay() = runTest {
         // Given — a pending write with no recorded owner, as an older build leaves it
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"legacy"}]"""))
 
-        // When
-        val report = syncer.sync()
+        // When — A's pass sees it but cannot reach the server; then B and A sync online
+        server.answer = { connectivityFailure() }
+        syncer.sync()
+        server.answer = { okJson("[]") }
+        session = USER_B
+        val asB = syncer.sync()
+        session = USER_A
+        val asA = syncer.sync()
 
-        // Then — it replays under the current session, as it always did
-        assertEquals(1, report.syncedCount)
-        assertEquals(USER_A.storedValue, store.outboxState.queueOwner())
+        // Then — it became A's at A's first pass: B never sent it, A did
+        assertEquals(0, asB.syncedCount)
+        assertEquals(1, asA.syncedCount)
+        assertEquals("""[{"title":"legacy"}]""", server.requests.last().body)
     }
 
     @Test
@@ -142,7 +156,7 @@ class QueueOwnershipTest {
 
         // Then
         assertEquals(requestsBefore, server.requests.size)
-        assertEquals(SyncStop.QueueOwnedByAnotherIdentity, report.stop)
+        assertEquals(SyncStop.IdentityUnknown, report.stop)
     }
 
     @Test

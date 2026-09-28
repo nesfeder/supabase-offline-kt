@@ -2,7 +2,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 /**
  * The `object_cache` table name under which the engine keeps its own state — the rejected-mutation
- * list and the queue owner — without a schema change.
+ * list and the owner of each queued mutation — without a schema change.
  *
  * It cannot collide with a table reachable through PostgREST: Postgres truncates identifiers to
  * `NAMEDATALEN - 1` = 63 bytes, so no table can be *named* anything longer, and this name is far
@@ -13,7 +13,7 @@ package io.github.nesfeder.supabase.offline.internal.db
  * read and never touched by an overlay; `clearAll` removes them with everything else. An older
  * build of the engine that opens the database sees them as cache rows for a table nobody queries.
  *
- * Changing this value orphans every installed device's rejected list and queue owner, so it never
+ * Changing this value orphans every installed device's rejected list and owner records, so it never
  * changes.
  */
 internal const val RESERVED_TABLE_NAME: String =
@@ -22,8 +22,8 @@ internal const val RESERVED_TABLE_NAME: String =
 /** Signature, within [RESERVED_TABLE_NAME], of the persisted rejected-mutation list. */
 internal const val REJECTED_MUTATIONS_SIGNATURE: String = "rejected_mutations"
 
-/** Signature, within [RESERVED_TABLE_NAME], of the identity that owns the pending queue. */
-internal const val QUEUE_OWNER_SIGNATURE: String = "queue_owner"
+/** Signature, within [RESERVED_TABLE_NAME], of the owner recorded for each queued mutation. */
+internal const val MUTATION_OWNERS_SIGNATURE: String = "mutation_owners"
 
 /**
  * Whether [table] is the engine's reserved state table rather than a table of the app's.

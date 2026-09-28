@@ -326,11 +326,10 @@ class OfflineStoreQueueAndCacheTest {
     }
 
     /**
-     * Pins today's behaviour: the per-table count re-emits its unchanged value when another table's
-     * queue changes, because the query is invalidated per database table (Room's tracker, mirrored
-     * by the in-memory DAO), not per `table_name`. The previous standalone engine asserted no such
-     * emission. A later change that de-duplicates the count flows is expected to drop the repeated
-     * value.
+     * The per-table count emits only when that table's pending writes change: a write to another
+     * table invalidates the same database query (Room's tracker works per database table, not per
+     * `table_name`), but the count is derived from the table's own pending list, de-duplicated, so
+     * it no longer repeats its unchanged value.
      */
     @Test
     fun pendingMutationCountForTableFlow_emitsUpdatedCount_andExcludesSyncedWrites() =
@@ -346,8 +345,8 @@ class OfflineStoreQueueAndCacheTest {
             store.markMutationSynced(id = mutationDao.inserted.first().id, table = TABLE)
             collector.cancel()
 
-            // Then — the second 2 is the other table's write
-            assertEquals(listOf(0, 1, 2, 2, 1), counts)
+            // Then — the other table's write does not re-emit this table's count
+            assertEquals(listOf(0, 1, 2, 1), counts)
         }
 
     @Test

@@ -52,6 +52,7 @@ class AuthPluginQueueIdentityTest {
         // Given — Auth installed, nobody signed in, and an offline write
         supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing }
         val anonymousOutcome = builder.insertJson(rows("""[{"id":"n0","title":"anonymous"}]"""))
+        val attemptsWhileOffline = sentBodies().size
 
         // When — a pass while still signed out
         server.answer = { okJson("[]") }
@@ -60,7 +61,7 @@ class AuthPluginQueueIdentityTest {
         // Then — the anonymous write went out
         assertEquals(MutationOutcome.Queued, anonymousOutcome)
         assertEquals(1, signedOut.syncedCount)
-        assertEquals(listOf("""[{"id":"n0","title":"anonymous"}]"""), sentBodies())
+        assertEquals(listOf("""[{"id":"n0","title":"anonymous"}]"""), sentBodies().drop(attemptsWhileOffline))
 
         // When — user A signs in and writes offline, then a pass runs signed in
         supabase.auth.importSession(

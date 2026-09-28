@@ -7,6 +7,9 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_URL
 import io.ktor.client.request.post
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -47,13 +50,40 @@ class PreferHeaderProbeContractTest {
         // Given — a probe that stops PostgREST writes, and a session refresh in the same coroutine
         val supabase = server.supabaseClient()
         supabase.installPreferHeaderProbe()
-        val probe = PreferHeaderProbe(shortCircuit = true)
+        val probe = PreferHeaderProbe()
 
         // When
         withContext(probe) { supabase.httpClient.httpClient.post("$TEST_SUPABASE_URL/auth/v1/token") }
 
         // Then — it reached the server, and the probe did not record it as a write
         assertEquals(listOf("token"), server.requests.map { it.table })
+        assertFalse(probe.observed)
+    }
+
+    @Test
+    fun the_probe_is_installed_once_however_many_callers_race_to_install_it() = runTest {
+        // Given — a client nothing has installed the probe on yet
+        val supabase = server.supabaseClient()
+
+        // When — many first uses at once
+        val installs = (1..64).map { async(Dispatchers.Default) { supabase.installPreferHeaderProbe() } }.awaitAll()
+
+        // Then — exactly one of them put the interceptor on the pipeline
+        assertEquals(1, installs.count { installed -> installed })
+    }
+
+    @Test
+    fun a_postgrest_read_passes_a_short_circuiting_probe() = runTest {
+        // Given
+        val supabase = server.supabaseClient()
+        supabase.installPreferHeaderProbe()
+        val probe = PreferHeaderProbe()
+
+        // When
+        withContext(probe) { supabase.postgrest.from("todos").select { filter { eq("id", 1) } } }
+
+        // Then — reads are not the probe's business
+        assertEquals(1, server.requests.size)
         assertFalse(probe.observed)
     }
 }

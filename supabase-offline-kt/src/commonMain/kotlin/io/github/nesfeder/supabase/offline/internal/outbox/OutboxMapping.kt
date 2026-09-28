@@ -74,6 +74,7 @@ internal fun StoredRejection.toRejectedMutation(json: Json, primaryKeys: Primary
         },
         message = message,
         rejectedAt = Instant.fromEpochMilliseconds(rejectedAtMs),
+        bodyOmittedChars = bodyOmittedChars,
     )
 }
 

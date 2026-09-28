@@ -49,6 +49,7 @@ internal class ReservedRowsDatabaseScenarios(
             assertEquals(SHIPPED_FIXTURE_CONTENTS, reopened.readShippedFixtureContents())
             val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
             assertEquals(emptyList(), store.outboxState.rejections())
+            assertEquals(MutationOwners.Known(emptyMap()), store.outboxState.owners())
         } finally {
             reopened.close()
         }
@@ -71,9 +72,9 @@ internal class ReservedRowsDatabaseScenarios(
         // When
         val callback = RecordingRoomCallback()
         val reopened = open(path, callback)
-        val (contents, rejections, owner) = try {
+        val (contents, rejections, owners) = try {
             val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
-            Triple(reopened.readShippedFixtureContents(), store.outboxState.rejections(), store.outboxState.queueOwner())
+            Triple(reopened.readShippedFixtureContents(), store.outboxState.rejections(), store.outboxState.owners())
         } finally {
             reopened.close()
         }
@@ -81,7 +82,7 @@ internal class ReservedRowsDatabaseScenarios(
         // Then
         assertEquals(SHIPPED_FIXTURE_CONTENTS, contents)
         assertEquals(listOf(ON_DISK_REJECTION), rejections)
-        assertEquals("user:user-a", owner)
+        assertEquals(MutationOwners.Known(ON_DISK_OWNERS), owners)
         assertEquals(0, callback.creates)
         assertEquals(0, callback.destructiveMigrations)
         assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(path))
@@ -105,6 +106,70 @@ internal class ReservedRowsDatabaseScenarios(
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.sumOf { row -> row.payload.length.toLong() }, size)
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, evicted)
             assertEquals(2L, PreviousEngineQueries.reservedRowCount(path))
+        } finally {
+            database.close()
+        }
+    }
+
+    /**
+     * The pending writes of the shipped database, which recorded no owners, are adopted in place by
+     * the identity of the first pass that sees them, and keep their order.
+     */
+    suspend fun anEarlierBuildsQueueIsAdoptedInPlace(path: String) {
+        // Given — the shipped database, whose pending writes have no owners
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val store = newTestOfflineStore(objectDao = database.objectDao(), mutationDao = database.mutationDao())
+
+            // When
+            assertTrue(store.adoptUnownedMutations("user:user-a"))
+        } finally {
+            database.close()
+        }
+
+        // Then — after reopening, every pending write is the adopting user's, in the same order
+        val reopened = open(path, RecordingRoomCallback())
+        try {
+            val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
+            assertEquals(
+                MutationOwners.Known(mapOf(1L to "user:user-a", 2L to "user:user-a", 3L to "user:user-a", 4L to "user:user-a")),
+                store.outboxState.owners(),
+            )
+            assertEquals(listOf(1L, 2L, 3L, 4L), store.pendingMutationsOf("user:user-a")?.map { row -> row.id })
+            assertEquals(emptyList(), store.pendingMutationsOf("user:user-b")?.map { row -> row.id })
+        } finally {
+            reopened.close()
+        }
+    }
+
+    /**
+     * The outbox's multi-row changes run in one Room transaction: when one fails part-way, none of
+     * its writes land — the rejected list, the queue and the owners stay as they were.
+     */
+    suspend fun aFailedOutboxTransactionChangesNothing(path: String) {
+        // Given
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val objectDao = database.objectDao()
+            val mutationDao = database.mutationDao()
+            val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+            val (rejectedRow, _) = store.outboxState.rejectedRowWith(add = ON_DISK_REJECTION)
+
+            // When — a transaction that writes the rejection and deletes the write, then fails
+            val failure = runCatching {
+                mutationDao.runInTransaction {
+                    objectDao.upsert(rejectedRow)
+                    mutationDao.deleteById(1L)
+                    error("interrupted")
+                }
+            }
+
+            // Then
+            assertTrue(failure.isFailure)
+            assertEquals(null, objectDao.get(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+            assertEquals(listOf(1L, 2L, 3L, 4L), mutationDao.pendingAll().map { row -> row.id })
         } finally {
             database.close()
         }

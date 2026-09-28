@@ -8,6 +8,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /* ───────────────────────── Object cache ───────────────────────── */
@@ -322,6 +323,19 @@ internal interface MutationDao {
     @Query("SELECT COUNT(*) FROM mutation_cache")
     suspend fun countAll(): Int
 
+    /** The id of every queued mutation, pending or synced. */
+    @Query("SELECT id FROM mutation_cache")
+    suspend fun allIds(): List<Long>
+
+    /**
+     * Synced mutations marked synced before [syncedBeforeMs], by the device clock.
+     *
+     * @param syncedBeforeMs The cut-off, in epoch milliseconds.
+     * @return The rows, in insertion order.
+     */
+    @Query("SELECT * FROM mutation_cache WHERE synced_at_ms IS NOT NULL AND synced_at_ms < :syncedBeforeMs ORDER BY id ASC")
+    suspend fun syncedBefore(syncedBeforeMs: Long): List<MutationRow>
+
     @Query("SELECT COUNT(*) FROM mutation_cache WHERE synced_at_ms IS NULL")
     suspend fun countPending(): Int
 
@@ -360,6 +374,18 @@ internal interface MutationDao {
     /** Deletes every queued mutation (pending + already-synced) across all tables. */
     @Query("DELETE FROM mutation_cache")
     suspend fun deleteAll()
+
+    /**
+     * Runs [block] in one write transaction: every DAO call it makes, on any of the database's
+     * DAOs, commits together or not at all. Keep [block] to DAO calls — never wait on a coroutine
+     * lock inside it, or a writer holding that lock could wait on this transaction's connection.
+     *
+     * @param block The writes to make atomically.
+     */
+    @Transaction
+    suspend fun runInTransaction(block: suspend () -> Unit) {
+        block()
+    }
 }
 
 /* ───────────────────────── Mutation operations ───────────────────────── */

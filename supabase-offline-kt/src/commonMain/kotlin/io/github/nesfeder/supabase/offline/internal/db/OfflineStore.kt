@@ -6,6 +6,8 @@ import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.outbox.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.outbox.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
@@ -94,8 +96,8 @@ internal sealed interface EnqueueOutcome {
      */
     data class Queued(val id: Long) : EnqueueOutcome
 
-    /** Another identity's writes are pending; the write was not queued. */
-    data object QueueOwnedByAnotherIdentity : EnqueueOutcome
+    /** The owner records cannot be read, so no owner could be recorded; the write was not queued. */
+    data object OwnershipUnreadable : EnqueueOutcome
 
     /** Local data was cleared after the write started; it was not queued. */
     data object LocalDataCleared : EnqueueOutcome
@@ -141,15 +143,45 @@ internal class OfflineStore(
      */
     internal var sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO)
 
-    /** The outbox's persisted state: the rejected-mutation list and the queue owner. */
-    internal val outboxState: OutboxStateStore = OutboxStateStore(objectDao, OfflineJson, nowMillis)
+    /** The outbox's persisted state: the owner of each queued write and the rejected list. */
+    internal val outboxState: OutboxStateStore = OutboxStateStore(objectDao, OfflineJson, nowMillis) { sdkLogger }
 
     /**
-     * Serializes every decision about who owns the queue with the write that depends on it: an
-     * enqueue checks the owner and inserts its row, a sweep checks the owner before replaying, a
-     * retry re-queues a rejected write. Short critical sections only — never held across a request.
+     * Serializes every change to the outbox's bookkeeping together with the queue rows it describes:
+     * an enqueue and its owner, a rejection and the row it removes, a retry, a discard, a completed
+     * or retired write. Short critical sections of DAO calls only — never held across a request, and
+     * never awaited inside a database transaction (the transactions run inside it, not around it).
+     *
+     * Lock order, outermost first: the syncer's send lock, a table's write lock, this lock, then
+     * [teardownMutex].
      */
-    private val queueOwnershipMutex = Mutex()
+    private val outboxMutex = Mutex()
+
+    /**
+     * Makes a teardown and every cache write it must not be followed by one step: [clearAll] stamps
+     * the teardown tick and deletes under it, and every overlay and payload write checks the tick and
+     * writes under it. So a write whose operation started before a teardown can never land after it.
+     */
+    private val teardownMutex = Mutex()
+
+    /**
+     * The identity whose queued writes the overlay shows and the counts count — its stored value —
+     * or `null` for no filtering (a store driven directly, with no session model). Wired by the
+     * client.
+     */
+    internal var identityProvider: suspend () -> String? = { null }
+
+    /** Emits when the session may have changed, so overlays and counts re-apply [identityProvider]. */
+    internal var identityChanges: Flow<Any?> = flowOf(Unit)
+
+    /** Where the store learns each table's primary key, for de-duplicating overlaid rows. */
+    internal var primaryKeys: PrimaryKeys = DefaultPrimaryKeys
+
+    /** Mutation ids whose overlay failure was already logged, so a failing one is logged once. */
+    private val loggedOverlaySkips = MutableStateFlow<Set<Long>>(emptySet())
+
+    /** Whether an unclassifiable dry-run status has been reported yet; see [reportUnclassifiableWriteOnce]. */
+    private val unclassifiableWriteReported = MutableStateFlow(false)
 
     /**
      * `(table, signature)` → the tick at which the request that produced the cached payload started,
@@ -164,6 +196,27 @@ internal class OfflineStore(
 
     /** Mutation id → the tick at which it was marked synced in this process. */
     private val syncedMutationTicks = MutableStateFlow<Map<Long, Long>>(emptyMap())
+
+    /**
+     * Whether the synced [mutation] still belongs on the payload cached for [table]/[signature].
+     *
+     * A synced mutation stands in for its write only on payloads fetched before it replayed. A payload
+     * a network response wrote after the replay already holds the server's version — overlaying the
+     * mutation again would show an inserted row twice, or put back the user's value over a newer edit
+     * made elsewhere. A pending mutation always belongs.
+     *
+     * A mutation synced before this process started counts as older than any payload a response
+     * wrote in this process. A payload no response wrote in this process counts as older than any
+     * synced mutation; the age bound on synced retention (see [retireAgedSyncedMutations]) limits how
+     * long that stays true.
+     */
+    private fun belongsOnPayload(mutation: MutationRow, table: String, signature: String?): Boolean {
+        if (mutation.syncedAtMs == null) return true
+        if (signature == null) return true
+        val refreshedAtTick = networkRefreshTicks.value[table to signature] ?: return true
+        val syncedAtTick = syncedMutationTicks.value[mutation.id] ?: Long.MIN_VALUE
+        return refreshedAtTick < syncedAtTick
+    }
 
     /**
      * Per-table locks serializing every write to the object cache — [addPayload] and the
@@ -385,7 +438,7 @@ internal class OfflineStore(
         // response is judged against the watermark *after* any overlay in progress has recorded
         // its write, and never lands between an overlay's snapshot and its write-back (where the
         // overlay would roll it straight back out) — see [tableWriteLocks].
-        val outcome = tableWriteLock(table).withLock {
+        val outcome = tableWriteLock(table).withLock { teardownMutex.withLock {
             when {
                 // The cache was wiped for an identity change while this request was in flight.
                 // Its rows belong to the outgoing account; writing them here undoes the teardown.
@@ -421,7 +474,7 @@ internal class OfflineStore(
                     AddPayloadOutcome.WRITTEN
                 }
             }
-        }
+        } }
 
         // Outside the table lock: eviction takes its own mutex and scans every table.
         if (outcome == AddPayloadOutcome.WRITTEN && shouldEnforceSizeAfterWrite(payload)) {
@@ -518,20 +571,26 @@ internal class OfflineStore(
      * them. That is the guard's whole point, so it is recorded first and never rolled back.
      */
     suspend fun clearAll() {
-        // Under the ownership lock, so a write whose request predates this teardown cannot slip
-        // its queue row in between the tick and the deletes — see [enqueueOwnedBy].
-        queueOwnershipMutex.withLock {
-            val tick = monotonicTick()
-            // Never move the teardown tick backwards: two teardowns racing here must leave the later
-            // one, or the earlier assignment would re-admit responses the later wipe disqualified.
-            cacheClearedTick.update { existing -> if (existing >= tick) existing else tick }
-            // The object-cache wipe takes the reserved rows with it: the rejected list and the queue
-            // owner belong to the identity being torn down.
-            objectDao.deleteAll()
-            storageDao.deleteAll()
-            mutationDao.deleteAll()
-            networkRefreshTicks.value = emptyMap()
-            syncedMutationTicks.value = emptyMap()
+        // Under the outbox lock, so a write whose operation predates this teardown cannot slip its
+        // queue row in between the tick and the deletes (see [enqueueOwnedBy]); and under the
+        // teardown lock, so no overlay or payload write that checked the tick before it can land
+        // after the deletes. Neither lock is held across a request, so a teardown never waits on one.
+        outboxMutex.withLock {
+            teardownMutex.withLock {
+                val tick = monotonicTick()
+                // Never move the teardown tick backwards: two teardowns racing here must leave the
+                // later one, or the earlier assignment would re-admit responses it disqualified.
+                cacheClearedTick.update { existing -> if (existing >= tick) existing else tick }
+                // The object-cache wipe takes the reserved rows with it: the rejected list and the
+                // owner records belong to the identity being torn down.
+                objectDao.deleteAll()
+                storageDao.deleteAll()
+                mutationDao.deleteAll()
+                outboxState.resetCaches()
+                networkRefreshTicks.value = emptyMap()
+                syncedMutationTicks.value = emptyMap()
+                loggedOverlaySkips.value = emptySet()
+            }
         }
     }
 
@@ -680,71 +739,168 @@ internal class OfflineStore(
     }
 
     /**
-     * Runs [enqueue] only if the queue may take a write from [identity], recording [identity] as the
-     * queue's owner.
+     * Runs [enqueue] and records [identity] as the owner of the write it queues, in one transaction.
      *
-     * The queue holds one identity's writes at a time, because a replay can only be sent under one
-     * session. A write from [identity] is taken when nothing is pending, or when what is pending is
-     * already [identity]'s; a queue whose pending writes carry no recorded owner (written before
-     * owners were recorded) is adopted. It is refused while another identity's writes are pending —
-     * queueing it would send one account's write under the other's session, whichever replays.
+     * The queue is kept per identity: each write records who made it, a replay pass sends only the
+     * current identity's writes, and another identity's writes neither block it nor are sent by it.
      *
-     * It is also refused when [clearAll] has run since [startedAtTick]: the write belongs to the
-     * identity that was torn down. The check and the insert share [clearAll]'s lock, so no teardown
-     * can fall between them.
+     * The write is refused when [clearAll] has run since [startedAtTick] — it belongs to the identity
+     * that was torn down — and when the owner records cannot be read. The teardown check and the
+     * insert share [clearAll]'s lock, so no teardown can fall between them.
      *
-     * @param identity The stored value of the identity making the write, or `null` to skip the
-     *   ownership check (a store driven directly, with no session model).
-     * @param startedAtTick [monotonicTickNow] as read before the write's request went out, or
-     *   `null` to skip the teardown check.
-     * @param enqueue Inserts the queue row and returns its id.
+     * @param identity The stored value of the identity making the write, or `null` to record none (a
+     *   store driven directly, with no session model).
+     * @param startedAtTick [monotonicTickNow] as read before the write started, or `null` to skip
+     *   the teardown check.
+     * @param enqueue Inserts the queue row and returns its id. Must make DAO calls only.
      * @return What happened.
      */
     suspend fun enqueueOwnedBy(
         identity: String?,
         startedAtTick: Long? = null,
         enqueue: suspend OfflineStore.() -> Long,
-    ): EnqueueOutcome = queueOwnershipMutex.withLock {
-        when {
-            predatesCacheTeardown(startedAtTick) -> EnqueueOutcome.LocalDataCleared
-            identity != null && !claimQueueLocked(identity) -> EnqueueOutcome.QueueOwnedByAnotherIdentity
-            else -> EnqueueOutcome.Queued(enqueue())
+    ): EnqueueOutcome = outboxMutex.withLock {
+        if (predatesCacheTeardown(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
+        if (identity == null) return@withLock EnqueueOutcome.Queued(enqueue())
+        if (outboxState.owners() !is MutationOwners.Known) return@withLock EnqueueOutcome.OwnershipUnreadable
+        var id = 0L
+        var owners: MutationOwners.Known? = null
+        mutationDao.runInTransaction {
+            id = enqueue()
+            val (row, next) = checkNotNull(outboxState.ownersRowWith { current -> current + (id to identity) })
+            objectDao.upsert(row)
+            owners = next
         }
+        owners?.let(outboxState::ownersWritten)
+        EnqueueOutcome.Queued(id)
     }
 
     /**
-     * Whether a sweep made as [identity] may replay the pending queue. A queue with no recorded
-     * owner is adopted by [identity]: it was written before owners were recorded, and replaying it
-     * under the current session is what the engine always did.
+     * The pending mutations [identity] may replay, in insertion order: its own, and any with no
+     * recorded owner (queued by an earlier build of the engine, and adopted by the first pass that
+     * sees them).
      *
-     * @param identity The stored value of the identity the sweep would replay as.
-     * @return `false` when another identity's writes are pending.
+     * @param identity The replaying identity's stored value.
+     * @param table The table to look in, or `null` for every table.
+     * @return The mutations, or `null` when the owner records cannot be read.
      */
-    suspend fun mayReplayAs(identity: String): Boolean =
-        queueOwnershipMutex.withLock { claimQueueLocked(identity) }
+    suspend fun pendingMutationsOf(identity: String, table: String? = null): List<MutationRow>? {
+        val owners = outboxState.owners() as? MutationOwners.Known ?: return null
+        val pending = if (table == null) mutationDao.pendingAll() else mutationDao.pendingForTable(table)
+        return pending.filter { row -> owners.byId[row.id].let { owner -> owner == null || owner == identity } }
+    }
 
-    private suspend fun claimQueueLocked(identity: String): Boolean {
-        val owner = outboxState.queueOwner()
-        if (owner == identity) return true
-        if (owner != null && mutationDao.countPending() > 0) return false
-        outboxState.setQueueOwner(identity)
+    /**
+     * Records [identity] as the owner of every pending mutation that has none: rows queued by an
+     * earlier build of the engine, adopted by the identity present at the first pass that sees them.
+     *
+     * @param identity The replaying identity's stored value.
+     * @return `false` when the owner records cannot be read.
+     */
+    suspend fun adoptUnownedMutations(identity: String): Boolean = outboxMutex.withLock {
+        val owners = outboxState.owners() as? MutationOwners.Known ?: return@withLock false
+        val pendingIds = mutationDao.pendingAll().map { row -> row.id }.toSet()
+        val unowned = pendingIds - owners.byId.keys
+        val stale = owners.byId.keys - mutationDao.allIds().toSet()
+        if (unowned.isEmpty() && stale.isEmpty()) return@withLock true
+        val (row, next) = checkNotNull(
+            outboxState.ownersRowWith { current -> (current - stale) + unowned.associateWith { identity } },
+        )
+        objectDao.upsert(row)
+        outboxState.ownersWritten(next)
+        true
+    }
+
+    /**
+     * Whether [id] is the first of [identity]'s pending mutations — nothing of the same identity is
+     * pending ahead of it, in any table.
+     *
+     * @param id A queued mutation's id.
+     * @param identity Its owner's stored value.
+     * @return `true` at the head; `false` behind another write, or when owners cannot be read.
+     */
+    suspend fun isAtHead(id: Long, identity: String): Boolean =
+        pendingMutationsOf(identity)?.firstOrNull()?.id == id
+
+    /**
+     * Whether any of [identity]'s mutations queued before [id], in any table, is still pending.
+     *
+     * @param id A queued mutation's id.
+     * @param identity Its owner's stored value.
+     * @return `true` when an earlier write of the same identity has not replayed yet.
+     */
+    suspend fun hasEarlierPendingMutation(id: Long, identity: String): Boolean =
+        pendingMutationsOf(identity)?.any { row -> row.id < id } ?: mutationDao.hasPendingBefore(id)
+
+    /**
+     * Removes a write sent at the head of the queue once the server accepted it: its queue row, its
+     * owner record, and any rejected entry a crash left behind for it. The caller patches the cache
+     * with the server's response, so nothing needs to stand in for the write any more.
+     *
+     * @param id The sent mutation's id.
+     */
+    suspend fun completeSentMutation(id: Long) {
+        removeMutations(listOf(id), clearRejections = true)
+    }
+
+    /**
+     * Removes a write sent at the head of the queue that the server refused, or that local data was
+     * cleared under: its queue row and owner record.
+     *
+     * @param id The mutation's id.
+     */
+    suspend fun abandonSentMutation(id: Long) {
+        removeMutations(listOf(id), clearRejections = false)
+    }
+
+    /**
+     * Discards the pending mutation [id] of [identity]: it leaves the queue unsent, and the overlay
+     * stops showing it.
+     *
+     * @param id The mutation's id.
+     * @param identity The asking identity's stored value, or `null` to skip the ownership check.
+     * @return `true` when it was pending and [identity]'s to discard.
+     */
+    suspend fun discardPendingMutation(id: Long, identity: String?): Boolean {
+        val pending = mutationDao.pendingAll().firstOrNull { row -> row.id == id } ?: return false
+        if (identity != null) {
+            val owner = (outboxState.owners() as? MutationOwners.Known)?.byId?.get(pending.id)
+            if (owner != null && owner != identity) return false
+        }
+        removeMutations(listOf(id), clearRejections = false)
         return true
     }
 
     /**
-     * Whether any mutation queued before [id], in any table, is still pending.
-     *
-     * @param id A queued mutation's id.
-     * @return `true` when an earlier write has not replayed yet.
+     * Deletes the queue rows [ids] and their owner records in one transaction, and — when
+     * [clearRejections] — any rejected entry left for them.
      */
-    suspend fun hasPendingMutationBefore(id: Long): Boolean = mutationDao.hasPendingBefore(id)
+    private suspend fun removeMutations(ids: Collection<Long>, clearRejections: Boolean) {
+        if (ids.isEmpty()) return
+        outboxMutex.withLock {
+            val idSet = ids.toSet()
+            val owners = outboxState.ownersRowWith { current -> current - idSet }
+            val rejectionIds = if (clearRejections) idSet.filter { id -> outboxState.hasRejection(id) } else emptyList()
+            var rejected: StoredRejectionList? = null
+            mutationDao.runInTransaction {
+                idSet.forEach { id -> mutationDao.deleteById(id) }
+                owners?.let { (row, _) -> objectDao.upsert(row) }
+                rejectionIds.forEach { id ->
+                    val (row, list) = outboxState.rejectedRowWith(removeId = id)
+                    objectDao.upsert(row)
+                    rejected = list
+                }
+            }
+            owners?.let { (_, next) -> outboxState.ownersWritten(next) }
+            rejected?.let(outboxState::rejectedWritten)
+            syncedMutationTicks.update { ticks -> ticks - idSet }
+            loggedOverlaySkips.update { logged -> logged - idSet }
+        }
+    }
 
     /**
-     * Moves [mutation] out of the queue and onto the rejected list.
-     *
-     * The list entry is written first and the queue row deleted second, so a crash in between
-     * leaves the write pending (it replays, is refused again, and replaces its own entry) rather
-     * than lost.
+     * Moves [mutation] out of the queue and onto the rejected list, in one transaction: the list
+     * entry, the queue row and its owner record change together or not at all.
      *
      * @param mutation The refused write.
      * @param message Why it was refused.
@@ -755,7 +911,8 @@ internal class OfflineStore(
         mutation: MutationRow,
         message: String,
         serverError: StoredServerError?,
-    ): StoredRejection {
+    ): StoredRejection = outboxMutex.withLock {
+        val owner = (outboxState.owners() as? MutationOwners.Known)?.byId?.get(mutation.id)
         val entry = StoredRejection(
             id = mutation.id,
             table = mutation.table,
@@ -767,38 +924,53 @@ internal class OfflineStore(
             onConflict = mutation.onConflict,
             ignoreDuplicates = mutation.ignoreDuplicates,
             deltaJson = mutation.deltaJson,
-            owner = outboxState.queueOwner(),
+            owner = owner,
             rejectedAtMs = nowMillis(),
             message = message,
             serverError = serverError,
         )
-        outboxState.addRejection(entry)
-        mutationDao.deleteById(mutation.id)
+        val (rejectedRow, list) = outboxState.rejectedRowWith(add = entry)
+        val owners = outboxState.ownersRowWith { current -> current - mutation.id }
+        mutationDao.runInTransaction {
+            objectDao.upsert(rejectedRow)
+            mutationDao.deleteById(mutation.id)
+            owners?.let { (row, _) -> objectDao.upsert(row) }
+        }
+        outboxState.rejectedWritten(list)
+        owners?.let { (_, next) -> outboxState.ownersWritten(next) }
         syncedMutationTicks.update { ticks -> ticks - mutation.id }
-        return entry
+        list.entries.firstOrNull { stored -> stored.id == mutation.id } ?: entry
     }
 
     /**
-     * Puts the rejected mutation [id] back at the tail of the queue, under a new id.
+     * Puts the rejected mutation [id] back at the tail of the queue, under a new id, in one
+     * transaction with its owner record and the list entry's removal.
      *
      * @param id The rejected mutation's id.
      * @param identity The stored value of the identity asking, or `null` to skip ownership checks.
-     * @return The new pending mutation's id, or `null` when there is no such rejection, or it — or
-     *   the pending queue — belongs to another identity.
+     * @return The new pending mutation's id, or `null` when there is no such rejection, its body was
+     *   too long to keep, it belongs to another identity, or the owner records cannot be read.
      */
-    suspend fun retryRejectedMutation(id: Long, identity: String?): Long? =
-        queueOwnershipMutex.withLock {
-            val entry = outboxState.rejections().firstOrNull { rejection -> rejection.id == id }
-                ?: return@withLock null
+    suspend fun retryRejectedMutation(id: Long, identity: String?): Long? = outboxMutex.withLock {
+        val entry = outboxState.rejections().firstOrNull { rejection -> rejection.id == id } ?: return@withLock null
+        if (identity != null && entry.owner != null && entry.owner != identity) return@withLock null
+        val row = entry.toRequeuedRow(createdAtMs = nowMillis()) ?: return@withLock null
+        val (rejectedRow, list) = outboxState.rejectedRowWith(removeId = id)
+        var newId = 0L
+        var owners: MutationOwners.Known? = null
+        mutationDao.runInTransaction {
+            newId = mutationDao.insert(row)
+            objectDao.upsert(rejectedRow)
             if (identity != null) {
-                val rejectedOwner = entry.owner
-                if (rejectedOwner != null && rejectedOwner != identity) return@withLock null
-                if (!claimQueueLocked(identity)) return@withLock null
+                val (ownersRow, next) = checkNotNull(outboxState.ownersRowWith { current -> current + (newId to identity) })
+                objectDao.upsert(ownersRow)
+                owners = next
             }
-            val newId = mutationDao.insert(entry.toRequeuedRow(createdAtMs = nowMillis()))
-            outboxState.removeRejection(id)
-            newId
         }
+        outboxState.rejectedWritten(list)
+        owners?.let(outboxState::ownersWritten)
+        newId
+    }
 
     /**
      * Removes the rejected mutation [id] from the list.
@@ -806,57 +978,79 @@ internal class OfflineStore(
      * @param id The rejected mutation's id.
      * @return `true` when an entry was removed.
      */
-    suspend fun dismissRejectedMutation(id: Long): Boolean = outboxState.removeRejection(id) != null
+    suspend fun dismissRejectedMutation(id: Long): Boolean =
+        outboxMutex.withLock { outboxState.removeRejection(id) != null }
 
     suspend fun pendingMutationsForTable(table: String): List<MutationRow> =
         mutationDao.pendingForTable(table)
 
     /**
-     * Returns all pending mutations in insertion order across **all tables**.
-     * Used by [OfflineMutationSyncer.syncAllTables].
+     * Returns all pending mutations in insertion order across **all tables**, whatever their owner.
      */
     suspend fun allPendingMutations(): List<MutationRow> =
         mutationDao.pendingAll()
 
     /**
-     * Every pending mutation — of [table], or of every table when it is `null` — in insertion
-     * order, re-emitted on each queue change.
+     * The current identity's pending mutations — of [table], or of every table when it is `null` —
+     * in insertion order, re-emitted on each change.
      *
      * @param table The table to observe, or `null` for the whole queue.
      * @return A flow of pending queue rows.
      */
     fun pendingMutationsFlow(table: String?): Flow<List<MutationRow>> =
-        mutationDao.pendingAllFlow()
-            .map { rows -> if (table == null) rows else rows.filter { row -> row.table == table } }
-            .distinctUntilChanged()
+        combine(mutationDao.pendingAllFlow(), outboxState.ownersFlow(), identityChanges) { rows, owners, _ ->
+            visibleTo(identityProvider(), owners, rows).filter { row -> table == null || row.table == table }
+        }.distinctUntilChanged()
 
     /**
-     * Total number of queued mutations across all tables.
+     * The current identity's pending mutations across all tables.
      */
     suspend fun pendingMutationCount(): Int =
-        mutationDao.countPending()
+        visibleTo(identityProvider(), outboxState.owners(), mutationDao.pendingAll()).size
 
     /**
-     * Flow of total number of queued mutations across all tables.
+     * Flow of the current identity's pending mutations across all tables.
      */
     fun pendingMutationCountFlow(): Flow<Int> =
-        mutationDao.countPendingFlow()
+        pendingMutationsFlow(null).map { rows -> rows.size }
 
     /**
-     * Number of queued mutations for a specific [table].
+     * The current identity's pending mutations for a specific [table].
      */
     suspend fun pendingMutationCountForTable(table: String): Int =
-        mutationDao.countPendingForTable(table)
+        visibleTo(identityProvider(), outboxState.owners(), mutationDao.pendingForTable(table)).size
 
     /**
-     * Flow of number of queued mutations for a specific [table].
+     * Flow of the current identity's pending mutations for a specific [table].
      */
     fun pendingMutationCountForTableFlow(table: String): Flow<Int> =
-        mutationDao.countPendingForTableFlow(table)
+        pendingMutationsFlow(table).map { rows -> rows.size }
 
+    /**
+     * Deletes the queue row [id] and its owner record.
+     *
+     * @param id The mutation's id.
+     */
     suspend fun deleteMutation(id: Long) {
-        mutationDao.deleteById(id)
+        removeMutations(listOf(id), clearRejections = false)
     }
+
+    /**
+     * The mutations of [rows] visible to [identity]: its own and unowned ones — or all of them when
+     * there is no identity to filter by, or the owner records cannot be read.
+     */
+    private fun visibleTo(identity: String?, owners: MutationOwners, rows: List<MutationRow>): List<MutationRow> {
+        if (identity == null || owners !is MutationOwners.Known) return rows
+        return rows.filter { row -> owners.byId[row.id].let { owner -> owner == null || owner == identity } }
+    }
+
+    /**
+     * Claims the one report, per store, that a write's dry-run status could not be determined.
+     *
+     * @return `true` the first time only; the caller then logs it at ERROR.
+     */
+    internal fun claimUnclassifiableWriteReport(): Boolean =
+        unclassifiableWriteReported.compareAndSet(expect = false, update = true)
 
     /**
      * Refuses the engine's reserved state table (see [RESERVED_TABLE_NAME]) as the target of a
@@ -869,8 +1063,17 @@ internal class OfflineStore(
         return table
     }
 
-    /** Logs a mutation the overlay skipped. Never the mutation's body or filter values. */
+    /**
+     * Logs a mutation the overlay skipped, once per mutation: the overlay is recomputed on every
+     * emission, and a mutation that fails once fails every time. Never the body or filter values.
+     */
     private fun logSkippedOverlay(mutation: MutationRow, failure: Exception) {
+        var first = false
+        loggedOverlaySkips.update { logged ->
+            first = mutation.id !in logged
+            logged + mutation.id
+        }
+        if (!first) return
         sdkLogger.warning {
             "Overlay skipped pending ${mutation.operation} ${mutation.id} on ${mutation.table}: " +
                 "${failure::class.simpleName}"
@@ -897,16 +1100,10 @@ internal class OfflineStore(
         serverJson: String
     ): String {
         if (isReservedTable(table)) return serverJson
-        val pending = mutationDao.pendingForTable(table)
+        val pending = visibleTo(identityProvider(), outboxState.owners(), mutationDao.pendingForTable(table))
         if (pending.isEmpty()) return serverJson
 
-        return OfflineMutationOverlay.applyPendingMutations(
-            json = json,
-            serverJson = serverJson,
-            pending = pending,
-            targetFilters = parseSignatureFilters(signature),
-            onMutationFailure = ::logSkippedOverlay,
-        )
+        return overlayMutations(table, serverJson, pending, signature)
     }
 
     /**
@@ -917,23 +1114,37 @@ internal class OfflineStore(
      * unavailable, those payloads might be older than some mutations that
      * have since been synced. We need to re-apply both pending and synced
      * mutations on top of the cached snapshot so the UI reflects the latest
-     * known state.
+     * known state — but only the current identity's, and a synced mutation only when the payload
+     * was fetched before it replayed (see [belongsOnPayload]).
+     *
+     * @param table Table whose mutations are overlaid.
+     * @param signature Signature of the cached payload, or `null` when it is not known (every synced
+     *   mutation is then applied).
+     * @param cachedJson The cached payload.
+     * @return The overlaid payload.
      */
     suspend fun applyAllMutationsForOfflineFallback(
         table: String,
+        signature: String?,
         cachedJson: String
     ): String {
         if (isReservedTable(table)) return cachedJson
-        val all = mutationDao.allForTable(table)
+        val all = visibleTo(identityProvider(), outboxState.owners(), mutationDao.allForTable(table))
+            .filter { mutation -> belongsOnPayload(mutation, table, signature) }
         if (all.isEmpty()) return cachedJson
 
         return OfflineMutationOverlay.applyPendingMutations(
             json = json,
             serverJson = cachedJson,
             pending = all,
+            keyColumns = primaryKeys.of(table),
             onMutationFailure = ::logSkippedOverlay,
         )
     }
+
+    /** [applyAllMutationsForOfflineFallback] for a payload whose signature is not known. */
+    suspend fun applyAllMutationsForOfflineFallback(table: String, cachedJson: String): String =
+        applyAllMutationsForOfflineFallback(table, signature = null, cachedJson = cachedJson)
 
     /**
      * Reactive overlay substrate for [table]/[signature], the in-memory replacement for the old
@@ -972,13 +1183,18 @@ internal class OfflineStore(
         return combine(
             observePayload(table, signature).distinctUntilChanged(),
             mutationDao.allForTableFlow(table).distinctUntilChanged(),
-        ) { cachedJson, mutations ->
+            outboxState.ownersFlow(),
+            identityChanges,
+            networkRefreshTicks,
+        ) { cachedJson, allMutations, owners, _, _ ->
+            val mutations = visibleTo(identityProvider(), owners, allMutations)
+                .filter { mutation -> belongsOnPayload(mutation, table, signature) }
             when {
                 cachedJson != null ->
-                    if (mutations.isEmpty()) cachedJson else overlayMutations(cachedJson, mutations, signature)
+                    if (mutations.isEmpty()) cachedJson else overlayMutations(table, cachedJson, mutations, signature)
 
                 mutations.isNotEmpty() ->
-                    overlayMutations(EMPTY_JSON_ARRAY, mutations, signature)
+                    overlayMutations(table, EMPTY_JSON_ARRAY, mutations, signature)
                         .takeUnless { overlaid -> isEmptyJsonArrayPayload(overlaid) }
 
                 else -> null
@@ -989,6 +1205,7 @@ internal class OfflineStore(
     /**
      * Overlays [mutations] onto [serverJson] for the query identified by [signature].
      *
+     * @param table Table the payload belongs to, whose primary key de-duplicates appended rows.
      * @param serverJson Payload (or the in-memory `[]` substrate) to overlay onto.
      * @param mutations Mutations to apply.
      * @param signature Canonical signature of the query; the seam through which the query-aware
@@ -996,6 +1213,7 @@ internal class OfflineStore(
      * @return The overlaid payload JSON.
      */
     private fun overlayMutations(
+        table: String,
         serverJson: String,
         mutations: List<MutationRow>,
         signature: String,
@@ -1004,6 +1222,7 @@ internal class OfflineStore(
         serverJson = serverJson,
         pending = mutations,
         targetFilters = parseSignatureFilters(signature),
+        keyColumns = primaryKeys.of(table),
         onMutationFailure = ::logSkippedOverlay,
     )
 
@@ -1051,6 +1270,9 @@ internal class OfflineStore(
      * @param liveSignatures Signatures with a live collector to materialize INSERT/UPSERT results
      *   into when they have no cached row. `null` (the default) reads the wired-in
      *   [liveSignatureProvider], so ordinary mutation-verb callers need not thread it.
+     * @param startedAtTick [monotonicTickNow] as read when the operation behind this patch started —
+     *   for a write, before its request went out. If [clearAll] ran since, nothing is written.
+     *   `null` (the default) takes the tick at the call.
      */
     internal suspend fun applyLocalMutationToCache(
         table: String,
@@ -1061,61 +1283,83 @@ internal class OfflineStore(
         onConflict: String? = null,
         ignoreDuplicates: Boolean? = null,
         liveSignatures: Set<String>? = null,
-    ): Unit = tableWriteLock(requireUserTable(table)).withLock {
-        // Disqualify every network SELECT already in flight for this table before touching a row:
-        // their responses describe the server as it was before this mutation committed, and
-        // nothing would replay this patch if one of them landed on top of it.
-        recordLocalMutation(table)
+        startedAtTick: Long? = null,
+    ) {
+        requireUserTable(table)
+        // A teardown after this point voids the patch: each write below checks it under the
+        // teardown lock, so the outgoing identity's rows cannot be written back after a wipe.
+        val guardTick = startedAtTick ?: monotonicTick()
+        tableWriteLock(table).withLock {
+            // Disqualify every network SELECT already in flight for this table before touching a row:
+            // their responses describe the server as it was before this mutation committed, and
+            // nothing would replay this patch if one of them landed on top of it.
+            recordLocalMutation(table)
 
-        val rows = objectDao.allForTable(table)
+            val rows = objectDao.allForTable(table)
 
-        // UPSERT with an onConflict clause but no caller-supplied filter is the common case
-        // (an upsert keyed on a natural or composite key). The overlay's UPSERT path
-        // treats a null descriptor as an INSERT (append), which would leave a duplicate row
-        // in the cache. Synthesize a filter from (onConflict cols × values in body) so the
-        // overlay merges into the matching existing row instead.
-        val effectiveFilterJson = filterJson ?: synthesizeFilterFromOnConflict(
-            operation = operation,
-            bodyJson = bodyJson,
-            onConflict = onConflict,
-        )
-
-        val syntheticMutation = MutationRow(
-            table = table,
-            operation = operation,
-            bodyJson = bodyJson,
-            filterJson = effectiveFilterJson,
-            createdAtMs = nowMillis(),
-            syncedAtMs = null,
-            defaultToNull = defaultToNull,
-            onConflict = onConflict,
-            ignoreDuplicates = ignoreDuplicates,
-        )
-
-        val now = nowMillis()
-        for (row in rows) {
-            // Gate INSERT/UPSERT appends on this specific cached query's own filters, so an online
-            // insert never lands in a signature whose exhaustive WHERE clause excludes it.
-            val updated = OfflineMutationOverlay.applyPendingMutations(
-                json = json,
-                serverJson = row.payload,
-                pending = listOf(syntheticMutation),
-                targetFilters = parseSignatureFilters(row.signature),
-                onMutationFailure = ::logSkippedOverlay,
+            // UPSERT with an onConflict clause but no caller-supplied filter is the common case
+            // (an upsert keyed on a natural or composite key). The overlay's UPSERT path
+            // treats a null descriptor as an INSERT (append), which would leave a duplicate row
+            // in the cache. Synthesize a filter from (onConflict cols × values in body) so the
+            // overlay merges into the matching existing row instead.
+            val effectiveFilterJson = filterJson ?: synthesizeFilterFromOnConflict(
+                operation = operation,
+                bodyJson = bodyJson,
+                onConflict = onConflict,
             )
-            if (updated != row.payload) {
-                objectDao.upsert(row.copy(payload = updated, updatedAt = now))
-            }
-        }
 
-        materializeForLiveSignatures(
-            table = table,
-            operation = operation,
-            syntheticMutation = syntheticMutation,
-            existingSignatures = rows.mapTo(mutableSetOf()) { row -> row.signature },
-            liveSignatures = liveSignatures ?: liveSignatureProvider(table),
-            now = now,
-        )
+            val syntheticMutation = MutationRow(
+                table = table,
+                operation = operation,
+                bodyJson = bodyJson,
+                filterJson = effectiveFilterJson,
+                createdAtMs = nowMillis(),
+                syncedAtMs = null,
+                defaultToNull = defaultToNull,
+                onConflict = onConflict,
+                ignoreDuplicates = ignoreDuplicates,
+            )
+
+            val now = nowMillis()
+            for (row in rows) {
+                // Gate INSERT/UPSERT appends on this specific cached query's own filters, so an online
+                // insert never lands in a signature whose exhaustive WHERE clause excludes it.
+                val updated = OfflineMutationOverlay.applyPendingMutations(
+                    json = json,
+                    serverJson = row.payload,
+                    pending = listOf(syntheticMutation),
+                    targetFilters = parseSignatureFilters(row.signature),
+                    onMutationFailure = ::logSkippedOverlay,
+                )
+                if (updated != row.payload && !writeUnlessTornDown(guardTick, row.copy(payload = updated, updatedAt = now))) {
+                    return@withLock
+                }
+            }
+
+            materializeForLiveSignatures(
+                table = table,
+                operation = operation,
+                syntheticMutation = syntheticMutation,
+                existingSignatures = rows.mapTo(mutableSetOf()) { row -> row.signature },
+                liveSignatures = liveSignatures ?: liveSignatureProvider(table),
+                now = now,
+                guardTick = guardTick,
+            )
+        }
+    }
+
+    /**
+     * Writes [row] unless [clearAll] has run since [guardTick], as one step with the teardown.
+     *
+     * @return `false` when a teardown voided the write.
+     */
+    private suspend fun writeUnlessTornDown(guardTick: Long, row: ObjectRow): Boolean = teardownMutex.withLock {
+        if (predatesCacheTeardown(guardTick)) {
+            false
+        } else {
+            objectDao.upsert(row)
+            true
+        }
     }
 
     /**
@@ -1131,6 +1375,7 @@ internal class OfflineStore(
      * @param existingSignatures Signatures that already have a cached row (already patched above).
      * @param liveSignatures Signatures with a live collector.
      * @param now Timestamp to stamp on any created row.
+     * @param guardTick The patch's start tick; nothing is written once [clearAll] has run since.
      */
     private suspend fun materializeForLiveSignatures(
         table: String,
@@ -1139,6 +1384,7 @@ internal class OfflineStore(
         existingSignatures: Set<String>,
         liveSignatures: Set<String>,
         now: Long,
+        guardTick: Long,
     ) {
         if (operation != MutationOperation.INSERT && operation != MutationOperation.UPSERT) return
 
@@ -1153,7 +1399,8 @@ internal class OfflineStore(
             if (isEmptyJsonArrayPayload(created)) continue
             // A materialized payload is not a network response: it covers no synced mutation.
             networkRefreshTicks.update { ticks -> ticks - (table to signature) }
-            objectDao.upsert(
+            val written = writeUnlessTornDown(
+                guardTick,
                 ObjectRow(
                     table = table,
                     signature = signature,
@@ -1161,6 +1408,7 @@ internal class OfflineStore(
                     updatedAt = now,
                 ),
             )
+            if (!written) return
         }
     }
 
@@ -1226,6 +1474,11 @@ internal class OfflineStore(
         recordLocalMutation(table, tick)
         syncedMutationTicks.update { ticks -> ticks + (id to tick) }
         mutationDao.markSynced(id = id, syncedAtMs = nowMillis())
+        // A crash between recording a rejection and removing its queue row leaves both; once the
+        // write has synced, the stale entry must go, or a retry would re-send an accepted write.
+        if (outboxState.hasRejection(id)) {
+            outboxMutex.withLock { outboxState.removeRejection(id) }
+        }
     }
 
     /**
@@ -1262,23 +1515,41 @@ internal class OfflineStore(
         tableWriteLock(table).withLock {
             val synced = mutationDao.allForTable(table).filter { row -> row.syncedAtMs != null }
             if (synced.isEmpty()) return@withLock
+            val agedOut = syncedRetentionCutoffMs()
+            val (aged, retained) = synced.partition { mutation -> (mutation.syncedAtMs ?: Long.MAX_VALUE) < agedOut }
 
             val cachedSignatures = objectDao.signaturesForTable(table).toSet()
-            if ((liveSignatureProvider(table) - cachedSignatures).isNotEmpty()) return@withLock
-
-            val refreshTicks = networkRefreshTicks.value
-            val syncTicks = syncedMutationTicks.value
-            val retirable = synced.filter { mutation ->
-                val syncedAtTick = syncTicks[mutation.id] ?: Long.MIN_VALUE
-                cachedSignatures.all { signature ->
-                    val refreshedAtTick = refreshTicks[table to signature]
-                    refreshedAtTick != null && refreshedAtTick >= syncedAtTick
+            val retirable = if ((liveSignatureProvider(table) - cachedSignatures).isNotEmpty()) {
+                emptyList()
+            } else {
+                val refreshTicks = networkRefreshTicks.value
+                val syncTicks = syncedMutationTicks.value
+                retained.filter { mutation ->
+                    val syncedAtTick = syncTicks[mutation.id] ?: Long.MIN_VALUE
+                    cachedSignatures.all { signature ->
+                        val refreshedAtTick = refreshTicks[table to signature]
+                        refreshedAtTick != null && refreshedAtTick >= syncedAtTick
+                    }
                 }
             }
-            retirable.forEach { mutation -> mutationDao.deleteById(mutation.id) }
-            syncedMutationTicks.update { ticks -> ticks - retirable.map { mutation -> mutation.id }.toSet() }
+            removeMutations((aged + retirable).map { mutation -> mutation.id }, clearRejections = false)
         }
     }
+
+    /**
+     * Retires every synced mutation older than [SYNCED_RETENTION_MS], whatever still depends on it.
+     *
+     * A cached query that is never refreshed again — a detail screen visited once — would otherwise
+     * keep a synced mutation, and its overlay, for as long as the query stays cached. After the bound
+     * such a payload shows the server state it was fetched with, without the write, until it is
+     * refreshed.
+     */
+    suspend fun retireAgedSyncedMutations() {
+        val aged = mutationDao.syncedBefore(syncedRetentionCutoffMs())
+        removeMutations(aged.map { mutation -> mutation.id }, clearRejections = false)
+    }
+
+    private fun syncedRetentionCutoffMs(): Long = nowMillis() - SYNCED_RETENTION_MS
 
     /* ──────────────────────── Size-based eviction (DB) ──────────────────────── */
 
@@ -1348,6 +1619,12 @@ internal class OfflineStore(
     }
 
     private companion object {
+        /**
+         * How long a synced mutation may stand in for its write on cached queries that have not been
+         * refreshed since it replayed: a day, by the device clock.
+         */
+        const val SYNCED_RETENTION_MS = 24L * 60 * 60 * 1000
+
         /**
          * Run size enforcement once every this many [addPayload] writes. A cheap periodic
          * backstop that bounds cache growth from many small writes without measuring on every

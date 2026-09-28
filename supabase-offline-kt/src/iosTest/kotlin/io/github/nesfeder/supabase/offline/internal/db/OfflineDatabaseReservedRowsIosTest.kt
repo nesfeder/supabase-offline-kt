@@ -52,4 +52,14 @@ class OfflineDatabaseReservedRowsIosTest {
     fun room_replays_pending_writes_in_insertion_order() = runTest {
         scenarios.roomReplaysPendingWritesInInsertionOrder(dbPath)
     }
+
+    @Test
+    fun an_earlier_builds_queue_is_adopted_in_place() = runTest {
+        scenarios.anEarlierBuildsQueueIsAdoptedInPlace(dbPath)
+    }
+
+    @Test
+    fun a_failed_outbox_transaction_changes_nothing() = runTest {
+        scenarios.aFailedOutboxTransactionChangesNothing(dbPath)
+    }
 }
