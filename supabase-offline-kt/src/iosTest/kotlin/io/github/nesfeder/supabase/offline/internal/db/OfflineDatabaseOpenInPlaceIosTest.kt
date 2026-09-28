@@ -15,7 +15,8 @@ import kotlin.test.assertEquals
  * place through the library's own database builder, with every row intact.
  *
  * Opening also proves the identity hash compiled into this build equals the shipped one: Room
- * checks `room_master_table` against its generated hash on open and refuses a mismatch.
+ * checks `room_master_table` against its generated hash on open and refuses a mismatch. A schema
+ * version 1 file must likewise migrate in place, through `MIGRATION_1_2`, keeping its queued writes.
  */
 class OfflineDatabaseOpenInPlaceIosTest {
 
@@ -45,6 +46,31 @@ class OfflineDatabaseOpenInPlaceIosTest {
 
         // Then — every row reads back; Room neither created nor recreated the file
         assertEquals(SHIPPED_FIXTURE_CONTENTS, contents)
+        assertEquals(0, callback.creates, "the existing database must not be created again")
+        assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
+        assertEquals(1, callback.opens)
+        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath))
+        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath))
+    }
+
+    @Test
+    fun a_shipped_schema_version_1_database_migrates_in_place_keeping_every_row() = runTest {
+        // Given — an install that never ran a schema version 2 build, written without Room
+        FileSystem.SYSTEM.createDirectories(directory)
+        val dbPath = (directory / "supabase_offline.db").toString()
+        ShippedDatabaseFixture.writeVersion1To(dbPath)
+        val callback = RecordingRoomCallback()
+
+        // When — opened the way createSupabaseOfflineClient opens it
+        val database = getRoomDatabase(getDatabaseBuilder(dbPath).addCallback(callback))
+        val contents = try {
+            database.readShippedFixtureContents()
+        } finally {
+            database.close()
+        }
+
+        // Then — MIGRATION_1_2 carried every queued write across; nothing was recreated
+        assertEquals(SHIPPED_VERSION_1_FIXTURE_CONTENTS_AFTER_MIGRATION, contents)
         assertEquals(0, callback.creates, "the existing database must not be created again")
         assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
         assertEquals(1, callback.opens)

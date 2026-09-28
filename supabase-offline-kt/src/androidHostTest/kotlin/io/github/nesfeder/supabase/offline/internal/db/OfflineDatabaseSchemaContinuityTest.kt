@@ -67,7 +67,7 @@ class OfflineDatabaseSchemaContinuityTest {
 
         // Then
         assertEquals(1, version)
-        assertEquals("da81d9c688873737d807333f92e2e56d", identityHash)
+        assertEquals(ShippedDatabaseFixture.VERSION_1_IDENTITY_HASH, identityHash)
     }
 
     @Test
@@ -76,20 +76,39 @@ class OfflineDatabaseSchemaContinuityTest {
         val schema = exportedSchema(version = 2)
 
         // When — every statement Room would run to create schema version 2
-        val statements = buildList {
-            schema.getValue("entities").jsonArray.forEach { element ->
-                val entity = element.jsonObject
-                val tableName = entity.getValue("tableName").jsonPrimitive.content
-                add(entity.getValue("createSql").jsonPrimitive.content.withTableName(tableName))
-                entity["indices"]?.jsonArray?.forEach { index ->
-                    add(index.jsonObject.getValue("createSql").jsonPrimitive.content.withTableName(tableName))
-                }
-            }
-            schema.getValue("setupQueries").jsonArray.forEach { query -> add(query.jsonPrimitive.content) }
-        }
+        val statements = creationStatements(schema)
 
         // Then — the fixture that the open-in-place tests write is exactly this schema
         assertEquals(statements, ShippedDatabaseFixture.SCHEMA_STATEMENTS)
+    }
+
+    @Test
+    fun the_version_1_fixture_is_the_exported_schema_1_verbatim() {
+        // Given
+        val schema = exportedSchema(version = 1)
+
+        // When
+        val statements = creationStatements(schema)
+
+        // Then
+        assertEquals(statements, ShippedDatabaseFixture.VERSION_1_SCHEMA_STATEMENTS)
+        assertEquals(
+            ShippedDatabaseFixture.VERSION_1_IDENTITY_HASH,
+            schema.getValue("identityHash").jsonPrimitive.content,
+        )
+    }
+
+    /** Every statement Room runs to create [schema]: each table, its indices, then setup queries. */
+    private fun creationStatements(schema: JsonObject): List<String> = buildList {
+        schema.getValue("entities").jsonArray.forEach { element ->
+            val entity = element.jsonObject
+            val tableName = entity.getValue("tableName").jsonPrimitive.content
+            add(entity.getValue("createSql").jsonPrimitive.content.withTableName(tableName))
+            entity["indices"]?.jsonArray?.forEach { index ->
+                add(index.jsonObject.getValue("createSql").jsonPrimitive.content.withTableName(tableName))
+            }
+        }
+        schema.getValue("setupQueries").jsonArray.forEach { query -> add(query.jsonPrimitive.content) }
     }
 
     private fun String.withTableName(tableName: String): String = replace(TABLE_NAME_PLACEHOLDER, tableName)

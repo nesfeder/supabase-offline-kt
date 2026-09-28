@@ -17,6 +17,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
  * today can shape it. `OfflineDatabaseSchemaContinuityTest` checks the copy against the exported
  * schema file.
  *
+ * [writeVersion1To] writes the same rows at schema version 1 (from `1.json`, before `delta_json`
+ * existed), for the one migration an older install still has to take.
+ *
  * The rows use the stored formats the engine reads back: `operation` strings, `filter_json` as the
  * JSON encoding of `FilterDescriptor` (an AND descriptor omits its default `mode`), `delta_json` as a
  * JSON list of `NumericDeltaColumn` (a null `minValue` is omitted), and booleans as SQLite integers.
@@ -44,6 +47,22 @@ internal object ShippedDatabaseFixture {
             "`default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER, `delta_json` TEXT)",
         "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
         "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5a519d822fb8c3ead14608102c6846d9')",
+    )
+
+    /** Room identity hash of schema version 1. */
+    const val VERSION_1_IDENTITY_HASH: String = "da81d9c688873737d807333f92e2e56d"
+
+    /** Schema version 1, statement for statement, from the exported `1.json`. */
+    val VERSION_1_SCHEMA_STATEMENTS: List<String> = listOf(
+        SCHEMA_STATEMENTS[0],
+        SCHEMA_STATEMENTS[1],
+        SCHEMA_STATEMENTS[2],
+        "CREATE TABLE IF NOT EXISTS `mutation_cache` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`table_name` TEXT NOT NULL, `operation` TEXT NOT NULL, `body_json` TEXT NOT NULL, " +
+            "`filter_json` TEXT, `created_at_ms` INTEGER NOT NULL, `synced_at_ms` INTEGER, " +
+            "`default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER)",
+        "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+        "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'da81d9c688873737d807333f92e2e56d')",
     )
 
     /** The UPDATE's filter: an AND descriptor, stored without its default `mode`. */
@@ -181,14 +200,36 @@ internal object ShippedDatabaseFixture {
         ),
     )
 
+    /** [MUTATION_ROWS] as a schema version 1 install holds them: no `delta_json` column yet. */
+    val VERSION_1_MUTATION_ROWS: List<MutationRow> = MUTATION_ROWS.map { row -> row.copy(deltaJson = null) }
+
     /**
      * Writes the shipped database to [path] with the raw SQLite driver: schema version 2, every
      * fixture row, and `PRAGMA user_version = 2`, which is how Room records the schema version.
      */
     fun writeTo(path: String) {
+        write(path, version = VERSION, schemaStatements = SCHEMA_STATEMENTS, mutationRows = MUTATION_ROWS)
+    }
+
+    /**
+     * Writes the same database at schema version 1 — the `1.json` schema, the rows without
+     * `delta_json`, and `PRAGMA user_version = 1` — as an install that never ran a version-2 build
+     * holds it.
+     */
+    fun writeVersion1To(path: String) {
+        write(path, version = 1, schemaStatements = VERSION_1_SCHEMA_STATEMENTS, mutationRows = VERSION_1_MUTATION_ROWS)
+    }
+
+    private fun write(
+        path: String,
+        version: Long,
+        schemaStatements: List<String>,
+        mutationRows: List<MutationRow>,
+    ) {
+        val hasDeltaColumn = version >= VERSION
         val connection = BundledSQLiteDriver().open(path)
         try {
-            SCHEMA_STATEMENTS.forEach { statement -> connection.execSQL(statement) }
+            schemaStatements.forEach { statement -> connection.execSQL(statement) }
             OBJECT_ROWS.forEach { row ->
                 connection.execSQL(
                     "INSERT INTO object_cache (table_name, signature, payload, updated_at) VALUES (" +
@@ -201,17 +242,19 @@ internal object ShippedDatabaseFixture {
                     "${sql(STORAGE_ROW.path)}, ${sql(STORAGE_ROW.localPath)}, ${STORAGE_ROW.sizeBytes}, " +
                     "${sql(STORAGE_ROW.eTag)}, ${STORAGE_ROW.lastFetchedEpochMs})",
             )
-            MUTATION_ROWS.forEach { row ->
+            mutationRows.forEach { row ->
+                val deltaColumn = if (hasDeltaColumn) ", delta_json" else ""
+                val deltaValue = if (hasDeltaColumn) ", ${sql(row.deltaJson)}" else ""
                 connection.execSQL(
                     "INSERT INTO mutation_cache (id, table_name, operation, body_json, filter_json, " +
-                        "created_at_ms, synced_at_ms, default_to_null, on_conflict, ignore_duplicates, " +
-                        "delta_json) VALUES (${row.id}, ${sql(row.table)}, ${sql(row.operation)}, " +
+                        "created_at_ms, synced_at_ms, default_to_null, on_conflict, ignore_duplicates" +
+                        "$deltaColumn) VALUES (${row.id}, ${sql(row.table)}, ${sql(row.operation)}, " +
                         "${sql(row.bodyJson)}, ${sql(row.filterJson)}, ${row.createdAtMs}, " +
                         "${row.syncedAtMs ?: "NULL"}, ${sql(row.defaultToNull)}, ${sql(row.onConflict)}, " +
-                        "${sql(row.ignoreDuplicates)}, ${sql(row.deltaJson)})",
+                        "${sql(row.ignoreDuplicates)}$deltaValue)",
                 )
             }
-            connection.execSQL("PRAGMA user_version = $VERSION")
+            connection.execSQL("PRAGMA user_version = $version")
         } finally {
             connection.close()
         }

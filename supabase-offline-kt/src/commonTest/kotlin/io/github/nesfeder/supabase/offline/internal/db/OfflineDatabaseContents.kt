@@ -34,3 +34,12 @@ internal val SHIPPED_FIXTURE_CONTENTS: OfflineDatabaseContents = OfflineDatabase
         .sortedBy { it.createdAtMs },
     mutationCount = ShippedDatabaseFixture.MUTATION_ROWS.size,
 )
+
+/**
+ * What [readShippedFixtureContents] must return once a schema version 1 install has migrated: the
+ * same rows, with every queued write's `delta_json` NULL (read as "no declarations").
+ */
+internal val SHIPPED_VERSION_1_FIXTURE_CONTENTS_AFTER_MIGRATION: OfflineDatabaseContents =
+    SHIPPED_FIXTURE_CONTENTS.copy(
+        pendingMutations = SHIPPED_FIXTURE_CONTENTS.pendingMutations.map { row -> row.copy(deltaJson = null) },
+    )
