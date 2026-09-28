@@ -2,11 +2,14 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.jan.supabase.exceptions.UnauthorizedRestException
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import okio.FileSystem
@@ -150,6 +153,38 @@ class StorageWriteInvalidationTest {
         // Then
         assertEquals(listOf<Collection<String>>(listOf(PATH)), fake.deletedPaths)
         assertNull(store.getStorageByKey(BUCKET, PATH))
+    }
+
+    @Test
+    fun a_write_that_timed_out_drops_the_cached_copy_it_may_have_replaced() = runTest {
+        // Given — a cached object, and an update whose response never arrives
+        val fake = FakeBucketApi(bucketId = BUCKET)
+        fake.onDownload = { OLD.encodeToByteArray() }
+        val bucket = newTestBucketApi(delegate = fake, baseDirectory = dataDirectory, store = store)
+        bucket.downloadAuthenticated(PATH) { }
+        fake.onWrite = { throw HttpRequestTimeoutException(PATH, 10_000) }
+
+        // When — the server may or may not have stored the new bytes
+        assertFailsWith<HttpRequestTimeoutException> { bucket.update(PATH, NEW.encodeToByteArray()) }
+
+        // Then — the old copy is not trusted any more
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+    }
+
+    @Test
+    fun a_write_the_server_rejected_keeps_the_cached_copy() = runTest {
+        // Given — a cached object, and an update the server refuses: its copy is unchanged
+        val fake = FakeBucketApi(bucketId = BUCKET)
+        fake.onDownload = { OLD.encodeToByteArray() }
+        val bucket = newTestBucketApi(delegate = fake, baseDirectory = dataDirectory, store = store)
+        bucket.downloadAuthenticated(PATH) { }
+        fake.onWrite = { throw forbiddenRestException() }
+
+        // When
+        assertFailsWith<UnauthorizedRestException> { bucket.update(PATH, NEW.encodeToByteArray()) }
+
+        // Then
+        assertNotNull(store.getStorageByKey(BUCKET, PATH))
     }
 
     @Test
