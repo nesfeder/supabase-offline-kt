@@ -3,8 +3,14 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
+import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * One pending mutation the overlay cannot apply is skipped on its own. Before, the whole batch ran
@@ -61,6 +67,42 @@ class OverlayMutationIsolationTest {
         assertEquals("""[{"id":1},{"id":2}]""", overlaid)
     }
 
+    @Test
+    fun a_skipped_mutation_is_reported_to_the_failure_callback() {
+        // Given
+        val skipped = mutableListOf<Long>()
+        val pending = listOf(mutation(id = 7, operation = MutationOperation.INSERT, body = "not json"))
+
+        // When
+        OfflineMutationOverlay.applyPendingMutations(
+            json = OfflineJson,
+            serverJson = "[]",
+            pending = pending,
+            onMutationFailure = { mutation, _ -> skipped += mutation.id },
+        )
+
+        // Then
+        assertEquals(listOf(7L), skipped)
+    }
+
+    @Test
+    fun the_store_logs_a_skipped_mutation_without_its_payload() = runTest {
+        // Given — a store whose overlay meets a pending write it cannot apply
+        val logger = RecordingOfflineLogger()
+        val mutationDao = FakeMutationDao()
+        val store = newTestOfflineStore(mutationDao = mutationDao)
+        store.sdkLogger = logger.asSdkLogger()
+        mutationDao.insert(mutation(id = 0, operation = MutationOperation.INSERT, body = "not json $PRIVATE_VALUE"))
+
+        // When
+        store.applyAllMutationsForOfflineFallback("todos", "[]")
+
+        // Then
+        val warning = logger.entriesAt(OfflineLogLevel.WARNING).single().message
+        assertTrue(warning.contains("todos"), warning)
+        assertTrue(logger.entries.none { it.message.contains(PRIVATE_VALUE) })
+    }
+
     private fun mutation(id: Long, operation: String, body: String, filter: FilterDescriptor? = null): MutationRow =
         MutationRow(
             id = id,
@@ -70,4 +112,8 @@ class OverlayMutationIsolationTest {
             filterJson = filter?.let { FilterEngine.encode(it, OfflineJson) },
             createdAtMs = id,
         )
+
+    private companion object {
+        const val PRIVATE_VALUE = "private-row-value"
+    }
 }

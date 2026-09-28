@@ -1,0 +1,213 @@
+package io.github.nesfeder.supabase.offline.internal.db
+
+import io.github.nesfeder.supabase.offline.internal.outbox.MutationOperation as OutboxOperation
+import io.github.nesfeder.supabase.offline.internal.outbox.ServerError
+import io.github.nesfeder.supabase.offline.internal.outbox.SyncStop
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Instant
+
+/**
+ * A write the server refuses for good is not lost: it leaves the queue for a persisted list — the
+ * newest 100 — that carries the write and the server's reason until the app dismisses or retries it.
+ */
+class RejectedMutationListTest {
+
+    private val objectDao = FakeObjectDao()
+    private val mutationDao = FakeMutationDao()
+    private var clock = 1_000L
+    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, nowMillis = { clock })
+    private val server = RecordingPostgrestServer()
+    private val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+
+    @Test
+    fun a_permanent_rejection_keeps_the_write_and_the_servers_reason() = runTest {
+        // Given — a queued insert the server refuses with a check violation
+        val id = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":""}]"""))
+        server.answer = {
+            postgrestError(
+                HttpStatusCode.BadRequest,
+                code = "23514",
+                message = "new row violates check constraint",
+                details = "Failing row contains (t1, ).",
+                hint = "Give the task a title",
+            )
+        }
+        clock = 5_000L
+
+        // When
+        val report = syncer.sync()
+
+        // Then — it left the queue, and the rejection says what the server said
+        assertEquals(0, store.pendingMutationCount())
+        val rejected = report.rejected.single()
+        assertEquals(id, rejected.id)
+        assertEquals(TABLE, rejected.table)
+        assertEquals(OutboxOperation.Insert, rejected.operation)
+        assertEquals(Instant.fromEpochMilliseconds(1_000L), rejected.createdAt)
+        assertEquals(Instant.fromEpochMilliseconds(5_000L), rejected.rejectedAt)
+        assertEquals(rows("""[{"id":"t1","title":""}]"""), rejected.body)
+        assertEquals(listOf(JsonObject(mapOf("id" to JsonPrimitive("t1")))), rejected.rowKeys)
+        assertEquals(
+            ServerError(
+                status = 400,
+                code = "23514",
+                message = "new row violates check constraint",
+                details = "Failing row contains (t1, ).",
+                hint = "Give the task a title",
+            ),
+            rejected.serverError,
+        )
+        assertEquals("new row violates check constraint", rejected.message)
+    }
+
+    @Test
+    fun the_rejected_list_survives_a_restart() = runTest {
+        // Given — a write rejected in one process
+        val id = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
+        server.answer = { postgrestError(HttpStatusCode.UnprocessableEntity) }
+        syncer.sync()
+
+        // When — a new process opens the same database
+        val restarted = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+
+        // Then
+        assertEquals(listOf(id), restarted.outboxState.rejections().map { it.id })
+        assertEquals(422, restarted.outboxState.rejections().single().serverError?.status)
+    }
+
+    @Test
+    fun a_body_that_no_longer_parses_is_rejected_without_a_request() = runTest {
+        // Given
+        val id = mutationDao.insert(
+            MutationRow(table = TABLE, operation = MutationOperation.INSERT, bodyJson = "{broken", filterJson = null, createdAtMs = 0L),
+        )
+
+        // When
+        val report = syncer.sync()
+
+        // Then — refused locally: no server error, a reason, nothing sent
+        val rejected = report.rejected.single()
+        assertEquals(id, rejected.id)
+        assertNull(rejected.serverError)
+        assertNull(rejected.body)
+        assertEquals("The queued body no longer parses", rejected.message)
+        assertTrue(server.requests.isEmpty())
+    }
+
+    @Test
+    fun an_unfiltered_update_is_rejected_without_a_request() = runTest {
+        // Given — a legacy UPDATE row that carries no filter
+        mutationDao.insert(
+            MutationRow(table = TABLE, operation = MutationOperation.UPDATE, bodyJson = """{"done":true}""", filterJson = null, createdAtMs = 0L),
+        )
+
+        // When
+        val report = syncer.sync()
+
+        // Then
+        assertEquals(OutboxOperation.Update, report.rejected.single().operation)
+        assertNull(report.rejected.single().serverError)
+        assertTrue(server.requests.isEmpty())
+    }
+
+    @Test
+    fun the_list_keeps_the_newest_hundred() = runTest {
+        // Given — 105 writes the server refuses
+        repeat(105) { index -> store.enqueueInsert(table = TABLE, body = rows("""[{"n":$index}]""")) }
+        server.answer = { postgrestError(HttpStatusCode.BadRequest, code = "22P02") }
+
+        // When
+        syncer.sync()
+
+        // Then — the oldest five went first
+        val ids = store.outboxState.rejections().map { it.id }
+        assertEquals(MAX_REJECTED_MUTATIONS, ids.size)
+        assertEquals((6L..105L).toList(), ids)
+    }
+
+    @Test
+    fun a_dismissed_rejection_leaves_the_list() = runTest {
+        // Given
+        val id = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
+        server.answer = { postgrestError(HttpStatusCode.BadRequest) }
+        syncer.sync()
+
+        // When
+        val dismissed = store.dismissRejectedMutation(id)
+
+        // Then
+        assertTrue(dismissed)
+        assertEquals(emptyList(), store.outboxState.rejections())
+        assertEquals(emptyList(), store.outboxState.rejectionsFlow().first())
+    }
+
+    @Test
+    fun a_retried_rejection_rejoins_the_queue_at_the_tail_and_replays() = runTest {
+        // Given — a rejected write, and a newer write queued after it
+        val rejectedId = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"first"}]"""))
+        server.answer = { postgrestError(HttpStatusCode.Forbidden) }
+        syncer.sync()
+        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"second"}]"""))
+
+        // When — the app fixed the cause and retries it
+        val newId = assertNotNull(store.retryRejectedMutation(rejectedId, identity = null))
+        server.answer = { okJson("[]") }
+        val report = syncer.sync()
+
+        // Then — it replayed after the newer write, under a new id, and left the list
+        assertTrue(newId > rejectedId)
+        assertEquals(2, report.syncedCount)
+        assertEquals(listOf("""[{"title":"second"}]""", """[{"title":"first"}]"""), server.requests.takeLast(2).map { it.body })
+        assertEquals(emptyList(), store.outboxState.rejections())
+    }
+
+    @Test
+    fun an_unreadable_rejected_list_is_never_read_as_empty() = runTest {
+        // Given — the reserved row holds something this build cannot decode
+        objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "not a list")
+
+        // When / Then
+        assertFailsWith<IllegalStateException> { store.outboxState.rejections() }
+    }
+
+    @Test
+    fun a_rejection_that_cannot_be_recorded_keeps_the_write_queued() = runTest {
+        // Given — an unreadable list, and a write the server refuses
+        objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "not a list")
+        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
+        server.answer = { postgrestError(HttpStatusCode.BadRequest) }
+
+        // When
+        val report = syncer.sync()
+
+        // Then — the pass stopped with the write still queued rather than losing it
+        assertIs<SyncStop.TransientFailure>(report.stop)
+        assertEquals(1, store.pendingMutationCount())
+        assertEquals("not a list", objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)?.payload)
+    }
+
+    private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
+
+    private companion object {
+        const val TABLE = "todos"
+    }
+}

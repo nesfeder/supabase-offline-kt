@@ -208,7 +208,16 @@ internal class OfflineMutationSyncer(
     /** The pass itself. Must only be called while [syncMutex] is held. */
     private suspend fun sweepLocked(table: String?, schema: String, generation: Long): SyncReport {
         val identity = currentIdentity()
-        if (identity == null || !store.mayReplayAs(identity.storedValue)) {
+        val mayReplay = try {
+            identity != null && store.mayReplayAs(identity.storedValue)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (unreadableOwner: Exception) {
+            // The recorded owner cannot be decoded. Sending nothing is the only safe answer.
+            sdkLogger.error { "The queue owner cannot be read; not replaying (${unreadableOwner::class.simpleName})" }
+            return SyncReport(0, emptyList(), remainingCount(table), SyncStop.TransientFailure(unreadableOwner))
+        }
+        if (!mayReplay) {
             sdkLogger.warning {
                 "Pending mutations were queued under another identity than the current session; not replaying"
             }
@@ -244,7 +253,20 @@ internal class OfflineMutationSyncer(
                 }
 
                 is ReplayOutcome.Rejected -> {
-                    rejected += store.rejectMutation(mutation, outcome.message, outcome.serverError)
+                    try {
+                        rejected += store.rejectMutation(mutation, outcome.message, outcome.serverError)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (unrecorded: Exception) {
+                        // The rejected list cannot be written (it cannot be decoded). The write
+                        // stays queued rather than vanish, and the pass stops here.
+                        sdkLogger.error {
+                            "Could not record the rejection of ${mutation.operation} on ${mutation.table}; " +
+                                "keeping it queued (${unrecorded::class.simpleName})"
+                        }
+                        stop = SyncStop.TransientFailure(unrecorded)
+                        break
+                    }
                 }
 
                 is ReplayOutcome.Held -> {

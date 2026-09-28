@@ -6,6 +6,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -97,6 +98,26 @@ class OnlineWriteJoinsQueueTest {
 
         // Then
         assertEquals(MutationOutcome.Applied::class, outcome::class)
+    }
+
+    @Test
+    fun a_write_that_joins_the_queue_is_sent_by_a_pass_the_engine_starts_itself() = runTest {
+        // Given — a client whose background work runs on the test scheduler, with a pending edit
+        val client = newTestOfflineClient(supabase = server.supabaseClient(), store = store, coordinatorScope = backgroundScope)
+        server.answer = { connectivityFailure() }
+        client.from(TABLE).updateJson(patch("A")) { filter { eq("id", 1) } }
+
+        // When — online again, a new edit joins the queue; nobody calls sync
+        server.answer = { okJson("[]") }
+        val outcome = client.from(TABLE).updateJson(patch("B")) { filter { eq("id", 1) } }
+        store.pendingMutationCountFlow().first { pending -> pending == 0 }
+
+        // Then — the engine replayed both, in order
+        assertEquals(MutationOutcome.Queued, outcome)
+        assertEquals(
+            listOf("""{"title":"A"}""", """{"title":"B"}"""),
+            server.requests.filter { it.method == "PATCH" }.map { it.body }.takeLast(2),
+        )
     }
 
     private fun patch(title: String): JsonElement = Json.parseToJsonElement("""{"title":"$title"}""")

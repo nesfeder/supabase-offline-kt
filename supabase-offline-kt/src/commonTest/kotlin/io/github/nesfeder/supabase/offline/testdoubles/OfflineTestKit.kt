@@ -18,6 +18,9 @@ import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okio.Path
 import okio.Path.Companion.toPath
 
@@ -116,6 +119,8 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  * @param store the offline store.
  * @param baseDirectoryProvider base directory for downloaded storage files.
  * @param sdkLogger the SDK logger.
+ * @param coordinatorScope scope for the client's background work (refresh loops, replay passes it
+ *   starts itself); pass `runTest`'s `backgroundScope` to drive it from the test scheduler.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -123,9 +128,11 @@ internal fun newTestOfflineClient(
     store: OfflineStore = newTestOfflineStore(),
     baseDirectoryProvider: () -> Path = { "/tmp".toPath() },
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    coordinatorScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
     supabase = supabase,
     store = store,
     baseDirectoryProvider = baseDirectoryProvider,
     sdkLogger = sdkLogger,
+    coordinatorScope = coordinatorScope,
 )
