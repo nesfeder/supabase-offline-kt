@@ -80,4 +80,26 @@ class OfflineDatabaseOpenInPlaceAndroidTest {
         assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath))
         assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath))
     }
+
+    @Test
+    fun the_shipped_queue_replays_every_write_exactly_as_it_was_queued() = runTest {
+        // Given — the shipped database, opened in place through the library's own builder
+        directory.mkdirs()
+        val dbPath = File(directory, "supabase_offline.db").absolutePath
+        ShippedDatabaseFixture.writeTo(dbPath)
+        val database = getRoomDatabase(getDatabaseBuilder(context, dbPath))
+        val server = shippedQueueServer()
+
+        // When — the queue replays through a real store over the database's DAOs
+        val (synced, pendingAfter) = try {
+            database.replayShippedQueue(server) to database.mutationDao().pendingAll()
+        } finally {
+            database.close()
+        }
+
+        // Then — each queued write reaches the server with its filter and options intact
+        assertEquals(4, synced)
+        assertEquals(SHIPPED_QUEUE_REPLAY, server.requests)
+        assertEquals(emptyList(), pendingAfter)
+    }
 }

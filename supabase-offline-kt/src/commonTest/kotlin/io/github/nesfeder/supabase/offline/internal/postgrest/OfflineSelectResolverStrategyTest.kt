@@ -133,6 +133,19 @@ class OfflineSelectResolverStrategyTest {
     }
 
     @Test
+    fun networkFirst_nonNetworkFailure_rethrowsWithoutUsingCache() = runTest {
+        // Given — cached data, and a failure that is not a connectivity failure
+        store.addPayload(TABLE, signature(), CACHED_DATA)
+        networkAnswer = { throw IllegalStateException("server rejected the request") }
+        val resolver = resolver(backgroundScope)
+
+        // When / Then — only a connectivity failure may fall back to the cache
+        assertFailsWith<IllegalStateException> {
+            resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+        }
+    }
+
+    @Test
     fun networkOnly_successfulNetwork_returnsNetworkData() = runTest {
         // Given
         answerWith(NETWORK_DATA)

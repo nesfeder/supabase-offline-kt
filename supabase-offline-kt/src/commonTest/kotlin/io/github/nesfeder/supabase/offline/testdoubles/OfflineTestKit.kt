@@ -29,7 +29,8 @@ import okio.Path.Companion.toPath
  * - newTestSupabaseClient / newTestPostgrest — a real supabase-kt client on a Ktor MockEngine.
  * - newTestOfflineClient — the real SupabaseOfflineClientImpl over the two.
  *
- * To script the PostgREST handle without HTTP, use FakePostgrestQueryBuilderWrapper.
+ * To observe what goes on the wire, build the client from a RecordingPostgrestServer. To script
+ * the PostgREST handle without HTTP, use FakePostgrestQueryBuilderWrapper.
  */
 
 /** Project URL every test client points at. Never contacted: requests go to a MockEngine. */

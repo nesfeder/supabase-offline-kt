@@ -1,0 +1,99 @@
+package io.github.nesfeder.supabase.offline.testdoubles
+
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.Postgrest
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockRequestHandleScope
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.toByteArray
+import io.ktor.client.request.HttpResponseData
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import kotlinx.io.IOException
+
+/**
+ * A scripted PostgREST server on a Ktor [MockEngine] that records every request it receives, so a
+ * test can assert exactly what the engine put on the wire: method, table, query parameters (filters,
+ * `on_conflict`, `columns`), the `Prefer` header, the schema headers and the body.
+ *
+ * Build a client on it with [supabaseClient]. Every request is answered by [answer], which can
+ * return a canned response ([okJson], [postgrestError]) or throw to simulate a transport failure
+ * ([connectivityFailure]).
+ *
+ * @property answer decides the response for each recorded request; by default `200 []`.
+ */
+internal class RecordingPostgrestServer(
+    var answer: suspend MockRequestHandleScope.(RecordedRequest) -> HttpResponseData = { okJson("[]") },
+) {
+
+    /**
+     * One request as it reached the server.
+     *
+     * @property method the HTTP method, e.g. `"POST"`.
+     * @property table the last path segment, i.e. the table or view the request addresses.
+     * @property query the decoded query parameters. supabase-kt sends one value per name.
+     * @property prefer the raw `Prefer` header, or `null` when absent.
+     * @property contentProfile the `Content-Profile` header (the schema of a write), or `null`.
+     * @property acceptProfile the `Accept-Profile` header (the schema of a read), or `null`.
+     * @property body the request body as text; empty when there is none.
+     */
+    data class RecordedRequest(
+        val method: String,
+        val table: String,
+        val query: Map<String, String>,
+        val prefer: String?,
+        val contentProfile: String?,
+        val acceptProfile: String?,
+        val body: String,
+    )
+
+    /** Every request received, in order. */
+    val requests: MutableList<RecordedRequest> = mutableListOf()
+
+    /** The engine to install on a client (see [supabaseClient]). */
+    val engine: MockEngine = MockEngine { request ->
+        val recorded = RecordedRequest(
+            method = request.method.value,
+            table = request.url.encodedPath.substringAfterLast('/'),
+            query = request.url.parameters.names().associateWith { name -> request.url.parameters[name].orEmpty() },
+            prefer = request.headers["Prefer"],
+            contentProfile = request.headers["Content-Profile"],
+            acceptProfile = request.headers["Accept-Profile"],
+            body = request.body.toByteArray().decodeToString(),
+        )
+        requests += recorded
+        answer(recorded)
+    }
+
+    /**
+     * A supabase-kt client whose PostgREST requests reach this server. Automatic retries are off,
+     * so a scripted failure surfaces on the first attempt.
+     */
+    fun supabaseClient(): SupabaseClient = newTestSupabaseClient(engine = engine) {
+        install(Postgrest) { maxRetries = 0 }
+    }
+
+    companion object {
+        /** A `200 OK` JSON response carrying [body]. */
+        fun MockRequestHandleScope.okJson(body: String): HttpResponseData = respond(
+            content = body,
+            status = HttpStatusCode.OK,
+            headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+        )
+
+        /**
+         * A PostgREST error response: [status] with PostgREST's error body, which supabase-kt raises
+         * as a `PostgrestRestException` carrying that status.
+         */
+        fun MockRequestHandleScope.postgrestError(status: HttpStatusCode): HttpResponseData = respond(
+            content = """{"code":"42501","message":"rejected by the test server","details":null,"hint":null}""",
+            status = status,
+            headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+        )
+
+        /** A transport failure: the request never reaches a server. */
+        fun connectivityFailure(): Nothing = throw IOException("network unreachable")
+    }
+}

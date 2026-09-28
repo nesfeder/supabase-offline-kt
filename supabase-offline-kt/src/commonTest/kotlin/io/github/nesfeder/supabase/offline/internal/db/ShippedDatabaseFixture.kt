@@ -20,7 +20,8 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
  * [writeVersion1To] writes the same rows at schema version 1 (from `1.json`, before `delta_json`
  * existed), for the one migration an older install still has to take.
  *
- * The rows use the stored formats the engine reads back: `operation` strings, `filter_json` as the
+ * The rows use the stored formats the engine reads back: `operation` strings (written as
+ * literals, so the file does not follow the library's constants), `filter_json` as the
  * JSON encoding of `FilterDescriptor` (an AND descriptor omits its default `mode`), `delta_json` as a
  * JSON list of `NumericDeltaColumn` (a null `minValue` is omitted), and booleans as SQLite integers.
  */
@@ -136,7 +137,7 @@ internal object ShippedDatabaseFixture {
         MutationRow(
             id = 1,
             table = "todos",
-            operation = MutationOperation.INSERT,
+            operation = "INSERT",
             bodyJson = """[{"id":3,"title":"Water the plants"}]""",
             filterJson = null,
             createdAtMs = 1_727_000_001_000,
@@ -149,7 +150,7 @@ internal object ShippedDatabaseFixture {
         MutationRow(
             id = 2,
             table = "list_members",
-            operation = MutationOperation.UPSERT,
+            operation = "UPSERT",
             bodyJson = """[{"list_id":"l-1","user_id":"u-2","role":"editor"}]""",
             filterJson = null,
             createdAtMs = 1_727_000_002_000,
@@ -162,7 +163,7 @@ internal object ShippedDatabaseFixture {
         MutationRow(
             id = 3,
             table = "todos",
-            operation = MutationOperation.UPDATE,
+            operation = "UPDATE",
             bodyJson = """{"title":"Walk the dog twice","done_count":5,"minutes_spent":45}""",
             filterJson = UPDATE_FILTER_JSON,
             createdAtMs = 1_727_000_003_000,
@@ -175,7 +176,7 @@ internal object ShippedDatabaseFixture {
         MutationRow(
             id = 4,
             table = "todos",
-            operation = MutationOperation.DELETE,
+            operation = "DELETE",
             bodyJson = "{}",
             filterJson = DELETE_FILTER_JSON,
             createdAtMs = 1_727_000_004_000,
@@ -188,7 +189,7 @@ internal object ShippedDatabaseFixture {
         MutationRow(
             id = 5,
             table = "todos",
-            operation = MutationOperation.INSERT,
+            operation = "INSERT",
             bodyJson = """[{"id":4,"title":"Already sent"}]""",
             filterJson = null,
             createdAtMs = 1_727_000_000_900,
