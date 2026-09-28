@@ -1,7 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.execSQL
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -205,11 +205,15 @@ internal object ShippedDatabaseFixture {
     val VERSION_1_MUTATION_ROWS: List<MutationRow> = MUTATION_ROWS.map { row -> row.copy(deltaJson = null) }
 
     /**
-     * Writes the shipped database to [path] with the raw SQLite driver: schema version 2, every
+     * Writes the shipped database to [path] with the raw SQLite [driver]: schema version 2, every
      * fixture row, and `PRAGMA user_version = 2`, which is how Room records the schema version.
+     *
+     * The driver is a parameter so the same file can be written by the bundled SQLite and by the
+     * system one; this object never names a driver itself, so a test binary that must not link the
+     * bundled SQLite can still use it.
      */
-    fun writeTo(path: String) {
-        write(path, version = VERSION, schemaStatements = SCHEMA_STATEMENTS, mutationRows = MUTATION_ROWS)
+    fun writeTo(path: String, driver: SQLiteDriver) {
+        write(path, driver, version = VERSION, schemaStatements = SCHEMA_STATEMENTS, mutationRows = MUTATION_ROWS)
     }
 
     /**
@@ -217,18 +221,25 @@ internal object ShippedDatabaseFixture {
      * `delta_json`, and `PRAGMA user_version = 1` — as an install that never ran a version-2 build
      * holds it.
      */
-    fun writeVersion1To(path: String) {
-        write(path, version = 1, schemaStatements = VERSION_1_SCHEMA_STATEMENTS, mutationRows = VERSION_1_MUTATION_ROWS)
+    fun writeVersion1To(path: String, driver: SQLiteDriver) {
+        write(
+            path,
+            driver,
+            version = 1,
+            schemaStatements = VERSION_1_SCHEMA_STATEMENTS,
+            mutationRows = VERSION_1_MUTATION_ROWS,
+        )
     }
 
     private fun write(
         path: String,
+        driver: SQLiteDriver,
         version: Long,
         schemaStatements: List<String>,
         mutationRows: List<MutationRow>,
     ) {
         val hasDeltaColumn = version >= VERSION
-        val connection = BundledSQLiteDriver().open(path)
+        val connection = driver.open(path)
         try {
             schemaStatements.forEach { statement -> connection.execSQL(statement) }
             OBJECT_ROWS.forEach { row ->
@@ -261,12 +272,13 @@ internal object ShippedDatabaseFixture {
         }
     }
 
-    /** Reads `PRAGMA user_version` from the file at [path] with the raw driver. */
-    fun readUserVersion(path: String): Long = readSingleLong(path, "PRAGMA user_version")
+    /** Reads `PRAGMA user_version` from the file at [path] with the raw [driver]. */
+    fun readUserVersion(path: String, driver: SQLiteDriver): Long =
+        readSingleLong(path, driver, "PRAGMA user_version")
 
-    /** Reads the identity hash Room keeps in `room_master_table`, with the raw driver. */
-    fun readIdentityHash(path: String): String? {
-        val connection = BundledSQLiteDriver().open(path)
+    /** Reads the identity hash Room keeps in `room_master_table`, with the raw [driver]. */
+    fun readIdentityHash(path: String, driver: SQLiteDriver): String? {
+        val connection = driver.open(path)
         try {
             val statement = connection.prepare("SELECT identity_hash FROM room_master_table WHERE id = 42")
             try {
@@ -279,8 +291,8 @@ internal object ShippedDatabaseFixture {
         }
     }
 
-    private fun readSingleLong(path: String, query: String): Long {
-        val connection: SQLiteConnection = BundledSQLiteDriver().open(path)
+    private fun readSingleLong(path: String, driver: SQLiteDriver, query: String): Long {
+        val connection: SQLiteConnection = driver.open(path)
         try {
             val statement = connection.prepare(query)
             try {

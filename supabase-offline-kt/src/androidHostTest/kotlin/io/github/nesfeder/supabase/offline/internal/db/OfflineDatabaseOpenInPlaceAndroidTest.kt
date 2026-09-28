@@ -3,6 +3,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingRoomCallback
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
@@ -36,7 +37,7 @@ class OfflineDatabaseOpenInPlaceAndroidTest {
         // Given — the shipped database file, written with the raw driver, never through Room
         directory.mkdirs()
         val dbPath = File(directory, "supabase_offline.db").absolutePath
-        ShippedDatabaseFixture.writeTo(dbPath)
+        ShippedDatabaseFixture.writeTo(dbPath, BundledSQLiteDriver())
         val callback = RecordingRoomCallback()
 
         // When — opened the way createSupabaseOfflineClient opens it
@@ -52,8 +53,8 @@ class OfflineDatabaseOpenInPlaceAndroidTest {
         assertEquals(0, callback.creates, "the existing database must not be created again")
         assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
         assertEquals(1, callback.opens)
-        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath))
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath))
+        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath, BundledSQLiteDriver()))
+        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath, BundledSQLiteDriver()))
     }
 
     @Test
@@ -61,7 +62,7 @@ class OfflineDatabaseOpenInPlaceAndroidTest {
         // Given — an install that never ran a schema version 2 build, written without Room
         directory.mkdirs()
         val dbPath = File(directory, "supabase_offline.db").absolutePath
-        ShippedDatabaseFixture.writeVersion1To(dbPath)
+        ShippedDatabaseFixture.writeVersion1To(dbPath, BundledSQLiteDriver())
         val callback = RecordingRoomCallback()
 
         // When — opened the way createSupabaseOfflineClient opens it
@@ -77,8 +78,8 @@ class OfflineDatabaseOpenInPlaceAndroidTest {
         assertEquals(0, callback.creates, "the existing database must not be created again")
         assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
         assertEquals(1, callback.opens)
-        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath))
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath))
+        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath, BundledSQLiteDriver()))
+        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath, BundledSQLiteDriver()))
     }
 
     @Test
@@ -86,7 +87,7 @@ class OfflineDatabaseOpenInPlaceAndroidTest {
         // Given — the shipped database, opened in place through the library's own builder
         directory.mkdirs()
         val dbPath = File(directory, "supabase_offline.db").absolutePath
-        ShippedDatabaseFixture.writeTo(dbPath)
+        ShippedDatabaseFixture.writeTo(dbPath, BundledSQLiteDriver())
         val database = getRoomDatabase(getDatabaseBuilder(context, dbPath))
         val server = shippedQueueServer()
 

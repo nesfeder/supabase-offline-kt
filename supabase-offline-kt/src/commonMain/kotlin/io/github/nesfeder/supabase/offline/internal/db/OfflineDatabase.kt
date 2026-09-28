@@ -6,7 +6,7 @@ import androidx.room.RoomDatabase
 import androidx.room.RoomDatabaseConstructor
 import androidx.room.migration.Migration
 import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.execSQL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -67,8 +67,27 @@ internal val MIGRATION_1_2: Migration = object : Migration(1, 2) {
  */
 internal val OFFLINE_DB_MIGRATIONS: List<Migration> = listOf(MIGRATION_1_2)
 
+/**
+ * The SQLite driver the offline database opens with when none is passed to [getRoomDatabase]: the
+ * bundled SQLite on every platform, so every install runs the same SQLite version. The iOS build
+ * can be switched to the system SQLite (`-Psupabase.offline.iosSqlite=system`), which swaps this
+ * function's iOS implementation; see the module's build file for why that switch is build-time.
+ *
+ * @return a new driver instance.
+ */
+internal expect fun defaultSQLiteDriver(): SQLiteDriver
+
+/**
+ * Builds the offline database from a platform [builder].
+ *
+ * @param builder the platform builder, already pointed at the database file.
+ * @param driver the SQLite driver to open it with; [defaultSQLiteDriver] unless a caller needs
+ *   another. Internal on purpose: the published artifact always uses the default.
+ * @return the database, not yet opened; Room opens it on first use.
+ */
 internal fun getRoomDatabase(
-    builder: RoomDatabase.Builder<OfflineDatabase>
+    builder: RoomDatabase.Builder<OfflineDatabase>,
+    driver: SQLiteDriver = defaultSQLiteDriver(),
 ): OfflineDatabase {
     return builder
         .addMigrations(*OFFLINE_DB_MIGRATIONS.toTypedArray())
@@ -78,7 +97,7 @@ internal fun getRoomDatabase(
         // deliberate, reviewed diff. A bump that touches `mutation_cache` is the exception — that
         // table holds un-synced user writes, so it gets a real migration (see [MIGRATION_1_2]).
         .fallbackToDestructiveMigration(true)
-        .setDriver(BundledSQLiteDriver())
+        .setDriver(driver)
         .setQueryCoroutineContext(Dispatchers.IO)
         .build()
 }

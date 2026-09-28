@@ -15,6 +15,9 @@ robolectric = "4.16.1"
 room = "2.8.4"
 skie = "0.10.15"
 sqlite = "2.6.2"
+# The system-SQLite iOS test variant only. androidx.sqlite 2.6.x cannot open a connection on the
+# iOS libsqlite3 (fixed in 2.7.0-alpha02); every published artifact stays on "sqlite".
+sqlite-system = "2.7.1"
 supabase-bom = "3.8.0"
 
 [libraries]
@@ -22,6 +25,7 @@ androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref =
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 androidx-sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "sqlite" }
 androidx-sqlite-bundled-jvm = { module = "androidx.sqlite:sqlite-bundled-jvm", version.ref = "sqlite" }
+androidx-sqlite-framework-system = { module = "androidx.sqlite:sqlite-framework", version.ref = "sqlite-system" }
 androidx-test-core-ktx = { module = "androidx.test:core-ktx", version.ref = "androidx-test-core" }
 androidx-testExt-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-testExt" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
