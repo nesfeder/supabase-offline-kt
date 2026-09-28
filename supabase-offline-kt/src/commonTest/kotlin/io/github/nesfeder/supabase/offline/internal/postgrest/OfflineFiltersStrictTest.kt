@@ -121,7 +121,7 @@ class OfflineFiltersStrictTest {
         // ordinary `update { filter { … }; select() }` made offline failed instead of queuing.
         // When
         val descriptor = buildDescriptorStrictFromRequest(schema, conversion) {
-            filter { eq("id", "shoe-1") }
+            filter { eq("id", "project-1") }
             select()
         }
 
@@ -130,7 +130,7 @@ class OfflineFiltersStrictTest {
         val condition = descriptor?.conditions?.single()
         assertEquals("id", condition?.column)
         assertEquals("eq", condition?.operatorId)
-        assertEquals("shoe-1", condition?.value)
+        assertEquals("project-1", condition?.value)
     }
 
     @Test
@@ -143,7 +143,7 @@ class OfflineFiltersStrictTest {
         // When
         val descriptor = buildDescriptorStrictFromRequest(schema, conversion) {
             filter {
-                eq("id", "shoe-1")
+                eq("id", "project-1")
                 eq("user_id", "user-1")
             }
             select()
@@ -152,7 +152,7 @@ class OfflineFiltersStrictTest {
 
         // Then — both scoping conditions survive, and nothing else joins them
         assertEquals(
-            listOf("id" to "shoe-1", "user_id" to "user-1"),
+            listOf("id" to "project-1", "user_id" to "user-1"),
             descriptor?.conditions?.map { condition -> condition.column to condition.value },
         )
         assertEquals(listOf("eq", "eq"), descriptor?.conditions?.map { it.operatorId })
@@ -166,7 +166,7 @@ class OfflineFiltersStrictTest {
         // When / Then
         assertFailsWith<UnsupportedOfflineFilterException> {
             buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { eq("id", "shoe-1") }
+                filter { eq("id", "project-1") }
                 range(0L, 4L)
             }
         }

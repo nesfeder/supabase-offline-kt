@@ -48,10 +48,10 @@ class PreferResponseForCacheOverlayTest {
         val requestBody = buildJsonArray {
             add(buildJsonObject {
                 put("user_id", "u-1")
-                put("strava_activity_id", 42L)
+                put("external_id", 42L)
             })
         }
-        val serverResponse = """[{"id":"server-assigned","user_id":"u-1","strava_activity_id":42}]"""
+        val serverResponse = """[{"id":"server-assigned","user_id":"u-1","external_id":42}]"""
 
         val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
 
@@ -63,9 +63,9 @@ class PreferResponseForCacheOverlayTest {
         // Matches the INSERT-without-select() case where the server returns [].
         val requestBody = buildJsonArray {
             add(buildJsonObject {
-                put("activity_log_id", "log-1")
+                put("note_id", "log-1")
                 put("user_id", "u-1")
-                put("shoe_id", "shoe-xyz")
+                put("project_id", "project-xyz")
             })
         }
         val emptyResponse = "[]"
@@ -96,42 +96,42 @@ class PreferResponseForCacheOverlayTest {
         // that silently broke before.
         val objectDao = FakeObjectDao()
         val store = buildStore(objectDao)
-        val signature = "sig-run-logs-user-1"
+        val signature = "sig-notes-user-1"
 
         // Request body: the parent's upsert DTO — no id (server will assign it).
         val requestBody = buildJsonArray {
             add(buildJsonObject {
                 put("user_id", "u-1")
-                put("strava_activity_id", 42L)
+                put("external_id", 42L)
             })
         }
         // Response body from Supabase upsert+select(): full row including the server-assigned id.
         val serverResponse =
-            """[{"id":"server-log-id","user_id":"u-1","strava_activity_id":42,"notes":null}]"""
+            """[{"id":"server-log-id","user_id":"u-1","external_id":42,"notes":null}]"""
 
         store.applyLocalMutationToCache(
-            table = "activity_logs",
+            table = "notes",
             operation = MutationOperation.UPSERT,
             bodyJson = preferResponseForCacheOverlay(requestBody, serverResponse, json),
             filterJson = null,
-            onConflict = "user_id,strava_activity_id",
+            onConflict = "user_id,external_id",
             liveSignatures = setOf(signature),
         )
 
-        val cached = objectDao.getRow("activity_logs", signature)
+        val cached = objectDao.getRow("notes", signature)
         assertNotNull(cached)
-        val decoded = json.decodeFromString<List<ActivityLogDtoForTest>>(cached.payload)
+        val decoded = json.decodeFromString<List<NoteDtoForTest>>(cached.payload)
         assertEquals("server-log-id", decoded.single().id)
-        assertEquals(42L, decoded.single().stravaActivityId)
+        assertEquals(42L, decoded.single().externalId)
     }
 }
 
 /** Minimal mirror of a consumer's parent-row DTO, so the test depends on no consumer module. */
 @Serializable
-private data class ActivityLogDtoForTest(
+private data class NoteDtoForTest(
     @SerialName("id") val id: String = "",
     @SerialName("user_id") val userId: String,
-    @SerialName("strava_activity_id") val stravaActivityId: Long,
+    @SerialName("external_id") val externalId: Long,
     @SerialName("notes") val notes: String? = null,
 )
 

@@ -40,26 +40,26 @@ class OfflineStoreApplyLocalMutationTest {
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "scores",
+            table = "ratings",
             signature = "sig-A",
-            payload = """[{"id":1,"score":80}]""",
+            payload = """[{"id":1,"rating":80}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        // When — the same row is upserted online with a new score
+        // When — the same row is upserted online with a new rating
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":1,"score":92}]""",
+            bodyJson = """[{"id":1,"rating":92}]""",
             filterJson = null,
             defaultToNull = false,
             onConflict = "id",
         )
 
-        // Then — cached payload reflects the new score
-        val updated = objectDao.getRow("scores", "sig-A")
+        // Then — cached payload reflects the new rating
+        val updated = objectDao.getRow("ratings", "sig-A")
         assertNotNull(updated)
-        assertEquals("""[{"id":1,"score":92}]""", updated.payload)
+        assertEquals("""[{"id":1,"rating":92}]""", updated.payload)
         // And — mutation_cache is not touched (this is the online-success path)
         assertEquals(0, mutationDao.inserted.size)
     }
@@ -70,38 +70,38 @@ class OfflineStoreApplyLocalMutationTest {
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "scores",
+            table = "ratings",
             signature = "sig-A",
-            payload = """[{"id":1,"score":80}]""",
+            payload = """[{"id":1,"rating":80}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
         // When — a different id is upserted
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":2,"score":70}]""",
+            bodyJson = """[{"id":2,"rating":70}]""",
             filterJson = null,
             defaultToNull = false,
             onConflict = "id",
         )
 
         // Then — the new row is appended
-        val updated = objectDao.getRow("scores", "sig-A")
+        val updated = objectDao.getRow("ratings", "sig-A")
         assertNotNull(updated)
-        assertEquals("""[{"id":1,"score":80},{"id":2,"score":70}]""", updated.payload)
+        assertEquals("""[{"id":1,"rating":80},{"id":2,"rating":70}]""", updated.payload)
     }
 
     @Test
     fun upsert_with_ignoreDuplicates_leaves_matching_cached_row_untouched() = runTest {
-        // Given — cache holds the canonical server row for id 1 (e.g. a score another
+        // Given — cache holds the canonical server row for id 1 (e.g. a rating another
         // device already wrote)
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "scores",
+            table = "ratings",
             signature = "sig-A",
-            payload = """[{"id":1,"score":80}]""",
+            payload = """[{"id":1,"rating":80}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
@@ -109,19 +109,19 @@ class OfflineStoreApplyLocalMutationTest {
         // server preserved its row and returned nothing, so the overlay falls back to the
         // request body — which must NOT be merged over the canonical value.
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":1,"score":92}]""",
+            bodyJson = """[{"id":1,"rating":92}]""",
             filterJson = null,
             defaultToNull = false,
             onConflict = "id",
             ignoreDuplicates = true,
         )
 
-        // Then — cached payload still holds the canonical score
-        val updated = objectDao.getRow("scores", "sig-A")
+        // Then — cached payload still holds the canonical rating
+        val updated = objectDao.getRow("ratings", "sig-A")
         assertNotNull(updated)
-        assertEquals("""[{"id":1,"score":80}]""", updated.payload)
+        assertEquals("""[{"id":1,"rating":80}]""", updated.payload)
     }
 
     @Test
@@ -130,17 +130,17 @@ class OfflineStoreApplyLocalMutationTest {
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "scores",
+            table = "ratings",
             signature = "sig-A",
-            payload = """[{"id":1,"score":80}]""",
+            payload = """[{"id":1,"rating":80}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
         // When — an insert-if-missing for an id the cache doesn't hold
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":2,"score":70}]""",
+            bodyJson = """[{"id":2,"rating":70}]""",
             filterJson = null,
             defaultToNull = false,
             onConflict = "id",
@@ -148,9 +148,9 @@ class OfflineStoreApplyLocalMutationTest {
         )
 
         // Then — the genuinely new row is appended; ignoreDuplicates only guards existing rows
-        val updated = objectDao.getRow("scores", "sig-A")
+        val updated = objectDao.getRow("ratings", "sig-A")
         assertNotNull(updated)
-        assertEquals("""[{"id":1,"score":80},{"id":2,"score":70}]""", updated.payload)
+        assertEquals("""[{"id":1,"rating":80},{"id":2,"rating":70}]""", updated.payload)
     }
 
     @Test
@@ -158,59 +158,59 @@ class OfflineStoreApplyLocalMutationTest {
         // Given — two live observers on the same table, under different filter signatures
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
-        objectDao.seedPayload("scores", "sig-A", """[{"id":1,"score":80}]""")
-        objectDao.seedPayload("scores", "sig-B", """[{"id":1,"score":80}]""")
+        objectDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")
+        objectDao.seedPayload("ratings", "sig-B", """[{"id":1,"rating":80}]""")
         val store = buildStore(objectDao, mutationDao)
 
         // When
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":1,"score":92}]""",
+            bodyJson = """[{"id":1,"rating":92}]""",
             filterJson = null,
             onConflict = "id",
         )
 
         // Then — both signatures got patched
-        assertEquals("""[{"id":1,"score":92}]""", objectDao.getRow("scores", "sig-A")?.payload)
-        assertEquals("""[{"id":1,"score":92}]""", objectDao.getRow("scores", "sig-B")?.payload)
+        assertEquals("""[{"id":1,"rating":92}]""", objectDao.getRow("ratings", "sig-A")?.payload)
+        assertEquals("""[{"id":1,"rating":92}]""", objectDao.getRow("ratings", "sig-B")?.payload)
     }
 
     @Test
     fun upsert_with_composite_onConflict_patches_targeted_row_in_user_scoped_payload() = runTest {
-        // Given — a `scores` cache populated under a user_id-only signature, as a per-user
-        // reactive read would cache it. Two rows for two activities; the
-        // body shape mirrors what Supabase returns (id + user_id + activity_id + nested payload).
+        // Given — a `ratings` cache populated under a user_id-only signature, as a per-user
+        // reactive read would cache it. Two rows for two items; the
+        // body shape mirrors what Supabase returns (id + user_id + item_id + nested payload).
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "scores",
-            signature = "scores?user_id=eq.user-uuid",
-            payload = """[{"id":"r1","user_id":"user-uuid","activity_id":1,"payload":{"score":80}},""" +
-                """{"id":"r2","user_id":"user-uuid","activity_id":2,"payload":{"score":75}}]""",
+            table = "ratings",
+            signature = "ratings?user_id=eq.user-uuid",
+            payload = """[{"id":"r1","user_id":"user-uuid","item_id":1,"payload":{"rating":80}},""" +
+                """{"id":"r2","user_id":"user-uuid","item_id":2,"payload":{"rating":75}}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        // When — re-score for activity 2 via a composite-key UPSERT (onConflict names the
+        // When — re-rate for item 2 via a composite-key UPSERT (onConflict names the
         // table's natural key).
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":"r2","user_id":"user-uuid","activity_id":2,"payload":{"score":92}}]""",
+            bodyJson = """[{"id":"r2","user_id":"user-uuid","item_id":2,"payload":{"rating":92}}]""",
             filterJson = null,
-            onConflict = "user_id,activity_id",
+            onConflict = "user_id,item_id",
         )
 
-        // Then — activity 2's row reflects the new score; activity 1 stays unchanged. The
+        // Then — item 2's row reflects the new rating; item 1 stays unchanged. The
         // updated payload is what a cold-start `selectAsFlow` collector would observe after
         // a process restart, since the same in-memory map backs the on-disk Room cache.
-        val updated = objectDao.getRow("scores", "scores?user_id=eq.user-uuid")?.payload
+        val updated = objectDao.getRow("ratings", "ratings?user_id=eq.user-uuid")?.payload
         assertNotNull(updated)
-        assertTrue(updated.contains("\"activity_id\":1"))
-        assertTrue(updated.contains("\"score\":80"), "activity 1 score should remain 80, got $updated")
-        assertTrue(updated.contains("\"activity_id\":2"))
-        assertTrue(updated.contains("\"score\":92"), "activity 2 score should be 92, got $updated")
-        assertFalse(updated.contains("\"score\":75"), "stale score 75 must not survive overlay")
+        assertTrue(updated.contains("\"item_id\":1"))
+        assertTrue(updated.contains("\"rating\":80"), "item 1 rating should remain 80, got $updated")
+        assertTrue(updated.contains("\"item_id\":2"))
+        assertTrue(updated.contains("\"rating\":92"), "item 2 rating should be 92, got $updated")
+        assertFalse(updated.contains("\"rating\":75"), "stale rating 75 must not survive overlay")
     }
 
     @Test
@@ -222,9 +222,9 @@ class OfflineStoreApplyLocalMutationTest {
 
         // When
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":1,"score":92}]""",
+            bodyJson = """[{"id":1,"rating":92}]""",
             filterJson = null,
             onConflict = "id",
         )
@@ -240,11 +240,11 @@ class OfflineStoreApplyLocalMutationTest {
     fun insert_appends_row_to_cached_payload() = runTest {
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
-        objectDao.seedPayload("activity_logs", "sig-A", """[{"id":"a","notes":"one"}]""")
+        objectDao.seedPayload("notes", "sig-A", """[{"id":"a","notes":"one"}]""")
         val store = buildStore(objectDao, mutationDao)
 
         store.applyLocalMutationToCache(
-            table = "activity_logs",
+            table = "notes",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"b","notes":"two"}]""",
             filterJson = null,
@@ -253,7 +253,7 @@ class OfflineStoreApplyLocalMutationTest {
 
         assertEquals(
             """[{"id":"a","notes":"one"},{"id":"b","notes":"two"}]""",
-            objectDao.getRow("activity_logs", "sig-A")?.payload,
+            objectDao.getRow("notes", "sig-A")?.payload,
         )
     }
 
@@ -261,58 +261,58 @@ class OfflineStoreApplyLocalMutationTest {
 
     @Test
     fun insert_does_not_land_in_cached_signature_whose_eq_filter_excludes_it() = runTest {
-        // Given — a cached exhaustive `type=eq.RUN` query holding one RUN row
+        // Given — a cached exhaustive `type=eq.OPEN` query holding one OPEN row
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "activity_logs",
-            signature = "activity_logs?type=eq.RUN",
-            payload = """[{"id":"r1","type":"RUN"}]""",
+            table = "notes",
+            signature = "notes?type=eq.OPEN",
+            payload = """[{"id":"r1","type":"OPEN"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        // When — a WALK row is inserted online
+        // When — a DONE row is inserted online
         store.applyLocalMutationToCache(
-            table = "activity_logs",
+            table = "notes",
             operation = MutationOperation.INSERT,
-            bodyJson = """[{"id":"w1","type":"WALK"}]""",
+            bodyJson = """[{"id":"w1","type":"DONE"}]""",
             filterJson = null,
             defaultToNull = true,
         )
 
-        // Then — the WALK row is NOT appended to the RUN-only query, and the cache is untouched
+        // Then — the DONE row is NOT appended to the OPEN-only query, and the cache is untouched
         assertEquals(
-            """[{"id":"r1","type":"RUN"}]""",
-            objectDao.getRow("activity_logs", "activity_logs?type=eq.RUN")?.payload,
+            """[{"id":"r1","type":"OPEN"}]""",
+            objectDao.getRow("notes", "notes?type=eq.OPEN")?.payload,
         )
         assertEquals(0, objectDao.writes, "excluded row must not trigger a cache write")
     }
 
     @Test
     fun insert_lands_in_matching_exhaustive_signature() = runTest {
-        // Given — a cached exhaustive `type=eq.RUN` query
+        // Given — a cached exhaustive `type=eq.OPEN` query
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "activity_logs",
-            signature = "activity_logs?type=eq.RUN",
-            payload = """[{"id":"r1","type":"RUN"}]""",
+            table = "notes",
+            signature = "notes?type=eq.OPEN",
+            payload = """[{"id":"r1","type":"OPEN"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        // When — a matching RUN row is inserted
+        // When — a matching OPEN row is inserted
         store.applyLocalMutationToCache(
-            table = "activity_logs",
+            table = "notes",
             operation = MutationOperation.INSERT,
-            bodyJson = """[{"id":"r2","type":"RUN"}]""",
+            bodyJson = """[{"id":"r2","type":"OPEN"}]""",
             filterJson = null,
             defaultToNull = true,
         )
 
-        // Then — the RUN row is appended
+        // Then — the OPEN row is appended
         assertEquals(
-            """[{"id":"r1","type":"RUN"},{"id":"r2","type":"RUN"}]""",
-            objectDao.getRow("activity_logs", "activity_logs?type=eq.RUN")?.payload,
+            """[{"id":"r1","type":"OPEN"},{"id":"r2","type":"OPEN"}]""",
+            objectDao.getRow("notes", "notes?type=eq.OPEN")?.payload,
         )
     }
 
@@ -321,111 +321,111 @@ class OfflineStoreApplyLocalMutationTest {
         // Given — two live observers on the same table under mutually-exclusive type filters
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
-        objectDao.seedPayload("activity_logs", "activity_logs?type=eq.RUN", """[{"id":"r1","type":"RUN"}]""")
-        objectDao.seedPayload("activity_logs", "activity_logs?type=eq.WALK", """[{"id":"w1","type":"WALK"}]""")
+        objectDao.seedPayload("notes", "notes?type=eq.OPEN", """[{"id":"r1","type":"OPEN"}]""")
+        objectDao.seedPayload("notes", "notes?type=eq.DONE", """[{"id":"w1","type":"DONE"}]""")
         val store = buildStore(objectDao, mutationDao)
 
-        // When — a WALK row is inserted online
+        // When — a DONE row is inserted online
         store.applyLocalMutationToCache(
-            table = "activity_logs",
+            table = "notes",
             operation = MutationOperation.INSERT,
-            bodyJson = """[{"id":"w2","type":"WALK"}]""",
+            bodyJson = """[{"id":"w2","type":"DONE"}]""",
             filterJson = null,
             defaultToNull = true,
         )
 
-        // Then — it lands only in the WALK query; the RUN query is untouched
+        // Then — it lands only in the DONE query; the OPEN query is untouched
         assertEquals(
-            """[{"id":"r1","type":"RUN"}]""",
-            objectDao.getRow("activity_logs", "activity_logs?type=eq.RUN")?.payload,
+            """[{"id":"r1","type":"OPEN"}]""",
+            objectDao.getRow("notes", "notes?type=eq.OPEN")?.payload,
         )
         assertEquals(
-            """[{"id":"w1","type":"WALK"},{"id":"w2","type":"WALK"}]""",
-            objectDao.getRow("activity_logs", "activity_logs?type=eq.WALK")?.payload,
+            """[{"id":"w1","type":"DONE"},{"id":"w2","type":"DONE"}]""",
+            objectDao.getRow("notes", "notes?type=eq.DONE")?.payload,
         )
     }
 
     @Test
     fun insert_still_lands_in_non_exhaustive_ordered_signature() = runTest {
-        // Given — an ordered (hence non-exhaustive) `type=eq.RUN` query. We deliberately keep the
+        // Given — an ordered (hence non-exhaustive) `type=eq.OPEN` query. We deliberately keep the
         // legacy always-apply behavior here so windowed/ordered flows never under-apply.
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "activity_logs",
-            signature = "activity_logs?type=eq.RUN&order=created_at.desc",
-            payload = """[{"id":"r1","type":"RUN"}]""",
+            table = "notes",
+            signature = "notes?type=eq.OPEN&order=created_at.desc",
+            payload = """[{"id":"r1","type":"OPEN"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        // When — even a non-matching WALK row is inserted
+        // When — even a non-matching DONE row is inserted
         store.applyLocalMutationToCache(
-            table = "activity_logs",
+            table = "notes",
             operation = MutationOperation.INSERT,
-            bodyJson = """[{"id":"w1","type":"WALK"}]""",
+            bodyJson = """[{"id":"w1","type":"DONE"}]""",
             filterJson = null,
             defaultToNull = true,
         )
 
         // Then — it is still appended, because a non-exhaustive signature keeps legacy behavior
         assertEquals(
-            """[{"id":"r1","type":"RUN"},{"id":"w1","type":"WALK"}]""",
-            objectDao.getRow("activity_logs", "activity_logs?type=eq.RUN&order=created_at.desc")?.payload,
+            """[{"id":"r1","type":"OPEN"},{"id":"w1","type":"DONE"}]""",
+            objectDao.getRow("notes", "notes?type=eq.OPEN&order=created_at.desc")?.payload,
         )
     }
 
     @Test
     fun upsert_append_is_gated_by_exhaustive_signature() = runTest {
-        // Given — a cached exhaustive `type=eq.RUN` query
+        // Given — a cached exhaustive `type=eq.OPEN` query
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "activity_logs",
-            signature = "activity_logs?type=eq.RUN",
-            payload = """[{"id":"r1","type":"RUN"}]""",
+            table = "notes",
+            signature = "notes?type=eq.OPEN",
+            payload = """[{"id":"r1","type":"OPEN"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        // When — a WALK row is upserted (onConflict key doesn't match any cached row → append path)
+        // When — a DONE row is upserted (onConflict key doesn't match any cached row → append path)
         store.applyLocalMutationToCache(
-            table = "activity_logs",
+            table = "notes",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":"w1","type":"WALK"}]""",
+            bodyJson = """[{"id":"w1","type":"DONE"}]""",
             filterJson = null,
             onConflict = "id",
         )
 
         // Then — the append is suppressed for the excluding query
         assertEquals(
-            """[{"id":"r1","type":"RUN"}]""",
-            objectDao.getRow("activity_logs", "activity_logs?type=eq.RUN")?.payload,
+            """[{"id":"r1","type":"OPEN"}]""",
+            objectDao.getRow("notes", "notes?type=eq.OPEN")?.payload,
         )
         assertEquals(0, objectDao.writes, "excluded upsert-append must not trigger a cache write")
     }
 
     @Test
     fun upsert_merge_into_matching_row_unchanged_under_exhaustive_signature() = runTest {
-        // Given — a cached exhaustive `type=eq.RUN` query with an existing row
+        // Given — a cached exhaustive `type=eq.OPEN` query with an existing row
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "activity_logs",
-            signature = "activity_logs?type=eq.RUN",
-            payload = """[{"id":"r1","type":"RUN","notes":"old"}]""",
+            table = "notes",
+            signature = "notes?type=eq.OPEN",
+            payload = """[{"id":"r1","type":"OPEN","notes":"old"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
         // When — the same row (which belongs in this query) is re-upserted with new data
         store.applyLocalMutationToCache(
-            table = "activity_logs",
+            table = "notes",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":"r1","type":"RUN","notes":"new"}]""",
+            bodyJson = """[{"id":"r1","type":"OPEN","notes":"new"}]""",
             filterJson = null,
             onConflict = "id",
         )
 
         // Then — the merge into the matching row is unaffected by the gate
-        val updated = objectDao.getRow("activity_logs", "activity_logs?type=eq.RUN")?.payload
+        val updated = objectDao.getRow("notes", "notes?type=eq.OPEN")?.payload
         assertNotNull(updated)
         assertTrue(updated.contains("\"notes\":\"new\""), "matching row should be merged, got $updated")
         assertFalse(updated.contains("\"notes\":\"old\""), "stale value must not survive, got $updated")
@@ -435,11 +435,11 @@ class OfflineStoreApplyLocalMutationTest {
 
     @Test
     fun update_patches_rows_matching_filter() = runTest {
-        // Given — two shoes in cache, filter targets only the second
+        // Given — two projects in cache, filter targets only the second
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
             payload = """[{"id":"s1","retired":false},{"id":"s2","retired":false}]""",
         )
@@ -454,14 +454,14 @@ class OfflineStoreApplyLocalMutationTest {
 
         // When — update retire=true for id s2
         store.applyLocalMutationToCache(
-            table = "shoes",
+            table = "projects",
             operation = MutationOperation.UPDATE,
             bodyJson = buildJsonObject { put("retired", JsonPrimitive(true)) }.toString(),
             filterJson = FilterEngine.encode(filter, json),
         )
 
         // Then — only s2 is patched; s1 is unchanged
-        val updated = objectDao.getRow("shoes", "sig-A")?.payload
+        val updated = objectDao.getRow("projects", "sig-A")?.payload
         assertNotNull(updated)
         // Use substring checks since the overlay may preserve key order from the original row.
         assertTrue(updated.contains("\"id\":\"s1\"") && updated.contains("\"retired\":false"))
@@ -469,57 +469,57 @@ class OfflineStoreApplyLocalMutationTest {
     }
 
     @Test
-    fun update_with_is_null_condition_patches_unread_row_and_skips_seen_row() = runTest {
-        // Given — a weekly_report cache with one unread row (seen_at is JSON null) and one
-        // already-seen row. Mirrors a first-write-wins "mark seen" update's
-        // filter: [eq user_id, eq week_id, seen_at IS NULL].
+    fun update_with_is_null_condition_patches_unread_row_and_skips_read_row() = runTest {
+        // Given — a summaries cache with one unread row (read_at is JSON null) and one
+        // already-read row. Mirrors a first-write-wins "mark read" update's
+        // filter: [eq user_id, eq period_id, read_at IS NULL].
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "weekly_report",
-            signature = "weekly_report?user_id=eq.user-uuid",
-            payload = """[{"user_id":"user-uuid","week_id":"2026-W26","seen_at":null},""" +
-                """{"user_id":"user-uuid","week_id":"2026-W25","seen_at":"2026-06-22T08:00:00Z"}]""",
+            table = "summaries",
+            signature = "summaries?user_id=eq.user-uuid",
+            payload = """[{"user_id":"user-uuid","period_id":"2026-P26","read_at":null},""" +
+                """{"user_id":"user-uuid","period_id":"2026-P25","read_at":"2026-06-22T08:00:00Z"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        fun markSeenFilter(weekId: String) = FilterDescriptor(
+        fun markReadFilter(periodId: String) = FilterDescriptor(
             mode = FilterDescriptor.Mode.AND,
             conditions = listOf(
                 FilterDescriptor.Condition(column = "user_id", operatorId = "eq", value = "user-uuid"),
-                FilterDescriptor.Condition(column = "week_id", operatorId = "eq", value = weekId),
-                FilterDescriptor.Condition(column = "seen_at", operatorId = "is", value = "null"),
+                FilterDescriptor.Condition(column = "period_id", operatorId = "eq", value = periodId),
+                FilterDescriptor.Condition(column = "read_at", operatorId = "is", value = "null"),
             ),
         )
 
-        // When — mark the unread week seen, then re-mark the already-seen week
+        // When — mark the unread period read, then re-mark the already-read period
         store.applyLocalMutationToCache(
-            table = "weekly_report",
+            table = "summaries",
             operation = MutationOperation.UPDATE,
-            bodyJson = buildJsonObject { put("seen_at", JsonPrimitive("2026-06-29T09:00:00Z")) }.toString(),
-            filterJson = FilterEngine.encode(markSeenFilter("2026-W26"), json),
+            bodyJson = buildJsonObject { put("read_at", JsonPrimitive("2026-06-29T09:00:00Z")) }.toString(),
+            filterJson = FilterEngine.encode(markReadFilter("2026-P26"), json),
         )
         store.applyLocalMutationToCache(
-            table = "weekly_report",
+            table = "summaries",
             operation = MutationOperation.UPDATE,
-            bodyJson = buildJsonObject { put("seen_at", JsonPrimitive("2026-06-29T09:05:00Z")) }.toString(),
-            filterJson = FilterEngine.encode(markSeenFilter("2026-W25"), json),
+            bodyJson = buildJsonObject { put("read_at", JsonPrimitive("2026-06-29T09:05:00Z")) }.toString(),
+            filterJson = FilterEngine.encode(markReadFilter("2026-P25"), json),
         )
 
-        // Then — the unread row is stamped; the seen row keeps its first-open timestamp
-        val updated = objectDao.getRow("weekly_report", "weekly_report?user_id=eq.user-uuid")?.payload
+        // Then — the unread row is stamped; the read row keeps its first-open timestamp
+        val updated = objectDao.getRow("summaries", "summaries?user_id=eq.user-uuid")?.payload
         assertNotNull(updated)
         assertTrue(
-            updated.contains("\"seen_at\":\"2026-06-29T09:00:00Z\""),
-            "unread 2026-W26 row should be stamped, got $updated",
+            updated.contains("\"read_at\":\"2026-06-29T09:00:00Z\""),
+            "unread 2026-P26 row should be stamped, got $updated",
         )
         assertTrue(
-            updated.contains("\"seen_at\":\"2026-06-22T08:00:00Z\""),
-            "already-seen 2026-W25 row must keep its first-open timestamp, got $updated",
+            updated.contains("\"read_at\":\"2026-06-22T08:00:00Z\""),
+            "already-read 2026-P25 row must keep its first-open timestamp, got $updated",
         )
         assertFalse(
             updated.contains("2026-06-29T09:05:00Z"),
-            "IS NULL guard must skip the already-seen row, got $updated",
+            "IS NULL guard must skip the already-read row, got $updated",
         )
     }
 
@@ -530,30 +530,30 @@ class OfflineStoreApplyLocalMutationTest {
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
-            table = "activity_log_nutrition",
+            table = "note_attachments",
             signature = "sig-A",
-            payload = """[{"activity_log_id":"a","nutrition_item_id":"gel1"},{"activity_log_id":"a","nutrition_item_id":"gel2"}]""",
+            payload = """[{"note_id":"a","attachment_id":"att1"},{"note_id":"a","attachment_id":"att2"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
         val filter = FilterDescriptor(
             mode = FilterDescriptor.Mode.AND,
             conditions = listOf(
-                FilterDescriptor.Condition(column = "nutrition_item_id", operatorId = "eq", value = "gel1"),
+                FilterDescriptor.Condition(column = "attachment_id", operatorId = "eq", value = "att1"),
             ),
         )
 
         store.applyLocalMutationToCache(
-            table = "activity_log_nutrition",
+            table = "note_attachments",
             operation = MutationOperation.DELETE,
             bodyJson = "{}",
             filterJson = FilterEngine.encode(filter, json),
         )
 
-        val updated = objectDao.getRow("activity_log_nutrition", "sig-A")?.payload
+        val updated = objectDao.getRow("note_attachments", "sig-A")?.payload
         assertNotNull(updated)
-        assertFalse(updated.contains("gel1"), "gel1 row should be removed")
-        assertTrue(updated.contains("gel2"))
+        assertFalse(updated.contains("att1"), "att1 row should be removed")
+        assertTrue(updated.contains("att2"))
     }
 
     // ── Cross-cutting invariants ──────────────────────────────────────────────
@@ -563,14 +563,14 @@ class OfflineStoreApplyLocalMutationTest {
         // Given — cache already reflects what the mutation would produce
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
-        objectDao.seedPayload("scores", "sig-A", """[{"id":1,"score":92}]""")
+        objectDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":92}]""")
         val store = buildStore(objectDao, mutationDao)
 
         // When — same payload re-upserted
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":1,"score":92}]""",
+            bodyJson = """[{"id":1,"rating":92}]""",
             filterJson = null,
             onConflict = "id",
         )
@@ -583,13 +583,13 @@ class OfflineStoreApplyLocalMutationTest {
     fun mutation_cache_stays_empty_on_online_success_path() = runTest {
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
-        objectDao.seedPayload("scores", "sig-A", """[]""")
+        objectDao.seedPayload("ratings", "sig-A", """[]""")
         val store = buildStore(objectDao, mutationDao)
 
         store.applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":1,"score":80}]""",
+            bodyJson = """[{"id":1,"rating":80}]""",
             filterJson = null,
             onConflict = "id",
         )

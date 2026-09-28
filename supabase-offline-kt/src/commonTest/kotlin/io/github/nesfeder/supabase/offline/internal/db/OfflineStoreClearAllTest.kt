@@ -27,16 +27,16 @@ class OfflineStoreClearAllTest {
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         val store = buildStore(objectDao, mutationDao)
-        store.addPayload("insights", "sig-A", """[{"id":"i-1","user_id":"u-1"}]""")
-        store.enqueueInsert(table = "shoes", body = JsonArray(emptyList()))
-        assertTrue(objectDao.getRow("insights", "sig-A") != null, "precondition: payload seeded")
+        store.addPayload("reports", "sig-A", """[{"id":"i-1","user_id":"u-1"}]""")
+        store.enqueueInsert(table = "projects", body = JsonArray(emptyList()))
+        assertTrue(objectDao.getRow("reports", "sig-A") != null, "precondition: payload seeded")
         assertTrue(mutationDao.inserted.isNotEmpty(), "precondition: mutation queued")
 
         // When the entire offline cache is cleared
         store.clearAll()
 
         // Then no cached payload and no queued mutation remain
-        assertNull(objectDao.getRow("insights", "sig-A"), "cached payload should be gone")
+        assertNull(objectDao.getRow("reports", "sig-A"), "cached payload should be gone")
         assertEquals(0, mutationDao.inserted.size, "queued mutations should be gone")
     }
 

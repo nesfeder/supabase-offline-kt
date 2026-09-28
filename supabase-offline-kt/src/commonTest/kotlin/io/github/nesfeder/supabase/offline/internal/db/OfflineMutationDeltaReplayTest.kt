@@ -45,32 +45,32 @@ import kotlin.test.assertTrue
  */
 class OfflineMutationDeltaReplayTest {
 
-    private val table = "shoes"
+    private val table = "projects"
 
     @Test
     fun `a delta-declared update rebases onto the value the server holds at replay`() = runTest {
-        // Given — at enqueue the client saw 8 000 m and the user's edit made it 9 000 m (+1 000).
-        // While the write sat in the queue, a second device attributed a 500 m run, so the server
-        // now holds 8 500 m.
+        // Given — at enqueue the client saw 8 000 and the user's edit made it 9 000 (+1 000).
+        // While the write sat in the queue, a second device added 500, so the server
+        // now holds 8 500.
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(9000.0)) },
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
             deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
             ),
         )
         val client = testClient()
         val wrapper = wrapper(
             client = client,
-            selectPayload = """[{"id":"shoe-1","total_meters_used":8500.0}]""",
+            selectPayload = """[{"id":"project-1","total_minutes":8500.0}]""",
         )
 
         // When
         val synced = syncer(store, client, wrapper).syncTable(table = table)
 
-        // Then — the intervening 500 m survives and the user's +1 000 still applies
+        // Then — the intervening 500 survives and the user's +1 000 still applies
         assertEquals(1, synced)
         assertEquals(9500.0, wrapper.updatedTotal())
     }
@@ -82,16 +82,16 @@ class OfflineMutationDeltaReplayTest {
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(6000.0)) },
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(6000.0)) },
             filter = idFilter,
             deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
             ),
         )
         val client = testClient()
         val wrapper = wrapper(
             client = client,
-            selectPayload = """[{"id":"shoe-1","total_meters_used":8500.0}]""",
+            selectPayload = """[{"id":"project-1","total_minutes":8500.0}]""",
         )
 
         // When
@@ -109,11 +109,11 @@ class OfflineMutationDeltaReplayTest {
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(0.0)) },
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(0.0)) },
             filter = idFilter,
             deltaColumns = listOf(
                 NumericDeltaColumn(
-                    column = "total_meters_used",
+                    column = "total_minutes",
                     snapshotValue = 8000.0,
                     minValue = 0.0,
                 ),
@@ -122,7 +122,7 @@ class OfflineMutationDeltaReplayTest {
         val client = testClient()
         val wrapper = wrapper(
             client = client,
-            selectPayload = """[{"id":"shoe-1","total_meters_used":500.0}]""",
+            selectPayload = """[{"id":"project-1","total_minutes":500.0}]""",
         )
 
         // When
@@ -140,16 +140,16 @@ class OfflineMutationDeltaReplayTest {
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(0.0)) },
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(0.0)) },
             filter = idFilter,
             deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
             ),
         )
         val client = testClient()
         val wrapper = wrapper(
             client = client,
-            selectPayload = """[{"id":"shoe-1","total_meters_used":500.0}]""",
+            selectPayload = """[{"id":"project-1","total_minutes":500.0}]""",
         )
 
         // When
@@ -167,19 +167,19 @@ class OfflineMutationDeltaReplayTest {
             table = table,
             body = buildJsonObject {
                 put("nickname", JsonPrimitive("Sunday pair"))
-                put("starting_meters", JsonPrimitive(2000.0))
-                put("total_meters_used", JsonPrimitive(9000.0))
+                put("starting_minutes", JsonPrimitive(2000.0))
+                put("total_minutes", JsonPrimitive(9000.0))
             },
             filter = idFilter,
             deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
             ),
         )
         val client = testClient()
         val wrapper = wrapper(
             client = client,
             selectPayload =
-                """[{"id":"shoe-1","total_meters_used":8500.0,"starting_meters":1000.0}]""",
+                """[{"id":"project-1","total_minutes":8500.0,"starting_minutes":1000.0}]""",
         )
 
         // When
@@ -188,8 +188,8 @@ class OfflineMutationDeltaReplayTest {
         // Then — the declared column is rebased; the undeclared ones are the caller's absolutes,
         // because those are values the user stated outright rather than accumulating totals
         val body = wrapper.lastUpdateBody()
-        assertEquals(9500.0, body["total_meters_used"]?.jsonPrimitive?.double)
-        assertEquals(2000.0, body["starting_meters"]?.jsonPrimitive?.double)
+        assertEquals(9500.0, body["total_minutes"]?.jsonPrimitive?.double)
+        assertEquals(2000.0, body["starting_minutes"]?.jsonPrimitive?.double)
         assertEquals("Sunday pair", body["nickname"]?.jsonPrimitive?.content)
     }
 
@@ -200,7 +200,7 @@ class OfflineMutationDeltaReplayTest {
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(9000.0)) },
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
         )
         val client = testClient()
@@ -224,10 +224,10 @@ class OfflineMutationDeltaReplayTest {
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(9000.0)) },
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
             deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
             ),
         )
         val client = testClient()
@@ -249,18 +249,18 @@ class OfflineMutationDeltaReplayTest {
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(9000.0)) },
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
             deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
             ),
         )
         val client = testClient()
         val wrapper = wrapper(
             client = client,
             selectPayload =
-                """[{"id":"shoe-1","total_meters_used":8500.0},""" +
-                    """{"id":"shoe-2","total_meters_used":100.0}]""",
+                """[{"id":"project-1","total_minutes":8500.0},""" +
+                    """{"id":"project-2","total_minutes":100.0}]""",
         )
 
         // When
@@ -277,10 +277,10 @@ class OfflineMutationDeltaReplayTest {
             val store = buildStore()
             store.enqueueUpdate(
                 table = table,
-                body = buildJsonObject { put("total_meters_used", JsonPrimitive(9000.0)) },
+                body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
                 filter = idFilter,
                 deltaColumns = listOf(
-                    NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                    NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
                 ),
             )
             val client = testClient()
@@ -307,16 +307,16 @@ class OfflineMutationDeltaReplayTest {
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(9000.0)) },
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
             deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
             ),
         )
         val client = testClient()
         val wrapper = wrapper(
             client = client,
-            selectPayload = """[{"id":"shoe-1","total_meters_used":null}]""",
+            selectPayload = """[{"id":"project-1","total_minutes":null}]""",
         )
 
         // When
@@ -331,7 +331,7 @@ class OfflineMutationDeltaReplayTest {
     private val idFilter = FilterDescriptor(
         mode = FilterDescriptor.Mode.AND,
         conditions = listOf(
-            FilterDescriptor.Condition(column = "id", operatorId = "eq", value = "shoe-1"),
+            FilterDescriptor.Condition(column = "id", operatorId = "eq", value = "project-1"),
         ),
     )
 
@@ -339,7 +339,7 @@ class OfflineMutationDeltaReplayTest {
         recordedUpdateBodies.last().jsonObject
 
     private fun FakePostgrestQueryBuilderWrapper.updatedTotal(): Double =
-        lastUpdateBody().getValue("total_meters_used").jsonPrimitive.double
+        lastUpdateBody().getValue("total_minutes").jsonPrimitive.double
 
     private fun wrapper(
         client: SupabaseClient,

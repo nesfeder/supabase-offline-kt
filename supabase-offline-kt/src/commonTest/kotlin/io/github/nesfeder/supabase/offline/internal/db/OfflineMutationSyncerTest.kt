@@ -46,7 +46,7 @@ import kotlin.test.assertFailsWith
 @OptIn(ExperimentalCoroutinesApi::class)
 class OfflineMutationSyncerTest {
 
-    private val table = "shoes"
+    private val table = "projects"
     private var createdAtCounter = 0L
 
     @Test

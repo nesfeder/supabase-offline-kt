@@ -37,15 +37,15 @@ class OfflineStoreEmissionDedupTest {
         val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { now })
         val emissions = mutableListOf<String?>()
         val collector = launch {
-            store.cachePayloadWithOverlayFlow("scores", "sig-A").onEach { emissions.add(it) }.collect()
+            store.cachePayloadWithOverlayFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
         }
         now = 1L
-        store.addPayload(table = "scores", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
+        store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
         val emissionsAfterFirstWrite = emissions.size
 
         // When — a background refresh rewrites the byte-identical payload with a fresh timestamp
         now = 2L
-        store.addPayload(table = "scores", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
+        store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
 
         // Then — the rewrite is invisible downstream: no new emission, so no re-decode fan-out
         assertEquals(
@@ -58,23 +58,23 @@ class OfflineStoreEmissionDedupTest {
 
     @Test
     fun mutation_write_for_an_unrelated_table_does_not_reemit() = runTest(UnconfinedTestDispatcher()) {
-        // Given — a live overlay collector on `scores` with a cached payload
+        // Given — a live overlay collector on `ratings` with a cached payload
         val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { 1L })
         val emissions = mutableListOf<String?>()
         val collector = launch {
-            store.cachePayloadWithOverlayFlow("scores", "sig-A").onEach { emissions.add(it) }.collect()
+            store.cachePayloadWithOverlayFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
         }
-        store.addPayload(table = "scores", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
+        store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
         val emissionsBeforeUnrelatedWrite = emissions.size
 
         // When — a mutation is queued for a different table (the mutation queue is one shared
         // Room table, so this write invalidates every table's mutation flow)
         store.enqueueInsert(
-            table = "shoes",
-            body = buildJsonArray { add(buildJsonObject { put("id", "shoe-1"); put("user_id", "u-1") }) },
+            table = "projects",
+            body = buildJsonArray { add(buildJsonObject { put("id", "project-1"); put("user_id", "u-1") }) },
         )
 
-        // Then — the scores collector is not re-emitted an identical overlay
+        // Then — the ratings collector is not re-emitted an identical overlay
         assertEquals(
             emissionsBeforeUnrelatedWrite,
             emissions.size,
@@ -90,14 +90,14 @@ class OfflineStoreEmissionDedupTest {
         val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { now })
         val emissions = mutableListOf<String?>()
         val collector = launch {
-            store.cachePayloadWithOverlayFlow("scores", "sig-A").onEach { emissions.add(it) }.collect()
+            store.cachePayloadWithOverlayFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
         }
         now = 1L
-        store.addPayload(table = "scores", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
+        store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
 
         // When — a refresh writes a genuinely different payload
         now = 2L
-        store.addPayload(table = "scores", signature = "sig-A", payload = PAYLOAD_TWO_ROWS)
+        store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_TWO_ROWS)
 
         // Then — the change propagates and the latest emission carries the new payload
         assertEquals(

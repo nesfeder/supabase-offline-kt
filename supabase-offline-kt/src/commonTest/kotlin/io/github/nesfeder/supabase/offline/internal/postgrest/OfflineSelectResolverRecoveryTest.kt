@@ -61,7 +61,7 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class OfflineSelectResolverRecoveryTest {
 
-    private val freshPayload = """[{"id":"shoe-1"}]"""
+    private val freshPayload = """[{"id":"project-1"}]"""
 
     @Test
     fun with_state_reports_no_data_then_stalled_then_network_idle_on_late_success() =
@@ -71,7 +71,7 @@ class OfflineSelectResolverRecoveryTest {
             val accelerator = MutableSharedFlow<Unit>()
             var failing = true
             val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onSelect = { if (failing) throw RuntimeException("network down") else postgrestResultOf(freshPayload, postgrest) },
             )
@@ -115,7 +115,7 @@ class OfflineSelectResolverRecoveryTest {
             // Given: a network SELECT that succeeds immediately
             val postgrest = testPostgrest()
             val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onSelect = { postgrestResultOf(freshPayload, postgrest) },
             )
@@ -145,7 +145,7 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             var networkCalls = 0
             val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onSelect = { networkCalls++; postgrestResultOf(freshPayload, postgrest) },
             )
@@ -172,10 +172,10 @@ class OfflineSelectResolverRecoveryTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given: the network serves a distinct payload on each call, tracked by a counter
             val postgrest = testPostgrest()
-            val secondPayload = """[{"id":"shoe-2"}]"""
+            val secondPayload = """[{"id":"project-2"}]"""
             var networkCalls = 0
             val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onSelect = {
                     networkCalls++
@@ -221,7 +221,7 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             var failing = true
             val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onSelect = { if (failing) throw RuntimeException("network down") else postgrestResultOf(freshPayload, postgrest) },
             )
@@ -705,7 +705,7 @@ class OfflineSelectResolverRecoveryTest {
             // overlaid on top, as it was before)
             assertEquals(2, networkCalls)
             val served = oneShot.await().data
-            assertTrue(served.contains("shoe-1"), "the retry's server rows reach the caller")
+            assertTrue(served.contains("project-1"), "the retry's server rows reach the caller")
             assertTrue(served.contains("plan-queued"), "the pending write is still overlaid")
         }
 
@@ -963,12 +963,12 @@ class OfflineSelectResolverRecoveryTest {
             // Given: the cache is primed with the server's single row, and the next refresh hangs
             // in flight after capturing the server state it will eventually report
             val postgrest = testPostgrest()
-            val bothShoes = """[{"id":"shoe-1"},{"id":"shoe-2"}]"""
+            val bothProjects = """[{"id":"project-1"},{"id":"project-2"}]"""
             var serverRows = freshPayload
             var networkCalls = 0
             val inFlight = CompletableDeferred<Unit>()
             val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onSelect = {
                     networkCalls++
@@ -991,7 +991,7 @@ class OfflineSelectResolverRecoveryTest {
             advanceUntilIdle()
 
             // When: a new subscription's refresh goes out (and parks), and while it is in flight
-            // the user saves a second shoe — it succeeds online and is patched into the cache
+            // the user saves a second project — it succeeds online and is patched into the cache
             val emissions = mutableListOf<String>()
             val collector = launch {
                 resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -1002,17 +1002,17 @@ class OfflineSelectResolverRecoveryTest {
             runCurrent()
             assertEquals(2, networkCalls, "the second subscription's refresh must be in flight")
             store.applyLocalMutationToCache(
-                table = "shoes",
+                table = "projects",
                 operation = MutationOperation.INSERT,
-                bodyJson = """[{"id":"shoe-2"}]""",
+                bodyJson = """[{"id":"project-2"}]""",
                 filterJson = null,
                 defaultToNull = true,
             )
             runCurrent()
-            assertEquals(bothShoes, emissions.last(), "the save is visible before the race resolves")
+            assertEquals(bothProjects, emissions.last(), "the save is visible before the race resolves")
 
             // And: the server now holds both rows, and the parked pre-insert response is delivered
-            serverRows = bothShoes
+            serverRows = bothProjects
             inFlight.complete(Unit)
             advanceUntilIdle()
 
@@ -1020,13 +1020,13 @@ class OfflineSelectResolverRecoveryTest {
             // refused, one follow-up request was issued, and that request (which started after
             // the insert) converged the cache on real server state.
             assertEquals(
-                bothShoes,
-                objectDao.allForTable("shoes").single().payload,
+                bothProjects,
+                objectDao.allForTable("projects").single().payload,
                 "the pre-insert response must not erase the saved row",
             )
-            assertEquals(bothShoes, emissions.last(), "the collector never loses the saved row")
+            assertEquals(bothProjects, emissions.last(), "the collector never loses the saved row")
             assertFalse(
-                emissions.contains(freshPayload) && emissions.indexOf(freshPayload) > emissions.indexOf(bothShoes),
+                emissions.contains(freshPayload) && emissions.indexOf(freshPayload) > emissions.indexOf(bothProjects),
                 "the cache must never revert to the pre-insert payload",
             )
             assertEquals(3, networkCalls, "a refused stale response triggers exactly one re-fetch")
@@ -1042,7 +1042,7 @@ class OfflineSelectResolverRecoveryTest {
             var networkCalls = 0
             val inFlight = CompletableDeferred<Unit>()
             val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onSelect = {
                     networkCalls++
@@ -1070,7 +1070,7 @@ class OfflineSelectResolverRecoveryTest {
             // front of the next user, and a follow-up request during sign-out could still carry
             // the outgoing JWT — so neither happens.
             assertTrue(
-                objectDao.allForTable("shoes").isEmpty(),
+                objectDao.allForTable("projects").isEmpty(),
                 "a response that predates teardown must not repopulate the cache",
             )
             assertEquals(1, networkCalls, "a teardown-refused response must not trigger a re-fetch")

@@ -48,11 +48,11 @@ class MutationOutcomeTest {
     fun insert_online_success_returns_applied_with_delegate_result() = runTest {
         // Given — the delegate INSERT succeeds and echoes the written row
         val postgrest = testPostgrest()
-        val serverRow = """[{"id":"row-1","name":"Gel"}]"""
+        val serverRow = """[{"id":"row-1","name":"Widget"}]"""
         val mutationDao = FakeMutationDao()
         val builder = buildBuilder(
             wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "nutrition_items",
+                table = "attachments",
                 postgrest = postgrest,
                 onInsert = { postgrestResultOf(serverRow, postgrest) },
             ),
@@ -75,7 +75,7 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder = buildBuilder(
             wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "nutrition_items",
+                table = "attachments",
                 postgrest = postgrest,
                 onInsert = { throw IOException("network down") },
             ),
@@ -88,7 +88,7 @@ class MutationOutcomeTest {
         // Then — the outcome is honest about being queued, and the mutation was enqueued
         assertEquals(MutationOutcome.Queued, outcome)
         assertEquals(1, mutationDao.inserted.size)
-        assertEquals("nutrition_items", mutationDao.inserted.single().table)
+        assertEquals("attachments", mutationDao.inserted.single().table)
     }
 
     @Test
@@ -98,7 +98,7 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder = buildBuilder(
             wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "nutrition_items",
+                table = "attachments",
                 postgrest = postgrest,
                 onInsert = { throw IOException("network down") },
             ),
@@ -141,13 +141,13 @@ class MutationOutcomeTest {
     }
 
     @Test
-    fun queued_write_resultOrNull_is_null_so_equipment_fallthrough_pattern_returns_null() = runTest {
+    fun queued_write_resultOrNull_is_null_so_a_null_safe_readback_returns_null() = runTest {
         // Given — a queued UPSERT (network down under QueueIfOffline)
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
         val builder = buildBuilder(
             wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "activity_logs",
+                table = "notes",
                 postgrest = postgrest,
                 onUpsert = { throw IOException("network down") },
             ),
@@ -174,7 +174,7 @@ class MutationOutcomeTest {
         val serverRow = """[{"id":"log-1"}]"""
         val builder = buildBuilder(
             wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "activity_logs",
+                table = "notes",
                 postgrest = postgrest,
                 onUpsert = { postgrestResultOf(serverRow, postgrest) },
             ),
@@ -198,7 +198,7 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder = buildBuilder(
             wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onUpdate = { throw IOException("network down") },
             ),
@@ -211,7 +211,7 @@ class MutationOutcomeTest {
             mutationStrategy = MutationStrategy.QueueIfOffline,
         ) {
             filter {
-                eq("id", "shoe-1")
+                eq("id", "project-1")
                 eq("user_id", "user-1")
             }
         }
@@ -230,7 +230,7 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder = buildBuilder(
             wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "shoes",
+                table = "projects",
                 postgrest = postgrest,
                 onUpdate = { throw IOException("network down") },
             ),
@@ -245,7 +245,7 @@ class MutationOutcomeTest {
             ) {
                 filter {
                     or {
-                        eq("id", "shoe-1")
+                        eq("id", "project-1")
                         eq("user_id", "user-1")
                     }
                 }
@@ -263,7 +263,7 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder = buildBuilder(
             wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "activity_log_shoes",
+                table = "note_projects",
                 postgrest = postgrest,
                 onDelete = { throw IOException("network down") },
             ),
@@ -273,7 +273,7 @@ class MutationOutcomeTest {
         // When
         val outcome = builder.delete(MutationStrategy.QueueIfOffline) {
             filter {
-                eq("activity_log_id", "log-1")
+                eq("note_id", "log-1")
                 eq("user_id", "user-1")
             }
         }
@@ -286,7 +286,7 @@ class MutationOutcomeTest {
     // ── Helpers ────────────────────────────────────────────────────────────────────
 
     private fun singleRowBody(): JsonArray = buildJsonArray {
-        add(buildJsonObject { put("name", "Gel") })
+        add(buildJsonObject { put("name", "Widget") })
     }
 
     private fun buildBuilder(

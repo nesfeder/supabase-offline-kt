@@ -51,36 +51,36 @@ import kotlin.test.assertNull
  */
 class OfflineStoreStaleRefreshWatermarkTest {
 
-    private val oneShoe = """[{"id":"shoe-1"}]"""
-    private val bothShoes = """[{"id":"shoe-1"},{"id":"shoe-2"}]"""
+    private val oneProject = """[{"id":"project-1"}]"""
+    private val bothProjects = """[{"id":"project-1"},{"id":"project-2"}]"""
 
     @Test
     fun stale_non_empty_response_is_dropped_and_the_local_write_survives() = runTest {
         // Given — a cached payload, and a refresh whose request went out at tick 10
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
         val requestStartedAtTick = store.monotonicTickNow()
 
         // When — a local insert succeeds online while that request is still in flight
         tick = 20L
-        store.insertShoeTwo()
+        store.insertProjectTwo()
 
         // And — the in-flight refresh's pre-insert response finally lands
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = oneShoe,
+            payload = oneProject,
             requestStartedAtTick = requestStartedAtTick,
         )
 
         // Then — the response is refused and the just-saved row is still in the cache
         assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
-        val row = objectDao.getRow("shoes", "sig-A")
+        val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
-        assertEquals(bothShoes, row.payload)
+        assertEquals(bothProjects, row.payload)
     }
 
     @Test
@@ -94,12 +94,12 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — a local insert materializes into the observed signature mid-flight
         tick = 20L
-        store.insertShoeTwo(liveSignatures = setOf("sig-A"))
+        store.insertProjectTwo(liveSignatures = setOf("sig-A"))
 
         // And — the pre-insert `[]` lands afterwards
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
             payload = "[]",
             authoritativeEmpty = true,
@@ -109,53 +109,53 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // Then — staleness is decided before authority: the empty is refused rather than erasing
         // the row the user just saved
         assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
-        val row = objectDao.getRow("shoes", "sig-A")
+        val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
-        assertEquals("""[{"id":"shoe-2"}]""", row.payload)
+        assertEquals("""[{"id":"project-2"}]""", row.payload)
     }
 
     @Test
     fun response_started_after_the_local_write_is_applied() = runTest {
         // Given — a local insert landed at tick 10
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
-        store.insertShoeTwo()
+        store.insertProjectTwo()
 
         // When — a refresh issued *after* that write returns the server's current rows
         tick = 20L
         val requestStartedAtTick = store.monotonicTickNow()
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = bothShoes,
+            payload = bothProjects,
             requestStartedAtTick = requestStartedAtTick,
         )
 
         // Then — the watermark does not stand in the way of genuinely fresh server state
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
-        val row = objectDao.getRow("shoes", "sig-A")
+        val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
-        assertEquals(bothShoes, row.payload)
+        assertEquals(bothProjects, row.payload)
     }
 
     @Test
     fun authoritative_empty_started_after_the_local_write_still_replaces_cached_rows() = runTest {
         // Given — a local write at tick 10, after which every matching row is deleted remotely
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
-        store.insertShoeTwo()
+        store.insertProjectTwo()
 
         // When — a refresh issued after the write carries an authenticated session and returns []
         tick = 20L
         val requestStartedAtTick = store.monotonicTickNow()
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
             payload = "[]",
             authoritativeEmpty = true,
@@ -165,7 +165,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // Then — the authoritative-empty accept is untouched: the empty replaces the cached rows
         // so a delete performed on another device still converges here
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
-        val row = objectDao.getRow("shoes", "sig-A")
+        val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
         assertEquals("[]", row.payload)
     }
@@ -174,7 +174,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
     fun response_is_applied_when_no_local_write_was_recorded() = runTest {
         // Given — a store that has seen no local mutation at all (the overwhelmingly common case)
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
         val requestStartedAtTick = store.monotonicTickNow()
@@ -182,22 +182,22 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // When — a refresh lands
         tick = 20L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = bothShoes,
+            payload = bothProjects,
             requestStartedAtTick = requestStartedAtTick,
         )
 
         // Then — no watermark, no drop
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
-        assertEquals(bothShoes, objectDao.getRow("shoes", "sig-A")?.payload)
+        assertEquals(bothProjects, objectDao.getRow("projects", "sig-A")?.payload)
     }
 
     @Test
     fun authoritative_empty_is_applied_when_no_local_write_was_recorded() = runTest {
         // Given — cached rows and no local mutation on record
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
         val requestStartedAtTick = store.monotonicTickNow()
@@ -205,7 +205,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // When — an auth-ready refresh reports the rows are gone
         tick = 20L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
             payload = "[]",
             authoritativeEmpty = true,
@@ -214,44 +214,44 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // Then — the empty lands, exactly as it did before the watermark existed
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
-        assertEquals("[]", objectDao.getRow("shoes", "sig-A")?.payload)
+        assertEquals("[]", objectDao.getRow("projects", "sig-A")?.payload)
     }
 
     @Test
     fun writers_that_carry_no_request_tick_are_never_dropped() = runTest {
         // Given — a local write at tick 20 that would disqualify anything older
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 20L
         val store = buildStore(objectDao, tick = { tick })
-        store.insertShoeTwo()
+        store.insertProjectTwo()
 
         // When — a caller with no request behind it writes a payload (no tick to compare)
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = oneShoe,
+            payload = oneProject,
         )
 
         // Then — the write goes through; the guard only judges responses it can date
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
-        assertEquals(oneShoe, objectDao.getRow("shoes", "sig-A")?.payload)
+        assertEquals(oneProject, objectDao.getRow("projects", "sig-A")?.payload)
     }
 
     @Test
     fun the_watermark_is_scoped_per_table() = runTest {
-        // Given — an in-flight refresh for `plans`, and a local write on `shoes`
+        // Given — an in-flight refresh for `plans`, and a local write on `projects`
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         objectDao.seedPayload("plans", "sig-P", """[{"id":"plan-1"}]""")
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
         val requestStartedAtTick = store.monotonicTickNow()
         tick = 20L
-        store.insertShoeTwo()
+        store.insertProjectTwo()
 
-        // When — the `plans` refresh lands after the unrelated `shoes` write
+        // When — the `plans` refresh lands after the unrelated `projects` write
         tick = 30L
         val outcome = store.addPayload(
             table = "plans",
@@ -269,24 +269,24 @@ class OfflineStoreStaleRefreshWatermarkTest {
     fun a_queue_replay_marked_synced_advances_the_watermark() = runTest {
         // Given — a mutation queued while offline, and a refresh already in flight
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         val mutationDao = FakeMutationDao()
         var tick = 10L
         val store = buildStore(objectDao, mutationDao = mutationDao, tick = { tick })
-        store.enqueueInsert(table = "shoes", body = shoeTwoBody())
+        store.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
         val requestStartedAtTick = store.monotonicTickNow()
 
         // When — reconnect drains the queue and the replay succeeds
         tick = 20L
-        store.markMutationSynced(id = queued.id, table = "shoes")
+        store.markMutationSynced(id = queued.id, table = "projects")
 
         // And — the refresh that was already in flight returns the pre-replay server state
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = oneShoe,
+            payload = oneProject,
             requestStartedAtTick = requestStartedAtTick,
         )
 
@@ -300,7 +300,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
     fun a_response_that_left_before_sign_out_never_repopulates_the_wiped_cache() = runTest {
         // Given — the signed-in user's rows are cached and a refresh went out at tick 10
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
         val requestStartedAtTick = store.monotonicTickNow()
@@ -312,9 +312,9 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // And — the refresh that was still in flight delivers the outgoing user's rows
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = bothShoes,
+            payload = bothProjects,
             authoritativeEmpty = true,
             requestStartedAtTick = requestStartedAtTick,
         )
@@ -322,7 +322,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // Then — the response is refused and the wipe holds. Writing it would undo the teardown
         // and put one account's rows in front of the next user.
         assertEquals(AddPayloadOutcome.DROPPED_CACHE_CLEARED, outcome)
-        assertNull(objectDao.getRow("shoes", "sig-A"))
+        assertNull(objectDao.getRow("projects", "sig-A"))
     }
 
     @Test
@@ -338,44 +338,44 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val requestStartedAtTick = store.monotonicTickNow()
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = oneShoe,
+            payload = oneProject,
             requestStartedAtTick = requestStartedAtTick,
         )
 
         // Then — teardown disqualifies only what was already in flight; the cache refills
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
-        assertEquals(oneShoe, objectDao.getRow("shoes", "sig-A")?.payload)
+        assertEquals(oneProject, objectDao.getRow("projects", "sig-A")?.payload)
     }
 
     @Test
     fun a_replay_that_lands_between_the_response_and_the_retirement_keeps_its_overlay() = runTest {
         // Given — a mutation queued while offline and a refresh that went out at tick 10
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         val mutationDao = FakeMutationDao()
         var tick = 10L
         val store = buildStore(objectDao, mutationDao = mutationDao, tick = { tick })
-        store.enqueueInsert(table = "shoes", body = shoeTwoBody())
+        store.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
         val requestStartedAtTick = store.monotonicTickNow()
 
         // When — that response is accepted (no watermark yet, so nothing disqualifies it)
         tick = 15L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = oneShoe,
+            payload = oneProject,
             requestStartedAtTick = requestStartedAtTick,
         )
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
 
         // And — the queue drains in the gap before the resolver retires synced mutations
         tick = 20L
-        store.markMutationSynced(id = queued.id, table = "shoes")
+        store.markMutationSynced(id = queued.id, table = "projects")
         tick = 25L
-        store.clearSyncedMutationsForTable("shoes", requestStartedAtTick)
+        store.clearSyncedMutationsForTable("projects", requestStartedAtTick)
 
         // Then — retirement is refused. The cached payload predates the replay, so dropping the
         // queue row here would erase the write from the cache and the overlay at once.
@@ -387,25 +387,25 @@ class OfflineStoreStaleRefreshWatermarkTest {
     fun synced_mutations_are_retired_when_no_replay_raced_the_response() = runTest {
         // Given — a mutation that replayed at tick 10, before the refresh even went out
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         val mutationDao = FakeMutationDao()
         var tick = 10L
         val store = buildStore(objectDao, mutationDao = mutationDao, tick = { tick })
-        store.enqueueInsert(table = "shoes", body = shoeTwoBody())
+        store.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
-        store.markMutationSynced(id = queued.id, table = "shoes")
+        store.markMutationSynced(id = queued.id, table = "projects")
 
         // When — a refresh issued afterwards brings back server state that already includes it
         tick = 20L
         val requestStartedAtTick = store.monotonicTickNow()
         tick = 30L
         store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = bothShoes,
+            payload = bothProjects,
             requestStartedAtTick = requestStartedAtTick,
         )
-        store.clearSyncedMutationsForTable("shoes", requestStartedAtTick)
+        store.clearSyncedMutationsForTable("projects", requestStartedAtTick)
 
         // Then — the ordinary retirement still happens; the queue does not grow without bound
         assertEquals(emptyList(), mutationDao.inserted)
@@ -417,29 +417,29 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // caller's intent is "+1 000", not the frozen absolute it computed at enqueue), and a
         // refresh for the same table already in flight at tick 10
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", oneShoe)
+        objectDao.seedPayload("projects", "sig-A", oneProject)
         val mutationDao = FakeMutationDao()
         var tick = 10L
         val store = buildStore(objectDao, mutationDao = mutationDao, tick = { tick })
         store.enqueueUpdate(
-            table = "shoes",
-            body = buildJsonObject { put("total_meters_used", JsonPrimitive(9000.0)) },
-            filter = shoeOneFilter,
+            table = "projects",
+            body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
+            filter = projectOneFilter,
             deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_meters_used", snapshotValue = 8000.0),
+                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
             ),
         )
         val requestStartedAtTick = store.monotonicTickNow()
 
         // When — reconnect drains the queue through the real syncer. The replay re-reads the row
-        // (the server moved to 8 500 m meanwhile) and rebases the delta onto it.
+        // (the server moved to 8 500 meanwhile) and rebases the delta onto it.
         tick = 20L
         val client = deltaTestClient()
         val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = "shoes",
+            table = "projects",
             postgrest = client.postgrest,
             onSelect = {
-                postgrestResultOf("""[{"id":"shoe-1","total_meters_used":8500.0}]""", client.postgrest)
+                postgrestResultOf("""[{"id":"project-1","total_minutes":8500.0}]""", client.postgrest)
             },
             onUpdate = { postgrestResultOf("[]", client.postgrest) },
         )
@@ -447,7 +447,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             store = store,
             supabase = client,
             postgrestFactory = { _, _ -> wrapper },
-        ).syncTable(table = "shoes")
+        ).syncTable(table = "projects")
 
         // Then — the rebase itself is untouched by the watermark. The read-before-write goes out
         // on the raw PostgREST wrapper, never through addPayload, so nothing can refuse it.
@@ -455,35 +455,35 @@ class OfflineStoreStaleRefreshWatermarkTest {
         assertEquals(
             9500.0,
             wrapper.recordedUpdateBodies.last().jsonObject
-                .getValue("total_meters_used").jsonPrimitive.double,
+                .getValue("total_minutes").jsonPrimitive.double,
         )
 
         // And — the refresh that was already in flight returns the pre-replay server state
         tick = 30L
         val outcome = store.addPayload(
-            table = "shoes",
+            table = "projects",
             signature = "sig-A",
-            payload = oneShoe,
+            payload = oneProject,
             requestStartedAtTick = requestStartedAtTick,
         )
-        store.clearSyncedMutationsForTable("shoes", requestStartedAtTick)
+        store.clearSyncedMutationsForTable("projects", requestStartedAtTick)
 
         // Then — a delta-rebased replay establishes new server truth exactly like an absolute one:
         // it stamps the watermark, so the stale response is refused and its retirement suppressed.
         // The queue row survives, keeping the write visible through the overlay until a SELECT
         // issued after the replay brings back the rebased value.
         assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
-        assertEquals(oneShoe, objectDao.getRow("shoes", "sig-A")?.payload)
+        assertEquals(oneProject, objectDao.getRow("projects", "sig-A")?.payload)
         assertEquals(1, mutationDao.inserted.size)
         assertNotNull(mutationDao.inserted.single().syncedAtMs)
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
-    private val shoeOneFilter = FilterDescriptor(
+    private val projectOneFilter = FilterDescriptor(
         mode = FilterDescriptor.Mode.AND,
         conditions = listOf(
-            FilterDescriptor.Condition(column = "id", operatorId = "eq", value = "shoe-1"),
+            FilterDescriptor.Condition(column = "id", operatorId = "eq", value = "project-1"),
         ),
     )
 
@@ -495,20 +495,20 @@ class OfflineStoreStaleRefreshWatermarkTest {
         install(Postgrest)
     }
 
-    /** Applies the online-success insert of `shoe-2` — the write the stale response would erase. */
-    private suspend fun OfflineStore.insertShoeTwo(liveSignatures: Set<String>? = null) {
+    /** Applies the online-success insert of `project-2` — the write the stale response would erase. */
+    private suspend fun OfflineStore.insertProjectTwo(liveSignatures: Set<String>? = null) {
         applyLocalMutationToCache(
-            table = "shoes",
+            table = "projects",
             operation = MutationOperation.INSERT,
-            bodyJson = """[{"id":"shoe-2"}]""",
+            bodyJson = """[{"id":"project-2"}]""",
             filterJson = null,
             defaultToNull = true,
             liveSignatures = liveSignatures,
         )
     }
 
-    private fun shoeTwoBody(): JsonArray = JsonArray(
-        listOf(JsonObject(mapOf("id" to JsonPrimitive("shoe-2")))),
+    private fun projectTwoBody(): JsonArray = JsonArray(
+        listOf(JsonObject(mapOf("id" to JsonPrimitive("project-2")))),
     )
 
     private fun buildStore(

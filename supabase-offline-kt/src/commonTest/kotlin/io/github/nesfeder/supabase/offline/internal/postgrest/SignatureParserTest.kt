@@ -26,7 +26,7 @@ class SignatureParserTest {
     @Test
     fun plain_eq_filter_is_exhaustive_with_single_condition() {
         // Given / When
-        val result = parseSignatureFilters("activity_logs?type=eq.RUN")
+        val result = parseSignatureFilters("notes?type=eq.OPEN")
 
         // Then
         assertNotNull(result)
@@ -34,7 +34,7 @@ class SignatureParserTest {
         assertEquals(
             FilterDescriptor(
                 mode = FilterDescriptor.Mode.AND,
-                conditions = listOf(FilterDescriptor.Condition("type", "eq", "RUN")),
+                conditions = listOf(FilterDescriptor.Condition("type", "eq", "OPEN")),
             ),
             result.descriptor,
         )
@@ -43,7 +43,7 @@ class SignatureParserTest {
     @Test
     fun multi_condition_and_filter_is_exhaustive() {
         // Given / When
-        val result = parseSignatureFilters("activity_logs?type=eq.RUN&user_id=eq.user-1")
+        val result = parseSignatureFilters("notes?type=eq.OPEN&user_id=eq.user-1")
 
         // Then — both conditions captured in order, combined with AND
         assertNotNull(result)
@@ -52,7 +52,7 @@ class SignatureParserTest {
             FilterDescriptor(
                 mode = FilterDescriptor.Mode.AND,
                 conditions = listOf(
-                    FilterDescriptor.Condition("type", "eq", "RUN"),
+                    FilterDescriptor.Condition("type", "eq", "OPEN"),
                     FilterDescriptor.Condition("user_id", "eq", "user-1"),
                 ),
             ),
@@ -63,7 +63,7 @@ class SignatureParserTest {
     @Test
     fun eq_value_with_dots_is_preserved() {
         // Given / When — a timestamp value carries dots the `op.value` split must not swallow
-        val result = parseSignatureFilters("activity_logs?created_at=eq.2026-01-01T00:00:00.000Z")
+        val result = parseSignatureFilters("notes?created_at=eq.2026-01-01T00:00:00.000Z")
 
         // Then — the whole value is kept and, being an equality filter, stays exhaustive
         assertNotNull(result)
@@ -77,13 +77,13 @@ class SignatureParserTest {
     @Test
     fun neq_filter_is_exhaustive() {
         // Given / When — `neq` is the other equality operator the admit gate evaluates faithfully
-        val result = parseSignatureFilters("activity_logs?type=neq.WALK")
+        val result = parseSignatureFilters("notes?type=neq.DONE")
 
         // Then
         assertNotNull(result)
         assertTrue(result.exhaustive)
         assertEquals(
-            listOf(FilterDescriptor.Condition("type", "neq", "WALK")),
+            listOf(FilterDescriptor.Condition("type", "neq", "DONE")),
             result.descriptor?.conditions,
         )
     }
@@ -91,7 +91,7 @@ class SignatureParserTest {
     @Test
     fun unfiltered_query_is_exhaustive_with_null_descriptor() {
         // Given / When — no '?' means SELECT * (returns every row)
-        val result = parseSignatureFilters("activity_logs")
+        val result = parseSignatureFilters("notes")
 
         // Then
         assertNotNull(result)
@@ -102,7 +102,7 @@ class SignatureParserTest {
     @Test
     fun select_projection_does_not_break_exhaustiveness() {
         // Given / When — `select` only chooses columns; it never changes row membership
-        val result = parseSignatureFilters("activity_logs?select=id,name&user_id=eq.user-1")
+        val result = parseSignatureFilters("notes?select=id,name&user_id=eq.user-1")
 
         // Then
         assertNotNull(result)
@@ -115,9 +115,9 @@ class SignatureParserTest {
 
     @Test
     fun embedded_select_with_parens_does_not_break_exhaustiveness() {
-        // Given / When — an embedded resource projection `shoes(name)` lives under the `select`
+        // Given / When — an embedded resource projection `projects(name)` lives under the `select`
         // key, which is handled before the paren check, so it must not flip exhaustiveness
-        val result = parseSignatureFilters("activity_logs?select=id,shoes(name)&user_id=eq.user-1")
+        val result = parseSignatureFilters("notes?select=id,projects(name)&user_id=eq.user-1")
 
         // Then
         assertNotNull(result)
@@ -129,7 +129,7 @@ class SignatureParserTest {
     @Test
     fun range_suffix_marks_non_exhaustive_but_keeps_descriptor() {
         // Given / When
-        val result = parseSignatureFilters("activity_logs?user_id=eq.user-1|range=0-49")
+        val result = parseSignatureFilters("notes?user_id=eq.user-1|range=0-49")
 
         // Then — the filter is still recovered, but the positional window blocks exhaustiveness
         assertNotNull(result)
@@ -143,7 +143,7 @@ class SignatureParserTest {
     @Test
     fun order_param_marks_non_exhaustive() {
         // Given / When
-        val result = parseSignatureFilters("activity_logs?user_id=eq.user-1&order=created_at.desc")
+        val result = parseSignatureFilters("notes?user_id=eq.user-1&order=created_at.desc")
 
         // Then
         assertNotNull(result)
@@ -153,7 +153,7 @@ class SignatureParserTest {
     @Test
     fun limit_param_marks_non_exhaustive() {
         // Given / When
-        val result = parseSignatureFilters("activity_logs?user_id=eq.user-1&limit=10")
+        val result = parseSignatureFilters("notes?user_id=eq.user-1&limit=10")
 
         // Then
         assertNotNull(result)
@@ -163,7 +163,7 @@ class SignatureParserTest {
     @Test
     fun offset_param_marks_non_exhaustive() {
         // Given / When — pagination offset is a positional window like limit/range
-        val result = parseSignatureFilters("activity_logs?user_id=eq.user-1&offset=20")
+        val result = parseSignatureFilters("notes?user_id=eq.user-1&offset=20")
 
         // Then
         assertNotNull(result)
@@ -175,7 +175,7 @@ class SignatureParserTest {
     @Test
     fun or_group_with_value_parens_marks_non_exhaustive() {
         // Given / When — a logical OR group we don't model offline
-        val result = parseSignatureFilters("activity_logs?or=(type.eq.RUN,type.eq.WALK)&user_id=eq.user-1")
+        val result = parseSignatureFilters("notes?or=(type.eq.OPEN,type.eq.DONE)&user_id=eq.user-1")
 
         // Then
         assertNotNull(result)
@@ -186,7 +186,7 @@ class SignatureParserTest {
     fun and_group_with_key_parens_marks_non_exhaustive() {
         // Given / When — regardless of whether the paren lands in the key or the value, a logical
         // group must not be treated as exhaustive
-        val result = parseSignatureFilters("activity_logs?and(type.eq.RUN,user_id.eq.user-1)=")
+        val result = parseSignatureFilters("notes?and(type.eq.OPEN,user_id.eq.user-1)=")
 
         // Then
         assertNotNull(result)
@@ -195,8 +195,8 @@ class SignatureParserTest {
 
     @Test
     fun dotted_foreign_key_marks_non_exhaustive() {
-        // Given / When — a foreign-table filter `shoes.brand` we don't model offline
-        val result = parseSignatureFilters("activity_logs?shoes.brand=eq.nike&user_id=eq.user-1")
+        // Given / When — a foreign-table filter `projects.brand` we don't model offline
+        val result = parseSignatureFilters("notes?projects.brand=eq.nike&user_id=eq.user-1")
 
         // Then
         assertNotNull(result)
@@ -206,7 +206,7 @@ class SignatureParserTest {
     @Test
     fun not_negated_operator_marks_non_exhaustive() {
         // Given / When — `not.eq` negation; the `not` operator id is unrecognized
-        val result = parseSignatureFilters("activity_logs?type=not.eq.RUN")
+        val result = parseSignatureFilters("notes?type=not.eq.OPEN")
 
         // Then
         assertNotNull(result)
@@ -216,7 +216,7 @@ class SignatureParserTest {
     @Test
     fun unrecognized_operator_marks_non_exhaustive() {
         // Given / When — a made-up operator id
-        val result = parseSignatureFilters("activity_logs?type=bogusop.RUN")
+        val result = parseSignatureFilters("notes?type=bogusop.OPEN")
 
         // Then
         assertNotNull(result)
@@ -234,7 +234,7 @@ class SignatureParserTest {
         // Given / When — `gte` on an ISO timestamp: matchesRow parses both sides as Double, fails,
         // and returns false for every row, so an exhaustive descriptor would hide freshly-inserted
         // rows the server returns
-        val result = parseSignatureFilters("activity_logs?created_at=gte.2026-01-01T00:00:00.000Z")
+        val result = parseSignatureFilters("notes?created_at=gte.2026-01-01T00:00:00.000Z")
 
         // Then
         assertNotNull(result)
@@ -245,7 +245,7 @@ class SignatureParserTest {
     fun overlaps_operator_marks_non_exhaustive() {
         // Given / When — `ov` encodes as `{a,b}` (no parens to trip the group check) and matchesRow
         // returns false unconditionally for it
-        val result = parseSignatureFilters("activity_logs?tags=ov.{trail,race}")
+        val result = parseSignatureFilters("notes?tags=ov.{home,work}")
 
         // Then
         assertNotNull(result)
@@ -256,7 +256,7 @@ class SignatureParserTest {
     fun full_text_search_operator_marks_non_exhaustive() {
         // Given / When — `fts` encodes as a bare word (no parens) and matchesRow returns false
         // unconditionally for it
-        val result = parseSignatureFilters("activity_logs?notes=fts.tempo")
+        val result = parseSignatureFilters("notes?notes=fts.urgent")
 
         // Then
         assertNotNull(result)
@@ -267,7 +267,7 @@ class SignatureParserTest {
     fun ilike_pattern_operator_marks_non_exhaustive() {
         // Given / When — matchesRow approximates `ilike` with a substring check that misses
         // interior-`%` matches, so it can drop rows the server returns
-        val result = parseSignatureFilters("activity_logs?name=ilike.%tempo%")
+        val result = parseSignatureFilters("notes?name=ilike.%urgent%")
 
         // Then
         assertNotNull(result)
@@ -278,7 +278,7 @@ class SignatureParserTest {
     fun is_operator_marks_non_exhaustive() {
         // Given / When — `is.null` matchesRow returns false for a row that simply omits the column,
         // which a freshly-inserted sparse row frequently does
-        val result = parseSignatureFilters("activity_logs?deleted_at=is.null")
+        val result = parseSignatureFilters("notes?deleted_at=is.null")
 
         // Then
         assertNotNull(result)
@@ -289,7 +289,7 @@ class SignatureParserTest {
     fun eq_mixed_with_comparison_marks_non_exhaustive() {
         // Given / When — a faithful `eq` alongside a non-evaluable `gte`; the eq must not let the
         // signature claim exhaustiveness while the gte half is unmodeled
-        val result = parseSignatureFilters("activity_logs?user_id=eq.user-1&created_at=gte.2026-01-01")
+        val result = parseSignatureFilters("notes?user_id=eq.user-1&created_at=gte.2026-01-01")
 
         // Then
         assertNotNull(result)
@@ -309,51 +309,51 @@ class SignatureParserTest {
 
     @Test
     fun exhaustive_filter_admits_matching_row_and_rejects_non_matching() {
-        // Given — an exhaustive `type=eq.RUN` query
-        val filters = parseSignatureFilters("activity_logs?type=eq.RUN")
+        // Given — an exhaustive `type=eq.OPEN` query
+        val filters = parseSignatureFilters("notes?type=eq.OPEN")
         assertNotNull(filters)
 
-        // When / Then — a RUN row belongs; a WALK row does not
-        assertTrue(filters.admits(rowWithType("RUN")))
-        assertFalse(filters.admits(rowWithType("WALK")))
+        // When / Then — a OPEN row belongs; a DONE row does not
+        assertTrue(filters.admits(rowWithType("OPEN")))
+        assertFalse(filters.admits(rowWithType("DONE")))
     }
 
     @Test
     fun non_exhaustive_filter_admits_everything() {
         // Given — a windowed query is non-exhaustive
-        val filters = parseSignatureFilters("activity_logs?type=eq.RUN&limit=10")
+        val filters = parseSignatureFilters("notes?type=eq.OPEN&limit=10")
         assertNotNull(filters)
 
         // When / Then — even a non-matching row is admitted (legacy always-apply behavior)
-        assertTrue(filters.admits(rowWithType("WALK")))
+        assertTrue(filters.admits(rowWithType("DONE")))
     }
 
     @Test
     fun exhaustive_unfiltered_query_admits_everything() {
         // Given — an unfiltered SELECT * (exhaustive, null descriptor)
-        val filters = parseSignatureFilters("activity_logs")
+        val filters = parseSignatureFilters("notes")
         assertNotNull(filters)
 
         // When / Then
-        assertTrue(filters.admits(rowWithType("WALK")))
+        assertTrue(filters.admits(rowWithType("DONE")))
     }
 
     @Test
     fun non_evaluable_operator_signature_admits_everything() {
         // Given — a full-text-search filter matchesRow cannot reproduce; it is non-exhaustive, so
         // the gate must over-apply rather than drop rows the server would return
-        val filters = parseSignatureFilters("activity_logs?notes=fts.tempo")
+        val filters = parseSignatureFilters("notes?notes=fts.urgent")
         assertNotNull(filters)
 
         // When / Then — every row is admitted, matching the legacy always-append behavior
-        assertTrue(filters.admits(rowWithType("RUN")))
-        assertTrue(filters.admits(rowWithType("WALK")))
+        assertTrue(filters.admits(rowWithType("OPEN")))
+        assertTrue(filters.admits(rowWithType("DONE")))
     }
 
     @Test
     fun exhaustive_filter_admits_row_missing_the_filtered_column() {
-        // Given — an exhaustive `type=eq.RUN` query
-        val filters = parseSignatureFilters("activity_logs?type=eq.RUN")
+        // Given — an exhaustive `type=eq.OPEN` query
+        val filters = parseSignatureFilters("notes?type=eq.OPEN")
         assertNotNull(filters)
 
         // When — a row that lacks the `type` column entirely. FilterEngine.matchesRow returns

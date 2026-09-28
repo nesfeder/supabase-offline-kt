@@ -34,7 +34,7 @@ class OfflineStoreEvictionTest {
         val objectDao = FakeObjectDao()
         repeat(5) { index ->
             objectDao.seedPayload(
-                table = "scores",
+                table = "ratings",
                 signature = "sig-$index",
                 payload = "x".repeat(100),
                 updatedAt = index.toLong(), // 0 = oldest ... 4 = newest
@@ -52,11 +52,11 @@ class OfflineStoreEvictionTest {
         // Then the cache is back within the limit
         assertTrue(objectDao.totalPayloadBytes() <= 250L, "cache should be within the limit")
         // And the oldest rows were evicted while the newest survive
-        assertNull(objectDao.getRow("scores", "sig-0"), "oldest row should be evicted")
-        assertNull(objectDao.getRow("scores", "sig-1"))
-        assertNull(objectDao.getRow("scores", "sig-2"))
-        assertNotNull(objectDao.getRow("scores", "sig-3"), "newest rows should survive")
-        assertNotNull(objectDao.getRow("scores", "sig-4"))
+        assertNull(objectDao.getRow("ratings", "sig-0"), "oldest row should be evicted")
+        assertNull(objectDao.getRow("ratings", "sig-1"))
+        assertNull(objectDao.getRow("ratings", "sig-2"))
+        assertNotNull(objectDao.getRow("ratings", "sig-3"), "newest rows should survive")
+        assertNotNull(objectDao.getRow("ratings", "sig-4"))
     }
 
     @Test
@@ -105,7 +105,7 @@ class OfflineStoreEvictionTest {
         val objectDao = FakeObjectDao()
         repeat(4) { index ->
             objectDao.seedPayload(
-                table = "scores",
+                table = "ratings",
                 signature = "sig-$index",
                 payload = "x".repeat(4_096),
                 updatedAt = index.toLong(),
@@ -133,7 +133,7 @@ class OfflineStoreEvictionTest {
         val objectDao = FakeObjectDao()
         repeat(10) { index ->
             objectDao.seedPayload(
-                table = "scores",
+                table = "ratings",
                 signature = "sig-$index",
                 payload = "x".repeat(100),
                 updatedAt = index.toLong(), // 0 = oldest ... 9 = newest
@@ -159,9 +159,9 @@ class OfflineStoreEvictionTest {
         )
         // And it stops at the floor rather than wiping the whole cache: rows above the floor go,
         // the newest rows within it survive.
-        assertNull(objectDao.getRow("scores", "sig-5"), "rows above the floor should be evicted")
+        assertNull(objectDao.getRow("ratings", "sig-5"), "rows above the floor should be evicted")
         assertNotNull(
-            objectDao.getRow("scores", "sig-6"),
+            objectDao.getRow("ratings", "sig-6"),
             "the newest rows within the floor should survive",
         )
     }
@@ -172,7 +172,7 @@ class OfflineStoreEvictionTest {
         val objectDao = FakeObjectDao()
         repeat(3) { index ->
             objectDao.seedPayload(
-                table = "scores",
+                table = "ratings",
                 signature = "sig-$index",
                 payload = "x".repeat(1_000),
                 updatedAt = index.toLong(),
@@ -190,7 +190,7 @@ class OfflineStoreEvictionTest {
         // Then nothing is measured or evicted
         assertEquals(0, objectDao.deleteCallCount)
         assertEquals(0, objectDao.evictedRows)
-        assertNotNull(objectDao.getRow("scores", "sig-0"))
+        assertNotNull(objectDao.getRow("ratings", "sig-0"))
     }
 
     @Test
@@ -204,7 +204,7 @@ class OfflineStoreEvictionTest {
         )
 
         // When a payload large enough to otherwise trigger enforcement is written
-        store.addPayload("scores", "sig", "x".repeat(8_192))
+        store.addPayload("ratings", "sig", "x".repeat(8_192))
 
         // Then enforcement was skipped entirely (kept off the hot path)
         assertEquals(0, objectDao.deleteCallCount)
@@ -220,15 +220,15 @@ class OfflineStoreEvictionTest {
             evictionBatchSize = 1,
             nowMillis = incrementingClock(),
         )
-        store.addPayload("scores", "old", "x".repeat(800))
+        store.addPayload("ratings", "old", "x".repeat(800))
 
         // When a large payload pushes the cache over the limit
-        store.addPayload("scores", "new", "x".repeat(9_000))
+        store.addPayload("ratings", "new", "x".repeat(9_000))
 
         // Then the large write's enforcement evicted the older entry, keeping the newest
         assertTrue(objectDao.totalPayloadBytes() <= 9_500L)
-        assertNull(objectDao.getRow("scores", "old"), "older entry should be evicted")
-        assertNotNull(objectDao.getRow("scores", "new"), "the just-written entry should survive")
+        assertNull(objectDao.getRow("ratings", "old"), "older entry should be evicted")
+        assertNotNull(objectDao.getRow("ratings", "new"), "the just-written entry should survive")
     }
 
     @Test
@@ -237,7 +237,7 @@ class OfflineStoreEvictionTest {
         // large enough to trigger an enforcement pass on its own
         val objectDao = FakeObjectDao()
         objectDao.seedPayload(
-            table = "scores",
+            table = "ratings",
             signature = "seed",
             payload = "x".repeat(2_000),
             updatedAt = 0L,
@@ -250,11 +250,11 @@ class OfflineStoreEvictionTest {
         )
 
         // When 31 small writes arrive, the periodic backstop has not yet fired
-        repeat(31) { index -> store.addPayload("scores", "small-$index", "x") }
+        repeat(31) { index -> store.addPayload("ratings", "small-$index", "x") }
         assertEquals(0, objectDao.deleteCallCount, "no enforcement before the write interval")
 
         // When the 32nd write arrives, the rolling counter reaches the interval
-        store.addPayload("scores", "small-31", "x")
+        store.addPayload("ratings", "small-31", "x")
 
         // Then the periodic backstop triggered an eviction pass off the per-write hot path
         assertTrue(objectDao.deleteCallCount >= 1, "enforcement should fire on the 32nd write")
@@ -266,7 +266,7 @@ class OfflineStoreEvictionTest {
         val objectDao = FakeObjectDao()
         repeat(5) { index ->
             objectDao.seedPayload(
-                table = "scores",
+                table = "ratings",
                 signature = "sig-$index",
                 payload = "x".repeat(100),
                 updatedAt = index.toLong(),
@@ -305,7 +305,7 @@ class OfflineStoreEvictionTest {
         // When 50 writes race through the eviction mutex
         val writers = List(50) { index ->
             launch {
-                store.addPayload("scores", "sig-$index", "x".repeat(4_096))
+                store.addPayload("ratings", "sig-$index", "x".repeat(4_096))
             }
         }
         writers.forEach { writer -> writer.join() }

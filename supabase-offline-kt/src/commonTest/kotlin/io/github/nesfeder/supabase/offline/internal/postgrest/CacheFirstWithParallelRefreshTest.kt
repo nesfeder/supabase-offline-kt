@@ -118,7 +118,7 @@ class CacheFirstWithParallelRefreshTest {
                 cache = cache,
                 refresh = {
                     attemptCount++
-                    if (attemptCount == 1) throw TransientEmptyResponseException(table = "scores")
+                    if (attemptCount == 1) throw TransientEmptyResponseException(table = "ratings")
                     cache.emit("""[{"id":1}]""")
                 },
             ).take(2).toList(emissions)

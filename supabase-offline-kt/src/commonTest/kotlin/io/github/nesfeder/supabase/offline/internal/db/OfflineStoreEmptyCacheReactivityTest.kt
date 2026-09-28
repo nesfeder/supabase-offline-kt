@@ -38,7 +38,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         val store = buildStore(FakeObjectDao(), FakeMutationDao())
 
         // When — the overlay substrate is observed
-        val emitted = store.cachePayloadWithOverlayFlow("shoes", "sig-A").first()
+        val emitted = store.cachePayloadWithOverlayFlow("projects", "sig-A").first()
 
         // Then — it reports the typed no-data state (null), never a fabricated empty array
         assertNull(emitted, "cache-less, mutation-less signature is no-data, not empty []")
@@ -51,18 +51,18 @@ class OfflineStoreEmptyCacheReactivityTest {
         val mutationDao = FakeMutationDao()
         val store = buildStore(objectDao, mutationDao)
         store.enqueueInsert(
-            table = "shoes",
-            body = buildJsonArray { add(buildJsonObject { put("id", "shoe-1"); put("user_id", "u-1") }) },
+            table = "projects",
+            body = buildJsonArray { add(buildJsonObject { put("id", "project-1"); put("user_id", "u-1") }) },
         )
 
         // When — the overlay substrate is observed
-        val emitted = store.cachePayloadWithOverlayFlow("shoes", "sig-A").first()
+        val emitted = store.cachePayloadWithOverlayFlow("projects", "sig-A").first()
 
         // Then — the optimistic row surfaces from the in-memory `[]` substrate, and nothing was
         // persisted to Room for the signature
         assertNotNull(emitted, "a queued INSERT must be visible even with no cached payload")
-        assertTrue(emitted.contains("shoe-1"))
-        assertNull(objectDao.getRow("shoes", "sig-A"), "the substrate must not persist a Room row")
+        assertTrue(emitted.contains("project-1"))
+        assertNull(objectDao.getRow("projects", "sig-A"), "the substrate must not persist a Room row")
         assertEquals(0, objectDao.writes, "the substrate must not write to the object cache")
     }
 
@@ -71,11 +71,11 @@ class OfflineStoreEmptyCacheReactivityTest {
         // Given — a live subscriber on a signature whose object cache is empty
         val objectDao = FakeObjectDao()
         val store = buildStore(objectDao, FakeMutationDao())
-        val table = "activity_log_shoes"
+        val table = "note_projects"
         val signature = "sig-A"
         val cacheFlow = store.cachePayloadWithOverlayFlow(table, signature)
         val firstRealRow = async {
-            withTimeoutOrNull(timeMillis = 500) { cacheFlow.first { it != null && it.contains("shoe-1") } }
+            withTimeoutOrNull(timeMillis = 500) { cacheFlow.first { it != null && it.contains("project-1") } }
         }
 
         // When — an online-success upsert fires while the subscriber is live but cache-less; the
@@ -83,10 +83,10 @@ class OfflineStoreEmptyCacheReactivityTest {
         store.applyLocalMutationToCache(
             table = table,
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"activity_log_id":"log-1","shoe_id":"shoe-1","user_id":"u-1"}]""",
+            bodyJson = """[{"note_id":"log-1","project_id":"project-1","user_id":"u-1"}]""",
             filterJson = null,
             defaultToNull = false,
-            onConflict = "activity_log_id",
+            onConflict = "note_id",
             liveSignatures = setOf(signature),
         )
 
@@ -94,7 +94,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         // contract for first-time saves), and a real row now exists in Room
         val emitted = firstRealRow.await()
         assertNotNull(emitted, "live collector must observe the materialized upsert even on an empty cache")
-        assertTrue(emitted.contains("shoe-1"))
+        assertTrue(emitted.contains("project-1"))
         assertNotNull(objectDao.getRow(table, signature), "materialize-on-write must persist the real row")
     }
 
@@ -106,12 +106,12 @@ class OfflineStoreEmptyCacheReactivityTest {
 
         // When — an online-success upsert fires on an uncached table
         store.applyLocalMutationToCache(
-            table = "activity_log_shoes",
+            table = "note_projects",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"activity_log_id":"log-1","shoe_id":"shoe-1","user_id":"u-1"}]""",
+            bodyJson = """[{"note_id":"log-1","project_id":"project-1","user_id":"u-1"}]""",
             filterJson = null,
             defaultToNull = false,
-            onConflict = "activity_log_id",
+            onConflict = "note_id",
         )
 
         // Then — nothing is materialized (self-GC: no live subscriber → no write)

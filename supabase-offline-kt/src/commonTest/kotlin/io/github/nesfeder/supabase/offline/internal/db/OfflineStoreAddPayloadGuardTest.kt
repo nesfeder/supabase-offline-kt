@@ -87,36 +87,36 @@ class OfflineStoreAddPayloadGuardTest {
         // Given — cache holds a non-empty payload from a previous successful refresh
         val objectDao = FakeObjectDao()
         objectDao.seedPayload(
-            table = "scores",
+            table = "ratings",
             signature = "sig-A",
-            payload = """[{"id":1,"score":80}]""",
+            payload = """[{"id":1,"rating":80}]""",
         )
         val store = buildStore(objectDao)
 
         // When — a refresh fires before the auth session is restored and the server
         // responds 200 OK with an empty array (RLS-filtered)
-        store.addPayload(table = "scores", signature = "sig-A", payload = "[]")
+        store.addPayload(table = "ratings", signature = "sig-A", payload = "[]")
 
         // Then — the previously-cached non-empty payload is preserved
-        val row = objectDao.getRow("scores", "sig-A")
+        val row = objectDao.getRow("ratings", "sig-A")
         assertNotNull(row)
-        assertEquals("""[{"id":1,"score":80}]""", row.payload)
+        assertEquals("""[{"id":1,"rating":80}]""", row.payload)
     }
 
     @Test
     fun whitespace_only_response_does_not_clobber_non_empty_cache() = runTest {
         // Given — cache holds a non-empty payload
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("shoes", "sig-A", """[{"id":"shoe-1"}]""")
+        objectDao.seedPayload("projects", "sig-A", """[{"id":"project-1"}]""")
         val store = buildStore(objectDao)
 
         // When — a refresh returns a whitespace-only body (some PostgREST proxy edge cases)
-        store.addPayload(table = "shoes", signature = "sig-A", payload = "   ")
+        store.addPayload(table = "projects", signature = "sig-A", payload = "   ")
 
         // Then — the cache row is unchanged
-        val row = objectDao.getRow("shoes", "sig-A")
+        val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
-        assertEquals("""[{"id":"shoe-1"}]""", row.payload)
+        assertEquals("""[{"id":"project-1"}]""", row.payload)
     }
 
     @Test
@@ -128,14 +128,14 @@ class OfflineStoreAddPayloadGuardTest {
         // When — a refresh that could not attribute its emptiness to an authenticated session
         // returns `[]` (the restore-window / signed-out shape, indistinguishable on the wire
         // from a genuinely-empty table)
-        val outcome = store.addPayload(table = "nutrition_items", signature = "sig-A", payload = "[]")
+        val outcome = store.addPayload(table = "attachments", signature = "sig-A", payload = "[]")
 
         // Then — nothing is written. A cold slot is exactly where an RLS-shaped empty does its
         // damage: with no prior row to protect, it used to be upserted with a fresh updatedAt and
         // every later cache-first read served that phantom empty as the user's data. A genuinely
         // empty table still seeds the cache — via `authoritativeEmpty`, not via this path.
         assertEquals(AddPayloadOutcome.DROPPED_EMPTY, outcome)
-        assertNull(objectDao.getRow("nutrition_items", "sig-A"))
+        assertNull(objectDao.getRow("attachments", "sig-A"))
         assertEquals(0, objectDao.writes)
     }
 
@@ -143,17 +143,17 @@ class OfflineStoreAddPayloadGuardTest {
     fun unattributed_empty_is_dropped_when_existing_row_is_already_empty() = runTest {
         // Given — the cache row already holds an empty `[]`
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("scores", "sig-A", "[]")
+        objectDao.seedPayload("ratings", "sig-A", "[]")
         val store = buildStore(objectDao)
 
         // When — an unattributed refresh returns an empty array
-        val outcome = store.addPayload(table = "scores", signature = "sig-A", payload = "[]")
+        val outcome = store.addPayload(table = "ratings", signature = "sig-A", payload = "[]")
 
         // Then — refused as well. Nothing is lost by dropping it (the payload is identical), and
         // rewriting would only stamp a fresh updatedAt, keeping a possibly-phantom empty alive
         // past the cache duration that would otherwise expire it.
         assertEquals(AddPayloadOutcome.DROPPED_EMPTY, outcome)
-        val row = objectDao.getRow("scores", "sig-A")
+        val row = objectDao.getRow("ratings", "sig-A")
         assertNotNull(row)
         assertEquals("[]", row.payload)
         assertEquals(0, objectDao.writes)
@@ -167,7 +167,7 @@ class OfflineStoreAddPayloadGuardTest {
 
         // When — the request carried an authenticated session and the user genuinely has no rows
         val outcome = store.addPayload(
-            table = "nutrition_items",
+            table = "attachments",
             signature = "sig-A",
             payload = "[]",
             authoritativeEmpty = true,
@@ -177,7 +177,7 @@ class OfflineStoreAddPayloadGuardTest {
         // instead of waiting forever for a row that is never coming. This is the half of the
         // cold-slot rule that must NOT change: only *unattributed* empties are dropped.
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
-        val row = objectDao.getRow("nutrition_items", "sig-A")
+        val row = objectDao.getRow("attachments", "sig-A")
         assertNotNull(row)
         assertEquals("[]", row.payload)
     }
@@ -186,12 +186,12 @@ class OfflineStoreAddPayloadGuardTest {
     fun authoritative_empty_rewrites_an_already_empty_row_and_advances_its_timestamp() = runTest {
         // Given — a cache row holding an empty `[]` stamped long ago
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("scores", "sig-A", "[]", updatedAt = 0L)
+        objectDao.seedPayload("ratings", "sig-A", "[]", updatedAt = 0L)
         val store = buildStore(objectDao, nowMillis = { 5_000L })
 
         // When — an auth-ready refresh confirms the table is still empty
         val outcome = store.addPayload(
-            table = "scores",
+            table = "ratings",
             signature = "sig-A",
             payload = "[]",
             authoritativeEmpty = true,
@@ -202,7 +202,7 @@ class OfflineStoreAddPayloadGuardTest {
         // has just re-confirmed the emptiness with the server should not immediately expire and
         // re-fetch, which is exactly what a frozen timestamp would cause.
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
-        val row = objectDao.getRow("scores", "sig-A")
+        val row = objectDao.getRow("ratings", "sig-A")
         assertNotNull(row)
         assertEquals("[]", row.payload)
         assertEquals(5_000L, row.updatedAt)
@@ -212,32 +212,32 @@ class OfflineStoreAddPayloadGuardTest {
     fun non_empty_response_overwrites_existing_non_empty_cache() = runTest {
         // Given — cache holds a stale non-empty payload
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("scores", "sig-A", """[{"id":1,"score":80}]""")
+        objectDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")
         val store = buildStore(objectDao)
 
         // When — a refresh succeeds with new server data
         store.addPayload(
-            table = "scores",
+            table = "ratings",
             signature = "sig-A",
-            payload = """[{"id":1,"score":92}]""",
+            payload = """[{"id":1,"rating":92}]""",
         )
 
         // Then — the new payload replaces the cached one
-        val row = objectDao.getRow("scores", "sig-A")
+        val row = objectDao.getRow("ratings", "sig-A")
         assertNotNull(row)
-        assertEquals("""[{"id":1,"score":92}]""", row.payload)
+        assertEquals("""[{"id":1,"rating":92}]""", row.payload)
     }
 
     @Test
     fun guard_is_scoped_per_signature() = runTest {
         // Given — the same table has two distinct cached signatures (e.g. one per user_id)
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("scores", "sig-A", """[{"id":1,"score":80}]""")
+        objectDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")
         val store = buildStore(objectDao)
 
         // When — an authoritative empty arrives for a *different* signature (no prior row)
         store.addPayload(
-            table = "scores",
+            table = "ratings",
             signature = "sig-B",
             payload = "[]",
             authoritativeEmpty = true,
@@ -246,10 +246,10 @@ class OfflineStoreAddPayloadGuardTest {
         // Then — sig-A is untouched and sig-B gets the empty payload as its initial seed: the
         // guard reasons per signature, not per table, so one query's emptiness never reaches
         // another query's rows
-        val rowA = objectDao.getRow("scores", "sig-A")
+        val rowA = objectDao.getRow("ratings", "sig-A")
         assertNotNull(rowA)
-        assertEquals("""[{"id":1,"score":80}]""", rowA.payload)
-        val rowB = objectDao.getRow("scores", "sig-B")
+        assertEquals("""[{"id":1,"rating":80}]""", rowA.payload)
+        val rowB = objectDao.getRow("ratings", "sig-B")
         assertNotNull(rowB)
         assertEquals("[]", rowB.payload)
     }
@@ -258,15 +258,15 @@ class OfflineStoreAddPayloadGuardTest {
     fun guard_does_not_block_explicit_clear_table() = runTest {
         // Given — cache holds a non-empty payload
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("scores", "sig-A", """[{"id":1,"score":80}]""")
+        objectDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")
         val store = buildStore(objectDao)
 
         // When — the caller explicitly clears the table (e.g. on logout)
-        store.clearTable("scores")
+        store.clearTable("ratings")
 
         // Then — the cache row is removed; the empty-clobber guard only protects against
         // implicit empty SELECT responses, not explicit deletes
-        assertNull(objectDao.getRow("scores", "sig-A"))
+        assertNull(objectDao.getRow("ratings", "sig-A"))
     }
 
     private fun buildStore(

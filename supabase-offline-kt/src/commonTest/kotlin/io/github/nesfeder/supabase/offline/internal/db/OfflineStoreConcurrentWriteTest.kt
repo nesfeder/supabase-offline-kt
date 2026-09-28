@@ -45,7 +45,7 @@ class OfflineStoreConcurrentWriteTest {
         // Given — one cached signature holding a single row, and a first overlay that will park
         // after it has snapshotted the cache (the read half of its read-modify-write)
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("scores", "sig-A", scoresPayload(1))
+        objectDao.seedPayload("ratings", "sig-A", ratingsPayload(1))
         val firstSnapshotTaken = CompletableDeferred<Unit>()
         val releaseFirstWriter = CompletableDeferred<Unit>()
         var snapshots = 0
@@ -60,9 +60,9 @@ class OfflineStoreConcurrentWriteTest {
 
         // When — two online-success inserts overlay concurrently: the first parks holding its
         // pre-write snapshot, the second is launched while it is parked, then the first resumes
-        val first = launch { store.insertScore(activityId = 2) }
+        val first = launch { store.insertRating(itemId = 2) }
         firstSnapshotTaken.await()
-        val second = launch { store.insertScore(activityId = 3) }
+        val second = launch { store.insertRating(itemId = 3) }
         runCurrent()
         releaseFirstWriter.complete(Unit)
         first.join()
@@ -70,14 +70,14 @@ class OfflineStoreConcurrentWriteTest {
 
         // Then — both appended rows survive: the second writer must have read the first's write
         // rather than the snapshot the first was still holding
-        assertEquals(listOf(1, 2, 3), objectDao.activityIds("scores", "sig-A"))
+        assertEquals(listOf(1, 2, 3), objectDao.itemIds("ratings", "sig-A"))
     }
 
     @Test
     fun refresh_landing_mid_overlay_is_not_rolled_back_by_that_overlay() = runTest {
         // Given — a cached signature and an overlay parked after its snapshot
         val objectDao = FakeObjectDao()
-        objectDao.seedPayload("scores", "sig-A", scoresPayload(1))
+        objectDao.seedPayload("ratings", "sig-A", ratingsPayload(1))
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
         val snapshotTaken = CompletableDeferred<Unit>()
@@ -86,7 +86,7 @@ class OfflineStoreConcurrentWriteTest {
             snapshotTaken.complete(Unit)
             releaseOverlay.await()
         }
-        val overlay = launch { store.insertScore(activityId = 2) }
+        val overlay = launch { store.insertRating(itemId = 2) }
         snapshotTaken.await()
 
         // When — a refresh whose request started AFTER the overlay recorded its write (so the
@@ -97,9 +97,9 @@ class OfflineStoreConcurrentWriteTest {
         val requestStartedAtTick = store.monotonicTickNow()
         val refresh = launch {
             store.addPayload(
-                table = "scores",
+                table = "ratings",
                 signature = "sig-A",
-                payload = scoresPayload(1, 2, 9),
+                payload = ratingsPayload(1, 2, 9),
                 requestStartedAtTick = requestStartedAtTick,
             )
         }
@@ -110,31 +110,31 @@ class OfflineStoreConcurrentWriteTest {
 
         // Then — the fresher server payload is what the cache holds; the overlay's stale
         // snapshot did not write row 9 back out
-        assertEquals(listOf(1, 2, 9), objectDao.activityIds("scores", "sig-A"))
+        assertEquals(listOf(1, 2, 9), objectDao.itemIds("ratings", "sig-A"))
     }
 
-    private suspend fun OfflineStore.insertScore(activityId: Int) {
+    private suspend fun OfflineStore.insertRating(itemId: Int) {
         applyLocalMutationToCache(
-            table = "scores",
+            table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = scoresPayload(activityId),
+            bodyJson = ratingsPayload(itemId),
             filterJson = null,
             defaultToNull = false,
-            onConflict = "user_id,activity_id",
+            onConflict = "user_id,item_id",
             ignoreDuplicates = true,
         )
     }
 
-    private fun scoresPayload(vararg activityIds: Int): String =
-        activityIds.joinToString(prefix = "[", postfix = "]") { id ->
-            """{"activity_id":$id,"user_id":"u"}"""
+    private fun ratingsPayload(vararg itemIds: Int): String =
+        itemIds.joinToString(prefix = "[", postfix = "]") { id ->
+            """{"item_id":$id,"user_id":"u"}"""
         }
 
-    private fun FakeObjectDao.activityIds(table: String, signature: String): List<Int> {
+    private fun FakeObjectDao.itemIds(table: String, signature: String): List<Int> {
         val row = getRow(table, signature)
         assertNotNull(row)
         return json.parseToJsonElement(row.payload).jsonArray.map { element ->
-            element.jsonObject.getValue("activity_id").jsonPrimitive.int
+            element.jsonObject.getValue("item_id").jsonPrimitive.int
         }
     }
 
