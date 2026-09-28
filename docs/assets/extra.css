@@ -1,36 +1,95 @@
 /*
- * Site colours for the "custom" primary and accent in mkdocs.yml: a green in the family of
- * Supabase's, deep enough that white header text and green link text both stay above a 4.5:1
- * contrast ratio.
+ * Site colours for the "custom" primary and accent in mkdocs.yml: greens in the family of
+ * Supabase's. Measured contrast ratios (WCAG 2) are in the pull request that set them; every text
+ * colour here is at least 4.5:1 against the background it is drawn on, including the inactive
+ * navigation tabs, which Material draws at 70% opacity on the header colour.
  */
 
 [data-md-color-primary="custom"] {
-  --md-primary-fg-color: #1e7b52;
+  /* Header and tab bar background. White on it: 7.96:1; inactive tabs (white at 70%): 4.82:1. */
+  --md-primary-fg-color: #175c3f;
   --md-primary-fg-color--light: #3ecf8e;
-  --md-primary-fg-color--dark: #145a3b;
+  --md-primary-fg-color--dark: #104630;
   --md-primary-bg-color: #ffffff;
   --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
 }
 
 [data-md-color-accent="custom"] {
+  /* Hover and focus colour. On white: 4.55:1; white text on it: 4.55:1. */
   --md-accent-fg-color: #00875a;
   --md-accent-fg-color--transparent: rgba(0, 135, 90, 0.1);
   --md-accent-bg-color: #ffffff;
   --md-accent-bg-color--light: rgba(255, 255, 255, 0.7);
 }
 
+[data-md-color-scheme="default"] {
+  /*
+   * Secondary text: page titles, blockquotes, line numbers, and code comments and punctuation.
+   * Material's 54% black measures 4.50:1 on the code background; 58% measures 5.20:1 there and
+   * 5.32:1 on white.
+   */
+  --md-default-fg-color--light: rgba(0, 0, 0, 0.58);
+}
+
+[data-md-color-scheme="default"][data-md-color-primary="custom"] {
+  /* Links, lighter than the header green so they stand apart from body text. On white: 5.24:1. */
+  --md-typeset-a-color: #1e7b52;
+}
+
 [data-md-color-scheme="slate"] {
   /* A green-grey dark background instead of the default blue-grey. */
   --md-hue: 160deg;
+  /*
+   * Secondary text and code comments at 66% instead of 56%, and lighter code highlight colours:
+   * Material's dark-mode defaults measure 3.99-4.42:1 on the code background, and the section
+   * titles in the phone navigation drawer need 66% to clear 4.5:1 on their tinted background.
+   */
+  --md-default-fg-color--light: hsla(var(--md-hue), 15%, 90%, 0.66);
+  --md-code-hl-number-color: #f28b7f;
+  --md-code-hl-special-color: #f47fa6;
+  --md-code-hl-function-color: #d99be5;
+  --md-code-hl-constant-color: #ab9ff0;
+  --md-code-hl-keyword-color: #8fb0f0;
 }
 
 [data-md-color-scheme="slate"][data-md-color-primary="custom"] {
   --md-primary-fg-color: #175c3f;
   --md-primary-fg-color--dark: #104630;
+  /* Links on the dark background: 7.51:1. */
   --md-typeset-a-color: #3ecf8e;
 }
 
 [data-md-color-scheme="slate"][data-md-color-accent="custom"] {
   --md-accent-fg-color: #6ee7b7;
   --md-accent-fg-color--transparent: rgba(110, 231, 183, 0.1);
+  /* Text drawn on the bright accent (button hover, back-to-top hover) is dark, not white. */
+  --md-accent-bg-color: #0d2419;
+  --md-accent-bg-color--light: rgba(13, 36, 25, 0.7);
+}
+
+/*
+ * The search box in the desktop header: Material draws the placeholder in 70% white, which falls
+ * to 3.79:1 when the box lightens on hover. Full white measures 5.85:1 there.
+ */
+@media screen and (min-width: 60em) {
+  .md-search__input::placeholder {
+    color: var(--md-primary-bg-color);
+  }
+}
+
+/* Outlined buttons take the header green by default, which is too dark on the dark background. */
+[data-md-color-scheme="slate"] .md-typeset .md-button:not(.md-button--primary) {
+  color: var(--md-typeset-a-color);
+}
+
+/*
+ * Code-block titles carry full repository paths. Let them wrap anywhere, so a long path breaks
+ * across lines instead of widening the page on a phone.
+ */
+.md-typeset .highlight span.filename {
+  overflow-wrap: anywhere;
+}
+
+.md-typeset .highlighttable th.filename {
+  min-width: 0;
 }
