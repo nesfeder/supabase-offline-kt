@@ -50,6 +50,15 @@ import kotlinx.serialization.json.jsonArray
  */
 public interface OfflinePostgrestQueryBuilder {
 
+    /**
+     * One-shot read that consults the network and the offline cache according to [readStrategy].
+     *
+     * @param columns Columns to select.
+     * @param readStrategy How the network and the cache are combined; defaults to
+     *   [ReadStrategy.NetworkFirst], which falls back to the cache on a connectivity failure.
+     * @param request PostgREST request builder (filters, ordering, …).
+     * @return The server's result, or the cached payload wrapped in a result.
+     */
     public suspend fun select(
         columns: Columns = Columns.ALL,
         readStrategy: ReadStrategy = ReadStrategy.NetworkFirst(),

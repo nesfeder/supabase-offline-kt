@@ -557,6 +557,14 @@ public suspend fun OfflinePostgrestQueryBuilder.deleteWhereKt(
 /*  SHIM HELPER IMPLEMENTATIONS (correct builder calls & imports)                */
 /* ────────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * Applies the options the Swift-facing insert helpers expose to an INSERT request.
+ *
+ * @param returningColumns Columns to return, or `null` / empty for none.
+ * @param count Row-count mode, or `null` for none.
+ * @param defaultToNull Whether missing columns become `null` rather than their default; `null`
+ *   keeps the builder's default.
+ */
 public fun InsertRequestBuilder.applySwiftOptions(
     returningColumns: String?,
     count: Count?,
@@ -567,6 +575,16 @@ public fun InsertRequestBuilder.applySwiftOptions(
     if (defaultToNull != null) this.defaultToNull = defaultToNull
 }
 
+/**
+ * Applies the options the Swift-facing upsert helpers expose to an UPSERT request.
+ *
+ * @param onConflict Columns that identify a conflicting row, or `null` for the primary key.
+ * @param ignoreDuplicates Whether a conflicting row is left untouched rather than merged.
+ * @param returningColumns Columns to return, or `null` / empty for none.
+ * @param count Row-count mode, or `null` for none.
+ * @param defaultToNull Whether missing columns become `null` rather than their default; `null`
+ *   keeps the builder's default.
+ */
 public fun UpsertRequestBuilder.applySwiftOptions(
     onConflict: String?,
     ignoreDuplicates: Boolean,
@@ -581,6 +599,13 @@ public fun UpsertRequestBuilder.applySwiftOptions(
     if (defaultToNull != null) this.defaultToNull = defaultToNull
 }
 
+/**
+ * Applies the options the Swift-facing update and delete helpers expose to a request.
+ *
+ * @param returningColumns Columns to return, or `null` / empty for none.
+ * @param count Row-count mode, or `null` for none.
+ * @param filter The rows to target, or `null` for none.
+ */
 public fun PostgrestRequestBuilder.applySwiftOptions(
     returningColumns: String?,
     count: Count?,

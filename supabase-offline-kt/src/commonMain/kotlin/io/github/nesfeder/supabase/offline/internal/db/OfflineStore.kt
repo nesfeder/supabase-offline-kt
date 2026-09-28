@@ -136,8 +136,8 @@ internal class OfflineStore(
      * Per table rather than store-wide because the hazard is per table — the overlay reads
      * `allForTable` — and one heavily cached table's overlay can be expensive (every cached
      * signature of that table is parsed and re-serialized per write), so other tables' writes
-     * should not queue behind it. Keyed lazily; the map is guarded by its own mutex because it is touched from many
-     * coroutines and commonMain has no concurrent map.
+     * should not queue behind it. Keyed lazily; the map is guarded by its own mutex because it is
+     * touched from many coroutines and commonMain has no concurrent map.
      */
     private val tableWriteLocksMutex = Mutex()
     private val tableWriteLocks = mutableMapOf<String, Mutex>()

@@ -28,6 +28,13 @@ public enum class OfflineLogLevel {
  * On iOS/Swift this exports as a protocol with a single method.
  */
 public fun interface OfflineLogger {
+    /**
+     * Receives one SDK log message. Only levels at or above
+     * [SupabaseOfflineConfig.minLogLevel] reach this method.
+     *
+     * @param level the message's severity.
+     * @param message the message text; it carries row data only at [OfflineLogLevel.DEBUG].
+     */
     public fun log(level: OfflineLogLevel, message: String)
 }
 

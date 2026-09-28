@@ -30,8 +30,9 @@ internal const val EMPTY_JSON_ARRAY: String = "[]"
  * **Not every blank body means "no rows".** A `head = true` / count-only SELECT legitimately
  * answers with an empty body and its row count in the `Content-Range` header, and this predicate
  * cannot tell that apart from an RLS-filtered `[]`. Such a read would walk the resolver's whole
- * restore-window ladder before returning. The SDK's own read paths never issue one; supporting it
- * needs a head/count carve-out in this classification rather than a wider `trim()`.
+ * restore-window ladder before returning. A caller can issue one — `head` and `count` are set in
+ * the request lambda the SDK passes through — and would then wait out that whole ladder. Supporting
+ * it needs a head/count carve-out in this classification rather than a wider `trim()`.
  *
  * @param payload Raw response body as returned by PostgREST (or read back from the cache).
  * @return `true` when the body carries no rows.

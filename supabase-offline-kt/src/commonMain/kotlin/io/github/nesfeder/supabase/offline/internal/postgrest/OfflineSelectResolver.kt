@@ -284,8 +284,9 @@ internal class OfflineSelectResolver(
      * ### Not covered
      * Reads built with `.single()` / `.maybeSingle()` never see a `200 []` — PostgREST answers a
      * zero-row `single()` with a 406 `RestException`, which throws straight out of the delegate
-     * before any of this runs, so a single-row read by id is not protected by this ladder.
-     * Extending the ladder to classify those exceptions is a separate change.
+     * before any of this runs, so a `.single()` / `.maybeSingle()` read is not protected by this
+     * ladder. (A list read is, even when its filter targets a single id.) Extending the ladder to
+     * classify those exceptions is a separate change.
      *
      * A connectivity failure likewise throws out of the first attempt before any emptiness check,
      * so an offline caller falls through to its strategy's cache handling immediately instead of

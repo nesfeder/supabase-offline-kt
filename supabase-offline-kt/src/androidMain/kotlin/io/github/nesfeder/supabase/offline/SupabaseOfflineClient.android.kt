@@ -10,6 +10,16 @@ import io.github.nesfeder.supabase.offline.internal.db.getRoomDatabase
 import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
 import io.github.jan.supabase.SupabaseClient
 
+/**
+ * Creates the offline client for Android over [supabase], with its database in the app's database
+ * directory (`supabase_offline.db`) and downloaded files under `<filesDir>/supabase_offline` unless
+ * [SupabaseOfflineConfig.offlineStoragePath] says otherwise.
+ *
+ * @param context Any context; its application context is used.
+ * @param supabase The supabase-kt client to wrap. Install PostgREST, and Storage if you use it.
+ * @param config Cache size, storage path, logging and connectivity hint.
+ * @return The offline client.
+ */
 public fun createSupabaseOfflineClient(
     context: Context,
     supabase: SupabaseClient,
