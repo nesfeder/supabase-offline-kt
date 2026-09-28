@@ -12,6 +12,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.io.IOException
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * A scripted PostgREST server on a Ktor [MockEngine] that records every request it receives, so a
@@ -85,10 +87,26 @@ internal class RecordingPostgrestServer(
 
         /**
          * A PostgREST error response: [status] with PostgREST's error body, which supabase-kt raises
-         * as a `PostgrestRestException` carrying that status.
+         * as a `PostgrestRestException` carrying that status and these fields.
+         *
+         * @param code the Postgres SQLSTATE or PostgREST error code.
+         * @param message PostgREST's `message` field.
+         * @param details PostgREST's `details` field, or `null`.
+         * @param hint PostgREST's `hint` field, or `null`.
          */
-        fun MockRequestHandleScope.postgrestError(status: HttpStatusCode): HttpResponseData = respond(
-            content = """{"code":"42501","message":"rejected by the test server","details":null,"hint":null}""",
+        fun MockRequestHandleScope.postgrestError(
+            status: HttpStatusCode,
+            code: String = "42501",
+            message: String = "rejected by the test server",
+            details: String? = null,
+            hint: String? = null,
+        ): HttpResponseData = respond(
+            content = buildJsonObject {
+                put("code", code)
+                put("message", message)
+                put("details", details)
+                put("hint", hint)
+            }.toString(),
             status = status,
             headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
         )
