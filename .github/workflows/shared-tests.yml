@@ -15,6 +15,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Internal code stays out of the public surface. The self-test runs first, so a check that
+      # has stopped seeing violations fails loudly instead of passing quietly.
+      - name: Check API visibility
+        run: |
+          bash scripts/check-api-visibility.sh --self-test
+          bash scripts/check-api-visibility.sh
+
       - uses: ./.github/actions/setup-project
 
       # check runs the Android host tests (Robolectric) and the iOS simulator tests of both modules.
