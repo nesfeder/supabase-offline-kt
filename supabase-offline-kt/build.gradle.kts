@@ -84,11 +84,94 @@ kotlin {
     }
 }
 
+// Host-native SQLite for the Robolectric host tests. The Android BundledSQLiteDriver ships only
+// Android-ABI binaries, which a host JVM cannot load, but its loader accepts an explicit binary
+// through the androidx.sqlite.driver.bundled.path / .name system properties. The binary comes from
+// the JVM artifact of the same driver version and is used by the host tests only, so they can open
+// the library's real Room database.
+val hostSqliteNative: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+
 // KSP dependencies per target (Room compiler)
 dependencies {
     add("kspAndroid", libs.androidx.room.compiler)
     add("kspIosArm64", libs.androidx.room.compiler)
     add("kspIosSimulatorArm64", libs.androidx.room.compiler)
+    hostSqliteNative(variantOf(libs.androidx.sqlite.bundled.jvm) { artifactType("jar") })
+}
+
+/** Path, inside the JVM driver artifact, of the SQLite binary for the machine running the build. */
+fun hostSqliteNativeEntry(): String {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = System.getProperty("os.arch").lowercase()
+    val arm = arch == "aarch64" || arch == "arm64"
+    return when {
+        "mac" in os -> if (arm) "natives/osx_arm64/libsqliteJni.dylib" else "natives/osx_x64/libsqliteJni.dylib"
+        "linux" in os -> if (arm) "natives/linux_arm64/libsqliteJni.so" else "natives/linux_x64/libsqliteJni.so"
+        "windows" in os -> "natives/windows_x64/sqliteJni.dll"
+        else -> error("No host SQLite binary for $os/$arch")
+    }
+}
+
+/** Copies the host SQLite binary out of the JVM driver artifact. */
+abstract class ExtractHostSqliteNative : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val driverJar: ConfigurableFileCollection
+
+    @get:Input
+    abstract val nativeEntry: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @get:Inject
+    abstract val archives: ArchiveOperations
+
+    @get:Inject
+    abstract val fileSystem: FileSystemOperations
+
+    @TaskAction
+    fun extract() {
+        val entry = nativeEntry.get()
+        fileSystem.sync {
+            driverJar.forEach { jar -> from(archives.zipTree(jar)) { include(entry) } }
+            eachFile { path = name }
+            includeEmptyDirs = false
+            into(outputDirectory)
+        }
+    }
+}
+
+/** Points the Android driver's native loader at the extracted host binary. */
+class HostSqliteNativeArguments(
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.NONE)
+    val directory: Provider<Directory>,
+    @get:Input
+    val libraryName: String,
+) : CommandLineArgumentProvider {
+    override fun asArguments(): Iterable<String> = listOf(
+        "-Dandroidx.sqlite.driver.bundled.path=${directory.get().asFile.absolutePath}",
+        "-Dandroidx.sqlite.driver.bundled.name=$libraryName",
+    )
+}
+
+val extractHostSqliteNative = tasks.register<ExtractHostSqliteNative>("extractHostSqliteNative") {
+    driverJar.from(hostSqliteNative)
+    nativeEntry.set(hostSqliteNativeEntry())
+    outputDirectory.set(layout.buildDirectory.dir("host-sqlite-native"))
+}
+
+tasks.withType<Test>().matching { it.name == "testAndroidHostTest" }.configureEach {
+    jvmArgumentProviders.add(
+        HostSqliteNativeArguments(
+            directory = extractHostSqliteNative.flatMap { it.outputDirectory },
+            libraryName = hostSqliteNativeEntry().substringAfterLast('/'),
+        ),
+    )
 }
 
 room {
