@@ -8,8 +8,7 @@
 #
 # Some pages pull files from the repository root in at build time with pymdownx.snippets
 # (`--8<-- "CHANGELOG.md"`), so nothing is copied into docs/. Snippet paths are relative to the
-# directory mkdocs runs in, which must be the repository root. Shared admonitions live in
-# docs/.snippets/, which MkDocs leaves out of the site because the directory name starts with a dot.
+# directory mkdocs runs in, which must be the repository root.
 #
 # Keep this file within the dialect Zensical also reads: no hooks, no not_in_nav, no exclude_docs
 # and no third-party plugins. Switching to Zensical is then a change of pins, not of this file.

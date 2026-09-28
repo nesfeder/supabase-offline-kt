@@ -1,6 +1,8 @@
 # Test Apps
 
---8<-- "docs/.snippets/legacy-notice.md"
+> **Written for an earlier engine.** This page describes the library as it was before 0.1.0: an
+> earlier engine, API and release process. Parts of it contradict what 0.1.0 will ship. It is
+> being rewritten for 0.1.0; until then, do not rely on it.
 
 The repo ships two demo apps that exercise the SDK end-to-end against the schema in
 [demo/supabase/schema.sql](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/demo/supabase/schema.sql):

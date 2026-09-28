@@ -2,7 +2,8 @@
 
 How writes that have not reached the server yet appear in cached query results.
 
---8<-- "docs/.snippets/not-written-yet.md"
+> **Not written yet.** This page is a placeholder in the planned site. The headings below are its
+> outline; the content will be written for 0.1.0, once the API it describes has settled.
 
 ## What it applies
 
@@ -10,6 +11,6 @@ How writes that have not reached the server yet appear in cached query results.
 
 ## How rows are matched
 
-## Known limits
+## Limits
 
 ## Tips

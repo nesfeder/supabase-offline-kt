@@ -12,10 +12,11 @@ in `.github/workflows/docs-requirements.txt`.
 
 ### Build it locally
 
-From the repository root, with Python 3.11 or later:
+From the repository root, with Python 3.11 or later. On macOS the system `python3` is too old
+for the pinned packages, so name a newer interpreter explicitly:
 
 ```bash
-python3 -m venv .venv-docs
+python3.11 -m venv .venv-docs
 .venv-docs/bin/pip install -r .github/workflows/docs-requirements.txt
 .venv-docs/bin/mkdocs build --strict
 ```
@@ -38,6 +39,7 @@ Material for MkDocs prints a notice about MkDocs 2.0 on every run. Set
   `CHANGELOG.md`, and the sample schema in `demo/supabase/schema.sql`. Edit those files, not the
   pages that include them. Links inside them must be absolute URLs, because they are resolved
   relative to the page that includes them.
-- A page that has not been written yet includes `docs/.snippets/not-written-yet.md`. A page
-  written for the engine before 0.1.0 includes `docs/.snippets/legacy-notice.md`. Remove the
-  include when the page is rewritten.
+- A page that has not been written yet opens with a "Not written yet" note, and a page written
+  for the engine before 0.1.0 opens with a "Written for an earlier engine" note. Both are plain
+  Markdown blockquotes, so they show on GitHub as well as on the site. Remove the note when the
+  page is rewritten.

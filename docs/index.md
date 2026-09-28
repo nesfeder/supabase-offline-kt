@@ -2,9 +2,10 @@
 
 What supabase-offline-kt is, how to install it, and where to go next.
 
---8<-- "docs/.snippets/not-written-yet.md"
+> **Not written yet.** This page is a placeholder in the planned site. The headings below are its
+> outline; the content will be written for 0.1.0, once the API it describes has settled.
 
-## Pitch
+## Overview
 
 ## Before and after
 
