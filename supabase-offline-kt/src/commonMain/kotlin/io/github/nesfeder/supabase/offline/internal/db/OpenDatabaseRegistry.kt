@@ -17,7 +17,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 internal const val OFFLINE_DATABASE_FILE_NAME: String = "supabase_offline.db"
 
 /**
- * The offline databases and data directories open in this process, one client each: two clients on
+ * The offline databases and data directories open in this process, one client each. Two clients on
  * one would replay the same queue twice and clear each other's file cache. Paths are compared with
  * every symlink resolved; [Registration.release], from the client's close, frees them.
  */

@@ -10,8 +10,8 @@ import okio.Path
 internal const val STORAGE_DIRECTORY_NAME: String = "storage"
 
 /**
- * Directory under the data directory for every entry whose name is not plain (see
- * [isPlainName]), image-transform variants included, each in a file named by a hash of its key.
+ * Directory under the data directory for every entry whose name is not plain (see [isPlainName]).
+ * Image-transform variants go there too, each in a file named by a hash of its key.
  */
 internal const val HASHED_DIRECTORY_NAME: String = "storage-hashed"
 
@@ -72,13 +72,10 @@ internal fun isPlainName(name: String): Boolean =
 
 /**
  * The cache file of an untransformed object: `<data>/storage/<bucket>/<object path>` for a plain
- * name, or its [hashedFilePath] for any other.
+ * name, or its [hashedFilePath] for any other. A verbatim path is checked to lie inside the bucket's
+ * directory.
  *
- * @param dataDirectory the offline data directory.
- * @param bucketId the bucket.
- * @param objectPath the object path.
- * @return the file, or `null` when the bucket or the path cannot be cached. A verbatim path is
- *   verified to lie inside the bucket's directory.
+ * @return the file, or `null` when the bucket or the path cannot be cached.
  */
 internal fun objectFilePathOrNull(dataDirectory: Path, bucketId: String, objectPath: String): Path? {
     if (!isCacheableBucketId(bucketId) || !isCacheableObjectPath(objectPath)) return null

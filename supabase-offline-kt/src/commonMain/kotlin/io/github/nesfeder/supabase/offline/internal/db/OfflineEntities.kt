@@ -155,8 +155,8 @@ internal interface StorageDao {
     suspend fun deleteAll()
 
     /**
-     * The rows of one object in [bucketId]: its own row, whose `path` is [path], and the rows of its
-     * image-transform variants, whose `path` starts with [variantPrefix].
+     * The rows of one object in [bucketId], variants included. Its own row's `path` is [path]; its
+     * image-transform variants' `path` starts with [variantPrefix].
      *
      * @param bucketId the bucket.
      * @param path the object path.

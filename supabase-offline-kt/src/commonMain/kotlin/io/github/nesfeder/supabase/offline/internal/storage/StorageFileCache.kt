@@ -45,7 +45,7 @@ private const val TEMPORARY_FILE_SUFFIX: String = ".tmp"
 private const val STALE_TEMPORARY_FILE_MILLIS: Long = 24L * 60L * 60L * 1000L
 
 /**
- * A file used this recently is never evicted: the download that just committed it has yet to
+ * A file used this recently is never evicted. The download that just committed it has yet to
  * deliver it, or a caller was just handed its path and has yet to open it.
  */
 internal const val RECENT_USE_GRACE_MILLIS: Long = 30_000L
@@ -72,9 +72,9 @@ internal class StorageCacheEntry(
     val file: Path,
 ) {
     /**
-     * The cache row's `path`: the object path for the original, which keeps the stored key format
-     * `"$bucket::$path"` every existing install uses; the object path, the variant separator and
-     * the transform for a variant.
+     * The cache row's `path`. For the original it is the object path, which keeps the stored key
+     * format `"$bucket::$path"` every existing install uses; for a variant, the object path, the
+     * variant separator and the transform.
      */
     val rowPath: String = if (transform == null) objectPath else "$objectPath$VARIANT_SEPARATOR$transform"
 
@@ -115,11 +115,7 @@ internal enum class CommitOutcome {
  * is derived from its bucket and path, never read back from its row, and every file operation stays
  * inside the data directory; commits, evictions, invalidations and clears run under one lock.
  *
- * @param store the offline store holding the cache rows.
- * @param dataDirectoryProvider the offline data directory; resolved on first use.
  * @param maxSizeBytes the size bound, or `null` for none.
- * @param fileSystem the file system; injectable so tests can make it fail.
- * @param nowMillis clock for use times.
  * @param markUsed records a use time on a file.
  */
 internal class StorageFileCache(
@@ -518,7 +514,7 @@ internal class StorageFileCache(
 
     /**
      * Undoes the row a commit or a move wrote for [entry] when its file could not be renamed into
-     * place: puts back the row it [replaced], whose file is still there, or drops it when there
+     * place. It puts back the row it [replaced], whose file is still there, or drops it when there
      * was none.
      */
     private suspend fun restoreRowLocked(entry: StorageCacheEntry, replaced: StorageRow?, recordedSize: Long?) {
@@ -540,7 +536,7 @@ internal class StorageFileCache(
 
     /**
      * Deletes [recorded], a file an outdated row pointed at, unless the current mapping gives it to
-     * another cached object (`x.txt` owns the file `media/x.txt` was once mapped to).
+     * another cached object. (`x.txt` owns the file `media/x.txt` was once mapped to.)
      */
     private suspend fun deleteOrphanedOutdatedFileLocked(recorded: Path) {
         if (!recorded.isStrictlyInside(storageDirectory)) return
@@ -610,8 +606,8 @@ internal class StorageFileCache(
     }
 
     /**
-     * Deletes the temporary files a crash left behind, once per cache: those a day old or older,
-     * and only when no cache row names the file — an object can be named like one.
+     * Deletes the temporary files a crash left behind, once per cache. It takes those a day old or
+     * older, and only when no cache row names the file, since an object can be named like one.
      */
     private suspend fun sweepTemporaryFilesOnce() {
         if (temporaryFilesSwept) return

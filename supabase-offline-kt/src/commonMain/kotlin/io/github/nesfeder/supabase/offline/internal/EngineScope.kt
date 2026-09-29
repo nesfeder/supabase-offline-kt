@@ -8,8 +8,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 
 /**
- * The handler every engine scope carries, so a background failure that reaches no caller is logged
- * by type (never its message, which can carry row data) instead of crashing the process.
+ * The handler every engine scope carries, so a background failure that reaches no caller never crashes
+ * the process. It is logged by type, never by its message, which can carry row data.
  *
  * @param sdkLogger where to log, or `null` to only contain the failure.
  * @return the handler.

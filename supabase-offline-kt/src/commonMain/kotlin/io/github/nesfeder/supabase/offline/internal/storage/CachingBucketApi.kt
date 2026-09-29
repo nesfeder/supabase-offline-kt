@@ -52,13 +52,8 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * [StorageFileCache]. Every member that can change the server's copy of a path is overridden, its
  * convenience overloads included, so stale copies are dropped; every member passes the client's gate.
  *
- * @param delegate the supabase-kt bucket.
- * @param cache the client's file cache.
- * @param sdkLogger the SDK logger. Messages at INFO and above name the bucket, never the object path.
- * @param backgroundScope the client's own scope: closing the client cancels the downloads and the
- *   resumable-upload waits running in it.
- * @param operationGate the client's gate, which every member passes, so a closed client refuses them.
- * @param renderImagePath the encoded path prefix of a transformed download (see [renderImagePathOf]).
+ * @param sdkLogger messages at INFO and above name the bucket, never the object path.
+ * @param backgroundScope the client's own scope, which closing the client cancels.
  */
 internal class CachingBucketApi(
     private val delegate: BucketApi,
@@ -183,7 +178,7 @@ internal class CachingBucketApi(
 
     /**
      * A download into the caller's channel, streamed through a temporary file so it is never held in
-     * memory; [channel] gets nothing until the download is complete, then is closed, as supabase-kt does.
+     * memory. [channel] gets nothing until the download is complete, then is closed, as supabase-kt does.
      */
     private suspend fun downloadToChannel(
         path: String,
@@ -237,8 +232,8 @@ internal class CachingBucketApi(
     }
 
     /**
-     * What a failed download returns instead of its failure: when the server says the object is gone,
-     * nothing (its copies are dropped and the failure rethrown); otherwise the cached copy of the
+     * What a failed download returns instead of its failure. When the server says the object is gone,
+     * nothing: its copies are dropped and the failure rethrown. Otherwise the cached copy of the
      * variant asked for, or of the original when the request was never built.
      */
     private suspend fun <T : Any> recover(
@@ -463,8 +458,8 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Whether this failure, or a cause, says the object is gone: a [NotFoundRestException] (Storage
-     * reports one on an HTTP 400), or any [RestException] or response with a literal 404.
+     * Whether this failure, or a cause, says the object is gone. That is a [NotFoundRestException]
+     * (Storage reports one on an HTTP 400), or any [RestException] or response with a literal 404.
      */
     private fun Throwable.indicatesServerObjectMissing(): Boolean {
         var current: Throwable? = this

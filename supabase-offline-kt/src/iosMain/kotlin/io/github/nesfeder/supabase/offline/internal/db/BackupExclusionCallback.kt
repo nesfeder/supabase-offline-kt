@@ -9,13 +9,9 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
- * Leaves the offline database out of iCloud and device backups once Room has opened it — the
- * first moment the file, and in WAL mode its `-wal` and `-shm` companions, exist.
- *
- * The database holds cached rows and writes not yet sent: re-creatable data, which Apple's storage
- * guidelines keep out of backups, and one user's, which a restore onto another device must not
- * bring back under whoever signs in next. The exclusion is a file attribute, so it is set again on
- * every open: SQLite deletes and re-creates its companion files.
+ * Leaves the offline database out of iCloud and device backups once Room has opened it, when the
+ * file, `-wal` and `-shm` first exist. It holds one user's re-creatable data, which a restore must not
+ * bring back; the attribute is set on every open, because SQLite re-creates its side files.
  *
  * @param databasePath the database file.
  */

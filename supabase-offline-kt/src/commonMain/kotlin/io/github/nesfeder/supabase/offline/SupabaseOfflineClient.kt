@@ -246,7 +246,7 @@ public interface SupabaseOfflineClient {
     )
 
     /**
-     * Wipes the entire local offline cache: every cached SELECT payload, every cached
+     * Wipes the entire local offline cache. That is every cached SELECT payload, every cached
      * storage-object metadata row, every queued (pending or already-synced) mutation, **and**
      * every downloaded storage file under `<base>/storage/` on disk.
      *
@@ -603,9 +603,9 @@ internal class SupabaseOfflineClientImpl(
     }
 
     /**
-     * Refuses new calls, cancels the client's own work and the calls it may stop (replays,
-     * downloads), then waits for every other call — a clear, a write, a read — before it closes the
-     * database. After [CLOSE_WAIT] it returns, and the database closes when the last call finishes.
+     * Refuses new calls and cancels the client's own work and the calls it may stop: replays and
+     * downloads. It waits for every other call (a clear, a write, a read) before closing the database;
+     * after [CLOSE_WAIT] it returns, and the database closes when the last call finishes.
      */
     override suspend fun close() {
         if (!operationGate.close()) return

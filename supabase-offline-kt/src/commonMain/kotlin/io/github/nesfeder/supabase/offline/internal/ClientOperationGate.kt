@@ -23,8 +23,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Counts the client's calls in flight, whoever's coroutine runs them, so [close] can refuse new ones
- * and the database is closed only once no call is using it.
+ * Counts the client's calls in flight, whoever's coroutine runs them. After [close] it refuses new
+ * ones, and the database is closed only once no call is using it.
  */
 internal class ClientOperationGate {
 

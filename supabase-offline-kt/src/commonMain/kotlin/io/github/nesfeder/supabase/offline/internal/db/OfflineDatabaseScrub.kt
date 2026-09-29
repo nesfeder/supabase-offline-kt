@@ -11,8 +11,8 @@ private const val CHECKPOINT_ATTEMPTS: Int = 20
 private const val CHECKPOINT_RETRY_MILLIS: Long = 50L
 
 /**
- * Rewrites the database so deleted rows cannot be read back from its files or its write-ahead log:
- * `VACUUM`, then a `TRUNCATE` checkpoint, on Room's writer connection outside any transaction.
+ * Rewrites the database so deleted rows cannot be read back from its files or its write-ahead log.
+ * It runs `VACUUM`, then a `TRUNCATE` checkpoint, on Room's writer connection outside any transaction.
  *
  * @return `true` when the write-ahead log was emptied; `false` when open reads held the checkpoint
  *   off on every try, which leaves the old pages in the log until the next checkpoint.

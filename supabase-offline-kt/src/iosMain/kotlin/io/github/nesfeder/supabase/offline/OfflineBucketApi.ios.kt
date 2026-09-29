@@ -36,8 +36,8 @@ public suspend fun BucketApi.localPathIfCached(objectPath: String): String? {
 }
 
 /**
- * [ensureLocalPath] as a `file://` URL string, for Swift's `URL(string:)`: percent-encoded, so a
- * name with a space, `#`, `?` or `%` still parses back to the file.
+ * [ensureLocalPath] as a percent-encoded `file://` URL string, for Swift's `URL(string:)`. A name
+ * with a space, `#`, `?` or `%` still parses back to the file.
  *
  * @param objectPath the object path within this bucket.
  * @param isPublic whether to download through the public URL rather than the authenticated one.

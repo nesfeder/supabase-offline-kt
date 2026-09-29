@@ -10,7 +10,7 @@ import io.github.nesfeder.supabase.offline.internal.openOfflineClient
 import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
 
 /**
- * Creates the offline client for Android over [supabase], with its database in the app's database
+ * Creates the offline client for Android over [supabase]. Its database is in the app's database
  * directory (`supabase_offline.db`) and downloaded files under `<filesDir>/supabase_offline`, or
  * both in [SupabaseOfflineConfig.offlineStoragePath] when that is set. Earlier versions kept the
  * database in the default directory whatever the configuration said; the first client created

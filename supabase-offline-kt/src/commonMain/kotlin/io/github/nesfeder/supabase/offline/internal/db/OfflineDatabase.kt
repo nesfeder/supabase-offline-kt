@@ -69,9 +69,8 @@ internal val OFFLINE_DB_MIGRATIONS: List<Migration> = listOf(MIGRATION_1_2)
 
 /**
  * The SQLite driver the offline database opens with when none is passed to [getRoomDatabase]: the
- * bundled SQLite on every platform, so every install runs the same SQLite version. The iOS build
- * can be switched to the system SQLite (`-Psupabase.offline.iosSqlite=system`), which swaps this
- * function's iOS implementation; see the module's build file for why that switch is build-time.
+ * bundled SQLite everywhere, so every install runs one version. `-Psupabase.offline.iosSqlite=system`
+ * swaps the iOS implementation for the system SQLite; the module's build file says why at build time.
  *
  * @return a new driver instance.
  */

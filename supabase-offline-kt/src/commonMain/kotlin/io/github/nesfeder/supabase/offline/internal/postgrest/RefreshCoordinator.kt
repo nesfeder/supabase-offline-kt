@@ -59,14 +59,9 @@ internal class RefreshCoordinator(
     private val liveSignatures = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
 
     /**
-     * The shared read flow for [table]/[signature]. A joining collector gets the latest value; the
-     * upstream's failure reaches every collector in band; the last to leave ends the entry; and
-     * once [scope] ends every collection fails with the client's closed error.
-     *
-     * @param table Table of the query.
-     * @param signature Canonical signature of the query.
-     * @param upstream Factory for the per-signature read flow; invoked once per live entry.
-     * @return The shared read flow.
+     * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A joining
+     * collector gets the latest value; the upstream's failure reaches every collector in band; the last
+     * to leave ends the entry; once [scope] ends every collection fails with the client's closed error.
      */
     fun sharedReadFlow(
         table: String,
