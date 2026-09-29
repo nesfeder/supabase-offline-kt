@@ -78,7 +78,7 @@ class QueryReaderStrategyTest {
         )
 
     /** The cache key the resolver uses for an unfiltered `SELECT *` on [TABLE]. */
-    private fun signature(): String = SignatureBuilder.build(
+    private fun signature(): String = cacheKeyOf(
         table = TABLE,
         columns = Columns.ALL,
         builderFactory = { SelectRequestBuilder(wrapper.schema, postgrest.config.propertyConversionMethod) },

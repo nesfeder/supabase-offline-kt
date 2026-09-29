@@ -724,7 +724,7 @@ internal class QueryReader(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit
     ): String {
-        return SignatureBuilder.build(
+        return cacheKeyOf(
             table = table,
             columns = columns,
             builderFactory = {

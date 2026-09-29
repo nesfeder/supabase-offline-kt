@@ -8,7 +8,7 @@ import kotlinx.serialization.json.JsonObject
  * newly-inserted row actually belongs in that cached query's result set.
  *
  * Produced by [parseSignatureFilters] from a canonical PostgREST signature (as built by
- * [SignatureBuilder]). The whole point is to let the offline mutation overlay stop patching
+ * [cacheKeyOf]). The whole point is to let the offline mutation overlay stop patching
  * INSERT/UPSERT rows into cached payloads whose filter excludes them.
  *
  * @property descriptor The AND-combined conditions recovered from the signature's filter params,
@@ -77,7 +77,7 @@ private val ADMIT_EVALUABLE_OPERATOR_IDS: Set<String> = setOf(
 )
 
 /**
- * Parse a canonical PostgREST SELECT [signature] (as produced by [SignatureBuilder]) into a
+ * Parse a canonical PostgREST SELECT [signature] (as produced by [cacheKeyOf]) into a
  * [SignatureFilters] describing which rows the query admits.
  *
  * The contract is deliberately conservative: over-application is only avoided when it is provably
