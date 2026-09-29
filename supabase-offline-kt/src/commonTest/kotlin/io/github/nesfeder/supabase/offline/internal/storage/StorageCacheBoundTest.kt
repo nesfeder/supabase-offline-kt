@@ -1,7 +1,13 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
+import io.github.nesfeder.supabase.offline.internal.db.MUTATION_OWNERS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
+import io.github.nesfeder.supabase.offline.internal.db.SYNCED_MUTATION_COVERAGE_SIGNATURE
+import io.github.nesfeder.supabase.offline.internal.db.UNCONFIRMED_SENDS_SIGNATURE
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
@@ -201,6 +207,29 @@ class StorageCacheBoundTest {
         assertTrue(dao.scans <= 6, "the cache rescanned its rows ${dao.scans} times over 50 downloads")
         assertEquals(0, dao.totalSizeQueries)
         assertTrue(store.totalStorageSizeBytes() <= 1_000)
+    }
+
+    @Test
+    fun eviction_leaves_the_mutation_queues_reserved_rows_alone() = runTest {
+        // Given — the mutation queue's four reserved rows, and a file cache at its bound
+        val objectDao = FakeObjectDao()
+        val reservedSignatures = listOf(
+            REJECTED_MUTATIONS_SIGNATURE,
+            MUTATION_OWNERS_SIGNATURE,
+            SYNCED_MUTATION_COVERAGE_SIGNATURE,
+            UNCONFIRMED_SENDS_SIGNATURE,
+        )
+        reservedSignatures.forEach { signature -> objectDao.seedPayload(RESERVED_TABLE_NAME, signature, "{}") }
+        store = newTestOfflineStore(objectDao = objectDao)
+        val bucket = bucket(maxSizeBytes = 10)
+
+        // When — downloads push the cache over its bound, again and again
+        repeat(5) { index -> download(bucket, "file-$index.bin", size = 6, at = index * MINUTE) }
+
+        // Then — the size accounting and eviction worked on files only
+        assertTrue(store.totalStorageSizeBytes() <= 10)
+        reservedSignatures.forEach { signature -> assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, signature), signature) }
+        assertEquals(0, objectDao.evictedRows)
     }
 
     private companion object {
