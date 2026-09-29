@@ -1,0 +1,141 @@
+# Dependabot version and security updates. Why some dependencies are held and how their updates
+# are reviewed: CONTRIBUTING.md, "Dependency updates". Nothing here merges anything.
+#
+# Options: https://docs.github.com/code-security/reference/supply-chain-security/dependabot-options-reference
+
+version: 2
+
+updates:
+  # Gradle: gradle/libs.versions.toml, the build scripts and the wrapper.
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    # A release is proposed once it has been public for a week. supabase-kt is exempt: its patch
+    # releases are how upstream crash fixes arrive.
+    cooldown:
+      default-days: 7
+      exclude:
+        - "io.github.jan-tennert.supabase*"
+    commit-message:
+      prefix: "build(deps)"
+    labels:
+      - "dependencies"
+      - "gradle"
+    # The coupled set moves by patch only; a minor or major version is changed by hand. Every
+    # coordinate that shares a catalog version key with a held one is listed, so no sibling can
+    # move the key. Dependabot applies `update-types` to version updates only, so security
+    # updates still arrive.
+    ignore:
+      - dependency-name: "io.github.jan-tennert.supabase:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "io.ktor:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.jetbrains.kotlinx:kotlinx-coroutines*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.jetbrains.kotlinx:kotlinx-serialization*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # Libraries are group:artifact; Gradle plugins are their plugin id. The dot after `kotlin`
+      # keeps `org.jetbrains.kotlinx.*` out.
+      - dependency-name: "org.jetbrains.kotlin:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.jetbrains.kotlin.*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "com.android.*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "androidx.room:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "androidx.room"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "androidx.sqlite:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # SKIE supports exact Kotlin versions, so it moves by hand, together with Kotlin.
+      - dependency-name: "co.touchlab.skie*"
+    # A dependency joins the first group that matches it. The first three names are the labels the
+    # triage workflow applies.
+    groups:
+      upstream-pin:
+        patterns:
+          - "io.github.jan-tennert.supabase*"
+          - "io.ktor:*"
+          - "org.jetbrains.kotlinx:kotlinx-coroutines*"
+          - "org.jetbrains.kotlinx:kotlinx-serialization*"
+      toolchain:
+        patterns:
+          - "org.jetbrains.kotlin:*"
+          - "org.jetbrains.kotlin.*"
+          - "com.android.*"
+      persistence:
+        patterns:
+          - "androidx.room*"
+          - "androidx.sqlite*"
+      build-tooling:
+        patterns:
+          - "gradle-wrapper"
+          - "com.google.devtools.ksp"
+          - "org.jetbrains.kotlinx.kover"
+        update-types: ["minor", "patch"]
+      test-libraries:
+        patterns:
+          - "org.robolectric:*"
+          - "androidx.test*"
+        update-types: ["minor", "patch"]
+      # Everything else. A major version matches no group and arrives as its own pull request.
+      other-gradle:
+        patterns:
+          - "*"
+        update-types: ["minor", "patch"]
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # GitHub Actions: the workflows and the local composite action. Where a workflow pins an action
+  # by commit SHA with the version in a same-line comment, Dependabot updates both.
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci(deps)"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # The documentation toolchain, .github/workflows/docs-requirements.txt. It is a fully pinned
+  # set, so it moves as one pull request.
+  - package-ecosystem: "pip"
+    directory: "/.github/workflows"
+    schedule:
+      interval: "monthly"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "docs(deps)"
+    labels:
+      - "dependencies"
+      - "docs-toolchain"
+    ignore:
+      # MkDocs 2 removes the plugin and theme systems Material for MkDocs depends on.
+      - dependency-name: "mkdocs"
+        versions: [">=2"]
+    groups:
+      docs-toolchain:
+        patterns:
+          - "*"
