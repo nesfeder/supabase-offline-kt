@@ -289,16 +289,17 @@ class QueryReaderStrategyTest {
     }
 
     @Test
-    fun selectAsFlow_networkFirstThenCache_networkFailure_flowFails() = runTest {
-        // Given — cached data exists, but this strategy bootstraps from the network first
+    fun selectAsFlow_networkFirstThenCache_networkFailure_fallsBackToCache() = runTest {
+        // Given — cached data exists, and the network bootstrap fails
         store.addPayload(TABLE, signature(), CACHED_DATA)
         failNetwork()
         val flow = resolver(backgroundScope).selectAsFlow(Columns.ALL, FlowReadStrategy.NetworkFirstThenCache) {}
 
-        // When / Then
-        assertFailsWith<HttpRequestTimeoutException> {
-            flow.first()
-        }
+        // When
+        val first = flow.first()
+
+        // Then
+        assertEquals(CACHED_DATA, first.result?.data)
     }
 
     @Test
