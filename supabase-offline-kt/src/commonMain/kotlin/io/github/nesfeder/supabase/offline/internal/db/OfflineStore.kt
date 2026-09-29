@@ -369,6 +369,9 @@ internal class OfflineStore(
      */
     internal var liveSignatureProvider: (table: String) -> Set<String> = { _ -> emptySet() }
 
+    /** Signatures of every table with a live reader, which eviction keeps; wired like [liveSignatureProvider]. */
+    internal var allLiveSignaturesProvider: () -> Set<String> = { emptySet() }
+
     /* ────────────────────────── Object cache (SELECT payloads) ────────────────────────── */
 
     /**
@@ -1528,6 +1531,8 @@ internal class OfflineStore(
                 // and would otherwise leave the cache permanently over budget.
                 val deleted = objectDao.deleteOldestPayloadRows(
                     limit = settings.evictionBatchSize.coerceAtLeast(1),
+                    // A payload a live reader shows stays, or the reader would drop to no data
+                    keptSignatures = allLiveSignaturesProvider().take(MAX_KEPT_LIVE_SIGNATURES),
                 )
                 // Progress guard: no rows removed means the cache can't shrink further, so stop
                 // instead of re-measuring the same over-limit size forever.
@@ -1568,5 +1573,8 @@ internal class OfflineStore(
          * whose measured size never drops despite reported deletions.
          */
         const val MAX_EVICTION_ITERATIONS = 1_000
+
+        /** Live signatures eviction passes over at most, within SQLite's 999 bound variables. */
+        const val MAX_KEPT_LIVE_SIGNATURES = 500
     }
 }

@@ -164,6 +164,10 @@ internal class RefreshCoordinator(
     fun liveSignaturesFor(table: String): Set<String> =
         liveSignatures.value[table]?.keys ?: emptySet()
 
+    /** The signatures of every table that have a live collector: what eviction keeps. */
+    fun allLiveSignatures(): Set<String> =
+        liveSignatures.value.values.flatMapTo(mutableSetOf()) { perTable -> perTable.keys }
+
     private companion object {
         /** Refresh requests kept for a slow reader; the oldest go first, which a conflated reader never misses. */
         const val REFRESH_REQUEST_BUFFER = 16

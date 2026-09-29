@@ -102,12 +102,32 @@ internal class ReservedRowsDatabaseScenarios(
 
             // When
             val size = objectDao.totalPayloadBytes()
-            val evicted = objectDao.deleteOldestPayloadRows(limit = 10)
+            val evicted = objectDao.deleteOldestPayloadRows(limit = 10, keptSignatures = emptyList())
 
             // Then — only the cache rows counted and only they were evicted
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.sumOf { row -> row.payload.length.toLong() }, size)
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, evicted)
             assertEquals(2L, PreviousEngineQueries.reservedRowCount(path))
+        } finally {
+            database.close()
+        }
+    }
+
+    /** Room's eviction query passes over the signatures it is told to keep, however old they are. */
+    suspend fun roomEvictionKeepsTheListedSignatures(path: String) {
+        // Given — the shipped database's cache rows
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val objectDao = database.objectDao()
+            val kept = ShippedDatabaseFixture.OBJECT_ROWS.first()
+
+            // When — every row is evicted but one a live reader shows
+            val evicted = objectDao.deleteOldestPayloadRows(limit = 100, keptSignatures = listOf(kept.signature))
+
+            // Then
+            assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size - 1, evicted)
+            assertEquals(listOf(kept.signature), objectDao.signaturesForTable(kept.table))
         } finally {
             database.close()
         }

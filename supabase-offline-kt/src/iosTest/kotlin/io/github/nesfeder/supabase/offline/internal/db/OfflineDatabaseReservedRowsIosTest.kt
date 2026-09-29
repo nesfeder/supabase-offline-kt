@@ -49,6 +49,11 @@ class OfflineDatabaseReservedRowsIosTest {
     }
 
     @Test
+    fun room_eviction_keeps_the_listed_signatures() = runTest {
+        scenarios.roomEvictionKeepsTheListedSignatures(dbPath)
+    }
+
+    @Test
     fun room_replays_pending_writes_in_insertion_order() = runTest {
         scenarios.roomReplaysPendingWritesInInsertionOrder(dbPath)
     }

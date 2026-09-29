@@ -80,9 +80,12 @@ internal open class InMemoryObjectDao : ObjectDao {
     override suspend fun totalPayloadBytes(): Long =
         rows.values.filter { it.table != RESERVED_TABLE_NAME }.sumOf { it.payload.length.toLong() }
 
-    override suspend fun deleteOldestPayloadRows(limit: Int): Int {
+    override suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int {
         if (limit <= 0) return 0
-        val oldest = rows.values.filter { it.table != RESERVED_TABLE_NAME }.sortedBy { it.updatedAt }.take(limit)
+        val oldest = rows.values
+            .filter { it.table != RESERVED_TABLE_NAME && it.signature !in keptSignatures }
+            .sortedBy { it.updatedAt }
+            .take(limit)
         oldest.forEach { row ->
             rows.remove(row.table to row.signature)
             observers[row.table to row.signature]?.value = null

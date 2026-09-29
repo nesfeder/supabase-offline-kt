@@ -127,13 +127,13 @@ internal class FakeObjectDao : InMemoryObjectDao() {
 
     override suspend fun totalPayloadBytes(): Long = fixedTotalPayloadBytes ?: super.totalPayloadBytes()
 
-    override suspend fun deleteOldestPayloadRows(limit: Int): Int {
+    override suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int {
         deleteCallCount++
         forcedDeleteCount?.let { forced ->
             evictedRows += forced
             return forced
         }
-        val deleted = super.deleteOldestPayloadRows(limit)
+        val deleted = super.deleteOldestPayloadRows(limit, keptSignatures)
         evictedRows += deleted
         return deleted
     }

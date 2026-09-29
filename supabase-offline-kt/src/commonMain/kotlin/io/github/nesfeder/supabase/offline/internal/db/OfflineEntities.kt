@@ -102,17 +102,20 @@ internal interface ObjectDao {
      * owner of each queued mutation, which no refetch can restore.
      *
      * @param limit maximum number of rows to delete in this batch.
-     * @return the number of rows actually deleted; `0` once the table is empty, which the
+     * @param keptSignatures signatures that are never candidates: queries a live reader shows. A
+     *   signature begins with its table, so it names one row.
+     * @return the number of rows actually deleted; `0` once nothing is left to evict, which the
      *   eviction loop relies on as its progress guard to guarantee termination.
      */
     @Query(
         "DELETE FROM object_cache " +
                 "WHERE rowid IN (" +
                 "SELECT rowid FROM object_cache WHERE table_name != '$RESERVED_TABLE_NAME' " +
+                "AND signature NOT IN (:keptSignatures) " +
                 "ORDER BY updated_at ASC LIMIT :limit" +
                 ")"
     )
-    suspend fun deleteOldestPayloadRows(limit: Int): Int
+    suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int
 }
 
 /* ───────────────────────── Storage metadata ───────────────────────── */

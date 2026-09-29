@@ -417,6 +417,7 @@ internal class SupabaseOfflineClientImpl(
         // Let the store see which signatures are live so a server-successful mutation materializes
         // into a real cache row for a cache-less-but-observed subscription.
         store.liveSignatureProvider = refreshCoordinator::liveSignaturesFor
+        store.allLiveSignaturesProvider = refreshCoordinator::allLiveSignatures
         store.sdkLogger = sdkLogger
         store.primaryKeys = primaryKeys
         // Overlays and counts show the current session's queued writes only.
