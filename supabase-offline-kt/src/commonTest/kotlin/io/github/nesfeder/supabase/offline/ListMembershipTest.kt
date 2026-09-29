@@ -7,9 +7,14 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestSe
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -223,6 +228,32 @@ class ListMembershipTest {
         // Then — the done row keeps its title
         val done = rowsOf(items.select(readStrategy = ReadStrategy.CacheOnly(), request = listQuery("A")).data).single { it.idOf() == "a2" }
         assertEquals(JsonPrimitive("a2 title"), done["title"])
+    }
+
+    @Test
+    fun a_live_list_fetches_again_after_an_online_write_the_cache_cannot_patch() = runTest {
+        // Given — a list observed live, its first refresh done; the client's work, the reader and
+        // every request run on this test's scheduler
+        val testDispatcher = StandardTestDispatcher(testScheduler)
+        val scope = CoroutineScope(SupervisorJob() + testDispatcher)
+        val liveServer = FakeRelationalPostgrestServer(engineDispatcher = testDispatcher)
+        liveServer.seed(TABLE, row("a1", list = "A", position = 1, done = false), row("a2", list = "A", position = 2, done = true))
+        val liveItems = newTestOfflineClient(supabase = liveServer.supabaseClient(), coordinatorScope = scope).from(TABLE)
+        val shown = mutableListOf<List<String>>()
+        scope.launch { liveItems.selectAsFlow(request = listQuery("A")).collect { read -> read.result?.let { shown += idsOf(it.data) } } }
+        advanceUntilIdle()
+        val readsBefore = liveServer.requests.count { request -> request.method == "GET" }
+
+        // When — rows are deleted through an `or` group
+        liveItems.delete { filter { eq("list_id", "A"); or { eq("done", true); eq("archived", true) } } }
+        advanceUntilIdle()
+        scope.cancel()
+
+        // Then — the live list read the table again, and never lost a row the delete did not reach
+        assertEquals(1, readsBefore)
+        assertEquals(readsBefore + 1, liveServer.requests.count { request -> request.method == "GET" })
+        assertEquals(listOf("a1", "a2"), shown.last())
+        assertEquals(true, shown.all { ids -> "a1" in ids })
     }
 
     private fun listQuery(list: String): SelectRequestBuilder.() -> Unit = {

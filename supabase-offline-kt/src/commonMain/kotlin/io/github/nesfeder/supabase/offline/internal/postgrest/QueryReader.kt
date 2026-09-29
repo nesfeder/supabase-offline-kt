@@ -432,6 +432,7 @@ internal class QueryReader(
             refresh = { refreshFromNetwork(table, columns, request) },
             accelerator = accelerator,
             onRefreshState = { state -> refreshState.value = state },
+            refreshRequests = refreshCoordinator.refreshRequestsFor(table),
         )
 
         // Build the PostgrestResult once per *distinct* payload, not once per emission: a

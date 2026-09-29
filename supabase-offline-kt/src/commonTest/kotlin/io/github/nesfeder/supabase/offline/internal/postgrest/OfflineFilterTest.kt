@@ -8,7 +8,6 @@ import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -19,9 +18,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The filter engine's encode/decode round trip, its offline row matching ([FilterEngine.matchesRow])
- * and its replay onto a request builder ([FilterEngine.applyTo]), plus the lenient descriptor
- * capture used for the online overlay.
+ * The filter engine's encode/decode round trip and its replay onto a request builder
+ * ([FilterEngine.applyTo]), plus the lenient descriptor capture used for queued inserts and upserts.
  */
 class OfflineFilterTest {
 
@@ -63,178 +61,6 @@ class OfflineFilterTest {
 
         // Then
         assertEquals(null, decoded)
-    }
-
-    @Test
-    fun matchesRow_andModeAndBasicOperators() {
-        // Given
-        val row = buildJsonObject {
-            put("id", "123")
-            put("name", "Pump A")
-            put("count", 10)
-            put("flag", true)
-        }
-
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                Condition("id", "eq", "123"),
-                Condition("count", "gt", "5"),
-                Condition("name", "ilike", "%pump%"),
-                Condition("flag", "is", "true")
-            )
-        )
-
-        // When
-        val matches = FilterEngine.matchesRow(row, descriptor)
-
-        // Then
-        assertTrue(matches)
-    }
-
-    @Test
-    fun matchesRow_orMode() {
-        // Given
-        val row = buildJsonObject {
-            put("status", "active")
-        }
-
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.OR,
-            conditions = listOf(
-                Condition("status", "eq", "inactive"),
-                Condition("status", "eq", "active")
-            )
-        )
-
-        // When
-        val matches = FilterEngine.matchesRow(row, descriptor)
-
-        // Then
-        assertTrue(matches)
-    }
-
-    @Test
-    fun matchesRow_inOperator() {
-        // Given
-        val row = buildJsonObject {
-            put("id", "b")
-        }
-
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                Condition("id", "in", "(a,b,c)")
-            )
-        )
-
-        // When
-        val matches = FilterEngine.matchesRow(row, descriptor)
-
-        // Then
-        assertTrue(matches)
-    }
-
-    @Test
-    fun matchesRow_unsupportedOperatorsReturnFalse() {
-        // Given
-        val row = buildJsonObject {
-            put("payload", "anything")
-        }
-
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                Condition("payload", "cs", "[1,2,3]") // containment not supported offline
-            )
-        )
-
-        // When
-        val matches = FilterEngine.matchesRow(row, descriptor)
-
-        // Then
-        assertFalse(matches)
-    }
-
-    @Test
-    fun matchesRow_completeness() {
-        // Given / When / Then — each check builds a one-column row and a one-condition filter
-        // Helper to check
-        fun check(op: String, col: String, rowVal: Any?, filterVal: String, expected: Boolean) {
-            val row = buildJsonObject {
-                when (rowVal) {
-                    null -> put(col, JsonNull)
-                    is Number -> put(col, rowVal)
-                    is Boolean -> put(col, rowVal)
-                    else -> put(col, rowVal.toString())
-                }
-            }
-            val descriptor = FilterDescriptor(
-                conditions = listOf(Condition(col, op, filterVal))
-            )
-            assertEquals(
-                expected,
-                FilterEngine.matchesRow(row, descriptor),
-                "Failed for op=$op, val=$rowVal, filter=$filterVal"
-            )
-        }
-
-        // EQ
-        check("eq", "c", "foo", "foo", true)
-        check("eq", "c", "foo", "bar", false)
-        check("eq", "c", 10, "10", true)
-
-        // NEQ
-        check("neq", "c", "foo", "bar", true)
-        check("neq", "c", "foo", "foo", false)
-
-        // GT, GTE, LT, LTE (Numeric)
-        check("gt", "c", 10, "5", true)
-        check("gt", "c", 10, "10", false)
-        check("gt", "c", 10, "15", false)
-
-        check("gte", "c", 10, "5", true)
-        check("gte", "c", 10, "10", true)
-        check("gte", "c", 10, "15", false)
-
-        check("lt", "c", 10, "15", true)
-        check("lt", "c", 10, "10", false)
-        check("lt", "c", 10, "5", false)
-
-        check("lte", "c", 10, "15", true)
-        check("lte", "c", 10, "10", true)
-        check("lte", "c", 10, "5", false)
-
-        // Non-numeric GT/etc should return false
-        check("gt", "c", "foo", "5", false)
-
-        // LIKE, ILIKE, MATCH, IMATCH
-        listOf("like", "ilike", "match", "imatch").forEach { op ->
-            check(op, "c", "HelloWorld", "hello", true)
-            check(op, "c", "HelloWorld", "%world%", true)
-            check(op, "c", "HelloWorld", "xyz", false)
-        }
-
-        // IS
-        check("is", "c", null, "null", true)
-        check("is", "c", "val", "null", false)
-        check("is", "c", true, "true", true)
-        check("is", "c", false, "true", false)
-        check("is", "c", false, "false", true)
-        check("is", "c", "something", "something", true) // Fallback equality
-
-        // IN
-        check("in", "c", "foo", "(foo,bar)", true)
-        check("in", "c", "baz", "(foo,bar)", false)
-
-        // Unsupported - all return false
-        val unsupported = listOf(
-            "cs", "cd", "sl", "sr", "nxl", "nxr", "adj", "ov",
-            "fts", "plfts", "phfts", "wfts"
-        )
-        unsupported.forEach { op ->
-            check(op, "c", "whatever", "whatever", false)
-        }
     }
 
     // ────────────────────────────────────────────────────────────────

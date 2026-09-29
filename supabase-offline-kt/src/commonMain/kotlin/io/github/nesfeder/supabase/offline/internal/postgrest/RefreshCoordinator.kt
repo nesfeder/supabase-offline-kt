@@ -6,13 +6,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.update
@@ -57,6 +60,17 @@ internal class RefreshCoordinator(
 
     /** Table → (signature → live-collector count). A signature is "live" while its count is > 0. */
     private val liveSignatures = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
+
+    /** Tables whose live queries should fetch again; only readers already waiting see a request. */
+    private val refreshRequests = MutableSharedFlow<String>(extraBufferCapacity = REFRESH_REQUEST_BUFFER, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** Asks every live `CacheFirstThenNetwork` query of [table] whose refresh has finished to run it again. */
+    fun requestRefresh(table: String) {
+        refreshRequests.tryEmit(table)
+    }
+
+    /** The refresh requests for [table], one [Unit] each. */
+    fun refreshRequestsFor(table: String): Flow<Unit> = refreshRequests.filter { requested -> requested == table }.map { }
 
     /**
      * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A joining
@@ -149,6 +163,11 @@ internal class RefreshCoordinator(
      */
     fun liveSignaturesFor(table: String): Set<String> =
         liveSignatures.value[table]?.keys ?: emptySet()
+
+    private companion object {
+        /** Refresh requests kept for a slow reader; the oldest go first, which a conflated reader never misses. */
+        const val REFRESH_REQUEST_BUFFER = 16
+    }
 
     private fun Map<String, Map<String, Int>>.adjustCount(
         table: String,

@@ -6,7 +6,6 @@ import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.applyTo
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.matchesRow
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
@@ -18,13 +17,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Serializable description of a PostgREST filter expression.
@@ -63,8 +55,7 @@ internal data class FilterDescriptor(
  * names none.
  *
  * Every capture path and the stored-condition lookup resolve through here. Resolving an operator
- * does not mean the engine can evaluate it locally: [FilterEngine.matchesRow] answers "no match"
- * for the operators it cannot evaluate — [FilterOperator.ISDISTINCT] among them — while
+ * does not mean the engine can evaluate it locally: [rowMatch] evaluates only a few, while
  * [FilterEngine.applyTo] replays every one of them faithfully.
  *
  * @param identifier The operator prefix of a PostgREST filter value, e.g. `"eq"`.
@@ -261,7 +252,7 @@ internal fun buildDescriptorStrictFromRequest(
  *
  * - [encode] / [decodeOrNull] : store & restore conditions for UPDATE/DELETE mutations
  * - [applyTo]           : replay a FilterDescriptor onto PostgrestRequestBuilder
- * - [matchesRow]        : used by the offline overlay engine for SELECTs
+ * - [inListMembersOf]   : read an `in` list the way replay does, for [rowMatch]
  */
 internal object FilterEngine {
 
@@ -395,19 +386,8 @@ internal object FilterEngine {
             FilterOperator.MATCH -> regexMatch(cond.column, rawValue)
             FilterOperator.IMATCH -> regexIMatch(cond.column, rawValue)
 
-            // IS: Supabase-kt exposes this via `exact(column, Boolean?)`
-            FilterOperator.IS -> {
-                val boolValue: Boolean? = when (rawValue.lowercase()) {
-                    "true" -> true
-                    "false" -> false
-                    "null" -> null
-                    // "unknown" isn't directly supported by the current exact() API;
-                    // we just treat it as null to avoid throwing.
-                    "unknown" -> null
-                    else -> null
-                }
-                exact(cond.column, boolValue)
-            }
+            // As captured, so `not_null` and `unknown` reach the same rows as the caller's filter
+            FilterOperator.IS -> filter(cond.column, FilterOperator.IS, rawValue)
 
             // IN
             FilterOperator.IN -> {
@@ -523,6 +503,12 @@ internal object FilterEngine {
     }
 
     /**
+     * The members of an `in` value — `(a,"b,c")`, or a JSON array of strings — read exactly as replay
+     * reads them, or `null` when it is neither.
+     */
+    fun inListMembersOf(value: String): List<String>? = parseArray(value)?.map { member -> member.toString() }
+
+    /**
      * Parse Condition.value into a list of strings for array-like operators:
      *
      * - If the string looks like JSON array (`[ "a", "b" ]`), we parse via kotlinx.serialization.
@@ -536,8 +522,8 @@ internal object FilterEngine {
      * and broadening the mutation's target set. `null` means "unparseable"; callers skip the
      * condition only in that case.
      *
-     * [conditionMatches]' `IN` branch parses through here too, so the offline overlay and the
-     * replayed request cannot end up with different element lists for the same stored value.
+     * [rowMatch]'s `in` evaluation parses through here too, so the overlay and the replayed
+     * request cannot end up with different element lists for the same stored value.
      */
     private fun parseArray(raw: String?): List<Any>? {
         if (raw == null) return null
@@ -732,127 +718,10 @@ internal object FilterEngine {
         // reaches it — but only because every other path returns before getting here, not because
         // a `[`-shaped value is impossible. [parseArray] returns at its JSON branch for any
         // `[`-prefixed value (`null` when it is not decodable JSON), the array operators route the
-        // range form through [applyArrayOrRangeCondition] first, and [conditionMatches]' `IN`
-        // branch parses via [parseArray] rather than stripping wrappers itself — which is what
+        // range form through [applyArrayOrRangeCondition] first, and [rowMatch]'s `in`
+        // evaluation parses via [parseArray] rather than stripping wrappers itself — which is what
         // keeps the overlay from matching the bounds of a value the replay path drops.
         length >= 2 && startsWith('[') && endsWith(']') -> substring(1, length - 1)
         else -> this
-    }
-
-    /* ───────────────────── Offline matching for overlay ───────────────────── */
-
-    /**
-     * Returns true if [row] matches [descriptor] according to its conditions.
-     *
-     * Used by the offline overlay logic to apply pending mutations to a
-     * cached SELECT payload.
-     *
-     * This is intentionally conservative: unsupported operators default to
-     * "no match" so we don't accidentally hide rows offline.
-     */
-    fun matchesRow(
-        row: JsonObject,
-        descriptor: FilterDescriptor
-    ): Boolean {
-        return when (descriptor.mode) {
-            FilterDescriptor.Mode.AND ->
-                descriptor.conditions.all { conditionMatches(row, it) }
-
-            FilterDescriptor.Mode.OR ->
-                descriptor.conditions.any { conditionMatches(row, it) }
-        }
-    }
-
-    /**
-     * Apply a single condition to a JSON row.
-     *
-     * We favour “safe and correct” over “everything”: if we’re not sure we can evaluate
-     * something faithfully offline (full-text search, PostGIS, complex range ops), we
-     * simply return false for that condition so we don’t accidentally diverge from the
-     * server’s behaviour.
-     */
-    private fun conditionMatches(
-        row: JsonObject,
-        condition: FilterDescriptor.Condition
-    ): Boolean {
-        val operator = condition.operator ?: return false
-        val rawField: JsonElement = row[condition.column] ?: return false
-        val fieldValue = rawField.jsonPrimitive
-        val filterValue = condition.value
-
-        fun JsonPrimitive.asDoubleOrNull(): Double? =
-            doubleOrNull ?: content.toDoubleOrNull()
-
-        fun JsonPrimitive.asBooleanOrNull(): Boolean? =
-            booleanOrNull ?: content.toBooleanStrictOrNull()
-
-        return when (operator) {
-            FilterOperator.EQ -> fieldValue.content == filterValue
-            FilterOperator.NEQ -> fieldValue.content != filterValue
-
-            FilterOperator.GT,
-            FilterOperator.GTE,
-            FilterOperator.LT,
-            FilterOperator.LTE -> {
-                val fvNum = fieldValue.asDoubleOrNull()
-                val filterNum = filterValue.toDoubleOrNull()
-                if (fvNum == null || filterNum == null) return false
-                when (operator) {
-                    FilterOperator.GT -> fvNum > filterNum
-                    FilterOperator.GTE -> fvNum >= filterNum
-                    FilterOperator.LT -> fvNum < filterNum
-                    FilterOperator.LTE -> fvNum <= filterNum
-                }
-            }
-
-            FilterOperator.LIKE,
-            FilterOperator.MATCH -> {
-                val needle = filterValue.replace("%", "").lowercase()
-                fieldValue.content.lowercase().contains(needle)
-            }
-
-            FilterOperator.ILIKE,
-            FilterOperator.IMATCH -> {
-                val needle = filterValue.replace("%", "").lowercase()
-                fieldValue.content.lowercase().contains(needle)
-            }
-
-            FilterOperator.IS -> {
-                when (filterValue.lowercase()) {
-                    "null" -> fieldValue.contentOrNull == null
-                    "true" -> fieldValue.asBooleanOrNull() == true
-                    "false" -> fieldValue.asBooleanOrNull() == false
-                    else -> fieldValue.content.equals(filterValue, ignoreCase = true)
-                }
-            }
-
-            FilterOperator.IN -> {
-                // PostgREST value is usually "(a,b,c)". Parsed by the same function the replay
-                // path uses, so the overlay and the replayed request cannot disagree about which
-                // rows an `in` filter covers — including elements quoted for an embedded comma,
-                // and including an empty `in.()`, which matches nothing rather than matching a
-                // row whose column happens to be the empty string.
-                val items = parseArray(filterValue) ?: return false
-
-                items.contains(fieldValue.content)
-            }
-
-            // We DO NOT try to emulate these complex / domain-specific operators offline:
-            // containment, ranges, adjacency, overlaps, FTS, IS DISTINCT FROM, etc. We return
-            // false so we don't accidentally "match" rows that the server wouldn't.
-            FilterOperator.CS,
-            FilterOperator.CD,
-            FilterOperator.SL,
-            FilterOperator.SR,
-            FilterOperator.NXL,
-            FilterOperator.NXR,
-            FilterOperator.ADJ,
-            FilterOperator.OV,
-            FilterOperator.FTS,
-            FilterOperator.PLFTS,
-            FilterOperator.PHFTS,
-            FilterOperator.WFTS,
-            FilterOperator.ISDISTINCT -> false
-        }
     }
 }

@@ -2,11 +2,13 @@ package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMARY_KEY
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -15,371 +17,214 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Utilities for overlaying **pending offline mutations** on top of a SELECT
- * response payload.
+ * Overlays queued mutations onto a cached query payload in memory, so a read shows writes the server
+ * has not confirmed yet. A mutation that cannot be applied is skipped on its own and reported.
  *
- * This is where we make the local cache appear "eventually consistent" with
- * mutations that have been queued while the device is offline.
+ * Rows go into the query only when [admission] admits them, and a row an UPDATE or UPSERT stops
+ * matching leaves it. Rows the query does not show are held aside while the mutations run, so a later
+ * one that makes such a row start matching brings it in once. An UPDATE or DELETE touches only rows its
+ * filter provably matches ([rowMatch]); an UPSERT matches rows by its conflict columns, or the key.
  *
- * High-level behaviour
- * --------------------
- * Given:
- *  - [serverJson]: a raw JSON payload from PostgREST `select()` (we assume
- *    it is a JSON array of row objects).
- *  - [pending]: a list of [MutationRow] representing INSERT / UPSERT /
- *    UPDATE / DELETE operations that were queued while offline.
- *
- * We:
- *  1. Parse the server payload into a mutable list of JSON elements.
- *  2. For each mutation:
- *     - decode its filter descriptor (if any) via [FilterEngine.decodeOrNull]
- *     - apply an insert / upsert / patch / delete in memory
- *  3. Serialize the modified array back into a JSON string.
- *
- * If the payload does not parse, or isn't an array, we return [serverJson] unchanged. A mutation
- * that cannot be applied — its stored body no longer parses, or its filter cannot be evaluated
- * against a row — is skipped **on its own**: the other mutations still apply, and the skip is
- * reported through `onMutationFailure`. One bad mutation used to discard the whole batch, hiding
- * every pending write of the table from every screen until the next sync.
- *
- * Note on filters
- * ---------------
- * [MutationRow.filterJson] (when present) is a serialized
- * [FilterDescriptor]. We use [FilterEngine.matches] to decide which rows a
- * mutation applies to. For complex filters we can't faithfully model
- * offline, we fall back to "no matches" so that we **under-apply** rather
- * than silently diverging from server behaviour.
- *
- * Note on query visibility
- * ------------------------
- * INSERT/UPSERT-appended rows are additionally gated by the cached query's own filters
- * ([targetFilters], a [QueryAdmission]). When the query's signature is exhaustive, a row its
- * WHERE clause excludes is dropped rather than appended — so, e.g., an online INSERT of a `done`
- * row never lands in a cached `status=eq.open` payload. This gate is conservative: a `null` or
- * non-exhaustive [targetFilters] preserves the legacy always-append behavior, so we never hide
- * a row the server would have returned.
+ * @param admission which rows the cached query admits.
+ * @param primaryKeys each table's key columns.
+ * @param mayAlreadyHold whether an INSERT's rows may already be in the payload, which is then checked
+ *   by key before a row is added: true for a mutation the server may already hold.
+ * @param onMutationFailure told of each skipped mutation, for logging; never its body.
  */
-internal object MutationOverlay {
+internal class MutationOverlay(
+    private val json: Json,
+    private val admission: QueryAdmission,
+    private val primaryKeys: PrimaryKeys,
+    private val mayAlreadyHold: (MutationRow) -> Boolean,
+    private val onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> },
+) {
 
     /**
-     * Overlays [pending] onto the payload [serverJson], each mutation on its own copy so one that
-     * throws is skipped whole. Returns [serverJson] unchanged when it is not a JSON array.
-     *
-     * @param targetFilters The cached query's filters: when exhaustive, appended rows it excludes are
-     *   dropped; `null` appends them all.
-     * @param keyColumns The table's primary key, which an unfiltered UPSERT row merges on.
-     * @param appendsOnlyUnseenKeys Whether an INSERT's rows are left out where the payload already
-     *   holds their key — for a mutation the server may already hold.
-     * @param onMutationFailure Told of each skipped mutation, for logging; never its body.
+     * [mutations], oldest first, overlaid onto [payload]. [payload] comes back unchanged when it is not
+     * a JSON array, and when there is nothing to overlay.
      */
-    fun overlay(
-        json: Json,
-        serverJson: String,
-        pending: List<MutationRow>,
-        targetFilters: QueryAdmission? = null,
-        keyColumns: List<String> = DEFAULT_PRIMARY_KEY,
-        appendsOnlyUnseenKeys: (MutationRow) -> Boolean = { true },
-        onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> },
-    ): String {
-        if (pending.isEmpty()) return serverJson
+    fun overlay(payload: String, mutations: List<MutationRow>): String {
+        if (mutations.isEmpty()) return payload
+        val rows = payloadRowsOf(json, payload) ?: return payload
+        return encode(overlayRows(rows, mutations).visible)
+    }
 
-        // 1) Parse server payload as JSON array; if it does not parse or is not an array, bail.
-        val array = try {
-            json.parseToJsonElement(serverJson) as? JsonArray
-        } catch (_: IllegalArgumentException) {
-            null
-        } ?: return serverJson
-
-        // Copy rows into a mutable buffer we can modify.
-        var rows = array.toMutableList()
-
-        // 2) Apply each mutation in queue order (oldest → newest), each to its own working copy so
-        // a mutation that throws half-way leaves no partial change behind.
-        pending.forEach { mutation ->
-            val working = rows.toMutableList()
+    /**
+     * [mutations] overlaid onto [rows], each on its own copy so one that throws leaves nothing behind.
+     *
+     * @param knownRows rows the query does not show that the engine knows from elsewhere, such as
+     *   the table's other cached queries. A mutation brings one into the query only when it makes the
+     *   row start matching: one the query admitted already is outside its window, not missing.
+     */
+    fun overlayRows(rows: List<JsonElement>, mutations: List<MutationRow>, knownRows: List<JsonObject> = emptyList()): OverlaidRows {
+        var state = OverlaidRows(visible = rows, held = knownRows, written = emptyList())
+        mutations.forEach { mutation ->
             try {
-                applyMutation(json, working, mutation, targetFilters, keyColumns.takeIf { appendsOnlyUnseenKeys(mutation) }, keyColumns)
-                rows = working
+                state = Working(state).also { working -> working.overlay(mutation) }.snapshot()
             } catch (failure: Exception) {
                 onMutationFailure(mutation, failure)
             }
         }
-
-        // 3) Serialize back to a JSON string.
-        return json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
+        return state
     }
 
-    /**
-     * Applies one [mutation] to [rows]. [insertKeyColumns] is the key an INSERT's rows are
-     * de-duplicated by, or `null` to append them whatever the payload holds.
-     */
-    private fun applyMutation(
-        json: Json,
-        rows: MutableList<JsonElement>,
-        mutation: MutationRow,
-        targetFilters: QueryAdmission?,
-        insertKeyColumns: List<String>?,
-        keyColumns: List<String>,
-    ) {
-        val descriptor = FilterEngine.decodeOrNull(mutation.filterJson, json)
+    /** [rows] as a payload. */
+    fun encode(rows: List<JsonElement>): String = json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
 
-        when (mutation.operation) {
-            MutationOperation.INSERT ->
-                applyInsertMutation(json, rows, mutation, targetFilters, insertKeyColumns.orEmpty())
+    /** One mutation's changes, made on copies of the rows so a failure half-way changes nothing. */
+    private inner class Working(start: OverlaidRows) {
+        private val visible = start.visible.toMutableList()
+        private val held = start.held.toMutableList()
+        private val written = start.written.toMutableList()
 
-            MutationOperation.UPSERT ->
-                applyUpsertMutation(json, rows, mutation, descriptor, targetFilters, keyColumns)
+        fun snapshot(): OverlaidRows = OverlaidRows(visible = visible, held = held, written = written)
 
-            MutationOperation.UPDATE ->
-                applyUpdateMutation(json, rows, mutation, descriptor)
-
-            MutationOperation.DELETE ->
-                applyDeleteMutation(rows, descriptor)
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    //  INSERT
-    // -------------------------------------------------------------------------
-
-    /**
-     * Apply an INSERT mutation:
-     *
-     * - If `body` is a JSON array: append every element the query admits.
-     * - If `body` is a JSON object: append it if the query admits it.
-     * - Otherwise: ignore.
-     *
-     * Each candidate row is gated by [appendIfAdmitted] so a row an exhaustive-filter query
-     * excludes never lands in that cached payload. A row that carries [keyColumns] is not appended
-     * when the payload already holds that key; with no key columns every row is appended.
-     */
-    private fun applyInsertMutation(
-        json: Json,
-        rows: MutableList<JsonElement>,
-        mutation: MutationRow,
-        targetFilters: QueryAdmission?,
-        keyColumns: List<String>,
-    ) {
-        when (val bodyElement = json.parseToJsonElement(mutation.bodyJson)) {
-            is JsonArray -> bodyElement.forEach { element -> appendIfAdmitted(rows, element, targetFilters, keyColumns) }
-            is JsonObject -> appendIfAdmitted(rows, bodyElement, targetFilters, keyColumns)
-            else -> Unit
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    //  UPSERT
-    // -------------------------------------------------------------------------
-
-    /**
-     * Apply an UPSERT mutation.
-     *
-     * Offline we approximate PostgREST behaviour as:
-     *  - If [descriptor] is null: each body row that carries the table's primary key and matches a
-     *    row already in the payload by that key is merged into it (left untouched with
-     *    `ignoreDuplicates`); every other row is appended, as for an INSERT.
-     *  - If [descriptor] matches existing rows:
-     *      - with `ignoreDuplicates` set: leave them untouched (ON CONFLICT DO NOTHING)
-     *      - otherwise: shallow-merge the UPSERT body into each matching row
-     *  - If [descriptor] matches no rows:
-     *      - append the UPSERT body (insert new row)
-     *
-     * We only operate on a single row object from the body:
-     *  - if body is an object: use it directly
-     *  - if body is an array: use the first element if it is an object
-     */
-    private fun applyUpsertMutation(
-        json: Json,
-        rows: MutableList<JsonElement>,
-        mutation: MutationRow,
-        descriptor: FilterDescriptor?,
-        targetFilters: QueryAdmission?,
-        keyColumns: List<String>,
-    ) {
-        val bodyElement = json.parseToJsonElement(mutation.bodyJson)
-
-        // No target filter → the conflict target is the primary key: merge by key, else append.
-        if (descriptor == null) {
-            val bodyRows = when (bodyElement) {
-                is JsonArray -> bodyElement
-                is JsonObject -> listOf(bodyElement)
-                else -> return
+        fun overlay(mutation: MutationRow) {
+            when (mutation.operation) {
+                MutationOperation.INSERT -> insert(mutation)
+                MutationOperation.UPSERT -> upsert(mutation)
+                MutationOperation.UPDATE -> update(mutation)
+                MutationOperation.DELETE -> delete(mutation)
             }
-            bodyRows.forEach { element ->
-                val index = indexOfKey(rows, element, keyColumns)
-                if (index == null) {
-                    appendIfAdmitted(rows, element, targetFilters, keyColumns)
+        }
+
+        private fun insert(mutation: MutationRow) {
+            val keyColumns = primaryKeys.of(mutation.table)
+            val dedupe = mayAlreadyHold(mutation)
+            bodyRowsOf(mutation).forEach { element ->
+                val row = element as? JsonObject
+                if (row == null) {
+                    visible += element
                     return@forEach
                 }
-                if (mutation.ignoreDuplicates == true) return@forEach
-                val current = rows[index] as? JsonObject ?: return@forEach
-                val patch = element as? JsonObject ?: return@forEach
-                rows[index] = mergeObjects(current, patch)
-            }
-            return
-        }
-
-        val patchObj: JsonObject = when (bodyElement) {
-            is JsonObject -> bodyElement
-            is JsonArray -> bodyElement.firstOrNull() as? JsonObject ?: return
-            else -> return
-        }
-
-        val indices = matchingIndices(rows, descriptor)
-        if (indices.isEmpty()) {
-            // No match → append as a new row, subject to the cached query's own visibility filter.
-            appendIfAdmitted(rows, patchObj, targetFilters, keyColumns)
-            return
-        }
-
-        // ON CONFLICT DO NOTHING: with ignoreDuplicates the server preserves an existing row
-        // untouched, so the overlay must too. Merging the request body here would make the
-        // cache adopt a write the server rejected — an insert-if-missing that raced a
-        // pre-existing canonical row (e.g. one another device already wrote) was visibly
-        // replacing the canonical value locally until the next network refresh.
-        if (mutation.ignoreDuplicates == true) return
-
-        // Merge into each matching row.
-        indices.forEach { idx ->
-            val current = rows[idx] as? JsonObject ?: return@forEach
-            rows[idx] = mergeObjects(current, patchObj)
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    //  UPDATE
-    // -------------------------------------------------------------------------
-
-    /**
-     * Apply an UPDATE mutation.
-     *
-     * - If [descriptor] is null: we cannot safely know which rows to touch,
-     *   so we skip this mutation offline.
-     * - Otherwise:
-     *   - decode `body` as a JSON object
-     *   - shallow-merge body into every row that matches [descriptor]
-     */
-    private fun applyUpdateMutation(
-        json: Json,
-        rows: MutableList<JsonElement>,
-        mutation: MutationRow,
-        descriptor: FilterDescriptor?
-    ) {
-        if (descriptor == null) return
-
-        val patchElement = json.parseToJsonElement(mutation.bodyJson)
-        val patchObj = patchElement as? JsonObject ?: return
-
-        val indices = matchingIndices(rows, descriptor)
-        indices.forEach { idx ->
-            val current = rows[idx] as? JsonObject ?: return@forEach
-            rows[idx] = mergeObjects(current, patchObj)
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    //  DELETE
-    // -------------------------------------------------------------------------
-
-    /**
-     * Apply a DELETE mutation.
-     *
-     * - If [descriptor] is null: we don't know which rows to remove, so we
-     *   do nothing offline.
-     * - Otherwise: remove all rows that match [descriptor].
-     */
-    private fun applyDeleteMutation(
-        rows: MutableList<JsonElement>,
-        descriptor: FilterDescriptor?
-    ) {
-        if (descriptor == null) return
-        val indices = matchingIndices(rows, descriptor)
-
-        // Remove from the end so indices stay valid.
-        indices.sortedDescending().forEach { idx ->
-            rows.removeAt(idx)
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    //  Shared helpers
-    // -------------------------------------------------------------------------
-
-    /**
-     * Append [element] to [rows] only if [targetFilters] admits it into the cached query.
-     *
-     * Gating is applied per row so a batch insert lands each of its rows in exactly the cached
-     * queries that would return it. A non-object [element] (which [FilterEngine.matchesRow] can't
-     * evaluate) is always appended, matching the legacy behavior — we drop a row only when we can
-     * prove it doesn't belong.
-     *
-     * @param rows          The mutable buffer of cached rows.
-     * @param element       The candidate row to append.
-     * @param targetFilters Parsed filters of the cached query, or `null` for legacy always-append.
-     * @param keyColumns    The table's primary key; a row whose key is already present is not added.
-     */
-    private fun appendIfAdmitted(
-        rows: MutableList<JsonElement>,
-        element: JsonElement,
-        targetFilters: QueryAdmission?,
-        keyColumns: List<String>,
-    ) {
-        val rowObject = element as? JsonObject
-        if (rowObject != null && targetFilters != null && !targetFilters.admits(rowObject)) return
-        if (indexOfKey(rows, element, keyColumns) != null) return
-        rows.add(element)
-    }
-
-    /**
-     * The index of the row in [rows] with [element]'s primary key, or `null` when [element] carries
-     * no whole key or no row has it.
-     */
-    private fun indexOfKey(rows: List<JsonElement>, element: JsonElement, keyColumns: List<String>): Int? {
-        val key = primaryKeyOf(element, keyColumns) ?: return null
-        val index = rows.indexOfFirst { existing ->
-            val existingKey = primaryKeyOf(existing, keyColumns)
-            existingKey != null && sameKey(key, existingKey)
-        }
-        return index.takeIf { it >= 0 }
-    }
-
-    /** Whether two primary keys name the same row, comparing values by their JSON content. */
-    private fun sameKey(first: JsonObject, second: JsonObject): Boolean =
-        first.keys == second.keys &&
-            first.all { (column, value) -> (value as? JsonPrimitive)?.content == (second[column] as? JsonPrimitive)?.content }
-
-    /**
-     * Returns the indices of all rows that satisfy [descriptor] according to
-     * [FilterEngine.matchesRow].
-     */
-    private fun matchingIndices(
-        rows: List<JsonElement>,
-        descriptor: FilterDescriptor
-    ): List<Int> {
-        val result = mutableListOf<Int>()
-        rows.forEachIndexed { index, element ->
-            val obj = element as? JsonObject ?: return@forEachIndexed
-            if (FilterEngine.matchesRow(obj, descriptor)) {
-                result += index
+                if (dedupe && indexOfKey(visible, row, keyColumns) != null) return@forEach
+                place(row)
             }
         }
-        return result
+
+        private fun upsert(mutation: MutationRow) {
+            val keyColumns = conflictColumnsOf(mutation)
+            val ignoreDuplicates = mutation.ignoreDuplicates == true
+            bodyRowsOf(mutation).forEach { element ->
+                val row = element as? JsonObject
+                if (row == null) {
+                    visible += element
+                    return@forEach
+                }
+                if (primaryKeyOf(row, keyColumns) == null) {
+                    place(row)
+                    return@forEach
+                }
+                val shown = indexOfKey(visible, row, keyColumns)
+                val kept = if (shown == null) indexOfKey(held, row, keyColumns) else null
+                when {
+                    shown != null -> if (!ignoreDuplicates) replaceShown(shown, merge(visible[shown] as JsonObject, row))
+                    kept != null -> if (!ignoreDuplicates) replaceHeld(kept, merge(held[kept], row))
+                    else -> place(row)
+                }
+            }
+        }
+
+        private fun update(mutation: MutationRow) {
+            val filter = filterOf(mutation) ?: return
+            val patch = json.parseToJsonElement(mutation.bodyJson) as? JsonObject ?: return
+            // Rows the loop below moves aside land after these, and are not visited twice
+            val heldBefore = held.size
+            visible.indices.reversed().forEach { index ->
+                val row = visible[index] as? JsonObject ?: return@forEach
+                if (rowMatch(row, filter) == RowMatch.MATCHES) replaceShown(index, merge(row, patch))
+            }
+            (0 until heldBefore).reversed().forEach { index ->
+                val row = held[index]
+                if (rowMatch(row, filter) == RowMatch.MATCHES) replaceHeld(index, merge(row, patch))
+            }
+        }
+
+        private fun delete(mutation: MutationRow) {
+            val filter = filterOf(mutation) ?: return
+            visible.removeAll { element -> element is JsonObject && rowMatch(element, filter) == RowMatch.MATCHES }
+            held.removeAll { row -> rowMatch(row, filter) == RowMatch.MATCHES }
+        }
+
+        /** Adds a row the mutation wrote: shown when the query admits it, held otherwise. */
+        private fun place(row: JsonObject) {
+            written += row
+            if (admission.admits(row)) visible += row else held += row
+        }
+
+        /** Replaces the shown row at [index] with [row], moving it aside when the query no longer admits it. */
+        private fun replaceShown(index: Int, row: JsonObject) {
+            written += row
+            if (admission.admits(row)) {
+                visible[index] = row
+            } else {
+                visible.removeAt(index)
+                held += row
+            }
+        }
+
+        /** Replaces the held row at [index] with [row], bringing it in when the change makes it start matching. */
+        private fun replaceHeld(index: Int, row: JsonObject) {
+            written += row
+            if (!admission.admits(held[index]) && admission.admits(row)) {
+                held.removeAt(index)
+                visible += row
+            } else {
+                held[index] = row
+            }
+        }
     }
 
-    /**
-     * Simple shallow merge:
-     *
-     * - keys from [patch] overwrite keys in [base]
-     * - other keys from [base] are preserved
-     */
-    private fun mergeObjects(
-        base: JsonObject,
-        patch: JsonObject
-    ): JsonObject {
-        val combined = base.toMutableMap()
-        for ((k, v) in patch) {
-            combined[k] = v
-        }
-        return JsonObject(combined)
+    /** An INSERT or UPSERT body's rows: an array, or a single object. */
+    private fun bodyRowsOf(mutation: MutationRow): List<JsonElement> = when (val body = json.parseToJsonElement(mutation.bodyJson)) {
+        is JsonArray -> body
+        is JsonObject -> listOf(body)
+        else -> emptyList()
     }
+
+    /** The columns an UPSERT matches existing rows on: its conflict columns, or the table's primary key. */
+    private fun conflictColumnsOf(mutation: MutationRow): List<String> =
+        mutation.onConflict?.split(',')?.map { column -> column.trim() }?.filter { column -> column.isNotEmpty() }?.takeIf { it.isNotEmpty() }
+            ?: primaryKeys.of(mutation.table)
+
+    /** The rows an UPDATE or DELETE targets; `null`, which touches nothing, when it has no readable filter. */
+    private fun filterOf(mutation: MutationRow): FilterDescriptor? = FilterEngine.decodeOrNull(mutation.filterJson, json)
 }
+
+/**
+ * The rows after an overlay.
+ *
+ * @property visible the rows the query shows, in order.
+ * @property held the rows the overlay knows that the query does not show.
+ * @property written every row the mutations inserted or changed, as they left it, shown or not.
+ */
+internal data class OverlaidRows(
+    val visible: List<JsonElement>,
+    val held: List<JsonObject>,
+    val written: List<JsonObject>,
+)
+
+/** The rows of [payload], or `null` when it is not a JSON array. */
+internal fun payloadRowsOf(json: Json, payload: String): List<JsonElement>? = try {
+    json.parseToJsonElement(payload) as? JsonArray
+} catch (_: IllegalArgumentException) {
+    null
+}
+
+/** The index of the row in [rows] with [row]'s values in [keyColumns], or `null` when there is none or [row] lacks one. */
+internal fun indexOfKey(rows: List<JsonElement>, row: JsonObject, keyColumns: List<String>): Int? {
+    val key = primaryKeyOf(row, keyColumns) ?: return null
+    val index = rows.indexOfFirst { existing ->
+        val existingKey = primaryKeyOf(existing, keyColumns)
+        existingKey != null && isSameKey(key, existingKey)
+    }
+    return index.takeIf { it >= 0 }
+}
+
+/** Whether two keys name the same row, comparing values by their JSON content. */
+private fun isSameKey(first: JsonObject, second: JsonObject): Boolean =
+    first.keys == second.keys &&
+        first.all { (column, value) -> (value as? JsonPrimitive)?.content == (second[column] as? JsonPrimitive)?.content }
+
+/** [base] with [patch]'s columns written over it. */
+private fun merge(base: JsonObject, patch: JsonObject): JsonObject = JsonObject(base + patch)

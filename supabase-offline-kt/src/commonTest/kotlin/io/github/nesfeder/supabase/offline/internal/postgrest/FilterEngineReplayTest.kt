@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
  * `"(a"` / `"c)"`. Each test drives the same pipeline the offline mutation queue uses:
  * capture ([buildDescriptorStrict]) → [FilterEngine.encode] → [FilterEngine.decodeOrNull] →
  * [FilterEngine.applyTo], asserting the replayed request carries the caller's original param.
- * Overlay parity is asserted via [FilterEngine.matchesRow], which always stripped parens.
+ * Overlay parity is asserted via [rowMatch]: a row the overlay treats as matched is one replay reaches.
  *
  * The later cases also pin that the parser tokenizes by *encoding* rather than by delimiter. Only
  * `in`'s `(a,b)` comes from an encoder that escapes its elements (`encodeAsList` → `escapeValue`);
@@ -101,11 +101,11 @@ class FilterEngineReplayTest {
         val replayed = replayParams(descriptor)
 
         // Then the overlay matches exactly the captured values
-        assertTrue(FilterEngine.matchesRow(rowWithStatus("active"), descriptor))
-        assertTrue(FilterEngine.matchesRow(rowWithStatus("pending"), descriptor))
-        assertFalse(FilterEngine.matchesRow(rowWithStatus("retired"), descriptor))
-        assertFalse(FilterEngine.matchesRow(rowWithStatus("(active"), descriptor))
-        assertFalse(FilterEngine.matchesRow(rowWithStatus("pending)"), descriptor))
+        assertTrue(matches(rowWithStatus("active"), descriptor))
+        assertTrue(matches(rowWithStatus("pending"), descriptor))
+        assertFalse(matches(rowWithStatus("retired"), descriptor))
+        assertFalse(matches(rowWithStatus("(active"), descriptor))
+        assertFalse(matches(rowWithStatus("pending)"), descriptor))
 
         // And the replayed request targets those same values
         assertEquals(listOf("in.(active,pending)"), replayed["status"])
@@ -191,10 +191,10 @@ class FilterEngineReplayTest {
 
         // When the descriptor drives the offline overlay
         // Then it matches the two real values and neither torn half
-        assertTrue(FilterEngine.matchesRow(rowWithStatus("on,hold"), descriptor))
-        assertTrue(FilterEngine.matchesRow(rowWithStatus("active"), descriptor))
-        assertFalse(FilterEngine.matchesRow(rowWithStatus("on"), descriptor))
-        assertFalse(FilterEngine.matchesRow(rowWithStatus("hold"), descriptor))
+        assertTrue(matches(rowWithStatus("on,hold"), descriptor))
+        assertTrue(matches(rowWithStatus("active"), descriptor))
+        assertFalse(matches(rowWithStatus("on"), descriptor))
+        assertFalse(matches(rowWithStatus("hold"), descriptor))
 
         // And the replayed request targets that same pair
         assertEquals(listOf("""in.("on,hold",active)"""), replayParams(descriptor)["status"])
@@ -373,8 +373,8 @@ class FilterEngineReplayTest {
         // Then the overlay claims no match either. Matching the bracket contents while replay
         // drops the condition is the dangerous disagreement: the overlay hides rows the replayed
         // mutation would then hit unfiltered.
-        assertFalse(FilterEngine.matchesRow(rowWithStatus("a"), descriptor))
-        assertFalse(FilterEngine.matchesRow(rowWithStatus("b"), descriptor))
+        assertFalse(matches(rowWithStatus("a"), descriptor))
+        assertFalse(matches(rowWithStatus("b"), descriptor))
         assertEquals(null, replayed["status"])
     }
 
@@ -390,8 +390,8 @@ class FilterEngineReplayTest {
         // When the overlay evaluates rows against it
         // Then nothing matches — including a row whose column is the empty string, which a
         // tokenizer that reports one empty element would wrongly admit
-        assertFalse(FilterEngine.matchesRow(rowWithStatus(""), descriptor))
-        assertFalse(FilterEngine.matchesRow(rowWithStatus("active"), descriptor))
+        assertFalse(matches(rowWithStatus(""), descriptor))
+        assertFalse(matches(rowWithStatus("active"), descriptor))
         assertEquals(listOf("in.()"), replayParams(descriptor)["status"])
     }
 
@@ -531,4 +531,7 @@ class FilterEngineReplayTest {
             )
         }
     }
+
+    /** Whether the overlay would treat [row] as matched by [descriptor]. */
+    private fun matches(row: JsonObject, descriptor: FilterDescriptor): Boolean = rowMatch(row, descriptor) == RowMatch.MATCHES
 }

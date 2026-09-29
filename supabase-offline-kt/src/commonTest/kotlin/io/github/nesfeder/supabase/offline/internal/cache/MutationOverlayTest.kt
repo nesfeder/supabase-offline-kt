@@ -1,9 +1,10 @@
 package io.github.nesfeder.supabase.offline.internal.cache
 
-import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay.overlay
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -26,6 +27,10 @@ import kotlin.test.assertEquals
 class MutationOverlayTest {
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** Overlays [pending] onto [serverJson] for a query that admits every row. */
+    private fun overlay(json: Json, serverJson: String, pending: List<MutationRow>): String =
+        MutationOverlay(json, QueryAdmission.EVERY_ROW, DefaultPrimaryKeys, mayAlreadyHold = { true }).overlay(serverJson, pending)
 
     @Test
     fun overlay_noPending_returnsServerJson() {

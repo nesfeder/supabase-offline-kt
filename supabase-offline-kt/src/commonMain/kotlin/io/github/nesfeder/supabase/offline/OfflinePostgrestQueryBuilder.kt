@@ -22,7 +22,6 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuil
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
 import io.github.nesfeder.supabase.offline.internal.postgrest.UnsupportedOfflineFilterException
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromBuilder
-import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromRequest
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorStrictFromRequest
 import io.github.nesfeder.supabase.offline.internal.postgrest.wasRolledBack
 import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
@@ -520,20 +519,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             // — and PostgREST cannot express `col = col + x` in a PATCH anyway.
             performOnline = { delegate.update(body, request) },
             applyOnlineSuccessOverlay = { _, startedAtTick ->
-                // Online-success overlay keeps the lenient capture: it never replays, so an
-                // un-representable filter is harmless here (worst case it overlays nothing).
-                val descriptor = buildDescriptorFromRequest(
-                    defaultSchema = delegate.schema,
-                    conversionMethod = conversionMethod,
-                    request = request
-                )
-                store.patchCachedQueries(
-                    table = table,
-                    operation = MutationOperation.UPDATE,
-                    bodyJson = body.toString(),
-                    filterJson = descriptor?.let { FilterEngine.encode(it, json) },
-                    startedAtTick = startedAtTick,
-                )
+                patchFilteredWrite(MutationOperation.UPDATE, table, body.toString(), conversionMethod, request, startedAtTick)
             },
             captureForQueue = {
                 captureFilteredWrite(conversionMethod, request) { descriptor ->
@@ -574,18 +560,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             mutationStrategy = mutationStrategy,
             performOnline = { delegate.delete(request) },
             applyOnlineSuccessOverlay = { _, startedAtTick ->
-                val descriptor = buildDescriptorFromRequest(
-                    defaultSchema = delegate.schema,
-                    conversionMethod = conversionMethod,
-                    request = request
-                )
-                store.patchCachedQueries(
-                    table = table,
-                    operation = MutationOperation.DELETE,
-                    bodyJson = "{}",
-                    filterJson = descriptor?.let { FilterEngine.encode(it, json) },
-                    startedAtTick = startedAtTick,
-                )
+                patchFilteredWrite(MutationOperation.DELETE, table, "{}", conversionMethod, request, startedAtTick)
             },
             captureForQueue = {
                 captureFilteredWrite(conversionMethod, request) { descriptor ->
@@ -599,6 +574,39 @@ internal class OfflinePostgrestQueryBuilderImpl(
     }
 
     // --------------------------------------------------------------------------
+
+    /**
+     * Patches an UPDATE or DELETE the server applied into the cached queries of [table], by the filter
+     * the queue would record for it. When that filter cannot be recorded exactly, or there is none, no
+     * row is guessed at: the table's cached queries are marked stale and its live readers refresh.
+     */
+    private suspend fun patchFilteredWrite(
+        operation: String,
+        table: String,
+        bodyJson: String,
+        conversionMethod: PropertyConversionMethod,
+        request: PostgrestRequestBuilder.() -> Unit,
+        startedAtTick: Long,
+    ) {
+        val filter = try {
+            buildDescriptorStrictFromRequest(defaultSchema = delegate.schema, conversionMethod = conversionMethod, request = request)
+        } catch (_: UnsupportedOfflineFilterException) {
+            null
+        }
+        if (filter == null) {
+            sdkLogger.info { "$operation $table: its filter cannot be matched against cached rows; refreshing the table's cached queries" }
+            store.markCachedQueriesStale(table, startedAtTick)
+            refreshCoordinator.requestRefresh(table)
+            return
+        }
+        store.patchCachedQueries(
+            table = table,
+            operation = operation,
+            bodyJson = bodyJson,
+            filterJson = FilterEngine.encode(filter, json),
+            startedAtTick = startedAtTick,
+        )
+    }
 
     /**
      * How a write would be queued, decided before it is sent: either the action that queues it, or

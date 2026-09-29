@@ -7,6 +7,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -87,6 +88,7 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long = when (failures) 
  * @param accelerator Edge-triggered wake-ups that short-circuit the current backoff sleep.
  * @param onRefreshState Callback invoked on each refresh lifecycle transition.
  * @param backoffMillis Backoff schedule; injectable so tests can shrink or reshape delays.
+ * @param refreshRequests Each emission after the first success runs the refresh again.
  */
 internal fun <T> cacheFirstWithParallelRefresh(
     cache: Flow<T>,
@@ -94,12 +96,13 @@ internal fun <T> cacheFirstWithParallelRefresh(
     accelerator: Flow<Unit> = emptyFlow(),
     onRefreshState: (RefreshState) -> Unit = {},
     backoffMillis: (failures: Int) -> Long = ::defaultRefreshBackoffMillis,
+    refreshRequests: Flow<Unit> = emptyFlow(),
 ): Flow<T> = channelFlow {
     // Forward cache emissions immediately — not gated on the network.
     launch {
         cache.collect { value -> send(value) }
     }
-    // In parallel, refresh the cache with self-healing backoff for the life of the subscription.
+    // In parallel, refresh the cache with self-healing backoff, and again on each later request.
     launch {
         runSelfHealingRefresh(
             refresh = refresh,
@@ -107,6 +110,14 @@ internal fun <T> cacheFirstWithParallelRefresh(
             onRefreshState = onRefreshState,
             backoffMillis = backoffMillis,
         )
+        refreshRequests.conflate().collect {
+            runSelfHealingRefresh(
+                refresh = refresh,
+                accelerator = accelerator,
+                onRefreshState = onRefreshState,
+                backoffMillis = backoffMillis,
+            )
+        }
     }
 }
 

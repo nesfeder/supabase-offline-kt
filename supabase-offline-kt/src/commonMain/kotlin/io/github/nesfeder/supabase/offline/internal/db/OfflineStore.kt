@@ -7,13 +7,16 @@ import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
+import io.github.nesfeder.supabase.offline.internal.cache.indexOfKey
+import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.admissionOf
 import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
@@ -30,7 +33,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import okio.Path
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -1116,7 +1118,7 @@ internal class OfflineStore(
         val pending = visibleTo(identityProvider(), mutationQueueState.owners(), mutationDao.pendingForTable(table))
         if (pending.isEmpty()) return serverJson
 
-        return overlayMutations(table, serverJson, pending, signature, mutationQueueState.unconfirmedSends())
+        return overlayMutations(serverJson, pending, signature, mutationQueueState.unconfirmedSends())
     }
 
     /**
@@ -1136,15 +1138,8 @@ internal class OfflineStore(
             .filter { mutation -> belongsOnPayload(mutation, signature, coverage) }
         if (all.isEmpty()) return cachedJson
 
-        val unconfirmed = mutationQueueState.unconfirmedSends()
-        return MutationOverlay.overlay(
-            json = json,
-            serverJson = cachedJson,
-            pending = all,
-            keyColumns = primaryKeys.of(table),
-            appendsOnlyUnseenKeys = { mutation -> isSyncedOrUnconfirmed(mutation, unconfirmed) },
-            onMutationFailure = ::logSkippedOverlay,
-        )
+        val admission = signature?.let(::admissionOf) ?: QueryAdmission.EVERY_ROW
+        return overlayFor(admission, mutationQueueState.unconfirmedSends()).overlay(cachedJson, all)
     }
 
     /** [overlayCachedPayload] for a payload whose signature is not known. */
@@ -1171,10 +1166,10 @@ internal class OfflineStore(
             val unconfirmed = mutationQueueState.unconfirmedSends()
             when {
                 cachedJson != null ->
-                    if (mutations.isEmpty()) cachedJson else overlayMutations(table, cachedJson, mutations, signature, unconfirmed)
+                    if (mutations.isEmpty()) cachedJson else overlayMutations(cachedJson, mutations, signature, unconfirmed)
 
                 mutations.isNotEmpty() ->
-                    overlayMutations(table, EMPTY_JSON_ARRAY, mutations, signature, unconfirmed)
+                    overlayMutations(EMPTY_JSON_ARRAY, mutations, signature, unconfirmed)
                         .takeUnless { overlaid -> isEmptyJsonArrayPayload(overlaid) }
 
                 else -> null
@@ -1183,29 +1178,24 @@ internal class OfflineStore(
     }
 
     /**
-     * Overlays [mutations] onto [serverJson] for the query identified by [signature].
+     * Overlays [mutations] onto [serverJson] for the query cached under [signature], showing only the
+     * rows that query admits.
      *
-     * @param table Table the payload belongs to, whose primary key de-duplicates appended rows.
-     * @param serverJson Payload (or the in-memory `[]` substrate) to overlay onto.
-     * @param mutations Mutations to apply.
-     * @param signature Canonical signature of the query; the seam through which the query-aware
-     *   overlay scopes INSERT/UPSERT-appended rows to those this query admits.
-     * @param unconfirmedSends Mutations whose send may have reached the server; see [isSyncedOrUnconfirmed].
-     * @return The overlaid payload JSON.
+     * @param unconfirmedSends mutations whose send may have reached the server; see [isSyncedOrUnconfirmed].
      */
     private fun overlayMutations(
-        table: String,
         serverJson: String,
         mutations: List<MutationRow>,
         signature: String,
         unconfirmedSends: Set<Long>,
-    ): String = MutationOverlay.overlay(
+    ): String = overlayFor(admissionOf(signature), unconfirmedSends).overlay(serverJson, mutations)
+
+    /** The overlay for a query with [admission], de-duplicating by key the rows the server may already hold. */
+    private fun overlayFor(admission: QueryAdmission, unconfirmedSends: Set<Long>): MutationOverlay = MutationOverlay(
         json = json,
-        serverJson = serverJson,
-        pending = mutations,
-        targetFilters = admissionOf(signature),
-        keyColumns = primaryKeys.of(table),
-        appendsOnlyUnseenKeys = { mutation -> isSyncedOrUnconfirmed(mutation, unconfirmedSends) },
+        admission = admission,
+        primaryKeys = primaryKeys,
+        mayAlreadyHold = { mutation -> isSyncedOrUnconfirmed(mutation, unconfirmedSends) },
         onMutationFailure = ::logSkippedOverlay,
     )
 
@@ -1217,52 +1207,21 @@ internal class OfflineStore(
         mutation.syncedAtMs != null || mutation.id in unconfirmedSends
 
     /**
-     * Apply a server-successful mutation to every cached SELECT payload for [table] using the
-     * same overlay logic used for pending offline mutations. Honors
-     * [MutationStrategy.QueueIfOffline][io.github.nesfeder.supabase.offline.MutationStrategy.QueueIfOffline]'s
-     * documented "UI reflects immediately" promise on the online-success path — without it,
-     * reactive `observe*` flows emit stale payloads until something forces a re-fetch.
+     * Patches a write the server accepted, or a row it sent, into every cached query of [table], and
+     * creates a payload for each live query of the table that has none and admits one of its rows.
+     * Each query shows only the rows it admits. Rows cached for the table's other queries stand in for
+     * rows the write changes but the query does not hold yet, so a row an UPDATE makes match joins.
      *
-     * The [MutationRow] constructed below is **ephemeral**: it is never persisted to
-     * `mutation_cache`. It exists only as a data carrier for the pure
-     * [MutationOverlay.overlay] function. The only database write is
-     * `objectDao.upsert(...)` on the affected SELECT payload. There is therefore no cleanup
-     * lifecycle, unlike the offline path where real pending mutations get wiped by
-     * [retireCoveredSyncedMutations] after the next successful network SELECT.
+     * Serialized with every other writer of [table]'s cached payloads, and it moves the table's
+     * stale-refresh watermark first, so a response already in flight cannot roll the patch back.
      *
-     * **Materialize-on-write.** After patching existing cached rows, for every live
-     * [liveSignatures] signature of [table] that has *no* cached row, an INSERT/UPSERT creates a
-     * real row from the applied mutation result (the overlay onto an empty list — e.g.
-     * `[insertedRow]`, never a bare seed). This makes a first-time save visible to a live
-     * cache-less subscriber (the fix for the "save then stale UI" bug) without the old fabricated
-     * empty-array intermediate state, and it self-GCs: with no live subscriber, nothing is
-     * materialized and nothing is written.
-     *
-     * @param table Table name whose cached SELECT payloads should be patched.
-     * @param operation One of [MutationOperation.INSERT], [UPSERT][MutationOperation.UPSERT],
-     *   [UPDATE][MutationOperation.UPDATE], or [DELETE][MutationOperation.DELETE].
-     * @param bodyJson Raw JSON body string (array for INSERT/UPSERT, object for UPDATE,
-     *   `"{}"` for DELETE).
-     * @param filterJson Optional encoded [FilterDescriptor]. INSERT/UPSERT typically null;
-     *   UPDATE/DELETE carry their filter so the overlay knows which rows to patch.
-     * @param defaultToNull Mirrors the insert/upsert builder option; only meaningful for
-     *   INSERT/UPSERT.
-     * @param onConflict Mirrors the upsert builder option; only meaningful for UPSERT.
-     * @param ignoreDuplicates Mirrors the upsert builder option; only meaningful for UPSERT.
-     * **Serialized per table.** The whole snapshot → patch → write-back runs under the table's
-     * write lock ([tableWriteLocks]), together with every other writer of that table's cached
-     * payloads. Without it two concurrent overlays on one table lose a write: each snapshots
-     * before the other has written, and the later write-back carries the earlier row back out
-     * of the cache — a batch job's parallel workers did exactly this to a row a screen was
-     * displaying. The watermark is recorded inside the lock too, so a refresh response is
-     * always judged against a watermark that already reflects the overlay it raced.
-     *
-     * @param liveSignatures Signatures with a live collector to materialize INSERT/UPSERT results
-     *   into when they have no cached row. `null` (the default) reads the wired-in
-     *   [liveSignatureProvider], so ordinary mutation-verb callers need not thread it.
-     * @param startedAtTick [monotonicTickNow] as read when the operation behind this patch started —
-     *   for a write, before its request went out. If [clearAll] ran since, nothing is written.
-     *   `null` (the default) takes the tick at the call.
+     * @param operation one of the [MutationOperation] values.
+     * @param bodyJson rows for INSERT and UPSERT, the changed columns for UPDATE, `"{}"` for DELETE.
+     * @param filterJson the encoded [FilterDescriptor] of an UPDATE or DELETE; one that is missing touches nothing.
+     * @param onConflict an UPSERT's conflict columns; `null` matches rows by the table's primary key.
+     * @param liveSignatures the table's queries with a live reader; by default [liveSignatureProvider]'s.
+     * @param startedAtTick [monotonicTickNow] as read when the write started; nothing is written if
+     *   [clearAll] ran since. `null` takes the tick now.
      */
     internal suspend fun patchCachedQueries(
         table: String,
@@ -1276,119 +1235,76 @@ internal class OfflineStore(
         startedAtTick: Long? = null,
     ) {
         requireUserTable(table)
-        // A teardown after this point voids the patch: each write below checks it under the
-        // teardown lock, so the outgoing identity's rows cannot be written back after a wipe.
+        // A clear after this point voids the patch: each write below checks it under the teardown lock
         val guardTick = startedAtTick ?: monotonicTick()
+        val write = MutationRow(
+            table = table,
+            operation = operation,
+            bodyJson = bodyJson,
+            filterJson = filterJson,
+            createdAtMs = nowMillis(),
+            syncedAtMs = null,
+            defaultToNull = defaultToNull,
+            onConflict = onConflict,
+            ignoreDuplicates = ignoreDuplicates,
+        )
         tableWriteLock(table).withLock {
-            // Disqualify every network SELECT already in flight for this table before touching a row:
-            // their responses describe the server as it was before this mutation committed, and
-            // nothing would replay this patch if one of them landed on top of it.
             recordLocalMutation(table)
-
-            val rows = objectDao.allForTable(table)
-
-            // UPSERT with an onConflict clause but no caller-supplied filter is the common case
-            // (an upsert keyed on a natural or composite key). The overlay's UPSERT path
-            // treats a null descriptor as an INSERT (append), which would leave a duplicate row
-            // in the cache. Synthesize a filter from (onConflict cols × values in body) so the
-            // overlay merges into the matching existing row instead.
-            val effectiveFilterJson = filterJson ?: synthesizeFilterFromOnConflict(
-                operation = operation,
-                bodyJson = bodyJson,
-                onConflict = onConflict,
-            )
-
-            val syntheticMutation = MutationRow(
-                table = table,
-                operation = operation,
-                bodyJson = bodyJson,
-                filterJson = effectiveFilterJson,
-                createdAtMs = nowMillis(),
-                syncedAtMs = null,
-                defaultToNull = defaultToNull,
-                onConflict = onConflict,
-                ignoreDuplicates = ignoreDuplicates,
-            )
-
+            val cached = objectDao.allForTable(table)
+            val parsed = cached.map { row -> row to payloadRowsOf(json, row.payload) }
+            val keyColumns = primaryKeys.of(table)
+            val known = rowsByKey(parsed, keyColumns)
             val now = nowMillis()
-            for (row in rows) {
-                // Gate INSERT/UPSERT appends on this specific cached query's own filters, so an online
-                // insert never lands in a signature whose exhaustive WHERE clause excludes it.
-                val updated = MutationOverlay.overlay(
-                    json = json,
-                    serverJson = row.payload,
-                    pending = listOf(syntheticMutation),
-                    targetFilters = admissionOf(row.signature),
-                    onMutationFailure = ::logSkippedOverlay,
-                )
-                if (updated != row.payload && !writeUnlessTornDown(guardTick, row.copy(payload = updated, updatedAt = now))) {
-                    return@withLock
-                }
+            for ((row, rows) in parsed) {
+                if (rows == null) continue
+                val overlay = overlayFor(admissionOf(row.signature), unconfirmedSends = emptySet())
+                val elsewhere = known.filter { knownRow -> indexOfKey(rows, knownRow, keyColumns) == null }
+                val patched = overlay.overlayRows(rows, listOf(write), knownRows = elsewhere)
+                if (patched.visible == rows) continue
+                if (!writeUnlessTornDown(guardTick, row.copy(payload = overlay.encode(patched.visible), updatedAt = now))) return@withLock
             }
-
-            materializeForLiveSignatures(
-                table = table,
-                operation = operation,
-                syntheticMutation = syntheticMutation,
-                existingSignatures = rows.mapTo(mutableSetOf()) { row -> row.signature },
-                liveSignatures = liveSignatures ?: liveSignatureProvider(table),
-                now = now,
-                guardTick = guardTick,
-            )
+            val uncachedLive = (liveSignatures ?: liveSignatureProvider(table)) - cached.mapTo(mutableSetOf()) { row -> row.signature }
+            createLivePayloads(table, uncachedLive, write, known, now, guardTick)
         }
     }
 
     /**
-     * Writes [row] unless [clearAll] has run since [guardTick], as one step with the teardown.
-     *
-     * @return `false` when a teardown voided the write.
+     * The rows of [parsed] payloads that carry the whole [keyColumns], one per key, taken from the most
+     * recently written payload that holds it.
      */
-    private suspend fun writeUnlessTornDown(guardTick: Long, row: ObjectRow): Boolean = teardownMutex.withLock {
-        if (predatesCacheTeardown(guardTick)) {
-            false
-        } else {
-            objectDao.upsert(row)
-            true
+    private fun rowsByKey(parsed: List<Pair<ObjectRow, List<JsonElement>?>>, keyColumns: List<String>): List<JsonObject> {
+        val seen = mutableListOf<JsonObject>()
+        parsed.sortedByDescending { (row, _) -> row.updatedAt }.forEach { (_, rows) ->
+            rows.orEmpty().forEach { element ->
+                val row = element as? JsonObject
+                if (row != null && primaryKeyOf(row, keyColumns) != null && indexOfKey(seen, row, keyColumns) == null) seen += row
+            }
         }
+        return seen
     }
 
     /**
-     * Materialize-on-write: create a real cache row for each live [liveSignatures] signature of
-     * [table] that has no cached row, from [syntheticMutation] overlaid onto an empty list. Only
-     * row-producing operations (INSERT/UPSERT) materialize — an UPDATE/DELETE onto an empty list
-     * yields nothing to show. A materialized result that is still empty is skipped so no phantom
-     * empty row is persisted.
+     * Writes a payload for each of [signatures], queries a live reader observes that have none, of the
+     * rows [write] wrote that the query admits. Nothing is written for a query that would stay empty,
+     * and nothing once [clearAll] has run since [guardTick].
      *
-     * @param table Table being mutated.
-     * @param operation The mutation operation.
-     * @param syntheticMutation Ephemeral overlay carrier for the applied mutation.
-     * @param existingSignatures Signatures that already have a cached row (already patched above).
-     * @param liveSignatures Signatures with a live collector.
-     * @param now Timestamp to stamp on any created row.
-     * @param guardTick The patch's start tick; nothing is written once [clearAll] has run since.
+     * @param known rows cached for the table's other queries, the full rows an UPDATE or UPSERT changes.
      */
-    private suspend fun materializeForLiveSignatures(
+    private suspend fun createLivePayloads(
         table: String,
-        operation: String,
-        syntheticMutation: MutationRow,
-        existingSignatures: Set<String>,
-        liveSignatures: Set<String>,
+        signatures: Set<String>,
+        write: MutationRow,
+        known: List<JsonObject>,
         now: Long,
         guardTick: Long,
     ) {
-        if (operation != MutationOperation.INSERT && operation != MutationOperation.UPSERT) return
-
-        for (signature in liveSignatures) {
-            if (signature in existingSignatures) continue
-            val created = MutationOverlay.overlay(
-                json = json,
-                serverJson = EMPTY_JSON_ARRAY,
-                pending = listOf(syntheticMutation),
-                onMutationFailure = ::logSkippedOverlay,
-            )
-            if (isEmptyJsonArrayPayload(created)) continue
-            val row = ObjectRow(table = table, signature = signature, payload = created, updatedAt = now)
-            // A materialized payload is not a network response: it contains no synced mutation.
+        for (signature in signatures) {
+            val overlay = overlayFor(admissionOf(signature), unconfirmedSends = emptySet())
+            val admission = admissionOf(signature)
+            val created = overlay.overlayRows(emptyList(), listOf(write), knownRows = known).written.filter(admission::admits)
+            if (created.isEmpty()) continue
+            val row = ObjectRow(table = table, signature = signature, payload = overlay.encode(created), updatedAt = now)
+            // A created payload is not a network response: it contains no synced mutation
             val written = mutationQueueMutex.withLock {
                 teardownMutex.withLock {
                     if (predatesCacheTeardown(guardTick)) {
@@ -1404,46 +1320,36 @@ internal class OfflineStore(
     }
 
     /**
-     * For an UPSERT with `onConflict = "col_a,col_b"`, build a filter `col_a = value_a AND
-     * col_b = value_b` by extracting those columns' values from [bodyJson]. Returns null for
-     * any non-UPSERT, any missing input, or bodies the overlay can't handle (non-object rows,
-     * non-primitive values on the conflict keys).
+     * Marks every cached query of [table] stale after a write the cache cannot patch: a response already
+     * in flight is refused, and a read with a cache duration fetches again. The payloads stay, so an
+     * offline read without a duration still has them.
      *
-     * Only called when the caller didn't already provide a filter descriptor.
+     * @param startedAtTick [monotonicTickNow] as read when the write started; nothing is written if
+     *   [clearAll] ran since.
      */
-    private fun synthesizeFilterFromOnConflict(
-        operation: String,
-        bodyJson: String,
-        onConflict: String?,
-    ): String? {
-        if (operation != MutationOperation.UPSERT) return null
-        if (onConflict.isNullOrBlank()) return null
-
-        val row: JsonObject = runCatching {
-            when (val parsed = json.parseToJsonElement(bodyJson)) {
-                is JsonObject -> parsed
-                is JsonArray -> parsed.firstOrNull() as? JsonObject
-                else -> null
+    suspend fun markCachedQueriesStale(table: String, startedAtTick: Long) {
+        requireUserTable(table)
+        tableWriteLock(table).withLock {
+            recordLocalMutation(table)
+            for (row in objectDao.allForTable(table)) {
+                if (row.updatedAt == STALE_UPDATED_AT) continue
+                if (!writeUnlessTornDown(startedAtTick, row.copy(updatedAt = STALE_UPDATED_AT))) return@withLock
             }
-        }.getOrNull() ?: return null
-
-        val columns = onConflict.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        if (columns.isEmpty()) return null
-
-        val conditions = columns.map { column ->
-            val value = row[column] as? JsonPrimitive ?: return null
-            FilterDescriptor.Condition(
-                column = column,
-                operatorId = "eq",
-                value = value.content,
-            )
         }
+    }
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = conditions,
-        )
-        return FilterEngine.encode(descriptor, json)
+    /**
+     * Writes [row] unless [clearAll] has run since [guardTick], as one step with the teardown.
+     *
+     * @return `false` when a teardown voided the write.
+     */
+    private suspend fun writeUnlessTornDown(guardTick: Long, row: ObjectRow): Boolean = teardownMutex.withLock {
+        if (predatesCacheTeardown(guardTick)) {
+            false
+        } else {
+            objectDao.upsert(row)
+            true
+        }
     }
 
     /**
@@ -1622,6 +1528,9 @@ internal class OfflineStore(
     }
 
     private companion object {
+        /** The `updated_at` of a cached payload known to be stale: older than any cache duration. */
+        const val STALE_UPDATED_AT = 0L
+
         /**
          * How long a synced mutation may stand in for its write on cached queries that have not been
          * refreshed since it replayed: a day, by the device clock.

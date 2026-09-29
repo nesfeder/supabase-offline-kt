@@ -346,7 +346,7 @@ internal class SupabaseOfflineClientImpl(
     /** Told, with the count of calls still in flight, when [close] returns before the release. */
     private val onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     /** Each table's primary-key columns; `id` for every table unless the app says otherwise. */
-    @Suppress("unused") private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
 ) : SupabaseOfflineClient {
 
     /**
@@ -381,7 +381,7 @@ internal class SupabaseOfflineClientImpl(
         sdkLogger = sdkLogger,
     )
 
-    private val mutationQueueReplayer = MutationQueueReplayer(store, supabase, sdkLogger = sdkLogger)
+    private val mutationQueueReplayer = MutationQueueReplayer(store, supabase, sdkLogger = sdkLogger, primaryKeys = primaryKeys)
 
     /** Runs the replay passes the engine starts on its own, in the client's scope so [close] stops them. */
     private val backgroundSync = BackgroundSyncTrigger(scope = clientScope, sdkLogger = sdkLogger) {
@@ -413,6 +413,7 @@ internal class SupabaseOfflineClientImpl(
         // into a real cache row for a cache-less-but-observed subscription.
         store.liveSignatureProvider = refreshCoordinator::liveSignaturesFor
         store.sdkLogger = sdkLogger
+        store.primaryKeys = primaryKeys
         // Overlays and counts show the current session's queued writes only.
         store.identityProvider = ::overlayIdentityValue
         store.identityChanges = sessionChanges()
@@ -692,7 +693,7 @@ internal class SupabaseOfflineClientImpl(
         ensureOpen()
         return operationGate.callCollecting(
             store.pendingMutationsFlow(table).map { rows ->
-                rows.mapNotNull { row -> row.toPendingMutation(store.json, DefaultPrimaryKeys) }
+                rows.mapNotNull { row -> row.toPendingMutation(store.json, primaryKeys) }
             },
         )
     }
@@ -706,7 +707,7 @@ internal class SupabaseOfflineClientImpl(
         ensureOpen()
         return operationGate.callCollecting(
             store.mutationQueueState.rejectionsFlow().map { entries ->
-                entries.map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+                entries.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) }
             },
         )
     }
@@ -717,7 +718,7 @@ internal class SupabaseOfflineClientImpl(
      * @return The list; it throws if the persisted list cannot be decoded.
      */
     internal suspend fun rejectedMutationList(): List<RejectedMutation> = operationGate.call {
-        store.mutationQueueState.rejections().map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+        store.mutationQueueState.rejections().map { entry -> entry.toRejectedMutation(store.json, primaryKeys) }
     }
 
     /**

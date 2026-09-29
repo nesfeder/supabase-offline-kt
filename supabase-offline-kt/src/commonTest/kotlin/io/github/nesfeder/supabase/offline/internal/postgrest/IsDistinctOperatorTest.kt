@@ -77,7 +77,7 @@ class IsDistinctOperatorTest {
         val replayed = SelectRequestBuilder(SCHEMA, CONVERSION)
 
         // When
-        val matches = FilterEngine.matchesRow(row, descriptor)
+        val match = rowMatch(row, descriptor)
         val applied = FilterEngine.applyTo(replayed, descriptor)
 
         // Then — replayed through the generic filter call, exactly as the caller wrote it
@@ -85,18 +85,18 @@ class IsDistinctOperatorTest {
         assertEquals(1, applied)
         assertEquals(mapOf("status" to listOf("isdistinct.done")), replayed.params)
         assertTrue(FilterEngine.replaysFully(descriptor))
-        // And — the overlay still cannot evaluate it, so it never claims a match
-        assertFalse(matches)
+        // And — the overlay does not evaluate it, so it never claims a match
+        assertEquals(RowMatch.UNKNOWN, match)
     }
 
     @Test
-    fun a_cached_query_filtered_on_isdistinct_is_not_exhaustive() {
+    fun a_cached_query_filtered_on_isdistinct_admits_any_row() {
         // Given / When
-        val filters = assertNotNull(admissionOf("todos?status=isdistinct.done"))
+        val admission = admissionOf("todos?status=isdistinct.done")
 
-        // Then — the admit gate falls back to appending rather than hiding a row
-        assertFalse(filters.isExhaustive)
-        assertNull(filters.descriptor)
+        // Then — the condition is not evaluated, so it never hides a row
+        assertEquals(emptyList(), admission.conditions)
+        assertTrue(admission.admits(buildJsonObject { put("status", "done") }))
     }
 
     @Test
