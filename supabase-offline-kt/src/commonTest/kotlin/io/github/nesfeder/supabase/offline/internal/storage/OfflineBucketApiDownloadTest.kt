@@ -33,7 +33,7 @@ class OfflineBucketApiDownloadTest {
 
     private lateinit var baseDir: Path
     private lateinit var delegate: FakeBucketApi
-    private lateinit var api: OfflineBucketApiImpl
+    private lateinit var api: CachingBucketApi
     private val logger = RecordingOfflineLogger()
 
     @BeforeTest

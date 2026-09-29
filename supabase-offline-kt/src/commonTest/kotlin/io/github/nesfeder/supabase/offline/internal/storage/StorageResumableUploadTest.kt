@@ -58,7 +58,7 @@ class StorageResumableUploadTest {
     )
 
     /** Waits, on real time, for the cached copy of [PATH] to go. */
-    private suspend fun awaitUncached(bucket: OfflineBucketApiImpl) {
+    private suspend fun awaitUncached(bucket: CachingBucketApi) {
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) { while (bucket.cachedFile(PATH) != null) delay(5) }
         }

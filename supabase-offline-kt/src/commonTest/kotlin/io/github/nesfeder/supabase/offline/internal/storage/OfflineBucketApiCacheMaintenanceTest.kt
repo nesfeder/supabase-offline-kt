@@ -20,7 +20,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * How [OfflineBucketApiImpl] keeps its disk cache in step with the bucket operations it forwards:
+ * How [CachingBucketApi] keeps its disk cache in step with the bucket operations it forwards:
  * `delete` removes the cached file and its row, `move` carries both across, `copy` leaves the cache
  * alone, and `cachedFile` answers only for a tracked file that is still on disk.
  *
@@ -32,7 +32,7 @@ class OfflineBucketApiCacheMaintenanceTest {
     private lateinit var baseDir: Path
     private lateinit var store: OfflineStore
     private lateinit var delegate: FakeBucketApi
-    private lateinit var api: OfflineBucketApiImpl
+    private lateinit var api: CachingBucketApi
 
     @BeforeTest
     fun setUp() {

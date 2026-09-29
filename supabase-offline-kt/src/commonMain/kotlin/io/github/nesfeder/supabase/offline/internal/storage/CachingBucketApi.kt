@@ -68,7 +68,7 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * @param operationGate the client's gate, which every member passes, so a closed client refuses them.
  * @param renderImagePath the encoded path prefix of a transformed download (see [renderImagePathOf]).
  */
-internal class OfflineBucketApiImpl(
+internal class CachingBucketApi(
     private val delegate: BucketApi,
     private val cache: StorageFileCache,
     private val sdkLogger: SdkLogger,
@@ -78,7 +78,7 @@ internal class OfflineBucketApiImpl(
 ) : OfflineBucketApi, BucketApi by delegate {
 
     override fun setHeader(name: String, value: String): OfflineBucketApi =
-        OfflineBucketApiImpl(delegate.setHeader(name, value), cache, sdkLogger, backgroundScope, operationGate, renderImagePath)
+        CachingBucketApi(delegate.setHeader(name, value), cache, sdkLogger, backgroundScope, operationGate, renderImagePath)
 
     override val resumable: ResumableClient by lazy {
         InvalidatingResumableClient(

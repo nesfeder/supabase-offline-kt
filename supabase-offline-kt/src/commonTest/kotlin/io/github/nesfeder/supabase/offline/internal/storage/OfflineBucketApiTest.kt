@@ -35,7 +35,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import kotlin.time.ExperimentalTime
 
 /**
- * Behavioral tests for [OfflineBucketApiImpl]'s download-with-disk-cache path: successful caching,
+ * Behavioral tests for [CachingBucketApi]'s download-with-disk-cache path: successful caching,
  * transport-failure cache fallback, object-missing eviction (byte-array and byte-channel
  * overloads), transient-auth-failure cache retention, and cancellation propagation.
  *
@@ -56,7 +56,7 @@ class OfflineBucketApiTest {
     private lateinit var baseDir: Path
     private lateinit var store: OfflineStore
     private lateinit var fake: FakeBucketApi
-    private lateinit var offlineApi: OfflineBucketApiImpl
+    private lateinit var offlineApi: CachingBucketApi
 
     private val localFile: Path get() = objectFilePathOrNull(baseDir, BUCKET, OBJECT_PATH) ?: error("uncacheable fixture path")
 

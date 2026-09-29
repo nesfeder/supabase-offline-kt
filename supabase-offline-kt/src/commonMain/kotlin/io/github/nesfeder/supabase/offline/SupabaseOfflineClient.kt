@@ -23,7 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFa
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.childEngineScope
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
-import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApiImpl
+import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
 import io.github.jan.supabase.SupabaseClient
@@ -486,7 +486,7 @@ internal class SupabaseOfflineClientImpl(
     override fun storage(bucket: String): OfflineBucketApi {
         ensureOpen()
         ensureStorageInstalled()
-        return OfflineBucketApiImpl(
+        return CachingBucketApi(
             delegate = supabase.storage.from(bucket),
             cache = fileCache,
             sdkLogger = sdkLogger,

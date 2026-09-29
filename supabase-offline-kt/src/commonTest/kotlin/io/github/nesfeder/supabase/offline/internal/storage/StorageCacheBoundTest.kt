@@ -68,7 +68,7 @@ class StorageCacheBoundTest {
         bucket.api.downloadAuthenticated(path) { }
     }
 
-    private class StorageTestBucket(val api: OfflineBucketApiImpl, val cache: StorageFileCache)
+    private class StorageTestBucket(val api: CachingBucketApi, val cache: StorageFileCache)
 
     private fun bucket(maxSizeBytes: Long?): StorageTestBucket {
         val cache = cache(maxSizeBytes)

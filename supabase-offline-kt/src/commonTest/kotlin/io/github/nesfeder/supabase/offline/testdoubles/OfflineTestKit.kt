@@ -17,7 +17,7 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
-import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApiImpl
+import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
 import io.github.jan.supabase.storage.BucketApi
@@ -207,7 +207,7 @@ internal fun newTestBucketApi(
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
     cache: StorageFileCache = newTestFileCache(baseDirectory = baseDirectory, store = store, sdkLogger = sdkLogger),
     backgroundScope: CoroutineScope = newEngineScope(sdkLogger),
-): OfflineBucketApiImpl = OfflineBucketApiImpl(
+): CachingBucketApi = CachingBucketApi(
     delegate = delegate,
     cache = cache,
     sdkLogger = sdkLogger,

@@ -11,7 +11,7 @@ internal const val STORAGE_DIRECTORY_NAME: String = "storage"
 
 /**
  * Directory under the data directory for every entry whose name is not plain (see
- * [isPlainObjectName]), image-transform variants included, each in a file named by a hash of its key.
+ * [isPlainName]), image-transform variants included, each in a file named by a hash of its key.
  */
 internal const val HASHED_DIRECTORY_NAME: String = "storage-hashed"
 
@@ -65,7 +65,7 @@ private fun isCacheableSegment(segment: String): Boolean =
  * @param name the bucket identifier or object path, already known to be cacheable.
  * @return `true` when it is stored verbatim.
  */
-internal fun isPlainObjectName(name: String): Boolean =
+internal fun isPlainName(name: String): Boolean =
     name.length <= MAX_PLAIN_PATH_BYTES &&
         name.all { character -> character in ' '..'~' } &&
         name.split('/').all { segment -> segment.length <= MAX_PLAIN_SEGMENT_BYTES }
@@ -82,7 +82,7 @@ internal fun isPlainObjectName(name: String): Boolean =
  */
 internal fun objectFilePathOrNull(dataDirectory: Path, bucketId: String, objectPath: String): Path? {
     if (!isCacheableBucketId(bucketId) || !isCacheableObjectPath(objectPath)) return null
-    if (!isPlainObjectName(bucketId) || !isPlainObjectName(objectPath)) {
+    if (!isPlainName(bucketId) || !isPlainName(objectPath)) {
         return hashedFilePath(dataDirectory, "$bucketId::$objectPath")
     }
     val bucketDirectory = dataDirectory / STORAGE_DIRECTORY_NAME / bucketId
