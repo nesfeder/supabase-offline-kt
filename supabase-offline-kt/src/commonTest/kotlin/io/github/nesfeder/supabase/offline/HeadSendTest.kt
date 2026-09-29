@@ -2,9 +2,11 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -22,7 +24,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
 
 /**
  * A `QueueIfOffline` write at the head of its identity's queue is sent at once, and what the server
@@ -221,13 +222,95 @@ class HeadSendTest {
         // When
         val outcome = runCatching { rename("A") }
 
-        // Then — the failure surfaces, but the server has the write, so nothing will send it again
-        assertTrue(outcome.isFailure)
+        // Then — the server applied it, so the caller is told so, and nothing will send it again
+        assertEquals(MutationOutcome.Applied::class, outcome.getOrThrow()::class)
         assertEquals(1, server.requests.size)
         assertEquals(0, store.allPendingMutations().size)
     }
 
+    @Test
+    fun a_write_queued_behind_a_head_that_is_refused_gets_a_pass() = runTest {
+        // Given — the first write is on the wire, and the second queues behind it
+        val parked = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        server.answer = { request ->
+            if ("\"A\"" in request.body) {
+                parked.complete(Unit)
+                release.await()
+                postgrestError(HttpStatusCode.InternalServerError, code = "54000")
+            } else {
+                okJson("[]")
+            }
+        }
+        val first = async { runCatching { rename("A") } }
+        parked.await()
+        rename("B")
+        val requestsWhileTheHeadWasOut = syncRequests
+
+        // When — the head is refused
+        release.complete(Unit)
+        first.await()
+
+        // Then — the refusal asked for another pass, so the write behind it is not stranded
+        assertEquals(1, requestsWhileTheHeadWasOut)
+        assertEquals(2, syncRequests)
+    }
+
+    @Test
+    fun a_503_at_the_head_leaves_the_write_queued() = runTest {
+        // Given — PostgREST could not reach the database, so the write never ran
+        server.answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST001") }
+
+        // When
+        val outcome = rename("A")
+
+        // Then
+        assertEquals(MutationOutcome.Queued, outcome)
+        assertEquals(1, store.allPendingMutations().size)
+    }
+
+    @Test
+    fun a_520_at_the_head_leaves_the_write_queued() = runTest {
+        // Given
+        server.answer = { postgrestError(HttpStatusCode(520, "Unknown Error"), code = "PGRST000") }
+
+        // When
+        val outcome = rename("A")
+
+        // Then
+        assertEquals(MutationOutcome.Queued, outcome)
+        assertEquals(1, store.allPendingMutations().size)
+    }
+
+    @Test
+    fun a_write_a_pass_is_sending_is_not_sent_again_at_the_head() = runTest {
+        // Given — a queued write that a pass is sending, held open by the server
+        session = USER_A
+        val id = (store.enqueueOwnedBy(USER_A.storedValue) { enqueueUpdate(TABLE, patch("A"), byId("1")) } as EnqueueOutcome.Queued).id
+        val parked = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        server.answer = {
+            parked.complete(Unit)
+            release.await()
+            okJson("[]")
+        }
+        val pass = async { syncer.sync() }
+        parked.await()
+
+        // When — its own caller offers it at the head meanwhile
+        val outcome = syncer.sendAtHead(id, USER_A, send = { error("sent twice") }, onAccepted = {})
+        release.complete(Unit)
+        pass.await()
+
+        // Then — it went out once
+        assertEquals(OfflineMutationSyncer.HeadSendOutcome.NotAtHead, outcome)
+        assertEquals(1, server.requests.size)
+    }
+
     private fun patch(title: String): JsonElement = Json.parseToJsonElement("""{"title":"$title"}""")
+
+    private fun byId(id: String): FilterDescriptor =
+        FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))
 
     private companion object {
         const val TABLE = "tasks"

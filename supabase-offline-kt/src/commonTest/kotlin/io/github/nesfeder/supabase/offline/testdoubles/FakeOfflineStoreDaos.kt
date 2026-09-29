@@ -1,6 +1,8 @@
 package io.github.nesfeder.supabase.offline.testdoubles
 
+import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryObjectDao
@@ -125,4 +127,60 @@ internal class FakeMutationDao : InMemoryMutationDao() {
 
     /** Snapshot of the queued rows (all rows, pending + synced), for queue assertions. */
     internal val inserted: List<MutationRow> get() = mutations.value
+
+    /** How many times a query read every pending row of the queue or of a table. */
+    var pendingListReads: Int = 0
+        private set
+
+    /** When set, the next [deleteAll] fails, as a process dying part-way through clearing would. */
+    var failNextDeleteAll: Boolean = false
+
+    /** When set, the next [deleteById] fails, as a process dying before the delete would. */
+    var failNextDeleteById: Boolean = false
+
+    override suspend fun pendingAll(): List<MutationRow> {
+        pendingListReads++
+        return super.pendingAll()
+    }
+
+    override suspend fun pendingForTable(table: String): List<MutationRow> {
+        pendingListReads++
+        return super.pendingForTable(table)
+    }
+
+    override suspend fun deleteAll() {
+        if (failNextDeleteAll) {
+            failNextDeleteAll = false
+            error("Scripted failure part-way through clearing")
+        }
+        super.deleteAll()
+    }
+
+    override suspend fun deleteById(id: Long) {
+        if (failNextDeleteById) {
+            failNextDeleteById = false
+            error("Scripted failure before the delete")
+        }
+        super.deleteById(id)
+    }
+}
+
+/**
+ * A real [MutationDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can check
+ * that a clear which fails part-way changes nothing on disk.
+ */
+internal class DeleteAllFailingMutationDao(real: MutationDao) : MutationDao by real {
+    override suspend fun deleteAll() {
+        error("Scripted failure of the mutation delete")
+    }
+}
+
+/**
+ * A real [ObjectDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can check
+ * that a clear which fails part-way changes nothing on disk.
+ */
+internal class DeleteAllFailingObjectDao(real: ObjectDao) : ObjectDao by real {
+    override suspend fun deleteAll() {
+        error("Scripted failure of the object-cache delete")
+    }
 }

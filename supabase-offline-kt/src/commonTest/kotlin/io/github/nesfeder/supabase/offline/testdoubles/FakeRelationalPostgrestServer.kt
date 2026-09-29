@@ -22,7 +22,9 @@ import kotlinx.serialization.json.contentOrNull
  *
  * It understands exactly what the engine's replay sends: `POST` (with `on_conflict` and the
  * `resolution=ignore-duplicates` / `merge-duplicates` preferences), `PATCH` and `DELETE` scoped by
- * `eq` filters, and `GET` scoped the same way. Anything else is answered `400`.
+ * `eq` filters, and `GET` scoped the same way. Anything else is answered `400`. With
+ * `Prefer: count=exact` a `POST` answers a `Content-Range` whose count is the rows it wrote, as
+ * PostgREST does.
  *
  * @property primaryKey the primary-key column every table shares.
  * @property foreignKeys child table → the foreign key it must satisfy.
@@ -47,6 +49,12 @@ internal class FakeRelationalPostgrestServer(
      * connection drops before the response arrives — a lost response.
      */
     var loseResponseAfterCommit: ((RecordedRequest) -> Boolean)? = null
+
+    /**
+     * Tables with no unique constraint on [primaryKey]: an upsert on them is answered `400` with
+     * SQLSTATE `42P10`, as Postgres answers an `ON CONFLICT` target that matches no constraint.
+     */
+    var tablesWithoutUniqueKey: Set<String> = emptySet()
 
     /** The recording server underneath; its `requests` list everything received. */
     val recorder: RecordingPostgrestServer = RecordingPostgrestServer(answer = { request -> handle(request) })
@@ -84,8 +92,16 @@ internal class FakeRelationalPostgrestServer(
     private fun MockRequestHandleScope.insert(request: RecordedRequest): HttpResponseData {
         val body = Json.parseToJsonElement(request.body) as JsonArray
         val resolution = request.prefer.orEmpty().split(',').map { it.trim() }
+        if ("on_conflict" in request.query && request.table in tablesWithoutUniqueKey) {
+            return postgrestError(
+                HttpStatusCode.BadRequest,
+                code = "42P10",
+                message = "there is no unique or exclusion constraint matching the ON CONFLICT specification",
+            )
+        }
         val stored = tables.getOrPut(request.table) { mutableMapOf() }
         val staged = stored.toMutableMap()
+        var written = 0
         for (element in body) {
             val row = element as JsonObject
             val foreignKey = foreignKeys[request.table]
@@ -102,9 +118,15 @@ internal class FakeRelationalPostgrestServer(
             val key = keyOf(row, generated = staged.size + 1)
             val existing = staged[key]
             when {
-                existing == null -> staged[key] = withKey(row, key)
+                existing == null || request.table in tablesWithoutUniqueKey -> {
+                    staged[if (existing == null) key else "$key-${staged.size + 1}"] = withKey(row, key)
+                    written++
+                }
                 "resolution=ignore-duplicates" in resolution -> Unit
-                "resolution=merge-duplicates" in resolution -> staged[key] = JsonObject(existing + row)
+                "resolution=merge-duplicates" in resolution -> {
+                    staged[key] = JsonObject(existing + row)
+                    written++
+                }
                 else -> return postgrestError(
                     HttpStatusCode.Conflict,
                     code = "23505",
@@ -114,7 +136,8 @@ internal class FakeRelationalPostgrestServer(
         }
         stored.clear()
         stored.putAll(staged)
-        return okJson("[]")
+        val countHeader = if ("count=exact" in resolution) mapOf(CONTENT_RANGE to "*/$written") else emptyMap()
+        return okJson("[]", countHeader)
     }
 
     private fun MockRequestHandleScope.update(request: RecordedRequest): HttpResponseData {
@@ -150,5 +173,6 @@ internal class FakeRelationalPostgrestServer(
 
     private companion object {
         val NON_FILTER_PARAMS = setOf("select", "columns", "on_conflict")
+        const val CONTENT_RANGE = "Content-Range"
     }
 }

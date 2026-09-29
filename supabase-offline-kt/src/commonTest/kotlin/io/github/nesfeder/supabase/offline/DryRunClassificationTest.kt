@@ -11,6 +11,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
+import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -107,6 +109,28 @@ class DryRunClassificationTest {
             }
         }
         assertTrue(mutationDao.inserted.isEmpty())
+    }
+
+    @Test
+    fun a_write_that_fails_before_its_request_is_built_is_not_reported_as_unclassifiable() = runTest {
+        // Given — an expired session, and no network to refresh it: supabase-kt fails the write
+        // while building its request, before the dry-run check can read it
+        val logger = RecordingOfflineLogger()
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
+        supabase.signInForTest("user-a", expiresInSeconds = -60)
+        val builder = OfflinePostgrestQueryBuilderImpl(
+            delegate = supabase.postgrest.from(TABLE),
+            store = store,
+            sdkLogger = logger.asSdkLogger(),
+        )
+
+        // When
+        val outcome = runCatching { builder.updateJson(patch(), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } } }
+
+        // Then — the write's own failure reaches the caller, without a false "cannot tell" ERROR
+        assertTrue(outcome.isFailure)
+        assertEquals(0, logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") })
     }
 
     private fun patch(): JsonElement = Json.parseToJsonElement("""{"title":"new"}""")

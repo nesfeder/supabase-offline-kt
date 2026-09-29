@@ -3,9 +3,14 @@
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.jan.supabase.annotations.SupabaseInternal
+import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_URL
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.request.post
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +23,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 
 /**
  * Pins the upstream behaviour the dry-run probe depends on, so a supabase-kt change breaks this
@@ -94,5 +101,31 @@ class PreferHeaderProbeContractTest {
         // Then — reads are not the probe's business
         assertEquals(1, server.requests.size)
         assertFalse(probe.observed)
+    }
+
+    @Test
+    fun an_apps_retry_plugin_does_not_retry_the_dry_run_check() = runTest {
+        // Given — an app that retries every failed request three times, 400 ms apart
+        val supabase = newTestSupabaseClient(engine = server.engine) {
+            install(Postgrest) { maxRetries = 0 }
+            httpConfig {
+                install(HttpRequestRetry) {
+                    retryOnException(maxRetries = 3, retryOnTimeout = true)
+                    constantDelay(millis = 400)
+                }
+            }
+        }
+        val builder = OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from("todos"), store = newTestOfflineStore())
+
+        // When — one QueueIfOffline write, timed on the real clock
+        val elapsed = withContext(Dispatchers.Default) {
+            val mark = TimeSource.Monotonic.markNow()
+            builder.updateJson(Json.parseToJsonElement("""{"title":"x"}""")) { filter { eq("id", 1) } }
+            mark.elapsedNow()
+        }
+
+        // Then — the check that stops before the network was never retried
+        assertTrue(elapsed < 400.milliseconds, "the write took $elapsed")
+        assertEquals(1, server.requests.size)
     }
 }

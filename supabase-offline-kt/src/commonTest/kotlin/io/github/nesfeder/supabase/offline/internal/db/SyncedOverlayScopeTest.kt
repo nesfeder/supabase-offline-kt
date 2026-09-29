@@ -3,6 +3,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -122,6 +123,50 @@ class SyncedOverlayScopeTest {
         assertEquals("""[{"id":"a","list_id":"L"}]""", store.cachePayloadWithOverlayFlow(TABLE, LIST_L).first())
     }
 
+    @Test
+    fun a_refreshed_query_keeps_the_servers_version_after_a_restart() = runTest {
+        // Given — a keyless insert and an update replayed; ALL refreshed afterwards with the server's
+        // rows, while another query stays unrefreshed and so keeps the synced mutations around
+        objectDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
+        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","title":"orig"}]""")
+        tick = 10L
+        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"keyless"}]"""))
+        store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
+        tick = 20L
+        mutationDao.inserted.forEach { mutation -> store.markMutationSynced(id = mutation.id, table = TABLE) }
+        tick = 30L
+        val started = store.monotonicTickNow()
+        tick = 40L
+        store.addPayload(TABLE, ALL, """[{"id":"a","title":"C"},{"id":"srv","title":"keyless"}]""", requestStartedAtTick = started)
+        store.clearSyncedMutationsForTable(TABLE, started)
+        val beforeRestart = store.cachePayloadWithOverlayFlow(TABLE, ALL).first()
+
+        // When — the app starts again an hour later
+        clock += 60 * 60 * 1000
+        val afterRestart = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, nowMillis = { clock })
+            .cachePayloadWithOverlayFlow(TABLE, ALL)
+            .first()
+
+        // Then — ALL still shows the server's version: C, and the keyless row once
+        assertEquals("""[{"id":"a","title":"C"},{"id":"srv","title":"keyless"}]""", beforeRestart)
+        assertEquals(beforeRestart, afterRestart)
+    }
+
+    @Test
+    fun a_pass_retires_synced_mutations_older_than_a_day() = runTest {
+        // Given — a replayed update a never-refreshed query still shows, a day old
+        objectDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
+        store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        clock += ONE_DAY_MS + 1
+
+        // When — a pass runs, with nothing left to send
+        OfflineMutationSyncer(store = store, supabase = RecordingPostgrestServer().supabaseClient()).sync()
+
+        // Then
+        assertEquals(0, mutationDao.inserted.size)
+    }
+
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
 
     private fun element(json: String): JsonElement = Json.parseToJsonElement(json)
@@ -133,6 +178,7 @@ class SyncedOverlayScopeTest {
         const val TABLE = "tasks"
         const val LIST_L = "tasks?list_id=eq.L"
         const val ALL = "tasks"
+        const val ORPHAN = "tasks?id=eq.a"
         const val ONE_DAY_MS = 24L * 60 * 60 * 1000
     }
 }

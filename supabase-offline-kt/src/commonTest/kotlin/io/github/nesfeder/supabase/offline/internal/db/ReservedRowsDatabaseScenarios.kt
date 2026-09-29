@@ -1,5 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.testdoubles.DeleteAllFailingMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.DeleteAllFailingObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingRoomCallback
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.assertEquals
@@ -172,6 +174,60 @@ internal class ReservedRowsDatabaseScenarios(
             assertEquals(listOf(1L, 2L, 3L, 4L), mutationDao.pendingAll().map { row -> row.id })
         } finally {
             database.close()
+        }
+    }
+
+    /**
+     * Clearing local data is one transaction: when its mutation delete fails, the owner records,
+     * the mutations and the cache are all still there on disk.
+     */
+    suspend fun aClearWhoseMutationDeleteFailsChangesNothing(path: String) {
+        aClearThatFailsPartWayChangesNothing(path) { database ->
+            newTestOfflineStore(
+                objectDao = database.objectDao(),
+                storageDao = database.storageDao(),
+                mutationDao = DeleteAllFailingMutationDao(database.mutationDao()),
+            )
+        }
+    }
+
+    /**
+     * Clearing local data is one transaction: when its object-cache delete fails, the owner
+     * records, the mutations and the cache are all still there on disk.
+     */
+    suspend fun aClearWhoseObjectCacheDeleteFailsChangesNothing(path: String) {
+        aClearThatFailsPartWayChangesNothing(path) { database ->
+            newTestOfflineStore(
+                objectDao = DeleteAllFailingObjectDao(database.objectDao()),
+                storageDao = database.storageDao(),
+                mutationDao = database.mutationDao(),
+            )
+        }
+    }
+
+    private suspend fun aClearThatFailsPartWayChangesNothing(path: String, storeFailingIn: (OfflineDatabase) -> OfflineStore) {
+        // Given — the shipped database with owner records, and a clear that fails part-way
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        val cleared = try {
+            database.writeReservedRows()
+            runCatching { storeFailingIn(database).clearAll() }
+        } finally {
+            database.close()
+        }
+
+        // When
+        val reopened = open(path, RecordingRoomCallback())
+        try {
+            val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
+
+            // Then — nothing was cleared: every mutation still has the owner it had
+            assertTrue(cleared.isFailure)
+            assertEquals(SHIPPED_FIXTURE_CONTENTS, reopened.readShippedFixtureContents())
+            assertEquals(MutationOwners.Known(ON_DISK_OWNERS), store.mutationQueueState.owners())
+            assertEquals(listOf(ON_DISK_REJECTION), store.mutationQueueState.rejections())
+        } finally {
+            reopened.close()
         }
     }
 

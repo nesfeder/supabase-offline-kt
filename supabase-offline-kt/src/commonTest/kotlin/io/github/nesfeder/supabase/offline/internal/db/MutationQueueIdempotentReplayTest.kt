@@ -7,7 +7,10 @@ import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.ktor.client.network.sockets.ConnectTimeoutException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -16,13 +19,15 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /**
  * A write whose response was lost stays queued and replays, so replaying it must not apply it
- * twice. Which replays are idempotent:
+ * twice — while a genuine duplicate must still be refused. Which replays are idempotent:
  *
- * - an INSERT whose rows carry the table's primary key — it replays as an upsert that ignores
- *   duplicates, so it is not inserted twice (or refused as a duplicate of itself);
+ * - an INSERT whose rows carry the table's primary key and whose send may have reached the server
+ *   replays as an upsert that ignores duplicates and counts the rows it wrote; one that was never
+ *   sent, or never connected, replays as a plain INSERT, so a duplicate id is refused;
  * - an UPSERT, an UPDATE of absolute values and a DELETE — as sent.
  *
  * Two are not, and are pinned here as such: an INSERT whose key the server generates is inserted
@@ -54,20 +59,83 @@ class MutationQueueIdempotentReplayTest {
     }
 
     @Test
-    fun an_insert_carrying_its_primary_key_replays_as_an_upsert_that_ignores_duplicates() = runTest {
-        // Given
+    fun an_insert_that_was_never_sent_replays_as_a_plain_insert() = runTest {
+        // Given — queued without ever reaching the server
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
         val server = RecordingPostgrestServer()
 
         // When
         OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
-        // Then
+        // Then — nothing on the server can be its own, so a duplicate must be refused
         val request = server.requests.single()
         assertEquals("POST", request.method)
-        assertEquals(mapOf("on_conflict" to "id", "columns" to "id,title"), request.query)
-        assertEquals("resolution=ignore-duplicates,return=minimal", request.prefer)
-        assertEquals("""[{"id":"t1","title":"Buy milk"}]""", request.body)
+        assertEquals(mapOf("columns" to "id,title"), request.query)
+        assertEquals("return=minimal", request.prefer)
+    }
+
+    @Test
+    fun a_genuine_duplicate_id_is_refused_and_lands_on_the_rejected_list() = runTest {
+        // Given — another row already has the id this never-sent insert uses
+        val server = FakeRelationalPostgrestServer()
+        server.seed(TABLE, row("""{"id":"t1","title":"someone else's"}"""))
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
+
+        // When
+        val report = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).sync()
+
+        // Then — the server's own refusal reaches the rejected list; the other row is untouched
+        assertEquals("23505", report.rejected.single().serverError?.code)
+        assertEquals(listOf(row("""{"id":"t1","title":"someone else's"}""")), server.rows(TABLE))
+    }
+
+    @Test
+    fun an_insert_whose_send_may_have_reached_the_server_replays_as_an_upsert_that_counts_its_rows() = runTest {
+        // Given — the send failed without saying whether the server got it
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        server.answer = { okJson("[]") }
+
+        // When
+        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+
+        // Then
+        val replay = server.requests.last()
+        assertEquals("id", replay.query["on_conflict"])
+        val preferences = replay.prefer.orEmpty().split(',')
+        assertTrue("resolution=ignore-duplicates" in preferences, "got $preferences")
+        assertTrue("count=exact" in preferences, "got $preferences")
+    }
+
+    @Test
+    fun an_insert_whose_send_never_connected_replays_as_a_plain_insert() = runTest {
+        // Given — the connection was never made, so the server cannot have it
+        val server = RecordingPostgrestServer(answer = { throw ConnectTimeoutException("connect timed out", null) })
+        builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        server.answer = { okJson("[]") }
+
+        // When
+        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+
+        // Then
+        assertEquals("return=minimal", server.requests.last().prefer)
+    }
+
+    @Test
+    fun an_upsert_replay_with_no_matching_unique_key_is_sent_again_as_a_plain_insert() = runTest {
+        // Given — a table whose key is not the id alone, and an insert whose response was lost
+        val server = FakeRelationalPostgrestServer()
+        server.tablesWithoutUniqueKey = setOf(TABLE)
+        server.loseResponseAfterCommit = { request -> request.method == "POST" }
+        builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+
+        // When — the replay's upsert has no constraint to match (42P10)
+        val report = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).sync()
+
+        // Then — sent again as the plain INSERT it is, rather than rejected
+        assertEquals(1, report.syncedCount)
+        assertEquals(emptyList(), report.rejected)
+        assertEquals(listOf(null, "id", null), server.requests.map { it.query["on_conflict"] })
     }
 
     @Test
@@ -100,15 +168,16 @@ class MutationQueueIdempotentReplayTest {
 
     @Test
     fun an_idempotent_replay_keeps_default_to_null_false() = runTest {
-        // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1"}]"""), defaultToNull = false)
-        val server = RecordingPostgrestServer()
+        // Given — an insert that may have reached the server, made with defaultToNull = false
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        builderOn(server).insertJson(rows("""[{"id":"t1"}]""")) { defaultToNull = false }
+        server.answer = { okJson("[]") }
 
         // When
         OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — missing columns still take their database default
-        assertEquals("resolution=ignore-duplicates,missing=default,return=minimal", server.requests.single().prefer)
+        assertTrue("missing=default" in server.requests.last().prefer.orEmpty().split(','))
     }
 
     @Test
@@ -196,6 +265,9 @@ class MutationQueueIdempotentReplayTest {
     }
 
     private fun builderOn(server: FakeRelationalPostgrestServer): OfflinePostgrestQueryBuilderImpl =
+        OfflinePostgrestQueryBuilderImpl(delegate = server.supabaseClient().postgrest.from(TABLE), store = store)
+
+    private fun builderOn(server: RecordingPostgrestServer): OfflinePostgrestQueryBuilderImpl =
         OfflinePostgrestQueryBuilderImpl(delegate = server.supabaseClient().postgrest.from(TABLE), store = store)
 
     private fun row(json: String): JsonObject = Json.parseToJsonElement(json) as JsonObject
