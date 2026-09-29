@@ -4,17 +4,6 @@ import okio.ByteString.Companion.toByteString
 import okio.Path
 
 /**
- * Platform-specific base directory holder.
- *
- * - Android: construct with a Context (actual class in androidMain)
- * - iOS:     no-arg constructor that resolves Documents as base dir (actual class in iosMain)
- */
-internal expect class PlatformBaseDirectory {
-    /** Absolute base dir path for offline storage (e.g. /data/data/.../files/supabase_offline). */
-    val path: Path
-}
-
-/**
  * Directory under the data directory that holds cached objects with plain names, at
  * `<data>/storage/<bucket>/<object path>`. Unchanged since the first release: installs keep their
  * files there, and clearing local data removes it.

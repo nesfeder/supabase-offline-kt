@@ -165,7 +165,7 @@ internal class OfflineBucketApiImpl(
             currentCoroutineContext().ensureActive()
             return recover(path, probe, failure) { entry -> cache.readBytes(entry) }
         }
-        probe.entryToStore(cache, bucketId, path)?.let { entry -> cache.store(entry, bytes, generation) }
+        probe.entryToStore(cache, bucketId, path)?.let { entry -> cache.write(entry, bytes, generation) }
         return bytes
     }
 

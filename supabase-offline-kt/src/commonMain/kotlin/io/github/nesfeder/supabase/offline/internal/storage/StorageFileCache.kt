@@ -236,8 +236,8 @@ internal class StorageFileCache(
      */
     suspend fun lookup(entry: StorageCacheEntry): CachedFile? = withContext(Dispatchers.IO) {
         val row = store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return@withContext null
-        if (row.recordsALegacyFile(entry)) {
-            withContext(NonCancellable) { lock.withLock { dropLegacyRowLocked(entry) } }
+        if (row.recordsOutdatedPath(entry)) {
+            withContext(NonCancellable) { lock.withLock { dropOutdatedRowLocked(entry) } }
             return@withContext null
         }
         if (!resolvesInsideDataDirectory(entry.file)) return@withContext null
@@ -361,7 +361,7 @@ internal class StorageFileCache(
      * @param bytes the downloaded bytes.
      * @param startedInGeneration [currentGeneration] as read before the download started.
      */
-    suspend fun store(entry: StorageCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
+    suspend fun write(entry: StorageCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
         val temporary = openTemporaryDownload(entry) ?: return
         try {
             withContext(Dispatchers.IO) { temporary.sink.write(bytes) }
@@ -475,7 +475,7 @@ internal class StorageFileCache(
                 val source = entryFor(fromBucket, from)
                 val destination = entryFor(toBucket, to)
                 val sourceRow = store.getStorageByKey(fromBucket, from)
-                if (source != null && destination != null && sourceRow != null && !sourceRow.recordsALegacyFile(source)) {
+                if (source != null && destination != null && sourceRow != null && !sourceRow.recordsOutdatedPath(source)) {
                     moveFileLocked(source, destination)
                 }
                 removeObjectLocked(fromBucket, from)
@@ -525,7 +525,7 @@ internal class StorageFileCache(
      * `/` or the bucket's name from the path, and stored every name verbatim). A recorded file
      * outside the data directory only means the directory moved, and the derived file is used.
      */
-    private fun StorageRow.recordsALegacyFile(entry: StorageCacheEntry): Boolean {
+    private fun StorageRow.recordsOutdatedPath(entry: StorageCacheEntry): Boolean {
         val recorded = localPath.toPath().normalized()
         return recorded != entry.file && recorded.isStrictlyInside(dataDirectory)
     }
@@ -537,7 +537,7 @@ internal class StorageFileCache(
             removeRowLocked(row)
             val entry = entryForRow(row) ?: return@forEach
             deleteContained(entry.file)
-            if (row.recordsALegacyFile(entry)) deleteOrphanedLegacyFileLocked(row.localPath.toPath().normalized())
+            if (row.recordsOutdatedPath(entry)) deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
         }
         // The object's own file even without a row: a legacy row may have recorded another path.
         entryFor(bucketId, objectPath)?.let { entry -> deleteContained(entry.file) }
@@ -563,11 +563,11 @@ internal class StorageFileCache(
     }
 
     /** Drops [entry]'s row when it still records a legacy file, and that file when nothing owns it. */
-    private suspend fun dropLegacyRowLocked(entry: StorageCacheEntry) {
+    private suspend fun dropOutdatedRowLocked(entry: StorageCacheEntry) {
         val row = store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return
-        if (!row.recordsALegacyFile(entry)) return
+        if (!row.recordsOutdatedPath(entry)) return
         removeRowLocked(row)
-        deleteOrphanedLegacyFileLocked(row.localPath.toPath().normalized())
+        deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
     }
 
     /**
@@ -576,7 +576,7 @@ internal class StorageFileCache(
      * file that now belongs to `x.txt`. A file nothing can own any more (a name now stored under
      * its hash) is deleted, so it does not outlive its row untracked.
      */
-    private suspend fun deleteOrphanedLegacyFileLocked(recorded: Path) {
+    private suspend fun deleteOrphanedOutdatedFileLocked(recorded: Path) {
         if (!recorded.isStrictlyInside(storageDirectory)) return
         val segments = recorded.relativeTo(storageDirectory).segments
         if (segments.size >= 2) {
@@ -655,7 +655,7 @@ internal class StorageFileCache(
                     .filter { it.name.startsWith(TEMPORARY_FILE_PREFIX) && it.name.endsWith(TEMPORARY_FILE_SUFFIX) }
                     .toList()
                     .filter { file -> (fileSystem.metadataOrNull(file)?.lastModifiedAtMillis ?: Long.MAX_VALUE) < staleBefore }
-                    .filterNot { file -> isNamedByARow(file) }
+                    .filterNot { file -> belongsToACachedEntry(file) }
                     .forEach(::deleteQuietly)
             } catch (failure: IOException) {
                 sdkLogger.debug { "Storage cache could not sweep temporary files: $failure" }
@@ -664,7 +664,7 @@ internal class StorageFileCache(
     }
 
     /** Whether a cache row's entry lives in [file]. */
-    private suspend fun isNamedByARow(file: Path): Boolean {
+    private suspend fun belongsToACachedEntry(file: Path): Boolean {
         val normalized = file.normalized()
         if (!normalized.isStrictlyInside(storageDirectory)) return false
         val segments = normalized.relativeTo(storageDirectory).segments

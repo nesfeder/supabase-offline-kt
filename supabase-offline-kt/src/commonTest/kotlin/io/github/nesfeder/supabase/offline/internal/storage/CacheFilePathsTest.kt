@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
  * Mapping of a bucket object path to its on-disk cache location under `<base>/storage/<bucket>/`,
  * and the object paths that are never mapped at all.
  */
-class FileIOTest {
+class CacheFilePathsTest {
 
     private val baseDir = "/base".toPath()
 
