@@ -1,6 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.storage.UploadOptionBuilder
+import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.jan.supabase.storage.resumable.ResumableUpload
 import io.ktor.utils.io.ByteReadChannel
@@ -21,11 +22,13 @@ import kotlinx.coroutines.launch
  *
  * @param delegate supabase-kt's resumable client for the bucket.
  * @param backgroundScope where the waits run.
+ * @param operationGate the client's gate; a closed client refuses new and continued uploads.
  * @param onUploadFinished drops the cached copies of an object, by bucket and path.
  */
 internal class InvalidatingResumableClient(
     private val delegate: ResumableClient,
     private val backgroundScope: CoroutineScope,
+    private val operationGate: ClientOperationGate,
     private val onUploadFinished: suspend (bucketId: String, path: String) -> Unit,
 ) : ResumableClient {
 
@@ -35,11 +38,13 @@ internal class InvalidatingResumableClient(
         size: Long,
         path: String,
         options: UploadOptionBuilder.() -> Unit,
-    ): ResumableUpload = delegate.createOrContinueUpload(channel, source, size, path, options).also(::invalidateWhenFinished)
+    ): ResumableUpload = operationGate.call {
+        delegate.createOrContinueUpload(channel, source, size, path, options).also(::invalidateWhenFinished)
+    }
 
     override suspend fun continuePreviousUploads(
         channelProducer: suspend (source: String, offset: Long) -> ByteReadChannel,
-    ): List<Deferred<ResumableUpload>> = delegate.continuePreviousUploads(channelProducer).onEach { pending ->
+    ): List<Deferred<ResumableUpload>> = operationGate.call { delegate.continuePreviousUploads(channelProducer) }.onEach { pending ->
         backgroundScope.launch {
             val upload = try {
                 pending.await()

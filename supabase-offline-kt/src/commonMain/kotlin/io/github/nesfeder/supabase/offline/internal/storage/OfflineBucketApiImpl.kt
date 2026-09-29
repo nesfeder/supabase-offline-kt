@@ -5,12 +5,21 @@ import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.DownloadOptionBuilder
 import io.github.jan.supabase.storage.FileUploadResponse
+import io.github.jan.supabase.storage.FileObject
+import io.github.jan.supabase.storage.FileObjectV2
+import io.github.jan.supabase.storage.PurgeCacheOptions
+import io.github.jan.supabase.storage.SignedUrl
+import io.github.jan.supabase.storage.SignedUrlBuilder
+import io.github.jan.supabase.storage.SignedUrlsBuilder
+import io.github.jan.supabase.storage.StorageListFilter
 import io.github.jan.supabase.storage.UploadData
 import io.github.jan.supabase.storage.UploadOptionBuilder
+import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
@@ -30,6 +39,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okio.IOException
+import kotlin.time.Duration
 
 /** HTTP status returned by the server for an object that no longer exists. */
 private const val HTTP_NOT_FOUND = 404
@@ -53,8 +63,9 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * @param delegate the supabase-kt bucket.
  * @param cache the client's file cache.
  * @param sdkLogger the SDK logger. Messages at INFO and above name the bucket, never the object path.
- * @param backgroundScope where the wait for a resumable upload to finish runs; the client's own
- *   scope, so closing the client ends it.
+ * @param backgroundScope the client's own scope: closing the client cancels the downloads and the
+ *   resumable-upload waits running in it.
+ * @param operationGate the client's gate, which every member passes, so a closed client refuses them.
  * @param renderImagePath the encoded path prefix of a transformed download (see [renderImagePathOf]).
  */
 internal class OfflineBucketApiImpl(
@@ -62,28 +73,33 @@ internal class OfflineBucketApiImpl(
     private val cache: StorageFileCache,
     private val sdkLogger: SdkLogger,
     private val backgroundScope: CoroutineScope,
+    private val operationGate: ClientOperationGate = ClientOperationGate(),
     private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH,
 ) : OfflineBucketApi, BucketApi by delegate {
 
     override fun setHeader(name: String, value: String): OfflineBucketApi =
-        OfflineBucketApiImpl(delegate.setHeader(name, value), cache, sdkLogger, backgroundScope, renderImagePath)
+        OfflineBucketApiImpl(delegate.setHeader(name, value), cache, sdkLogger, backgroundScope, operationGate, renderImagePath)
 
     override val resumable: ResumableClient by lazy {
         InvalidatingResumableClient(
             delegate = delegate.resumable,
             backgroundScope = backgroundScope,
+            operationGate = operationGate,
             onUploadFinished = { bucketId, path -> cache.invalidateObject(bucketId, path) },
         )
     }
 
     // ─────────────────────────────── Cached files ───────────────────────────────
 
-    override suspend fun cachedFile(path: String): CachedFile? {
-        val entry = cache.entryFor(bucketId, path) ?: return null
-        return cache.lookup(entry)
+    override suspend fun cachedFile(path: String): CachedFile? = operationGate.call {
+        cache.entryFor(bucketId, path)?.let { entry -> cache.lookup(entry) }
     }
 
-    override suspend fun ensureCachedFile(path: String, isPublic: Boolean): CachedFile {
+    override suspend fun ensureCachedFile(path: String, isPublic: Boolean): CachedFile =
+        operationGate.cancellableCall(backgroundScope) { ensureCachedFileNow(path, isPublic) }
+
+    /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
+    private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
         val entry = cache.entryFor(bucketId, path)
             ?: throw IllegalArgumentException(
                 "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
@@ -122,16 +138,20 @@ internal class OfflineBucketApiImpl(
     // ───────────────────────────────── Downloads ─────────────────────────────────
 
     override suspend fun downloadAuthenticated(path: String, options: DownloadOptionBuilder.() -> Unit): ByteArray =
-        downloadBytes(path) { wrapped -> delegate.downloadAuthenticated(path, wrapped(options)) }
+        operationGate.cancellableCall(backgroundScope) {
+            downloadBytes(path) { wrapped -> delegate.downloadAuthenticated(path, wrapped(options)) }
+        }
 
     override suspend fun downloadPublic(path: String, options: DownloadOptionBuilder.() -> Unit): ByteArray =
-        downloadBytes(path) { wrapped -> delegate.downloadPublic(path, wrapped(options)) }
+        operationGate.cancellableCall(backgroundScope) {
+            downloadBytes(path) { wrapped -> delegate.downloadPublic(path, wrapped(options)) }
+        }
 
     override suspend fun downloadAuthenticated(
         path: String,
         channel: ByteWriteChannel,
         options: DownloadOptionBuilder.() -> Unit,
-    ) {
+    ): Unit = operationGate.cancellableCall(backgroundScope) {
         downloadToChannel(path, channel, options) { target, wrappedOptions ->
             delegate.downloadAuthenticated(path, target, wrappedOptions)
         }
@@ -141,7 +161,7 @@ internal class OfflineBucketApiImpl(
         path: String,
         channel: ByteWriteChannel,
         options: DownloadOptionBuilder.() -> Unit,
-    ) {
+    ): Unit = operationGate.cancellableCall(backgroundScope) {
         downloadToChannel(path, channel, options) { target, wrappedOptions ->
             delegate.downloadPublic(path, target, wrappedOptions)
         }
@@ -386,7 +406,7 @@ internal class OfflineBucketApiImpl(
         options: UploadOptionBuilder.() -> Unit,
     ): FileUploadResponse = invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
 
-    override suspend fun delete(paths: Collection<String>) {
+    override suspend fun delete(paths: Collection<String>): Unit = operationGate.call {
         delegate.delete(paths)
         paths.forEach { path -> cache.invalidateObject(bucketId, path) }
     }
@@ -395,23 +415,52 @@ internal class OfflineBucketApiImpl(
         delete(paths.toList())
     }
 
-    override suspend fun move(from: String, to: String, destinationBucket: String?) {
+    override suspend fun move(from: String, to: String, destinationBucket: String?): Unit = operationGate.call {
         delegate.move(from, to, destinationBucket)
         cache.moveObject(fromBucket = bucketId, from = from, toBucket = destinationBucket ?: bucketId, to = to)
     }
 
-    override suspend fun copy(from: String, to: String, destinationBucket: String?) {
+    override suspend fun copy(from: String, to: String, destinationBucket: String?): Unit = operationGate.call {
         delegate.copy(from, to, destinationBucket)
         // The copy's bytes are not on the device; the destination's cached copy, if any, is stale.
         cache.invalidateObject(destinationBucket ?: bucketId, to)
     }
+
+    // ─────────────────────── Passed through, refused once closed ───────────────────────
+
+    override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
+        operationGate.call { delegate.createSignedUploadUrl(path, upsert) }
+
+    override suspend fun createSignedUrl(path: String, expiresIn: Duration, builder: SignedUrlBuilder.() -> Unit): String =
+        operationGate.call { delegate.createSignedUrl(path, expiresIn, builder) }
+
+    override suspend fun createSignedUrls(
+        expiresIn: Duration,
+        paths: Collection<String>,
+        builder: SignedUrlsBuilder.() -> Unit,
+    ): List<SignedUrl> = operationGate.call { delegate.createSignedUrls(expiresIn, paths, builder) }
+
+    override suspend fun createSignedUrls(expiresIn: Duration, vararg paths: String, builder: SignedUrlsBuilder.() -> Unit): List<SignedUrl> =
+        createSignedUrls(expiresIn, paths.toList(), builder)
+
+    override suspend fun list(prefix: String, filter: StorageListFilter.Files.() -> Unit): List<FileObject> =
+        operationGate.call { delegate.list(prefix, filter) }
+
+    override suspend fun info(path: String): FileObjectV2 = operationGate.call { delegate.info(path) }
+
+    override suspend fun exists(path: String): Boolean = operationGate.call { delegate.exists(path) }
+
+    override suspend fun changePublicStatusTo(public: Boolean): Unit = operationGate.call { delegate.changePublicStatusTo(public) }
+
+    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
+        operationGate.call { delegate.purgeCache(path, options) }
 
     /**
      * Runs a write, then drops the cached copies of [path] it made stale. A write that timed out
      * may have been stored anyway, so it drops them too; any other failure left the server's copy
      * as it was, and the cache with it. Storage writes are never queued.
      */
-    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T {
+    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T = operationGate.call {
         val result = try {
             write()
         } catch (failure: Exception) {
@@ -419,7 +468,7 @@ internal class OfflineBucketApiImpl(
             throw failure
         }
         withContext(NonCancellable) { cache.invalidateObject(bucketId, path) }
-        return result
+        result
     }
 
     private fun Throwable.mayHaveReachedTheServer(): Boolean {

@@ -63,9 +63,10 @@ public object SupabaseFactory {
      * @param supabaseAnonKey  Anon/API key
      * @param accessTokenProvider Optional provider for access tokens
      * @throws IllegalStateException when another open client already uses the same database or
-     *   data directory. Swift receives it as a thrown error.
+     *   data directory; other failures to open it (a full disk, an unreadable file) are thrown too.
+     *   Swift receives each as a thrown error.
      */
-    @Throws(IllegalStateException::class)
+    @Throws(Exception::class)
     public fun offlineClientKt(
         supabaseUrl: String,
         supabaseAnonKey: String,
@@ -139,9 +140,10 @@ public object SupabaseFactory {
  * ```
  *
  * @throws IllegalStateException when another open client already uses the same database or data
- *   directory. Swift receives it as a thrown error.
+ *   directory; other failures to open it (a full disk, an unreadable file) are thrown too. Swift
+ *   receives each as a thrown error.
  */
-@Throws(IllegalStateException::class)
+@Throws(Exception::class)
 public fun createSupabaseOfflineClient(
     supabase: SupabaseClient,
     config: SupabaseOfflineConfig,

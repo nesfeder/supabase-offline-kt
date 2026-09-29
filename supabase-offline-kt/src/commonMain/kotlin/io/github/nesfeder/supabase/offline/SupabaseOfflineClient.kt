@@ -1,5 +1,3 @@
-@file:OptIn(ExperimentalAtomicApi::class)
-
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
@@ -17,12 +15,12 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
-import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
+import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.childEngineScope
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApiImpl
@@ -36,19 +34,13 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.async
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,8 +50,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okio.Path
-import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Entry point for the Supabase Offline SDK.
@@ -267,8 +259,8 @@ public interface SupabaseOfflineClient {
      * A replay pass in progress is cancelled first, and no queued write is sent once clearing has
      * begun. A write whose request was already in flight is neither overlaid onto the cache nor
      * queued when it returns, and a cache patch already under way when clearing begins writes
-     * nothing after it. A Storage download still in flight may hand its bytes to its caller, but
-     * it is not written back into the cache.
+     * nothing after it. A Storage download still in flight may hand its bytes to its caller, or
+     * fail, but it is not written back into the cache.
      *
      * The deleted rows are not left readable in the database files either: the database is
      * rebuilt without them and its write-ahead log emptied.
@@ -276,17 +268,23 @@ public interface SupabaseOfflineClient {
     public suspend fun clearAllCache()
 
     /**
-     * Releases the client: stops its background work — refreshes, and any replay in progress,
-     * which sends nothing more — closes its database, and frees the database for another client.
-     * Nothing is deleted. Calls made after `close()` fail with [IllegalStateException], and a
-     * reactive read still collecting fails with it too. Safe to call more than once.
+     * Releases the client and frees its database for another client. Nothing is deleted.
      *
-     * It suspends, like supabase-kt's own `close()`, while the client's background work winds down.
-     * The client returned by `createSupabaseOfflineClient` implements it; the default does nothing,
-     * so a wrapper must forward it — delegation with `by` does — or the database stays claimed.
+     * - From the moment it is called, every new call fails with [IllegalStateException]: on the
+     *   client, and on a builder, bucket or flow obtained from it. A flow still being collected ends
+     *   with it.
+     * - The client's own work stops: refreshes, replay passes, and the downloads and replays callers
+     *   started, which then fail with [IllegalStateException] — never with a cancellation.
+     * - Every other call already running — a clear, a write, a read — is left to finish, and the
+     *   database is closed only once none is using it. A clear that has begun always completes.
+     * - It waits for them at most 10 seconds. Past that it returns, and the database closes as soon
+     *   as the last of them finishes; until then, a new client on the same database fails to open.
+     *
+     * Safe to call more than once. A wrapper must forward it (delegation with `by` does), or the
+     * database stays claimed and the wrapped client's work keeps running.
      */
     @Throws(Exception::class)
-    public suspend fun close() {}
+    public suspend fun close()
 }
 
 /**
@@ -335,7 +333,11 @@ internal class SupabaseOfflineClientImpl(
      */
     private val clientScope: CoroutineScope = childEngineScope(coordinatorScope, sdkLogger)
 
-    private val closed = AtomicBoolean(false)
+    /** The scope a close that outlived its wait finishes in; the injected one, which close leaves running. */
+    private val parentScope: CoroutineScope = coordinatorScope
+
+    /** Every call's pass through the client, so [close] never closes the database under one. */
+    private val operationGate = ClientOperationGate()
 
     /** Where [storage]'s buckets see an image transform's requests go; resolved on first use. */
     private val renderImagePath: String by lazy { renderImagePathOf(supabase) }
@@ -445,7 +447,7 @@ internal class SupabaseOfflineClientImpl(
             queueIdentity = { supabase.currentQueueIdentity() },
             requestSync = backgroundSync::request,
             headSender = mutationQueueReplayer,
-            ensureClientOpen = ::ensureOpen,
+            operationGate = operationGate,
         )
     }
 
@@ -489,6 +491,7 @@ internal class SupabaseOfflineClientImpl(
             cache = fileCache,
             sdkLogger = sdkLogger,
             backgroundScope = clientScope,
+            operationGate = operationGate,
             renderImagePath = renderImagePath,
         )
     }
@@ -496,44 +499,39 @@ internal class SupabaseOfflineClientImpl(
     /* ───────────────────────────── Sync APIs ───────────────────────────── */
 
     override suspend fun syncAllPendingMutations(): Int =
-        inClientScope { mutationQueueReplayer.syncAllTables() }
+        operationGate.cancellableCall(clientScope) { mutationQueueReplayer.syncAllTables() }
 
     override suspend fun syncPendingMutations(table: String): Int =
-        inClientScope { mutationQueueReplayer.syncTable(table = table) }
+        operationGate.cancellableCall(clientScope) { mutationQueueReplayer.syncTable(table = table) }
 
-    override suspend fun pendingMutationCount(): Int {
-        ensureOpen()
-        return store.pendingMutationCount()
-    }
+    override suspend fun pendingMutationCount(): Int =
+        operationGate.call { store.pendingMutationCount() }
 
     override fun pendingMutationCountFlow(): Flow<Int> {
         ensureOpen()
-        return store.pendingMutationCountFlow()
+        return operationGate.callCollecting(store.pendingMutationCountFlow())
     }
 
-    override suspend fun pendingMutationCount(table: String): Int {
-        ensureOpen()
-        return store.pendingMutationCountForTable(table)
-    }
+    override suspend fun pendingMutationCount(table: String): Int =
+        operationGate.call { store.pendingMutationCountForTable(table) }
 
     override fun pendingMutationCountFlow(table: String): Flow<Int> {
         ensureOpen()
-        return store.pendingMutationCountForTableFlow(table)
+        return operationGate.callCollecting(store.pendingMutationCountForTableFlow(table))
     }
 
     override suspend fun applyServerRecord(
         table: String,
         record: JsonObject,
         primaryKeys: List<String>,
-    ) {
-        ensureOpen()
+    ): Unit = operationGate.call {
         val filterJson = primaryKeyFilterJson(record, primaryKeys)
         if (filterJson == null) {
             sdkLogger.warning {
                 "applyServerRecord($table): dropping record — primary key(s) $primaryKeys " +
                     "absent or non-primitive"
             }
-            return
+            return@call
         }
         store.applyLocalMutationToCache(
             table = table,
@@ -548,15 +546,14 @@ internal class SupabaseOfflineClientImpl(
         table: String,
         oldRecord: JsonObject,
         primaryKeys: List<String>,
-    ) {
-        ensureOpen()
+    ): Unit = operationGate.call {
         val filterJson = primaryKeyFilterJson(oldRecord, primaryKeys)
         if (filterJson == null) {
             sdkLogger.warning {
                 "applyServerDelete($table): dropping record — primary key(s) $primaryKeys " +
                     "absent or non-primitive"
             }
-            return
+            return@call
         }
         store.applyLocalMutationToCache(
             table = table,
@@ -596,8 +593,7 @@ internal class SupabaseOfflineClientImpl(
      * the file cache's lock; the store's, around [OfflineStore.clearAll]'s one transaction. The scrub
      * runs after that transaction, and the cache files go last.
      */
-    override suspend fun clearAllCache() {
-        ensureOpen()
+    override suspend fun clearAllCache(): Unit = operationGate.call {
         mutationQueueReplayer.clearLocalData {
             fileCache.clear {
                 store.clearAll()
@@ -606,35 +602,38 @@ internal class SupabaseOfflineClientImpl(
         }
     }
 
+    /**
+     * Refuses new calls, cancels the client's own work and the calls it may stop (replays,
+     * downloads), then waits for every other call — a clear, a write, a read — before it closes the
+     * database. After [CLOSE_WAIT] it returns, and the database closes when the last call finishes.
+     */
     override suspend fun close() {
-        if (!closed.compareAndSet(false, true)) return
+        if (!operationGate.close()) return
         val work = clientScope.coroutineContext.job
         work.cancel()
-        // Let what was cancelled wind down — a replay recording what it sent — before the database
-        // it writes to closes; bounded, so a stuck call cannot hold close() forever.
-        withContext(NonCancellable) { withTimeoutOrNull(CLOSE_WIND_DOWN_MILLIS) { work.join() } }
-        onClose()
+        val idle = withContext(NonCancellable) {
+            withTimeoutOrNull(CLOSE_WAIT) {
+                work.join()
+                operationGate.awaitNoCallsInFlight()
+            } != null
+        }
+        if (idle) {
+            onClose()
+            return
+        }
+        sdkLogger.warning {
+            "close() waited $CLOSE_WAIT for ${operationGate.inFlight} call(s) still using the database; " +
+                "it closes when they finish"
+        }
+        parentScope.launch(NonCancellable) {
+            work.join()
+            operationGate.awaitNoCallsInFlight()
+            onClose()
+        }
     }
 
     private fun ensureOpen() {
-        check(!closed.load()) { CLIENT_CLOSED_MESSAGE }
-    }
-
-    /**
-     * Runs [block] as a child of the client's scope but on the caller's dispatcher, so [close] stops
-     * it; the caller then gets [IllegalStateException].
-     */
-    private suspend fun <T> inClientScope(block: suspend () -> T): T {
-        ensureOpen()
-        val callerContext = currentCoroutineContext().minusKey(Job)
-        val call = clientScope.async(callerContext, start = CoroutineStart.UNDISPATCHED) { block() }
-        try {
-            return call.await()
-        } catch (cancellation: CancellationException) {
-            if (currentCoroutineContext().isActive) throw IllegalStateException(CLIENT_CLOSED_MESSAGE, cancellation)
-            call.cancel()
-            throw cancellation
-        }
+        operationGate.ensureOpen()
     }
 
     /* ──────────────────────── Mutation queue (internal) ──────────────────────── */
@@ -651,7 +650,7 @@ internal class SupabaseOfflineClientImpl(
      * @return What the pass synced, rejected and left pending.
      */
     internal suspend fun syncPendingMutationsReport(table: String? = null): SyncReport =
-        inClientScope { mutationQueueReplayer.sync(table = table) }
+        operationGate.cancellableCall(clientScope) { mutationQueueReplayer.sync(table = table) }
 
     /**
      * The current session's pending mutations — of [table], or of every table — in replay order,
@@ -662,9 +661,11 @@ internal class SupabaseOfflineClientImpl(
      */
     internal fun pendingMutations(table: String? = null): Flow<List<PendingMutation>> {
         ensureOpen()
-        return store.pendingMutationsFlow(table).map { rows ->
-            rows.mapNotNull { row -> row.toPendingMutation(store.json, DefaultPrimaryKeys) }
-        }
+        return operationGate.callCollecting(
+            store.pendingMutationsFlow(table).map { rows ->
+                rows.mapNotNull { row -> row.toPendingMutation(store.json, DefaultPrimaryKeys) }
+            },
+        )
     }
 
     /**
@@ -674,9 +675,11 @@ internal class SupabaseOfflineClientImpl(
      */
     internal fun rejectedMutations(): Flow<List<RejectedMutation>> {
         ensureOpen()
-        return store.mutationQueueState.rejectionsFlow().map { entries ->
-            entries.map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
-        }
+        return operationGate.callCollecting(
+            store.mutationQueueState.rejectionsFlow().map { entries ->
+                entries.map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+            },
+        )
     }
 
     /**
@@ -684,9 +687,8 @@ internal class SupabaseOfflineClientImpl(
      *
      * @return The list; it throws if the persisted list cannot be decoded.
      */
-    internal suspend fun rejectedMutationList(): List<RejectedMutation> {
-        ensureOpen()
-        return store.mutationQueueState.rejections().map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+    internal suspend fun rejectedMutationList(): List<RejectedMutation> = operationGate.call {
+        store.mutationQueueState.rejections().map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
     }
 
     /**
@@ -695,10 +697,7 @@ internal class SupabaseOfflineClientImpl(
      * @param id The rejected mutation's id.
      * @return `true` when it was on the list.
      */
-    internal suspend fun dismissRejectedMutation(id: Long): Boolean {
-        ensureOpen()
-        return store.dismissRejectedMutation(id)
-    }
+    internal suspend fun dismissRejectedMutation(id: Long): Boolean = operationGate.call { store.dismissRejectedMutation(id) }
 
     /**
      * Puts a rejected mutation back at the tail of the queue and requests a replay pass.
@@ -707,12 +706,11 @@ internal class SupabaseOfflineClientImpl(
      * @return The new pending mutation's id, or `null` when there is no such rejection, or it —
      *   or the pending queue — belongs to another identity than the current session's.
      */
-    internal suspend fun retryRejectedMutation(id: Long): Long? {
-        ensureOpen()
-        val identity = supabase.currentQueueIdentity() ?: return null
-        val newId = store.retryRejectedMutation(id, identity.storedValue) ?: return null
+    internal suspend fun retryRejectedMutation(id: Long): Long? = operationGate.call {
+        val identity = supabase.currentQueueIdentity() ?: return@call null
+        val newId = store.retryRejectedMutation(id, identity.storedValue) ?: return@call null
         backgroundSync.request()
-        return newId
+        newId
     }
 
     /**
@@ -723,17 +721,16 @@ internal class SupabaseOfflineClientImpl(
      * @param id The pending mutation's id.
      * @return `true` when it was pending, the current session's, and not being sent right now.
      */
-    internal suspend fun discardPendingMutation(id: Long): Boolean {
-        ensureOpen()
-        val identity = supabase.currentQueueIdentity() ?: return false
-        return mutationQueueReplayer.discardPendingMutation(id, identity)
+    internal suspend fun discardPendingMutation(id: Long): Boolean = operationGate.call {
+        val identity = supabase.currentQueueIdentity() ?: return@call false
+        mutationQueueReplayer.discardPendingMutation(id, identity)
     }
 
     /* ───────────────────────────── Guards ───────────────────────────── */
 
     private companion object {
-        /** How long [close] waits for the client's cancelled work to wind down. */
-        const val CLOSE_WIND_DOWN_MILLIS = 5_000L
+        /** How long [close] waits for the calls in flight before it returns without closing the database. */
+        val CLOSE_WAIT: Duration = 10.seconds
     }
 
     private fun ensurePostgrestInstalled() {

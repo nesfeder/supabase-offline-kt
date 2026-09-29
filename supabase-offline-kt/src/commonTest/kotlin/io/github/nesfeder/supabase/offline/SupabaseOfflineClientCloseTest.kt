@@ -3,11 +3,13 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
@@ -139,6 +141,38 @@ class SupabaseOfflineClientCloseTest {
         // Then — nothing reached the server after close(), and the client refuses another replay
         assertEquals(sentAtClose, sent.load(), "a request was sent after close()")
         assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
+    }
+
+    @Test
+    fun a_callers_replay_in_flight_sends_nothing_after_close() = runTest {
+        // Given — two writes queued offline; the engine's own passes never run, so the caller's
+        // replay is the only sender
+        val online = AtomicInt(0)
+        val sent = AtomicInt(0)
+        val held = CompletableDeferred<Unit>()
+        val server = RecordingPostgrestServer(
+            answer = {
+                if (online.load() == 0) connectivityFailure()
+                sent.addAndFetch(1)
+                held.await()
+                okJson("[]")
+            },
+        )
+        val client = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = idleCoroutineScope())
+        client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+        client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
+
+        // When — its first request is held at the server when the client closes
+        online.store(1)
+        val replay = callerScope.async { runCatching { client.syncAllPendingMutations() } }
+        withContext(Dispatchers.Default) { withTimeout(5.seconds) { while (sent.load() == 0) delay(5) } }
+        client.close()
+        held.complete(Unit)
+        val outcome = withContext(Dispatchers.Default) { withTimeout(5.seconds) { replay.await() } }
+
+        // Then — the replay stopped with the closed error and sent nothing more
+        assertIs<IllegalStateException>(outcome.exceptionOrNull())
+        assertEquals(1, sent.load(), "the replay kept sending after close()")
     }
 
     @Test

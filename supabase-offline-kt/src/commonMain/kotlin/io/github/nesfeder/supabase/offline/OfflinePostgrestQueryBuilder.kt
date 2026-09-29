@@ -2,6 +2,7 @@
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
@@ -302,8 +303,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
         sdkLogger = sdkLogger,
         currentIdentity = queueIdentity,
     ),
-    /** Throws once the client that built this builder has closed; checked before every read and write. */
-    private val ensureClientOpen: () -> Unit = {},
+    /** The client's gate: every read and write passes it, so the client's close waits for them. */
+    private val operationGate: ClientOperationGate = ClientOperationGate(),
 ) : OfflinePostgrestQueryBuilder {
 
     constructor(
@@ -321,7 +322,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             sdkLogger = sdkLogger,
             currentIdentity = queueIdentity,
         ),
-        ensureClientOpen: () -> Unit = {},
+        operationGate: ClientOperationGate = ClientOperationGate(),
     ) : this(
         delegate = PostgrestQueryBuilderWrapperImpl(delegate),
         store = store,
@@ -332,7 +333,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         queueIdentity = queueIdentity,
         requestSync = requestSync,
         headSender = headSender,
-        ensureClientOpen = ensureClientOpen,
+        operationGate = operationGate,
     )
 
     private val json: Json = OfflineJson
@@ -349,10 +350,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         columns: Columns,
         readStrategy: ReadStrategy,
         request: SelectRequestBuilder.() -> Unit
-    ): PostgrestResult {
-        ensureClientOpen()
-        return selectResolver.select(columns, readStrategy, request)
-    }
+    ): PostgrestResult = operationGate.call { selectResolver.select(columns, readStrategy, request) }
 
     override fun selectAsFlow(
         columns: Columns,
@@ -659,8 +657,19 @@ internal class OfflinePostgrestQueryBuilderImpl(
         performOnline: suspend () -> PostgrestResult,
         applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
+    ): MutationOutcome = operationGate.call {
+        executeMutationNow(verbLabel, table, mutationStrategy, performOnline, applyOnlineSuccessOverlay, captureForQueue)
+    }
+
+    /** [executeMutation]'s body, run while the call holds the client's gate. */
+    private suspend fun executeMutationNow(
+        verbLabel: String,
+        table: String,
+        mutationStrategy: MutationStrategy,
+        performOnline: suspend () -> PostgrestResult,
+        applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
+        captureForQueue: () -> QueueCapture,
     ): MutationOutcome {
-        ensureClientOpen()
         if (mutationStrategy == MutationStrategy.OnlineOnly) {
             val result = performOnline()
             sdkLogger.debug { "$verbLabel $table response: ${result.data}" }
