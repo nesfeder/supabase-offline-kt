@@ -4,7 +4,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMAR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
-import io.github.nesfeder.supabase.offline.internal.postgrest.SignatureFilters
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -51,7 +51,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * Note on query visibility
  * ------------------------
  * INSERT/UPSERT-appended rows are additionally gated by the cached query's own filters
- * ([targetFilters], a [SignatureFilters]). When the query's signature is exhaustive, a row its
+ * ([targetFilters], a [QueryAdmission]). When the query's signature is exhaustive, a row its
  * WHERE clause excludes is dropped rather than appended — so, e.g., an online INSERT of a `done`
  * row never lands in a cached `status=eq.open` payload. This gate is conservative: a `null` or
  * non-exhaustive [targetFilters] preserves the legacy always-append behavior, so we never hide
@@ -74,7 +74,7 @@ internal object OfflineMutationOverlay {
         json: Json,
         serverJson: String,
         pending: List<MutationRow>,
-        targetFilters: SignatureFilters? = null,
+        targetFilters: QueryAdmission? = null,
         keyColumns: List<String> = DEFAULT_PRIMARY_KEY,
         appendsOnlyUnseenKeys: (MutationRow) -> Boolean = { true },
         onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> },
@@ -115,7 +115,7 @@ internal object OfflineMutationOverlay {
         json: Json,
         rows: MutableList<JsonElement>,
         mutation: MutationRow,
-        targetFilters: SignatureFilters?,
+        targetFilters: QueryAdmission?,
         insertKeyColumns: List<String>?,
         keyColumns: List<String>,
     ) {
@@ -155,7 +155,7 @@ internal object OfflineMutationOverlay {
         json: Json,
         rows: MutableList<JsonElement>,
         mutation: MutationRow,
-        targetFilters: SignatureFilters?,
+        targetFilters: QueryAdmission?,
         keyColumns: List<String>,
     ) {
         when (val bodyElement = json.parseToJsonElement(mutation.bodyJson)) {
@@ -191,7 +191,7 @@ internal object OfflineMutationOverlay {
         rows: MutableList<JsonElement>,
         mutation: MutationRow,
         descriptor: FilterDescriptor?,
-        targetFilters: SignatureFilters?,
+        targetFilters: QueryAdmission?,
         keyColumns: List<String>,
     ) {
         val bodyElement = json.parseToJsonElement(mutation.bodyJson)
@@ -319,7 +319,7 @@ internal object OfflineMutationOverlay {
     private fun appendIfAdmitted(
         rows: MutableList<JsonElement>,
         element: JsonElement,
-        targetFilters: SignatureFilters?,
+        targetFilters: QueryAdmission?,
         keyColumns: List<String>,
     ) {
         val rowObject = element as? JsonObject

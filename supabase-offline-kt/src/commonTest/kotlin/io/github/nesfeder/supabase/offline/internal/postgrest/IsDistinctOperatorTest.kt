@@ -92,10 +92,10 @@ class IsDistinctOperatorTest {
     @Test
     fun a_cached_query_filtered_on_isdistinct_is_not_exhaustive() {
         // Given / When
-        val filters = assertNotNull(parseSignatureFilters("todos?status=isdistinct.done"))
+        val filters = assertNotNull(admissionOf("todos?status=isdistinct.done"))
 
         // Then — the admit gate falls back to appending rather than hiding a row
-        assertFalse(filters.exhaustive)
+        assertFalse(filters.isExhaustive)
         assertNull(filters.descriptor)
     }
 

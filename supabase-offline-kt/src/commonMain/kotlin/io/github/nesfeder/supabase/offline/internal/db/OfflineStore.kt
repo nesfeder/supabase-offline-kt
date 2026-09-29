@@ -13,7 +13,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarrie
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
-import io.github.nesfeder.supabase.offline.internal.postgrest.parseSignatureFilters
+import io.github.nesfeder.supabase.offline.internal.postgrest.admissionOf
 import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
 import kotlinx.coroutines.flow.Flow
@@ -1202,7 +1202,7 @@ internal class OfflineStore(
         json = json,
         serverJson = serverJson,
         pending = mutations,
-        targetFilters = parseSignatureFilters(signature),
+        targetFilters = admissionOf(signature),
         keyColumns = primaryKeys.of(table),
         appendsOnlyUnseenKeys = { mutation -> isSyncedOrUnconfirmed(mutation, unconfirmedSends) },
         onMutationFailure = ::logSkippedOverlay,
@@ -1317,7 +1317,7 @@ internal class OfflineStore(
                     json = json,
                     serverJson = row.payload,
                     pending = listOf(syntheticMutation),
-                    targetFilters = parseSignatureFilters(row.signature),
+                    targetFilters = admissionOf(row.signature),
                     onMutationFailure = ::logSkippedOverlay,
                 )
                 if (updated != row.payload && !writeUnlessTornDown(guardTick, row.copy(payload = updated, updatedAt = now))) {

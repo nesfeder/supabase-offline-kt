@@ -7,31 +7,31 @@ import kotlinx.serialization.json.JsonObject
  * Parsed view of a cached SELECT signature's WHERE clause, used to decide whether a
  * newly-inserted row actually belongs in that cached query's result set.
  *
- * Produced by [parseSignatureFilters] from a canonical PostgREST signature (as built by
+ * Produced by [admissionOf] from a canonical PostgREST signature (as built by
  * [cacheKeyOf]). The whole point is to let the offline mutation overlay stop patching
  * INSERT/UPSERT rows into cached payloads whose filter excludes them.
  *
  * @property descriptor The AND-combined conditions recovered from the signature's filter params,
  *   or `null` when the signature carries no filter params (an unfiltered query returning every
  *   row).
- * @property exhaustive `true` only when [descriptor] provably captures the *entire* row-membership
+ * @property isExhaustive `true` only when [descriptor] provably captures the *entire* row-membership
  *   predicate — every query param was either a filter condition the admit gate can evaluate without
  *   a false negative (an [ADMIT_EVALUABLE_OPERATOR_IDS] operator) or a pure column projection, and
  *   the query has no ordering/limit/offset/range window that could place a matching row outside the
  *   cached slice. When `false`, callers must fall back to the legacy always-apply behavior; we never
  *   under-apply on a signature we cannot fully model.
  */
-internal data class SignatureFilters(
+internal data class QueryAdmission(
     val descriptor: FilterDescriptor?,
-    val exhaustive: Boolean,
+    val isExhaustive: Boolean,
 ) {
     /**
      * Whether [rowObject] should be admitted into a cached payload governed by this signature.
      *
      * Conservative by construction:
-     * - a non-[exhaustive] signature admits everything (preserve the legacy behavior rather than
+     * - a non-[isExhaustive] signature admits everything (preserve the legacy behavior rather than
      *   risk hiding a row the server would return),
-     * - an [exhaustive] signature with a `null` [descriptor] is an unfiltered query and admits
+     * - an [isExhaustive] signature with a `null` [descriptor] is an unfiltered query and admits
      *   everything,
      * - otherwise the row must satisfy every captured condition via [FilterEngine.matchesRow].
      *
@@ -39,7 +39,7 @@ internal data class SignatureFilters(
      * @return `true` if the row may be appended to the cached payload for this signature.
      */
     fun admits(rowObject: JsonObject): Boolean {
-        if (!exhaustive) return true
+        if (!isExhaustive) return true
         val activeDescriptor = descriptor ?: return true
         return FilterEngine.matchesRow(rowObject, activeDescriptor)
     }
@@ -55,7 +55,7 @@ private const val RANGE_MARKER = "|range="
  * Operator identifiers whose [FilterEngine.matchesRow] evaluation the admit gate can trust: for
  * these, `matchesRow` returning `false` reliably means the server would also exclude the row (it
  * over-approximates the server predicate and never yields a false negative). Only a signature whose
- * every captured condition uses one of these keeps [SignatureFilters.exhaustive].
+ * every captured condition uses one of these keeps [QueryAdmission.isExhaustive].
  *
  * Deliberately narrow — the equality operators, which is what cached per-owner and per-key
  * queries typically filter on. Every other recognized [FilterOperator] is excluded because
@@ -78,10 +78,10 @@ private val ADMIT_EVALUABLE_OPERATOR_IDS: Set<String> = setOf(
 
 /**
  * Parse a canonical PostgREST SELECT [signature] (as produced by [cacheKeyOf]) into a
- * [SignatureFilters] describing which rows the query admits.
+ * [QueryAdmission] describing which rows the query admits.
  *
  * The contract is deliberately conservative: over-application is only avoided when it is provably
- * safe, and we never under-apply. A signature is marked [SignatureFilters.exhaustive] **only** when
+ * safe, and we never under-apply. A signature is marked [QueryAdmission.isExhaustive] **only** when
  * every query param is either a filter condition the admit gate can evaluate without a false
  * negative (an [ADMIT_EVALUABLE_OPERATOR_IDS] operator, interpreted exactly as
  * [buildDescriptorFromBuilder] does) or a pure column projection (`select`), and there is:
@@ -99,9 +99,9 @@ private val ADMIT_EVALUABLE_OPERATOR_IDS: Set<String> = setOf(
  * and `|range=...` suffix are stripped; the remaining query is split on `&`.
  *
  * @param signature The canonical signature string.
- * @return A [SignatureFilters], or `null` when [signature] is blank or cannot be parsed.
+ * @return A [QueryAdmission], or `null` when [signature] is blank or cannot be parsed.
  */
-internal fun parseSignatureFilters(signature: String): SignatureFilters? {
+internal fun admissionOf(signature: String): QueryAdmission? {
     if (signature.isBlank()) return null
 
     return runCatching {
@@ -172,9 +172,9 @@ internal fun parseSignatureFilters(signature: String): SignatureFilters? {
             FilterDescriptor(mode = FilterDescriptor.Mode.AND, conditions = conditions)
         }
 
-        SignatureFilters(
+        QueryAdmission(
             descriptor = descriptor,
-            exhaustive = exhaustive && !windowed && !hasRange,
+            isExhaustive = exhaustive && !windowed && !hasRange,
         )
     }.getOrNull()
 }
