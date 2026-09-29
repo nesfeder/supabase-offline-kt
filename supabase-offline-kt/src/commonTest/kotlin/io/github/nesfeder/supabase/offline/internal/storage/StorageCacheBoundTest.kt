@@ -210,6 +210,26 @@ class StorageCacheBoundTest {
     }
 
     @Test
+    fun a_cache_whose_files_were_all_used_moments_ago_is_not_rescanned_on_every_download() = runTest {
+        // Given — a full cache whose every file was used within the last minute
+        val dao = RecordingStorageDao()
+        store = newTestOfflineStore(storageDao = dao)
+        val bucket = bucket(maxSizeBytes = 100)
+        repeat(10) { index -> download(bucket, "fill-$index.bin", size = 10, at = 10 * MINUTE + index) }
+        dao.resetCounts()
+
+        // When — ten more downloads within the same few seconds, each over the bound
+        repeat(10) { index -> download(bucket, "new-$index.bin", size = 10, at = 10 * MINUTE + 100 + index) }
+
+        // Then — nothing was old enough to evict, and the cache looked once, not ten times
+        assertTrue(dao.scans <= 1, "the cache rescanned ${dao.scans} times while nothing could be evicted")
+
+        // And once those uses are old enough, the next download brings the cache back under its bound
+        download(bucket, "later.bin", size = 10, at = 12 * MINUTE)
+        assertTrue(store.totalStorageSizeBytes() <= 100)
+    }
+
+    @Test
     fun eviction_leaves_the_mutation_queues_reserved_rows_alone() = runTest {
         // Given — the mutation queue's four reserved rows, and a file cache at its bound
         val objectDao = FakeObjectDao()

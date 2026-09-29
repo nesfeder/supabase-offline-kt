@@ -155,6 +155,9 @@ internal class StorageFileCache(
      */
     private var trackedBytes: Long? = null
 
+    /** Until when every file an eviction could take is too recently used for one to be worth a scan. */
+    private var evictionIdleUntilMillis: Long = Long.MIN_VALUE
+
     /** The data directory with every symlink resolved, once it exists. */
     private var canonicalDataDirectory: Path? = null
 
@@ -461,6 +464,7 @@ internal class StorageFileCache(
             lock.withLock {
                 generation.addAndFetch(1L)
                 trackedBytes = null
+                evictionIdleUntilMillis = Long.MIN_VALUE
                 clearDatabase()
                 fileSystem.deleteRecursively(storageDirectory, mustExist = false)
                 fileSystem.deleteRecursively(hashedDirectory, mustExist = false)
@@ -575,18 +579,17 @@ internal class StorageFileCache(
         val limit = maxSizeBytes ?: return
         val total = trackedBytes ?: store.totalStorageSizeBytes().also { trackedBytes = it }
         if (total <= limit) return
+        val now = nowMillis()
+        if (now < evictionIdleUntilMillis) return
         val lowWater = limit - limit / LOW_WATER_FRACTION
-        val usedBefore = nowMillis() - RECENT_USE_GRACE_MILLIS
-        val candidates = store.allStorageRows()
-            .asSequence()
+        val usedBefore = now - RECENT_USE_GRACE_MILLIS
+        val (evictable, recent) = store.allStorageRows()
             .filter { row -> row.key != protectedKey && row.key !in pins }
             .map { row -> row to lastUsedMillis(row) }
-            .filter { (_, lastUsed) -> lastUsed < usedBefore }
-            .sortedBy { (_, lastUsed) -> lastUsed }
-            .toList()
+            .partition { (_, lastUsed) -> lastUsed < usedBefore }
         var remaining = total
         var evicted = 0
-        for ((row, _) in candidates) {
+        for ((row, _) in evictable.sortedBy { (_, lastUsed) -> lastUsed }) {
             if (remaining <= lowWater) break
             entryForRow(row)?.let { entry -> deleteContained(entry.file) }
             store.deleteStorageRow(row.key)
@@ -594,6 +597,9 @@ internal class StorageFileCache(
             evicted++
         }
         trackedBytes = remaining
+        // Still over: what is left is too recent to take, so scan again only once the oldest of it ages out.
+        val oldestRecentUse = recent.minOfOrNull { (_, lastUsed) -> lastUsed }
+        evictionIdleUntilMillis = if (remaining > lowWater && oldestRecentUse != null) oldestRecentUse + RECENT_USE_GRACE_MILLIS else Long.MIN_VALUE
         sdkLogger.debug { "Storage cache evicted $evicted file(s) to stay within $limit bytes" }
     }
 
