@@ -49,7 +49,7 @@ internal data class CacheKeyFixtureCase(
  * `cs_range`, `cd_range`, `ov_range`, `sl`, `sr`, `nxl`, `nxr`, `adj` (a two-element range), `fts`,
  * `plfts`, `phfts`, `wfts` (a query and an optional configuration), `not` (column, operator, value),
  * and `or` / `and` (a list of calls and optional `negate` / `referencedTable`). The rest: `order`,
- * `limit`, `range`, `param` (a raw query parameter) and `header`. A JSON number is passed as its
+ * `limit`, `range`, `schema` (set on the request), `param` (a raw query parameter) and `header`. A JSON number is passed as its
  * literal text, which is what supabase-kt writes for it.
  */
 internal object CacheKeyFixture {
@@ -105,6 +105,7 @@ internal object CacheKeyFixture {
                 referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content,
             )
 
+            "schema" -> schema = call[1].jsonPrimitive.content
             "param" -> params[call[1].jsonPrimitive.content] = call[2].jsonArray.map { value -> value.jsonPrimitive.content }
             "header" -> headers.append(call[1].jsonPrimitive.content, call[2].jsonPrimitive.content)
             else -> filter { applyFilter(call) }

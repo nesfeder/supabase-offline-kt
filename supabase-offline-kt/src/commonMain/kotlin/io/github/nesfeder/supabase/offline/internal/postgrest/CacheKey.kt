@@ -6,7 +6,34 @@ import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Columns.Companion.ALL
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.ktor.http.Headers
+
+/**
+ * Where a SELECT's response is cached.
+ *
+ * @property table the query-cache table: the table itself in the client's default schema, and
+ *   `schema.table` in any other, so the two never share cached rows or queued mutations.
+ * @property cacheKey the cache key, which starts with [table].
+ */
+internal data class CacheSlot(val table: String, val cacheKey: String)
+
+/**
+ * The [CacheSlot] of a SELECT on [table]. The schema is the builder's once [request] has run, which
+ * may set it; a blank one is the server's default.
+ *
+ * @param defaultSchema the client's default schema, whose keys carry no schema prefix.
+ */
+internal fun cacheSlotOf(
+    table: String,
+    columns: Columns,
+    defaultSchema: String,
+    builderFactory: () -> SelectRequestBuilder,
+    request: SelectRequestBuilder.() -> Unit,
+): CacheSlot {
+    val builder = builderFactory().apply(request)
+    val schema = builder.schema
+    val cachedTable = if (schema.isBlank() || schema == defaultSchema) table else "$schema.$table"
+    return CacheSlot(table = cachedTable, cacheKey = keyOf(cachedTable, columns, builder))
+}
 
 /**
  * The cache key of a SELECT: [table], its query parameters sorted by name, and its range, e.g.
@@ -18,32 +45,29 @@ internal fun cacheKeyOf(
     columns: Columns = ALL,
     builderFactory: () -> SelectRequestBuilder,
     request: SelectRequestBuilder.() -> Unit
-): String {
-    val tmp = builderFactory().apply(request)
-    val params: MutableMap<String, List<String>> = tmp.params.toMutableMap()
-    val headers: Headers = tmp.headers.build()
+): String = keyOf(table, columns, builderFactory().apply(request))
 
+/** The key [cacheKeyOf] describes, of a [builder] its request has already configured. */
+private fun keyOf(table: String, columns: Columns, builder: SelectRequestBuilder): String {
+    val params: MutableMap<String, List<String>> = builder.params.toMutableMap()
     if (columns.value != ALL.value) {
         params["select"] = listOf(columns.value)
     }
 
-    // Canonicalize params: sort keys; preserve insertion-order of values
+    // Keys sorted; each key's values kept in the order they were added
     val query = params.keys.sorted().joinToString("&") { key ->
         val values = params[key].orEmpty()
-        if (values.isEmpty()) key
-        else values.joinToString("&") { v -> "$key=$v" }
+        if (values.isEmpty()) key else values.joinToString("&") { value -> "$key=$value" }
     }
 
-    // Canonicalize Range (as |range=start-end)
-    val rangePart = headers["Range"]?.let { r ->
-        val canon = r.removePrefix("items=")
-        "|range=$canon"
-    } ?: ""
+    // A Range header's window, without its `items=` unit
+    val rangePart = builder.headers.build()["Range"]?.let { range -> "|range=${range.removePrefix("items=")}" } ?: ""
 
     return buildString {
         append(table)
         if (query.isNotEmpty()) {
-            append('?'); append(query)
+            append('?')
+            append(query)
         }
         append(rangePart)
     }

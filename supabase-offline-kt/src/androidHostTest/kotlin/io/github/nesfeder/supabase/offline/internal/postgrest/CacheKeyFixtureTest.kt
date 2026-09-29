@@ -8,6 +8,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -59,7 +61,11 @@ internal suspend fun storedCacheKeyOf(case: CacheKeyFixtureCase): String {
             request = CacheKeyFixture.requestOf(case.request),
         )
     }
-    val rows = objectDao.rowsOf(case.table)
+    // A table outside the default schema is cached as `schema.table`
+    val schemas = listOfNotNull(case.schema) + case.request.map { call -> call.jsonArray }
+        .filter { call -> call[0].jsonPrimitive.content == "schema" }
+        .map { call -> call[1].jsonPrimitive.content }
+    val rows = (listOf(case.table) + schemas.map { schema -> "$schema.${case.table}" }).distinct().flatMap(objectDao::rowsOf)
     check(rows.size == 1) { "${case.name} stored ${rows.size} rows" }
     return rows.single().signature
 }

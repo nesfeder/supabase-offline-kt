@@ -378,6 +378,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             verbLabel = "INSERT",
             table = table,
             mutationStrategy = mutationStrategy,
+            writeSchema = { InsertRequestBuilder(delegate.schema, conversionMethod).apply(request).schema },
             performOnline = { delegate.insert(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
                 // Honor QueueIfOffline's "UI reflects immediately" promise on the online-success
@@ -445,6 +446,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             verbLabel = "UPSERT",
             table = table,
             mutationStrategy = mutationStrategy,
+            writeSchema = { UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request).schema },
             performOnline = { delegate.upsert(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
                 val upsertBuilder = UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
@@ -514,6 +516,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             verbLabel = "UPDATE",
             table = table,
             mutationStrategy = mutationStrategy,
+            writeSchema = { SelectRequestBuilder(delegate.schema, conversionMethod).apply(request).schema },
             // [deltaColumns] deliberately does not touch the online path: the write lands now,
             // against the row the caller just read, so there is no queue window to rebase across
             // — and PostgREST cannot express `col = col + x` in a PATCH anyway.
@@ -558,6 +561,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             verbLabel = "DELETE",
             table = table,
             mutationStrategy = mutationStrategy,
+            writeSchema = { SelectRequestBuilder(delegate.schema, conversionMethod).apply(request).schema },
             performOnline = { delegate.delete(request) },
             applyOnlineSuccessOverlay = { _, startedAtTick ->
                 patchFilteredWrite(MutationOperation.DELETE, table, "{}", conversionMethod, request, startedAtTick)
@@ -667,18 +671,25 @@ internal class OfflinePostgrestQueryBuilderImpl(
         verbLabel: String,
         table: String,
         mutationStrategy: MutationStrategy,
+        writeSchema: () -> String,
         performOnline: suspend () -> PostgrestResult,
         applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
     ): MutationOutcome = operationGate.call {
-        executeMutationNow(verbLabel, table, mutationStrategy, performOnline, applyOnlineSuccessOverlay, captureForQueue)
+        executeMutationNow(verbLabel, table, mutationStrategy, writeSchema, performOnline, applyOnlineSuccessOverlay, captureForQueue)
     }
 
-    /** [executeMutation]'s body, run while the call holds the client's gate. */
+    /**
+     * [executeMutation]'s body, run while the call holds the client's gate.
+     *
+     * @throws UnsupportedOperationException for a `QueueIfOffline` write to a schema other than the
+     *   client's default: the queue replays to the default schema only.
+     */
     private suspend fun executeMutationNow(
         verbLabel: String,
         table: String,
         mutationStrategy: MutationStrategy,
+        writeSchema: () -> String,
         performOnline: suspend () -> PostgrestResult,
         applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
@@ -687,6 +698,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
             val result = performOnline()
             sdkLogger.debug { "$verbLabel $table response: ${result.data}" }
             return MutationOutcome.Applied(result)
+        }
+        val schema = writeSchema()
+        if (schema.isNotBlank() && schema != delegate.postgrest.config.defaultSchema) {
+            throw UnsupportedOperationException(
+                "Queueing a write to the \"$schema\" schema is not supported yet: the mutation queue replays to " +
+                    "the default schema only. Send this write with MutationStrategy.OnlineOnly.",
+            )
         }
 
         val startedAtTick = store.monotonicTickNow()

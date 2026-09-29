@@ -90,15 +90,16 @@ internal class QueryReader(
         readStrategy: ReadStrategy,
         request: SelectRequestBuilder.() -> Unit
     ): PostgrestResult {
-        val table = delegate.table
+        val slot = cacheSlotOf(columns, request)
+        val table = slot.table
         sdkLogger.debug { "SELECT $table via ${readStrategy::class.simpleName}" }
         return when (readStrategy) {
             is ReadStrategy.NetworkFirst -> {
                 try {
-                    fetchWaitingOutRestore(table, columns, request)
+                    fetchWaitingOutRestore(slot, columns, request)
                 } catch (exception: Exception) {
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
-                    val cached = readCached(table, columns, request, readStrategy.cacheDuration)
+                    val cached = readCached(slot, readStrategy.cacheDuration)
                     if (cached != null) {
                         sdkLogger.warning { "SELECT $table network failed, falling back to cache" }
                         cached
@@ -109,19 +110,19 @@ internal class QueryReader(
                 }
             }
             ReadStrategy.NetworkOnly -> {
-                fetchWaitingOutRestore(table, columns, request)
+                fetchWaitingOutRestore(slot, columns, request)
             }
             is ReadStrategy.CacheFirst -> {
-                val cached = readCached(table, columns, request, readStrategy.cacheDuration)
+                val cached = readCached(slot, readStrategy.cacheDuration)
                 if (cached != null) {
                     sdkLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
-                    fetchWaitingOutRestore(table, columns, request)
+                    fetchWaitingOutRestore(slot, columns, request)
                 }
             }
             is ReadStrategy.CacheOnly -> {
-                val cached = readCached(table, columns, request, readStrategy.cacheDuration)
+                val cached = readCached(slot, readStrategy.cacheDuration)
                 if (cached != null) {
                     sdkLogger.info { "SELECT $table served from cache" }
                     cached
@@ -140,24 +141,25 @@ internal class QueryReader(
      * mid-request. Once the steps run out it returns the last response, which was not cached.
      */
     private suspend fun fetchWaitingOutRestore(
-        table: String,
+        slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult {
+        val table = slot.table
         var sessionBefore = requestSession()
         var stepsTaken = 0
         while (true) {
-            val fetched = fetchAndCache(table, columns, request, sessionBefore)
+            val fetched = fetchAndCache(slot, columns, request, sessionBefore)
             // A response refused after a clear is answered with the emptied cache, and never asked again
             if (fetched.wasRefusedAfterClear) return buildResult(EMPTY_JSON_ARRAY, delegate.postgrest)
             if (!trustPolicy.oneShotAsksAgain(fetched.sessionBefore, fetched.sessionAfter, fetched.isEmpty) ||
                 fetched.outcome == AddPayloadOutcome.WRITTEN
             ) {
-                return overlaidResponse(table, columns, request, fetched)
+                return overlaidResponse(slot, fetched)
             }
             if (stepsTaken == RESTORE_WINDOW_RETRY_WAITS) {
                 sdkLogger.warning { "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the response uncached" }
-                return overlaidResponse(table, columns, request, fetched)
+                return overlaidResponse(slot, fetched)
             }
             sdkLogger.warning { "SELECT $table answered while the session was not settled; waiting for the session" }
             if (fetched.sessionBefore is RequestSession.Restoring) {
@@ -194,28 +196,26 @@ internal class QueryReader(
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit
     ): Flow<OfflineReadResult> {
-        val table = delegate.table
-        val cacheKey = cacheKeyOf(table, columns, request)
+        val slot = cacheSlotOf(columns, request)
         val base = when (readStrategy) {
             FlowReadStrategy.CacheFirstThenNetwork -> flow {
                 emitAll(
-                    refreshCoordinator.sharedReadFlow(table, cacheKey) {
-                        cacheFirstThenNetworkWithState(table, columns, request, cacheKey)
+                    refreshCoordinator.sharedReadFlow(slot.table, slot.cacheKey) {
+                        cacheFirstThenNetworkWithState(slot, columns, request)
                     },
                 )
             }
-            FlowReadStrategy.CacheOnly -> cacheOnlyWithState(cacheKey, table)
-            FlowReadStrategy.NetworkFirstThenCache ->
-                networkFirstThenCacheWithState(table, columns, request, cacheKey)
+            FlowReadStrategy.CacheOnly -> cacheOnlyWithState(slot)
+            FlowReadStrategy.NetworkFirstThenCache -> networkFirstThenCacheWithState(slot, columns, request)
         }
         return base
-            .onStart { refreshCoordinator.registerLiveSignature(table, cacheKey) }
-            .onCompletion { refreshCoordinator.unregisterLiveSignature(table, cacheKey) }
+            .onStart { refreshCoordinator.registerLiveSignature(slot.table, slot.cacheKey) }
+            .onCompletion { refreshCoordinator.unregisterLiveSignature(slot.table, slot.cacheKey) }
     }
 
     /** The cache and the overlay as they change, never the network; the refresh is always idle. */
-    private fun cacheOnlyWithState(cacheKey: String, table: String): Flow<OfflineReadResult> =
-        store.overlaidPayloadFlow(table, cacheKey).map { payload ->
+    private fun cacheOnlyWithState(slot: CacheSlot): Flow<OfflineReadResult> =
+        store.overlaidPayloadFlow(slot.table, slot.cacheKey).map { payload ->
             OfflineReadResult(
                 result = payload?.let { json -> buildResult(json, delegate.postgrest) },
                 refresh = RefreshState.Idle,
@@ -227,18 +227,17 @@ internal class QueryReader(
      * alongside, and again on each refresh request for the table. The shared upstream of one query.
      */
     private fun cacheFirstThenNetworkWithState(
-        table: String,
+        slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
-        cacheKey: String,
     ): Flow<OfflineReadResult> {
         val refreshState = MutableStateFlow<RefreshState>(RefreshState.InFlight)
         val payloads = cacheFirstWithParallelRefresh(
-            cache = store.overlaidPayloadFlow(table, cacheKey),
-            refresh = { refreshFromNetwork(table, columns, request) },
+            cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey),
+            refresh = { refreshFromNetwork(slot, columns, request) },
             accelerator = accelerator,
             onRefreshState = { state -> refreshState.value = state },
-            refreshRequests = refreshCoordinator.refreshRequestsFor(table),
+            refreshRequests = refreshCoordinator.refreshRequestsFor(slot.table),
         )
         // One result per distinct payload: a refresh-state change re-emits the same result instance
         val results = payloads
@@ -254,15 +253,15 @@ internal class QueryReader(
      * trust policy does not take as settled throws [UntrustedResponseException], so the loop retries.
      */
     private suspend fun refreshFromNetwork(
-        table: String,
+        slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ) {
-        val fetched = fetchAndCache(table, columns, request, requestSession())
+        val fetched = fetchAndCache(slot, columns, request, requestSession())
         if (fetched.wasRefusedAfterClear) return
         if (trustPolicy.refreshRetries(fetched.sessionBefore, fetched.sessionAfter, fetched.isEmpty)) {
-            sdkLogger.warning { "SELECT $table answered while the session was not settled; will retry" }
-            throw UntrustedResponseException(table)
+            sdkLogger.warning { "SELECT ${slot.table} answered while the session was not settled; will retry" }
+            throw UntrustedResponseException(slot.table)
         }
     }
 
@@ -271,13 +270,12 @@ internal class QueryReader(
      * bootstrap waits out a restoring session like a one-shot read, as nothing retries it later.
      */
     private fun networkFirstThenCacheWithState(
-        table: String,
+        slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
-        cacheKey: String,
     ): Flow<OfflineReadResult> =
-        store.overlaidPayloadFlow(table, cacheKey)
-            .onStart { fetchWaitingOutRestore(table, columns, request) }
+        store.overlaidPayloadFlow(slot.table, slot.cacheKey)
+            .onStart { fetchWaitingOutRestore(slot, columns, request) }
             .map { payload ->
                 OfflineReadResult(
                     result = payload?.let { json -> buildResult(json, delegate.postgrest) },
@@ -292,12 +290,12 @@ internal class QueryReader(
      * authoritative. A written one retires the synced mutations every cached query now holds.
      */
     private suspend fun fetchAndCache(
-        table: String,
+        slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
         sessionBeforeFirstRequest: RequestSession,
     ): FetchedResponse {
-        val cacheKey = cacheKeyOf(table, columns, request)
+        val (table, cacheKey) = slot
         var sessionBefore = sessionBeforeFirstRequest
         var refetchBudget = STALE_RESPONSE_REFETCH_BUDGET
         while (true) {
@@ -336,13 +334,8 @@ internal class QueryReader(
      * What a one-shot read serves for [fetched]: the server's rows, or the cache when they were
      * refused as older than a local write, with pending mutations overlaid.
      */
-    private suspend fun overlaidResponse(
-        table: String,
-        columns: Columns,
-        request: SelectRequestBuilder.() -> Unit,
-        fetched: FetchedResponse,
-    ): PostgrestResult {
-        val cacheKey = cacheKeyOf(table, columns, request)
+    private suspend fun overlaidResponse(slot: CacheSlot, fetched: FetchedResponse): PostgrestResult {
+        val (table, cacheKey) = slot
         val base = if (fetched.outcome == AddPayloadOutcome.DROPPED_STALE) {
             sdkLogger.warning { "SELECT $table response still predates a local write; serving cached state" }
             store.getPayload(table, cacheKey) ?: fetched.response.data
@@ -354,26 +347,19 @@ internal class QueryReader(
     }
 
     /** The cached payload of the query with its mutations overlaid, or `null` when none is cached or it is older than [cacheDuration]. */
-    private suspend fun readCached(
-        table: String,
-        columns: Columns,
-        request: SelectRequestBuilder.() -> Unit,
-        cacheDuration: Duration?,
-    ): PostgrestResult? {
-        val cacheKey = cacheKeyOf(table, columns, request)
+    private suspend fun readCached(slot: CacheSlot, cacheDuration: Duration?): PostgrestResult? {
+        val (table, cacheKey) = slot
         val (payload, updatedAt) = store.getPayloadWithTimestamp(table, cacheKey) ?: return null
         if (cacheDuration != null && nowMillis() - updatedAt > cacheDuration.inWholeMilliseconds) return null
         val overlaid = store.overlayCachedPayload(table = table, signature = cacheKey, cachedJson = payload)
         return buildResult(overlaid, delegate.postgrest)
     }
 
-    private fun cacheKeyOf(
-        table: String,
-        columns: Columns,
-        request: SelectRequestBuilder.() -> Unit
-    ): String = cacheKeyOf(
-        table = table,
+    /** Where the query is cached; see [cacheSlotOf]. */
+    private fun cacheSlotOf(columns: Columns, request: SelectRequestBuilder.() -> Unit): CacheSlot = cacheSlotOf(
+        table = delegate.table,
         columns = columns,
+        defaultSchema = delegate.postgrest.config.defaultSchema,
         builderFactory = { SelectRequestBuilder(delegate.schema, delegate.postgrest.config.propertyConversionMethod) },
         request = request,
     )

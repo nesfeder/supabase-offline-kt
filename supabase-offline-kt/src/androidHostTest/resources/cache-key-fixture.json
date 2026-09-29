@@ -82,6 +82,11 @@
     { "name": "range_header", "table": "notes", "request": [["header", "Range", "items=0-49"]], "cacheKey": "notes|range=0-49" },
     { "name": "range_header_with_filter", "table": "notes", "request": [["eq", "list_id", "home"], ["header", "Range", "items=50-99"]], "cacheKey": "notes?list_id=eq.home|range=50-99" },
     { "name": "raw_param", "table": "notes", "request": [["param", "custom", ["x"]]], "cacheKey": "notes?custom=x" },
-    { "name": "raw_param_two_values", "table": "notes", "request": [["param", "b", ["2", "1"]], ["param", "a", ["x"]]], "cacheKey": "notes?a=x&b=2&b=1" }
+    { "name": "raw_param_two_values", "table": "notes", "request": [["param", "b", ["2", "1"]], ["param", "a", ["x"]]], "cacheKey": "notes?a=x&b=2&b=1" },
+    { "name": "default_schema_named", "schema": "public", "table": "notes", "request": [["eq", "list_id", "home"]], "cacheKey": "notes?list_id=eq.home" },
+    { "name": "other_schema", "schema": "private", "table": "notes", "request": [], "cacheKey": "private.notes" },
+    { "name": "other_schema_filtered_ordered", "schema": "private", "table": "notes", "columns": "id,title", "request": [["eq", "list_id", "home"], ["order", "created_at", "desc"], ["range", 0, 19]], "cacheKey": "private.notes?limit=20&list_id=eq.home&offset=0&order=created_at.desc.nullslast&select=id,title" },
+    { "name": "other_schema_set_in_request", "table": "notes", "request": [["schema", "private"], ["eq", "list_id", "home"]], "cacheKey": "private.notes?list_id=eq.home" },
+    { "name": "default_schema_set_in_request", "schema": "private", "table": "notes", "request": [["schema", "public"], ["eq", "list_id", "home"]], "cacheKey": "notes?list_id=eq.home" }
   ]
 }
