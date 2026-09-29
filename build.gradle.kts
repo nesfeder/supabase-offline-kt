@@ -1,8 +1,8 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
 plugins {
-    // this is necessary to avoid the plugins to be loaded multiple times
-    // in each subproject's classloader
+    // Every plugin a module applies, itself or through a convention plugin in build-logic, is
+    // loaded here once, so all projects share one copy of it.
     alias(libs.plugins.androidKmpLibrary) apply false
     alias(libs.plugins.androidx.room) apply false
     alias(libs.plugins.kotlinMultiplatform) apply false

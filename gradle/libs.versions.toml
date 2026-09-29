@@ -24,7 +24,11 @@ sqlite-system = "2.7.1"
 supabase-bom = "3.8.0"
 
 [libraries]
+# The `gradleApi` and `gradlePlugin` entries are the plugins build-logic compiles against; the
+# modules apply the same plugins through [plugins].
+android-gradleApi = { module = "com.android.tools.build:gradle-api", version.ref = "agp" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+androidx-room-gradlePlugin = { module = "androidx.room:room-gradle-plugin", version.ref = "room" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 androidx-sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "sqlite" }
 androidx-sqlite-bundled-jvm = { module = "androidx.sqlite:sqlite-bundled-jvm", version.ref = "sqlite" }
@@ -32,6 +36,7 @@ androidx-sqlite-framework-system = { module = "androidx.sqlite:sqlite-framework"
 androidx-sqlite-system = { module = "androidx.sqlite:sqlite", version.ref = "sqlite-system" }
 androidx-test-core-ktx = { module = "androidx.test:core-ktx", version.ref = "androidx-test-core" }
 androidx-testExt-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-testExt" }
+kotlin-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
