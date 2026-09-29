@@ -71,6 +71,12 @@ internal class RecordingPostgrestServer(
          * too.
          */
         var authorization: String? = null
+
+        /**
+         * The `x-retry-count` header, or `null`: the retry supabase-kt numbered it. Outside
+         * equality.
+         */
+        var retryCount: String? = null
     }
 
     /** Every request received, in order. */
@@ -98,6 +104,7 @@ internal class RecordingPostgrestServer(
                             .apply {
                                 accept = request.headers.getAll("Accept")?.joinToString(",")
                                 authorization = request.headers["Authorization"]
+                                retryCount = request.headers["x-retry-count"]
                             }
                     requests += recorded
                     answer(recorded)
