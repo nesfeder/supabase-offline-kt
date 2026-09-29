@@ -3,6 +3,7 @@ package io.github.nesfeder.supabase.offline.testdoubles
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockEngineConfig
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.toByteArray
@@ -12,6 +13,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headers
 import io.ktor.http.headersOf
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.io.IOException
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -26,9 +28,12 @@ import kotlinx.serialization.json.put
  * ([connectivityFailure]).
  *
  * @property answer decides the response for each recorded request; by default `200 []`.
+ * @param engineDispatcher where the engine runs requests; by default its own I/O threads. A test that
+ *   passes its own test dispatcher keeps every request on the test scheduler.
  */
 internal class RecordingPostgrestServer(
     var answer: suspend MockRequestHandleScope.(RecordedRequest) -> HttpResponseData = { okJson("[]") },
+    engineDispatcher: CoroutineDispatcher? = null,
 ) {
 
     /**
@@ -56,19 +61,24 @@ internal class RecordingPostgrestServer(
     val requests: MutableList<RecordedRequest> = mutableListOf()
 
     /** The engine to install on a client (see [supabaseClient]). */
-    val engine: MockEngine = MockEngine { request ->
-        val recorded = RecordedRequest(
-            method = request.method.value,
-            table = request.url.encodedPath.substringAfterLast('/'),
-            query = request.url.parameters.names().associateWith { name -> request.url.parameters[name].orEmpty() },
-            prefer = request.headers["Prefer"],
-            contentProfile = request.headers["Content-Profile"],
-            acceptProfile = request.headers["Accept-Profile"],
-            body = request.body.toByteArray().decodeToString(),
-        )
-        requests += recorded
-        answer(recorded)
-    }
+    val engine: MockEngine = MockEngine(
+        MockEngineConfig().apply {
+            dispatcher = engineDispatcher
+            addHandler { request ->
+                val recorded = RecordedRequest(
+                    method = request.method.value,
+                    table = request.url.encodedPath.substringAfterLast('/'),
+                    query = request.url.parameters.names().associateWith { name -> request.url.parameters[name].orEmpty() },
+                    prefer = request.headers["Prefer"],
+                    contentProfile = request.headers["Content-Profile"],
+                    acceptProfile = request.headers["Accept-Profile"],
+                    body = request.body.toByteArray().decodeToString(),
+                )
+                requests += recorded
+                answer(recorded)
+            }
+        },
+    )
 
     /**
      * A supabase-kt client whose PostgREST requests reach this server. Automatic retries are off,
