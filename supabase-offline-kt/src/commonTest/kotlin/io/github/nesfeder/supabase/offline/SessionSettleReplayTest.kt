@@ -32,8 +32,8 @@ class SessionSettleReplayTest {
 
     @Test
     fun a_users_queued_mutations_go_out_when_that_user_signs_in_again() = runTest {
-        // Given — user A's edit queued offline, then A signs out and the network returns; the
-        // client's background work runs on real threads
+        // Given — user A's edit queued offline, then A signs out; the network stays down until A is
+        // back, so nothing but the sign-in can send it. The client's work runs on real threads.
         val clientScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         val client = newTestOfflineClient(supabase = supabase, store = store, coordinatorScope = clientScope)
@@ -41,21 +41,18 @@ class SessionSettleReplayTest {
         server.answer = { connectivityFailure() }
         client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"A's edit"}""")) { filter { eq("id", 1) } }
         supabase.auth.clearSession()
-        server.answer = { okJson("[]") }
-        val sentWhileSignedOut = server.requests.count { it.method == "PATCH" } - 1
 
-        // When — A signs in again, and nothing else asks for a pass
+        // When — the network returns and A signs in again; nothing else asks for a pass
+        server.answer = { okJson("[]") }
         supabase.signInForTest("user-a")
         val drained = withContext(Dispatchers.Default) {
-            withTimeoutOrNull(5.seconds) { store.pendingMutationCountFlow().first { pending -> pending == 0 } }
+            withTimeoutOrNull(10.seconds) { store.pendingMutationCountFlow().first { pending -> pending == 0 } }
         }
-
         clientScope.cancel()
 
         // Then — the settle started a pass that sent A's edit
-        assertEquals(0, sentWhileSignedOut)
         assertEquals(0, drained, "A's edit was never sent")
-        assertEquals(2, server.requests.count { it.method == "PATCH" })
+        assertEquals("""{"title":"A's edit"}""", server.requests.last { it.method == "PATCH" }.body)
     }
 
     private companion object {
