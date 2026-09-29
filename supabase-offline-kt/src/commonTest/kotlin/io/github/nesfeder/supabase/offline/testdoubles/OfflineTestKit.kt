@@ -36,6 +36,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration
 
 /*
  * The one place the engine's tests build the offline stack. Start here when writing a test:
@@ -138,6 +139,8 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  *   it from the test scheduler.
  * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
  *   database's scrub.
+ * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose
+ *   background work can never run (see [idleCoroutineScope]): its `close()` always waits it out.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -148,6 +151,7 @@ internal fun newTestOfflineClient(
     onClose: () -> Unit = {},
     coordinatorScope: CoroutineScope = newEngineScope(sdkLogger),
     scrubDatabase: suspend () -> Unit = {},
+    closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
 ): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
     supabase = supabase,
     store = store,
@@ -156,6 +160,7 @@ internal fun newTestOfflineClient(
     coordinatorScope = coordinatorScope,
     scrubDatabase = scrubDatabase,
     onClose = onClose,
+    closeWait = closeWait,
 )
 
 /**

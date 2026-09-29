@@ -40,6 +40,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -126,6 +128,7 @@ class MutationQueueAcrossCloseTest {
             supabase = server.supabaseClient(),
             store = newTestOfflineStore(objectDao = objects, storageDao = storage, mutationDao = mutations),
             coordinatorScope = idleCoroutineScope(),
+            closeWait = IDLE_CLOSE_WAIT,
         )
         first.from(TABLE).insertJson(rowWithId(1))
         first.from(TABLE).insertJson(rowWithId(2))
@@ -141,6 +144,7 @@ class MutationQueueAcrossCloseTest {
             supabase = server.supabaseClient(),
             store = newTestOfflineStore(objectDao = objects, storageDao = storage, mutationDao = mutations),
             coordinatorScope = idleCoroutineScope(),
+            closeWait = IDLE_CLOSE_WAIT,
         )
         reopened.syncAllPendingMutations()
 
@@ -158,6 +162,9 @@ class MutationQueueAcrossCloseTest {
     private companion object {
         const val TABLE = "todos"
         const val SETTLE_MILLIS = 300L
+
+        /** An idle client's work can never finish, so its `close()` always waits this long. */
+        val IDLE_CLOSE_WAIT: Duration = 100.milliseconds
         val ROW: JsonArray = Json.parseToJsonElement("""[{"id":1}]""") as JsonArray
     }
 }

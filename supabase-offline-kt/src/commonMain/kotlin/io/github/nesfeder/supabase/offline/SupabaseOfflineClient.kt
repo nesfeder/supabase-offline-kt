@@ -35,6 +35,7 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -276,8 +277,9 @@ public interface SupabaseOfflineClient {
      *   started, which then fail with [IllegalStateException] — never with a cancellation.
      * - Every other call already running — a clear, a write, a read — is left to finish, and the
      *   database is closed only once none is using it. A clear that has begun always completes.
-     * - It waits for them at most 10 seconds. Past that it returns, and the database closes as soon
-     *   as the last of them finishes; until then, a new client on the same database fails to open.
+     * - It waits for them at most 10 seconds of real time, even under a test's virtual clock. Past that
+     *   it returns, and the database closes as soon as the last of them finishes; until then, a new
+     *   client on the same database fails to open.
      *
      * Safe to call more than once. A wrapper must forward it (delegation with `by` does), or the
      * database stays claimed and the wrapped client's work keeps running.
@@ -324,6 +326,8 @@ internal class SupabaseOfflineClientImpl(
     private val scrubDatabase: suspend () -> Unit = {},
     /** Releases what the factory opened — the database and its registration — on [close]. */
     private val onClose: () -> Unit = {},
+    /** How long [close] waits for calls in flight; tests whose client work never runs shorten it. */
+    private val closeWait: Duration = CLOSE_WAIT,
 ) : SupabaseOfflineClient {
 
     /**
@@ -600,14 +604,15 @@ internal class SupabaseOfflineClientImpl(
     /**
      * Refuses new calls and cancels the client's own work and the calls it may stop: replays and
      * downloads. It waits for every other call (a clear, a write, a read) before closing the database;
-     * after [CLOSE_WAIT] it returns, and the database closes when the last call finishes.
+     * after [closeWait] it returns, and the database closes when the last call finishes.
      */
     override suspend fun close() {
         if (!operationGate.close()) return
         val work = clientScope.coroutineContext.job
         work.cancel()
-        val idle = withContext(NonCancellable) {
-            withTimeoutOrNull(CLOSE_WAIT) {
+        // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
+        val idle = withContext(NonCancellable + Dispatchers.Default) {
+            withTimeoutOrNull(closeWait) {
                 work.join()
                 operationGate.awaitNoCallsInFlight()
             } != null
@@ -617,7 +622,7 @@ internal class SupabaseOfflineClientImpl(
             return
         }
         sdkLogger.warning {
-            "close() waited $CLOSE_WAIT for ${operationGate.inFlight} call(s) still using the database; " +
+            "close() waited $closeWait for ${operationGate.inFlight} call(s) still using the database; " +
                 "it closes when they finish"
         }
         parentScope.launch(NonCancellable) {
@@ -723,7 +728,7 @@ internal class SupabaseOfflineClientImpl(
 
     /* ───────────────────────────── Guards ───────────────────────────── */
 
-    private companion object {
+    internal companion object {
         /** How long [close] waits for the calls in flight before it returns without closing the database. */
         val CLOSE_WAIT: Duration = 10.seconds
     }

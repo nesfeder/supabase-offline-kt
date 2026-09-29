@@ -1,5 +1,6 @@
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -28,7 +29,10 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -158,7 +162,7 @@ class SupabaseOfflineClientCloseTest {
                 okJson("[]")
             },
         )
-        val client = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = idleCoroutineScope())
+        val client = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = idleCoroutineScope(), closeWait = IDLE_CLOSE_WAIT)
         client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
         client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
 
@@ -173,6 +177,78 @@ class SupabaseOfflineClientCloseTest {
         // Then — the replay stopped with the closed error and sent nothing more
         assertClientClosedError(outcome.exceptionOrNull(), "the replay in flight at close()")
         assertEquals(1, sent.load(), "the replay kept sending after close()")
+    }
+
+    @Test
+    fun close_waits_in_real_time_for_a_call_in_flight_when_called_under_a_test_scheduler() = runTest {
+        // Given — a write on the wire, which the server answers after a moment of real time
+        var releases = 0
+        val arrived = CompletableDeferred<Unit>()
+        val held = CompletableDeferred<Unit>()
+        val server = RecordingPostgrestServer(
+            answer = {
+                arrived.complete(Unit)
+                held.await()
+                okJson("[]")
+            },
+        )
+        val client = newTestOfflineClient(supabase = server.supabaseClient(), onClose = { releases++ }, coordinatorScope = callerScope)
+        val write = callerScope.async { runCatching { client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) }) } }
+        withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
+        callerScope.launch {
+            delay(SETTLE_MILLIS)
+            held.complete(Unit)
+        }
+
+        // When — close() is called on the test's scheduler, whose clock skips ahead when idle
+        client.close()
+
+        // Then — it returned only after the write was answered and the database was released
+        assertEquals(1, releases, "close() returned before the database was released")
+        assertIs<MutationOutcome.Applied>(write.await().getOrNull(), "the write in flight at close() got ${write.await().exceptionOrNull()}")
+    }
+
+    @Test
+    fun past_its_wait_close_returns_and_the_database_is_released_once_the_last_call_finishes() = runTest {
+        // Given — a write on the wire that the server holds past close()'s wait
+        val releases = AtomicInt(0)
+        val logger = RecordingOfflineLogger()
+        val arrived = CompletableDeferred<Unit>()
+        val held = CompletableDeferred<Unit>()
+        val server = RecordingPostgrestServer(
+            answer = {
+                arrived.complete(Unit)
+                held.await()
+                okJson("[]")
+            },
+        )
+        val client = newTestOfflineClient(
+            supabase = server.supabaseClient(),
+            sdkLogger = SdkLogger(logger, OfflineLogLevel.INFO),
+            onClose = { releases.addAndFetch(1) },
+            coordinatorScope = callerScope,
+            closeWait = IDLE_CLOSE_WAIT,
+        )
+        val write = callerScope.async { runCatching { client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) }) } }
+        withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
+
+        // When — close() waits out its bound with the write still held, then the server answers
+        client.close()
+        val releasedWhenCloseReturned = releases.load()
+        held.complete(Unit)
+        val outcome = withContext(Dispatchers.Default) {
+            withTimeout(5.seconds) {
+                while (releases.load() == 0) delay(5)
+                write.await()
+            }
+        }
+
+        // Then — close() left the database open under the write and said so; the write was answered,
+        // and the database was released once, after it
+        assertEquals(0, releasedWhenCloseReturned, "close() released the database under a call in flight")
+        assertEquals(1, logger.entriesAt(OfflineLogLevel.WARNING).count { entry -> entry.message.startsWith("close() waited") })
+        assertIs<MutationOutcome.Applied>(outcome.getOrNull(), "the write in flight at close() got ${outcome.exceptionOrNull()}")
+        assertEquals(1, releases.load())
     }
 
     @Test
@@ -200,5 +276,8 @@ class SupabaseOfflineClientCloseTest {
     private companion object {
         /** Real time given to anything in flight to reach the server. */
         const val SETTLE_MILLIS = 200L
+
+        /** An idle client's work can never finish, so its `close()` always waits this long. */
+        val IDLE_CLOSE_WAIT: Duration = 100.milliseconds
     }
 }
