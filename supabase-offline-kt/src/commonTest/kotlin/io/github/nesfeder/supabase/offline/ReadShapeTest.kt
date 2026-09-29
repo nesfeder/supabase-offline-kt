@@ -25,12 +25,18 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import io.github.jan.supabase.auth.MemorySessionManager
+import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -104,7 +110,7 @@ class ReadShapeTest {
         // Given
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = listOfA)
 
-        listOf(ReadStrategy.CacheOnly(), ReadStrategy.CacheFirst(), ReadStrategy.NetworkFirst()).forEach { strategy ->
+        listOf(ReadStrategy.CacheFirst(), ReadStrategy.NetworkFirst()).forEach { strategy ->
             shapes.forEach { (name, request, answer) ->
                 // When
                 val read = items.select(readStrategy = strategy, request = request)
@@ -121,7 +127,7 @@ class ReadShapeTest {
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = listOfA)
         online = false
 
-        listOf(ReadStrategy.NetworkOnly, ReadStrategy.CacheOnly(), ReadStrategy.CacheFirst(), ReadStrategy.NetworkFirst()).forEach { strategy ->
+        listOf(ReadStrategy.NetworkOnly, ReadStrategy.CacheFirst(), ReadStrategy.NetworkFirst()).forEach { strategy ->
             shapes.forEach { (name, request, _) ->
                 // When
                 val failure = runCatching { items.select(readStrategy = strategy, request = request) }.exceptionOrNull()
@@ -133,8 +139,28 @@ class ReadShapeTest {
     }
 
     @Test
+    fun a_cache_only_read_of_each_shape_sends_nothing_and_says_the_cache_cannot_answer_it() = runTest {
+        // Given — the list of the same filters cached
+        items.select(readStrategy = ReadStrategy.NetworkOnly, request = listOfA)
+        val sentBefore = server.requests.size
+
+        shapes.forEach { (name, request, _) ->
+            // When
+            val oneShot = runCatching { items.select(readStrategy = ReadStrategy.CacheOnly(), request = request) }.exceptionOrNull()
+            val reactive = runCatching { items.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = request).first() }.exceptionOrNull()
+
+            // Then — a clear error, never the list in the shape's place, and nothing sent
+            listOf(oneShot, reactive).forEach { failure ->
+                assertIs<NoSuchElementException>(failure, "$name")
+                assertTrue(failure.message.orEmpty().contains("the cache holds lists of rows"), "$name: ${failure.message}")
+            }
+        }
+        assertEquals(sentBefore, server.requests.size)
+    }
+
+    @Test
     fun a_reactive_read_of_each_shape_emits_the_network_answer_once() = runTest {
-        FlowReadStrategy.entries.forEach { strategy ->
+        listOf(FlowReadStrategy.CacheFirstThenNetwork, FlowReadStrategy.NetworkFirstThenCache).forEach { strategy ->
             shapes.forEach { (name, request, answer) ->
                 // When
                 val emissions = items.selectAsFlow(readStrategy = strategy, request = request).toList()
@@ -152,7 +178,7 @@ class ReadShapeTest {
         // Given
         online = false
 
-        FlowReadStrategy.entries.forEach { strategy ->
+        listOf(FlowReadStrategy.CacheFirstThenNetwork, FlowReadStrategy.NetworkFirstThenCache).forEach { strategy ->
             shapes.forEach { (name, request, _) ->
                 // When
                 val failure = runCatching { items.selectAsFlow(readStrategy = strategy, request = request).toList() }.exceptionOrNull()
@@ -189,6 +215,66 @@ class ReadShapeTest {
         assertEquals(1, server.requests.size)
         assertEquals(0L, currentTime)
         if (objectDao.rowsOf(TABLE).isNotEmpty()) fail("the empty result was stored")
+    }
+
+    /**
+     * The list of the filters cached, then a client over the same cache that cannot build a request
+     * with a token: a session that expired while the network is down, a session required while nobody
+     * is signed in, and a token provider that throws. In each, a shape the cache cannot hold is never
+     * answered with that list.
+     */
+    @Test
+    fun a_client_that_cannot_resolve_a_token_never_answers_a_shape_from_the_list() = runTest {
+        // Given — the list cached, and a server that is down
+        items.select(readStrategy = ReadStrategy.NetworkOnly, request = listOfA)
+        online = false
+        val clients = listOf(
+            "expired offline" to suspend {
+                newTestSupabaseClient(engine = server.engine) {
+                    install(Postgrest)
+                    install(Auth) {
+                        sessionManager = MemorySessionManager()
+                        codeVerifierCache = MemoryCodeVerifierCache()
+                        autoLoadFromStorage = false
+                        alwaysAutoRefresh = true
+                        enableLifecycleCallbacks = false
+                    }
+                }.also { supabase ->
+                    supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing }
+                    supabase.signInForTest("u-1", expiresInSeconds = -60)
+                }
+            },
+            "session required, signed out" to suspend {
+                newTestSupabaseClient(engine = server.engine) {
+                    install(Postgrest) { requireValidSession = true }
+                    install(Auth) {
+                        sessionManager = MemorySessionManager()
+                        codeVerifierCache = MemoryCodeVerifierCache()
+                        autoLoadFromStorage = false
+                        enableLifecycleCallbacks = false
+                    }
+                }.also { supabase -> supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing } }
+            },
+            "token provider throws" to suspend {
+                newTestSupabaseClient(engine = server.engine) {
+                    accessToken = { error("the app's token provider failed") }
+                    install(Postgrest)
+                }
+            },
+        )
+
+        clients.forEach { (label, build) ->
+            val cached = newTestOfflineClient(supabase = build(), store = newTestOfflineStore(objectDao = objectDao), coordinatorScope = idleCoroutineScope()).from(TABLE)
+            shapes.filter { (name, _, _) -> name in listOf("single", "maybeSingle", "head", "count") }.forEach { (name, request, _) ->
+                // When
+                val reads = listOf(ReadStrategy.CacheOnly(), ReadStrategy.CacheFirst()).map { strategy ->
+                    strategy to runCatching { cached.select(readStrategy = strategy, request = request).data }
+                } + (FlowReadStrategy.CacheOnly to runCatching { cached.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = request).first().result?.data })
+
+                // Then — each fails; none returns the cached list
+                reads.forEach { (strategy, read) -> assertTrue(read.isFailure, "$label, $name via $strategy gave ${read.getOrNull()}") }
+            }
+        }
     }
 
     private companion object {
