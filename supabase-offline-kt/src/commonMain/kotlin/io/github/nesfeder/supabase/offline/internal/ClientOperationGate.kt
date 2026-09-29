@@ -76,9 +76,10 @@ internal class ClientOperationGate {
     }
 
     /**
-     * [flow] as a call for as long as it is collected, run apart from its collector one value at a
-     * time. [close] ends the collection with the closed error, however its collector is stuck; the
-     * upstream's own failure, a cancellation included, reaches the collector after the values before it.
+     * [flow] as a call while collected, run apart from its collector one value at a time. At [close] the
+     * channel ends with the closed error, then the upstream is cancelled; the collector reads that error
+     * next, however stuck. What the upstream throws (a cancellation, a send the closed channel refused)
+     * ends the channel after its values; only the collector's cancellation propagates, into nobody else's scope.
      */
     fun <T> callCollecting(flow: Flow<T>): Flow<T> = flow {
         coroutineScope {

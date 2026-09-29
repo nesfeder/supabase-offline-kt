@@ -3,18 +3,25 @@ package io.github.nesfeder.supabase.offline.internal
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.produceIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -117,6 +124,38 @@ class ClientOperationGateTest {
             assertClientClosedError(failure, "attempt $attempt: the collection live at close()")
             assertEquals(0, gate.inFlight)
         }
+    }
+
+    @Test
+    fun an_upstream_that_offers_a_value_after_close_never_throws_into_the_apps_scope() = runTest {
+        // Given — a collection read through produceIn in the app's scope, whose upstream is between two
+        // values when close() runs (so close() runs the collection's handler itself). It offers the
+        // second before its cancellation reaches it, into a channel close() has already ended, as an
+        // upstream caught between two statements does; here it waits, deaf to cancellation, to be sure
+        val gate = ClientOperationGate()
+        val uncaught = MutableStateFlow<List<Throwable>>(emptyList())
+        val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, failure -> uncaught.update { it + failure } })
+        val betweenValues = CompletableDeferred<Unit>()
+        val closeReturned = CompletableDeferred<Unit>()
+        val upstream = FakeUpstreamPastItsCancellation(betweenValues, closeReturned)
+        val values = gate.callCollecting(upstream).produceIn(appScope)
+        withContext(Dispatchers.Default) {
+            withTimeout(5.seconds) {
+                assertEquals(1, values.receive())
+                betweenValues.await()
+            }
+        }
+
+        // When
+        gate.close()
+        closeReturned.complete(Unit)
+        withContext(Dispatchers.Default) { withTimeout(5.seconds) { appScope.coroutineContext.job.children.forEach { child -> child.join() } } }
+
+        // Then — the collection ended with the closed error in its own channel, and nothing reached the app's handler
+        assertClientClosedError(values.receiveCatching().exceptionOrNull(), "the collection live at close()")
+        assertEquals(emptyList(), uncaught.value, "the closed error escaped into the app's scope")
+        assertEquals(0, gate.inFlight)
+        appScope.cancel()
     }
 
     @Test
@@ -232,5 +271,24 @@ class ClientOperationGateTest {
         const val GAVE_UP = "the upstream gave up"
         const val LAST_SNAPSHOT = 10
         val PROMPTLY: Duration = 2.seconds
+    }
+}
+
+/**
+ * An upstream that emits 1, then — deaf to cancellation, signalling [betweenValues] — waits for
+ * [closeReturned] and emits 2. A `flow {}` would refuse that second emission once cancelled.
+ */
+@OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+private class FakeUpstreamPastItsCancellation(
+    private val betweenValues: CompletableDeferred<Unit>,
+    private val closeReturned: CompletableDeferred<Unit>,
+) : Flow<Int> {
+    override suspend fun collect(collector: FlowCollector<Int>) {
+        collector.emit(1)
+        withContext(NonCancellable) {
+            betweenValues.complete(Unit)
+            closeReturned.await()
+            collector.emit(2)
+        }
     }
 }
