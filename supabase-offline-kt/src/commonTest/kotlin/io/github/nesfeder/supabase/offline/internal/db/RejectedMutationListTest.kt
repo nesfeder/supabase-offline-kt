@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
@@ -12,12 +14,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -25,6 +21,12 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * A write the server refuses for good is not lost: it leaves the queue for a persisted list — the
@@ -36,7 +38,8 @@ class RejectedMutationListTest {
     private val objectDao = FakeObjectDao()
     private val mutationDao = FakeMutationDao()
     private var clock = 1_000L
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, nowMillis = { clock })
+    private val store =
+        newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, nowMillis = { clock })
     private val server = RecordingPostgrestServer()
     private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
@@ -99,9 +102,16 @@ class RejectedMutationListTest {
     @Test
     fun a_body_that_no_longer_parses_is_rejected_without_a_request() = runTest {
         // Given
-        val id = mutationDao.insert(
-            MutationRow(table = TABLE, operation = MutationOperation.INSERT, bodyJson = "{broken", filterJson = null, createdAtMs = 0L),
-        )
+        val id =
+            mutationDao.insert(
+                MutationRow(
+                    table = TABLE,
+                    operation = MutationOperation.INSERT,
+                    bodyJson = "{broken",
+                    filterJson = null,
+                    createdAtMs = 0L,
+                )
+            )
 
         // When
         val report = syncer.sync()
@@ -119,7 +129,13 @@ class RejectedMutationListTest {
     fun an_unfiltered_update_is_rejected_without_a_request() = runTest {
         // Given — a legacy UPDATE row that carries no filter
         mutationDao.insert(
-            MutationRow(table = TABLE, operation = MutationOperation.UPDATE, bodyJson = """{"done":true}""", filterJson = null, createdAtMs = 0L),
+            MutationRow(
+                table = TABLE,
+                operation = MutationOperation.UPDATE,
+                bodyJson = """{"done":true}""",
+                filterJson = null,
+                createdAtMs = 0L,
+            )
         )
 
         // When
@@ -134,7 +150,9 @@ class RejectedMutationListTest {
     @Test
     fun the_list_keeps_the_newest_hundred() = runTest {
         // Given — 105 writes the server refuses
-        repeat(105) { index -> store.enqueueInsert(table = TABLE, body = rows("""[{"n":$index}]""")) }
+        repeat(105) { index ->
+            store.enqueueInsert(table = TABLE, body = rows("""[{"n":$index}]"""))
+        }
         server.answer = { postgrestError(HttpStatusCode.BadRequest, code = "22P02") }
 
         // When
@@ -178,7 +196,10 @@ class RejectedMutationListTest {
         // Then — it replayed after the newer write, under a new id, and left the list
         assertTrue(newId > rejectedId)
         assertEquals(2, report.syncedCount)
-        assertEquals(listOf("""[{"title":"second"}]""", """[{"title":"first"}]"""), server.requests.takeLast(2).map { it.body })
+        assertEquals(
+            listOf("""[{"title":"second"}]""", """[{"title":"first"}]"""),
+            server.requests.takeLast(2).map { it.body },
+        )
         assertEquals(emptyList(), store.mutationQueueState.rejections())
     }
 
@@ -194,9 +215,10 @@ class RejectedMutationListTest {
 
         // Then — read as a fresh list, the old payload kept under its own key, and said at ERROR
         assertEquals(emptyList(), rejections)
-        val keptAside = objectDao.rowsOf(RESERVED_TABLE_NAME).filter { row ->
-            row.signature.startsWith("$REJECTED_MUTATIONS_SIGNATURE.unreadable.")
-        }
+        val keptAside =
+            objectDao.rowsOf(RESERVED_TABLE_NAME).filter { row ->
+                row.signature.startsWith("$REJECTED_MUTATIONS_SIGNATURE.unreadable.")
+            }
         assertEquals(listOf("not a list"), keptAside.map { row -> row.payload })
         assertEquals(1, logger.entriesAt(OfflineLogLevel.ERROR).size)
     }
@@ -205,7 +227,9 @@ class RejectedMutationListTest {
     fun a_rejection_that_cannot_be_recorded_keeps_the_write_queued() = runTest {
         // Given — a write the server refuses, and a rejected list that cannot be written
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
-        objectDao.failUpsertOf = { row -> row.table == RESERVED_TABLE_NAME && row.signature == REJECTED_MUTATIONS_SIGNATURE }
+        objectDao.failUpsertOf = { row ->
+            row.table == RESERVED_TABLE_NAME && row.signature == REJECTED_MUTATIONS_SIGNATURE
+        }
         server.answer = { postgrestError(HttpStatusCode.BadRequest) }
 
         // When

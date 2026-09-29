@@ -1,11 +1,15 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.jan.supabase.postgrest.query.Columns
-import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -13,8 +17,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * S-35: a write that asked for its rows back (`select()`) is patched into the cache with what the
@@ -26,20 +28,33 @@ class ReturnedRowsOverlayTest {
     /** What the server answers a write with, by HTTP method. */
     private var writeAnswer: (method: String, accept: String) -> String = { _, _ -> "" }
 
-    private val server = RecordingPostgrestServer(
-        answer = { request ->
-            if (request.method == "GET") {
-                okJson("""[{"id":1,"list_id":"A","title":"old","done":false,"updated_at":"t0"}]""")
-            } else {
-                okJson(writeAnswer(request.method, request.accept.orEmpty()))
+    private val server =
+        RecordingPostgrestServer(
+            answer = { request ->
+                if (request.method == "GET") {
+                    okJson(
+                        """[{"id":1,"list_id":"A","title":"old","done":false,"updated_at":"t0"}]"""
+                    )
+                } else {
+                    okJson(writeAnswer(request.method, request.accept.orEmpty()))
+                }
             }
-        },
-    )
-    private val items = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = idleCoroutineScope()).from(TABLE)
+        )
+    private val items =
+        newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                coordinatorScope = idleCoroutineScope(),
+            )
+            .from(TABLE)
     private val listA: SelectRequestBuilder.() -> Unit = { filter { eq("list_id", "A") } }
 
     private suspend fun cachedRow(): JsonObject =
-        Json.parseToJsonElement(items.select(readStrategy = ReadStrategy.CacheOnly(), request = listA).data).jsonArray.single().jsonObject
+        Json.parseToJsonElement(
+                items.select(readStrategy = ReadStrategy.CacheOnly(), request = listA).data
+            )
+            .jsonArray
+            .single()
+            .jsonObject
 
     private fun JsonObject.text(column: String): String = getValue(column).jsonPrimitive.content
 
@@ -47,10 +62,15 @@ class ReturnedRowsOverlayTest {
     fun an_update_that_returns_its_row_leaves_the_servers_columns_in_the_cache() = runTest {
         // Given
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = listA)
-        writeAnswer = { _, _ -> """[{"id":1,"list_id":"A","title":"new","done":false,"updated_at":"t1"}]""" }
+        writeAnswer = { _, _ ->
+            """[{"id":1,"list_id":"A","title":"new","done":false,"updated_at":"t1"}]"""
+        }
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", 1) }; select() }
+        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+            filter { eq("id", 1) }
+            select()
+        }
 
         // Then — the trigger's timestamp as well as the title
         val row = cachedRow()
@@ -62,10 +82,16 @@ class ReturnedRowsOverlayTest {
     fun an_update_that_returns_one_object_leaves_the_servers_columns_in_the_cache() = runTest {
         // Given
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = listA)
-        writeAnswer = { _, _ -> """{"id":1,"list_id":"A","title":"new","done":false,"updated_at":"t1"}""" }
+        writeAnswer = { _, _ ->
+            """{"id":1,"list_id":"A","title":"new","done":false,"updated_at":"t1"}"""
+        }
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", 1) }; select(); single() }
+        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+            filter { eq("id", 1) }
+            select()
+            single()
+        }
 
         // Then
         assertEquals("t1", cachedRow().text("updated_at"))
@@ -78,7 +104,10 @@ class ReturnedRowsOverlayTest {
         writeAnswer = { _, _ -> """[{"id":1,"title":"new"}]""" }
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new","done":true}""")) { filter { eq("id", 1) }; select(Columns.raw("id,title")) }
+        items.updateJson(Json.parseToJsonElement("""{"title":"new","done":true}""")) {
+            filter { eq("id", 1) }
+            select(Columns.raw("id,title"))
+        }
 
         // Then
         val row = cachedRow()
@@ -88,29 +117,48 @@ class ReturnedRowsOverlayTest {
     }
 
     @Test
-    fun an_update_whose_filter_the_cache_cannot_match_is_still_patched_from_the_rows_it_returned() = runTest {
-        // Given
-        items.select(readStrategy = ReadStrategy.NetworkOnly, request = listA)
-        writeAnswer = { _, _ -> """[{"id":1,"list_id":"A","title":"new","done":false,"updated_at":"t1"}]""" }
+    fun an_update_whose_filter_the_cache_cannot_match_is_still_patched_from_the_rows_it_returned() =
+        runTest {
+            // Given
+            items.select(readStrategy = ReadStrategy.NetworkOnly, request = listA)
+            writeAnswer = { _, _ ->
+                """[{"id":1,"list_id":"A","title":"new","done":false,"updated_at":"t1"}]"""
+            }
 
-        // When — a filter the strict capture cannot represent
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { or { eq("id", 1); eq("id", 2) } }; select() }
+            // When — a filter the strict capture cannot represent
+            items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+                filter {
+                    or {
+                        eq("id", 1)
+                        eq("id", 2)
+                    }
+                }
+                select()
+            }
 
-        // Then — the returned row names what changed, whatever the filter
-        assertEquals("t1", cachedRow().text("updated_at"))
-    }
+            // Then — the returned row names what changed, whatever the filter
+            assertEquals("t1", cachedRow().text("updated_at"))
+        }
 
     @Test
     fun an_insert_that_returns_one_object_leaves_the_servers_columns_in_the_cache() = runTest {
         // Given — an empty list A
         server.answer = { request ->
-            if (request.method == "GET") okJson("[]") else okJson(writeAnswer(request.method, request.accept.orEmpty()))
+            if (request.method == "GET") okJson("[]")
+            else okJson(writeAnswer(request.method, request.accept.orEmpty()))
         }
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = listA)
-        writeAnswer = { _, _ -> """{"id":7,"list_id":"A","title":"new","done":false,"updated_at":"t1"}""" }
+        writeAnswer = { _, _ ->
+            """{"id":7,"list_id":"A","title":"new","done":false,"updated_at":"t1"}"""
+        }
 
         // When — the insert asks for its row back as one object
-        items.insertJson(Json.parseToJsonElement("""[{"list_id":"A","title":"new"}]""") as JsonArray) { select(); single() }
+        items.insertJson(
+            Json.parseToJsonElement("""[{"list_id":"A","title":"new"}]""") as JsonArray
+        ) {
+            select()
+            single()
+        }
 
         // Then — the generated id and the trigger's timestamp
         val row = cachedRow()

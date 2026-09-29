@@ -1,9 +1,20 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.UnauthorizedRestException
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.awaitCancellation
@@ -15,15 +26,6 @@ import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
 import platform.Foundation.NSURL
-import kotlin.random.Random
-import kotlin.test.AfterTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 /**
  * The iOS storage helpers (`ensureLocalPath`, `localPathIfCached`, `ensureLocalFileUrl`) over the
@@ -32,7 +34,9 @@ import kotlin.test.assertTrue
  */
 class BucketApiIosExtensionsTest {
 
-    private val directory: Path = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-ios-helpers-${Random.nextLong().toULong()}"
+    private val directory: Path =
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "supabase-offline-ios-helpers-${Random.nextLong().toULong()}"
     private val fakeBucket = FakeBucketApi(bucketId = "test-bucket")
     private val offlineApi = newTestBucketApi(delegate = fakeBucket, baseDirectory = directory)
 
@@ -51,7 +55,10 @@ class BucketApiIosExtensionsTest {
 
         // Then
         assertEquals((directory / "storage" / "test-bucket" / "a b" / "test.txt").toString(), path)
-        assertEquals(NSURL.fileURLWithPath(assertNotNull(path)).absoluteString, offlineApi.localFileUrlIfCached("a b/test.txt"))
+        assertEquals(
+            NSURL.fileURLWithPath(assertNotNull(path)).absoluteString,
+            offlineApi.localFileUrlIfCached("a b/test.txt"),
+        )
     }
 
     @Test
@@ -64,7 +71,11 @@ class BucketApiIosExtensionsTest {
             val url = assertNotNull(offlineApi.ensureLocalFileUrl(name, isPublic = false))
 
             // Then — Swift's URL(string:) accepts it, and it names the cached file
-            assertEquals(path, NSURL.URLWithString(url)?.path, "the URL for $name does not lead back to its file: $url")
+            assertEquals(
+                path,
+                NSURL.URLWithString(url)?.path,
+                "the URL for $name does not lead back to its file: $url",
+            )
         }
     }
 
@@ -90,7 +101,9 @@ class BucketApiIosExtensionsTest {
         fakeBucket.onDownload = { throw forbiddenRestException() }
 
         // When / Then
-        assertFailsWith<UnauthorizedRestException> { offlineApi.ensureLocalFileUrl("missing.txt", isPublic = false) }
+        assertFailsWith<UnauthorizedRestException> {
+            offlineApi.ensureLocalFileUrl("missing.txt", isPublic = false)
+        }
     }
 
     @Test
@@ -99,14 +112,15 @@ class BucketApiIosExtensionsTest {
         fakeBucket.onDownload = { awaitCancellation() }
         var returned = false
         var caught: Throwable? = null
-        val job = launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
-                offlineApi.ensureLocalPath("slow.txt")
-                returned = true
-            } catch (failure: Throwable) {
-                caught = failure
+        val job =
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    offlineApi.ensureLocalPath("slow.txt")
+                    returned = true
+                } catch (failure: Throwable) {
+                    caught = failure
+                }
             }
-        }
 
         // When
         job.cancelAndJoin()

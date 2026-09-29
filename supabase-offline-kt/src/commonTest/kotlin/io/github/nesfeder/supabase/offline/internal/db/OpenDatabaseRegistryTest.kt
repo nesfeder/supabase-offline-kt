@@ -1,16 +1,20 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import okio.FileSystem
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import okio.FileSystem
 
 /** A database whose client's close() returned before it was released tells the next client so. */
 class OpenDatabaseRegistryTest {
 
-    private val databasePath = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "registry-${Random.nextLong().toULong()}" / OFFLINE_DATABASE_FILE_NAME
+    private val databasePath =
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "registry-${Random.nextLong().toULong()}" /
+            OFFLINE_DATABASE_FILE_NAME
 
     @Test
     fun a_database_still_closing_says_so_and_how_many_calls_hold_it() {
@@ -19,7 +23,8 @@ class OpenDatabaseRegistryTest {
         registration.markStillClosing { 2 }
 
         // When
-        val failure = assertFailsWith<IllegalStateException> { OpenDatabaseRegistry.register(databasePath) }
+        val failure =
+            assertFailsWith<IllegalStateException> { OpenDatabaseRegistry.register(databasePath) }
         registration.release()
 
         // Then — the message says the client is closing, not that it should be closed, and the
@@ -35,10 +40,14 @@ class OpenDatabaseRegistryTest {
         val registration = OpenDatabaseRegistry.register(databasePath)
 
         // When
-        val failure = assertFailsWith<IllegalStateException> { OpenDatabaseRegistry.register(databasePath) }
+        val failure =
+            assertFailsWith<IllegalStateException> { OpenDatabaseRegistry.register(databasePath) }
         registration.release()
 
         // Then
-        assertTrue("already open" in failure.message.orEmpty(), "the message was: ${failure.message}")
+        assertTrue(
+            "already open" in failure.message.orEmpty(),
+            "the message was: ${failure.message}",
+        )
     }
 }

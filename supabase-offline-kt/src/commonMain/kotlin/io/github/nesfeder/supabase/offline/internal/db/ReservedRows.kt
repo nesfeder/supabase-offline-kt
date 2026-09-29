@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 /**
@@ -44,8 +46,11 @@ internal const val UNCONFIRMED_SENDS_SIGNATURE: String = "unconfirmed_sends"
  */
 internal const val QUERY_SHAPE_SIGNATURE_PREFIX_NAME: String = "query_shape"
 
-/** [QUERY_SHAPE_SIGNATURE_PREFIX_NAME] and the separator after it, as a record's signature begins. */
-internal const val QUERY_SHAPE_SIGNATURE_PREFIX: String = QUERY_SHAPE_SIGNATURE_PREFIX_NAME + "\u001F"
+/**
+ * [QUERY_SHAPE_SIGNATURE_PREFIX_NAME] and the separator after it, as a record's signature begins.
+ */
+internal const val QUERY_SHAPE_SIGNATURE_PREFIX: String =
+    QUERY_SHAPE_SIGNATURE_PREFIX_NAME + "\u001F"
 
 /** The length of [QUERY_SHAPE_SIGNATURE_PREFIX]. */
 internal const val QUERY_SHAPE_SIGNATURE_PREFIX_LENGTH: Int = 12

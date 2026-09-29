@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
@@ -17,18 +19,20 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Overlays queued mutations onto a cached query payload in memory, so a read shows writes the server
- * has not confirmed yet. A mutation that cannot be applied is skipped on its own and reported.
+ * Overlays queued mutations onto a cached query payload in memory, so a read shows writes the
+ * server has not confirmed yet. A mutation that cannot be applied is skipped on its own and
+ * reported.
  *
  * Rows go into the query only when [admission] admits them, and a row an UPDATE or UPSERT stops
- * matching leaves it. Rows the query does not show are held aside while the mutations run, so a later
- * one that makes such a row start matching brings it in once. An UPDATE or DELETE touches only rows its
- * filter provably matches ([rowMatch]); an UPSERT matches rows by its conflict columns, or the key.
+ * matching leaves it. Rows the query does not show are held aside while the mutations run, so a
+ * later one that makes such a row start matching brings it in once. An UPDATE or DELETE touches
+ * only rows its filter provably matches ([rowMatch]); an UPSERT matches rows by its conflict
+ * columns, or the key.
  *
  * @param admission which rows the cached query admits.
  * @param primaryKeys each table's key columns.
- * @param mayAlreadyHold whether an INSERT's rows may already be in the payload, which is then checked
- *   by key before a row is added: true for a mutation the server may already hold.
+ * @param mayAlreadyHold whether an INSERT's rows may already be in the payload, which is then
+ *   checked by key before a row is added: true for a mutation the server may already hold.
  * @param onMutationFailure told of each skipped mutation, for logging; never its body.
  */
 internal class MutationOverlay(
@@ -40,8 +44,8 @@ internal class MutationOverlay(
 ) {
 
     /**
-     * [mutations], oldest first, overlaid onto [payload]. [payload] comes back unchanged when it is not
-     * a JSON array, and when there is nothing to overlay.
+     * [mutations], oldest first, overlaid onto [payload]. [payload] comes back unchanged when it is
+     * not a JSON array, and when there is nothing to overlay.
      */
     fun overlay(payload: String, mutations: List<MutationRow>): String {
         if (mutations.isEmpty()) return payload
@@ -50,13 +54,18 @@ internal class MutationOverlay(
     }
 
     /**
-     * [mutations] overlaid onto [rows], in order; one that throws is undone, so it leaves nothing behind.
+     * [mutations] overlaid onto [rows], in order; one that throws is undone, so it leaves nothing
+     * behind.
      *
      * @param knownRows rows the query does not show that the engine knows from elsewhere, such as
-     *   the table's other cached queries. A mutation brings one into the query only when it makes the
-     *   row start matching: one the query admitted already is outside its window, not missing.
+     *   the table's other cached queries. A mutation brings one into the query only when it makes
+     *   the row start matching: one the query admitted already is outside its window, not missing.
      */
-    fun overlayRows(rows: List<JsonElement>, mutations: List<MutationRow>, knownRows: List<JsonObject> = emptyList()): OverlaidRows {
+    fun overlayRows(
+        rows: List<JsonElement>,
+        mutations: List<MutationRow>,
+        knownRows: List<JsonObject> = emptyList(),
+    ): OverlaidRows {
         val working = Working(OverlaidRows(visible = rows, held = knownRows, written = emptyList()))
         mutations.forEach { mutation ->
             try {
@@ -71,7 +80,8 @@ internal class MutationOverlay(
     }
 
     /** [rows] as a payload. */
-    fun encode(rows: List<JsonElement>): String = json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
+    fun encode(rows: List<JsonElement>): String =
+        json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
 
     /**
      * The rows as the mutations change them. Each change is journaled until [keep] or [undo], so a
@@ -85,7 +95,8 @@ internal class MutationOverlay(
         /** How to take back each change of the current mutation, in the order made. */
         private val journal = mutableListOf<() -> Unit>()
 
-        fun snapshot(): OverlaidRows = OverlaidRows(visible = visible, held = held, written = written)
+        fun snapshot(): OverlaidRows =
+            OverlaidRows(visible = visible, held = held, written = written)
 
         /** Keeps the current mutation's changes. */
         fun keep() {
@@ -155,7 +166,9 @@ internal class MutationOverlay(
                 val shown = indexOfKey(visible, row, keyColumns)
                 val kept = if (shown == null) indexOfKey(held, row, keyColumns) else null
                 when {
-                    shown != null -> if (!ignoreDuplicates) replaceShown(shown, merge(visible[shown] as JsonObject, row))
+                    shown != null ->
+                        if (!ignoreDuplicates)
+                            replaceShown(shown, merge(visible[shown] as JsonObject, row))
                     kept != null -> if (!ignoreDuplicates) replaceHeld(kept, merge(held[kept], row))
                     else -> place(row)
                 }
@@ -169,7 +182,8 @@ internal class MutationOverlay(
             val heldBefore = held.size
             visible.indices.reversed().forEach { index ->
                 val row = visible[index] as? JsonObject ?: return@forEach
-                if (rowMatch(row, filter) == RowMatch.MATCHES) replaceShown(index, merge(row, patch))
+                if (rowMatch(row, filter) == RowMatch.MATCHES)
+                    replaceShown(index, merge(row, patch))
             }
             (0 until heldBefore).reversed().forEach { index ->
                 val row = held[index]
@@ -181,7 +195,8 @@ internal class MutationOverlay(
             val filter = filterOf(mutation) ?: return
             visible.indices.reversed().forEach { index ->
                 val row = visible[index]
-                if (row is JsonObject && rowMatch(row, filter) == RowMatch.MATCHES) visible.removeWithUndo(index)
+                if (row is JsonObject && rowMatch(row, filter) == RowMatch.MATCHES)
+                    visible.removeWithUndo(index)
             }
             held.indices.reversed().forEach { index ->
                 if (rowMatch(held[index], filter) == RowMatch.MATCHES) held.removeWithUndo(index)
@@ -194,7 +209,10 @@ internal class MutationOverlay(
             if (admission.admits(row)) visible.append(row) else held.append(row)
         }
 
-        /** Replaces the shown row at [index] with [row], moving it aside when the query no longer admits it. */
+        /**
+         * Replaces the shown row at [index] with [row], moving it aside when the query no longer
+         * admits it.
+         */
         private fun replaceShown(index: Int, row: JsonObject) {
             written.append(row)
             if (admission.admits(row)) {
@@ -205,7 +223,10 @@ internal class MutationOverlay(
             }
         }
 
-        /** Replaces the held row at [index] with [row], bringing it in when the change makes it start matching. */
+        /**
+         * Replaces the held row at [index] with [row], bringing it in when the change makes it
+         * start matching.
+         */
         private fun replaceHeld(index: Int, row: JsonObject) {
             written.append(row)
             if (!admission.admits(held[index]) && admission.admits(row)) {
@@ -218,19 +239,30 @@ internal class MutationOverlay(
     }
 
     /** An INSERT or UPSERT body's rows: an array, or a single object. */
-    private fun bodyRowsOf(mutation: MutationRow): List<JsonElement> = when (val body = json.parseToJsonElement(mutation.bodyJson)) {
-        is JsonArray -> body
-        is JsonObject -> listOf(body)
-        else -> emptyList()
-    }
+    private fun bodyRowsOf(mutation: MutationRow): List<JsonElement> =
+        when (val body = json.parseToJsonElement(mutation.bodyJson)) {
+            is JsonArray -> body
+            is JsonObject -> listOf(body)
+            else -> emptyList()
+        }
 
-    /** The columns an UPSERT matches existing rows on: its conflict columns, or the table's primary key. */
+    /**
+     * The columns an UPSERT matches existing rows on: its conflict columns, or the table's primary
+     * key.
+     */
     private fun conflictColumnsOf(mutation: MutationRow): List<String> =
-        mutation.onConflict?.split(',')?.map { column -> column.trim() }?.filter { column -> column.isNotEmpty() }?.takeIf { it.isNotEmpty() }
-            ?: primaryKeys.of(mutation.table)
+        mutation.onConflict
+            ?.split(',')
+            ?.map { column -> column.trim() }
+            ?.filter { column -> column.isNotEmpty() }
+            ?.takeIf { it.isNotEmpty() } ?: primaryKeys.of(mutation.table)
 
-    /** The rows an UPDATE or DELETE targets; `null`, which touches nothing, when it has no readable filter. */
-    private fun filterOf(mutation: MutationRow): FilterDescriptor? = FilterEngine.decodeOrNull(mutation.filterJson, json)
+    /**
+     * The rows an UPDATE or DELETE targets; `null`, which touches nothing, when it has no readable
+     * filter.
+     */
+    private fun filterOf(mutation: MutationRow): FilterDescriptor? =
+        FilterEngine.decodeOrNull(mutation.filterJson, json)
 }
 
 /**
@@ -247,11 +279,12 @@ internal data class OverlaidRows(
 )
 
 /** The rows of [payload], or `null` when it is not a JSON array. */
-internal fun payloadRowsOf(json: Json, payload: String): List<JsonElement>? = try {
-    json.parseToJsonElement(payload) as? JsonArray
-} catch (_: IllegalArgumentException) {
-    null
-}
+internal fun payloadRowsOf(json: Json, payload: String): List<JsonElement>? =
+    try {
+        json.parseToJsonElement(payload) as? JsonArray
+    } catch (_: IllegalArgumentException) {
+        null
+    }
 
 /**
  * The rows a write's response carries: those of a JSON array, or the one object `single()` returns.
@@ -259,14 +292,24 @@ internal fun payloadRowsOf(json: Json, payload: String): List<JsonElement>? = tr
  */
 internal fun returnedRowsOf(json: Json, responseData: String): List<JsonObject> {
     if (responseData.isBlank()) return emptyList()
-    return when (val element = try { json.parseToJsonElement(responseData) } catch (_: IllegalArgumentException) { null }) {
+    return when (
+        val element =
+            try {
+                json.parseToJsonElement(responseData)
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+    ) {
         is JsonArray -> element.filterIsInstance<JsonObject>()
         is JsonObject -> listOf(element)
         else -> emptyList()
     }
 }
 
-/** The index of the row in [rows] with [row]'s values in [keyColumns], or `null` when there is none or [row] lacks one. */
+/**
+ * The index of the row in [rows] with [row]'s values in [keyColumns], or `null` when there is none
+ * or [row] lacks one.
+ */
 internal fun indexOfKey(rows: List<JsonElement>, row: JsonObject, keyColumns: List<String>): Int? {
     val key = primaryKeyOf(row, keyColumns) ?: return null
     val index = rows.indexOfFirst { existing ->
@@ -279,7 +322,9 @@ internal fun indexOfKey(rows: List<JsonElement>, row: JsonObject, keyColumns: Li
 /** Whether two keys name the same row, comparing values by their JSON content. */
 private fun isSameKey(first: JsonObject, second: JsonObject): Boolean =
     first.keys == second.keys &&
-        first.all { (column, value) -> (value as? JsonPrimitive)?.content == (second[column] as? JsonPrimitive)?.content }
+        first.all { (column, value) ->
+            (value as? JsonPrimitive)?.content == (second[column] as? JsonPrimitive)?.content
+        }
 
 /** [base] with [patch]'s columns written over it. */
 private fun merge(base: JsonObject, patch: JsonObject): JsonObject = JsonObject(base + patch)

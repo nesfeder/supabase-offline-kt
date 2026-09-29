@@ -1,20 +1,22 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import kotlinx.coroutines.test.runTest
-import org.junit.runner.RunWith
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlinx.coroutines.test.runTest
+import org.junit.runner.RunWith
 
 /**
  * The engine's reserved `object_cache` rows on a real Android database file: an older build that
- * opens the file reads around them, they persist across reopening without disturbing the schema, and
- * this build's eviction, size and queue-order queries behave on real SQLite as they do in memory.
- * See [ReservedRowsDatabaseScenarios].
+ * opens the file reads around them, they persist across reopening without disturbing the schema,
+ * and this build's eviction, size and queue-order queries behave on real SQLite as they do in
+ * memory. See [ReservedRowsDatabaseScenarios].
  */
 @RunWith(AndroidJUnit4::class)
 class OfflineDatabaseReservedRowsAndroidTest {

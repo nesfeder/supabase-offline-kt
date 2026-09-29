@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
@@ -71,8 +73,8 @@ internal fun decodeNumericDeltaColumns(
  *
  * The rebased value keeps the form the caller wrote. When the body wrote the column as an integer
  * and the snapshot, the server's value and the floor are whole numbers, the arithmetic is done in
- * [Long] and the body gets an integer back: `13`, never `13.0`, which Postgres refuses for an
- * `int` column. Doing it in [Long] also keeps a `bigint` exact beyond 2^53. Otherwise the value is
+ * [Long] and the body gets an integer back: `13`, never `13.0`, which Postgres refuses for an `int`
+ * column. Doing it in [Long] also keeps a `bigint` exact beyond 2^53. Otherwise the value is
  * computed and written as a [Double], as before.
  *
  * @param body The stored UPDATE body.
@@ -91,9 +93,10 @@ internal fun rebaseNumericDeltas(
     val rebased = bodyObject.toMutableMap()
     var changed = false
     for (declaration in deltaColumns) {
-        val value = rebaseIntegral(bodyObject, serverRow, declaration)
-            ?: rebaseDecimal(bodyObject, serverRow, declaration)
-            ?: continue
+        val value =
+            rebaseIntegral(bodyObject, serverRow, declaration)
+                ?: rebaseDecimal(bodyObject, serverRow, declaration)
+                ?: continue
         if (value != bodyObject[declaration.column]) {
             rebased[declaration.column] = value
             changed = true
@@ -107,11 +110,16 @@ internal fun rebaseNumericDeltas(
  *
  * @return The rebased integer, or `null` when the column does not qualify.
  */
-private fun rebaseIntegral(body: JsonObject, serverRow: JsonObject, declaration: NumericDeltaColumn): JsonPrimitive? {
+private fun rebaseIntegral(
+    body: JsonObject,
+    serverRow: JsonObject,
+    declaration: NumericDeltaColumn,
+): JsonPrimitive? {
     val desired = body.integerLiteralOrNull(declaration.column) ?: return null
     val serverCurrent = serverRow.wholeNumberOrNull(declaration.column) ?: return null
     val snapshot = declaration.snapshotValue.toWholeLongOrNull() ?: return null
-    val floor = declaration.minValue?.let { minValue -> minValue.toWholeLongOrNull() ?: return null }
+    val floor =
+        declaration.minValue?.let { minValue -> minValue.toWholeLongOrNull() ?: return null }
     val onServerBase = serverCurrent + (desired - snapshot)
     return JsonPrimitive(if (floor == null) onServerBase else onServerBase.coerceAtLeast(floor))
 }
@@ -121,13 +129,16 @@ private fun rebaseIntegral(body: JsonObject, serverRow: JsonObject, declaration:
  *
  * @return The rebased value, or `null` when the column is absent or non-numeric on either side.
  */
-private fun rebaseDecimal(body: JsonObject, serverRow: JsonObject, declaration: NumericDeltaColumn): JsonPrimitive? {
+private fun rebaseDecimal(
+    body: JsonObject,
+    serverRow: JsonObject,
+    declaration: NumericDeltaColumn,
+): JsonPrimitive? {
     val desired = body.numberOrNull(declaration.column) ?: return null
     val serverCurrent = serverRow.numberOrNull(declaration.column) ?: return null
     val onServerBase = serverCurrent + (desired - declaration.snapshotValue)
-    val value = declaration.minValue
-        ?.let { floor -> onServerBase.coerceAtLeast(floor) }
-        ?: onServerBase
+    val value =
+        declaration.minValue?.let { floor -> onServerBase.coerceAtLeast(floor) } ?: onServerBase
     return if (value == desired) body[declaration.column] as JsonPrimitive else JsonPrimitive(value)
 }
 

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.storage
@@ -22,6 +24,10 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -29,18 +35,17 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
 import okio.SYSTEM
-import kotlin.random.Random
-import kotlin.test.AfterTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * Storage does not wait for a stored session to finish restoring: a download or a write goes out at
- * once, on the anon key supabase-kt sends meanwhile, and a download's answer is cached as any other.
+ * once, on the anon key supabase-kt sends meanwhile, and a download's answer is cached as any
+ * other.
  */
 class StorageWhileRestoringTest {
 
-    private val dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-restoring-${Random.nextLong().toULong()}"
+    private val dataDirectory =
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "supabase-offline-restoring-${Random.nextLong().toULong()}"
 
     @AfterTest
     fun tearDown() {
@@ -50,40 +55,60 @@ class StorageWhileRestoringTest {
     /** Whose token each request carried, in order. */
     private val tokens = mutableListOf<String?>()
 
-    /** A bucket of a client whose stored session restores and never settles, on this test's scheduler. */
+    /**
+     * A bucket of a client whose stored session restores and never settles, on this test's
+     * scheduler.
+     */
     private fun TestScope.restoringBucket(): OfflineBucketApi {
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val engine = MockEngine(
-            MockEngineConfig().apply {
-                this.dispatcher = dispatcher
-                addHandler { request ->
-                    tokens += request.headers["Authorization"]
-                    if (request.method == HttpMethod.Get) {
-                        respond(content = "bytes", status = HttpStatusCode.OK)
-                    } else {
-                        respond(
-                            content = """{"Key":"$BUCKET/$PATH","Id":"id-1"}""",
-                            status = HttpStatusCode.OK,
-                            headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-                        )
+        val engine =
+            MockEngine(
+                MockEngineConfig().apply {
+                    this.dispatcher = dispatcher
+                    addHandler { request ->
+                        tokens += request.headers["Authorization"]
+                        if (request.method == HttpMethod.Get) {
+                            respond(content = "bytes", status = HttpStatusCode.OK)
+                        } else {
+                            respond(
+                                content = """{"Key":"$BUCKET/$PATH","Id":"id-1"}""",
+                                status = HttpStatusCode.OK,
+                                headers =
+                                    headersOf(
+                                        HttpHeaders.ContentType,
+                                        ContentType.Application.Json.toString(),
+                                    ),
+                            )
+                        }
                     }
                 }
-            },
-        )
-        val supabase = newTestSupabaseClient(engine = engine) {
-            coroutineDispatcher = dispatcher
-            install(Storage) { resumable { cache = FakeResumableCache() } }
-            install(Auth) {
-                sessionManager = FakeHeldSessionManager(UserSession(accessToken = testJwt("u-1"), refreshToken = "refresh-token", expiresIn = 3600, tokenType = "bearer"))
-                codeVerifierCache = MemoryCodeVerifierCache()
-                autoLoadFromStorage = true
-                alwaysAutoRefresh = false
-                enableLifecycleCallbacks = false
+            )
+        val supabase =
+            newTestSupabaseClient(engine = engine) {
+                coroutineDispatcher = dispatcher
+                install(Storage) { resumable { cache = FakeResumableCache() } }
+                install(Auth) {
+                    sessionManager =
+                        FakeHeldSessionManager(
+                            UserSession(
+                                accessToken = testJwt("u-1"),
+                                refreshToken = "refresh-token",
+                                expiresIn = 3600,
+                                tokenType = "bearer",
+                            )
+                        )
+                    codeVerifierCache = MemoryCodeVerifierCache()
+                    autoLoadFromStorage = true
+                    alwaysAutoRefresh = false
+                    enableLifecycleCallbacks = false
+                }
             }
-        }
         // The plugin starts loading the stored session, the load the held store keeps waiting
         runCurrent()
-        return newTestBucketApi(delegate = supabase.storage.from(BUCKET), baseDirectory = dataDirectory)
+        return newTestBucketApi(
+            delegate = supabase.storage.from(BUCKET),
+            baseDirectory = dataDirectory,
+        )
     }
 
     @Test

@@ -1,29 +1,26 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
-/**
- * Strategy for reading data from the network or local cache.
- */
+/** Strategy for reading data from the network or local cache. */
 public sealed interface ReadStrategy {
 
-    /**
-     * Only fetch from the network. If the network is unavailable, throw an error.
-     */
+    /** Only fetch from the network. If the network is unavailable, throw an error. */
     public data object NetworkOnly : ReadStrategy
 
     /**
-     * Try to fetch from the network first. If the network is unavailable,
-     * fall back to the local cache.
+     * Try to fetch from the network first. If the network is unavailable, fall back to the local
+     * cache.
      *
      * When the cache holds the query, a transport failure falls back at once: supabase-kt's retries
-     * of it are skipped, while a 503 or 520 is still retried on its schedule. With nothing cached, the
-     * read retries as a [NetworkOnly] read does.
+     * of it are skipped, while a 503 or 520 is still retried on its schedule. With nothing cached,
+     * the read retries as a [NetworkOnly] read does.
      *
-     * @param cacheDuration If provided, the cached data is only used if it's
-     * newer than this duration. If the cache is expired, the network error is
-     * thrown instead.
+     * @param cacheDuration If provided, the cached data is only used if it's newer than this
+     *   duration. If the cache is expired, the network error is thrown instead.
      */
     public data class NetworkFirst(val cacheDuration: Duration? = null) : ReadStrategy {
 
@@ -31,12 +28,11 @@ public sealed interface ReadStrategy {
     }
 
     /**
-     * Try to fetch from the local cache first. If the data is not in the cache,
-     * fetch from the network.
+     * Try to fetch from the local cache first. If the data is not in the cache, fetch from the
+     * network.
      *
-     * @param cacheDuration If provided, the cached data is only used if it's
-     * newer than this duration. If the cache is expired, it's treated as a cache
-     * miss and the network is used.
+     * @param cacheDuration If provided, the cached data is only used if it's newer than this
+     *   duration. If the cache is expired, it's treated as a cache miss and the network is used.
      */
     public data class CacheFirst(val cacheDuration: Duration? = null) : ReadStrategy {
 
@@ -49,9 +45,8 @@ public sealed interface ReadStrategy {
      * No request is ever sent. A read of a shape the cache does not hold (`single()`, `head`, a
      * count, `csv()`, …) throws [NoSuchElementException] saying so.
      *
-     * @param cacheDuration If provided, the cached data is only used if it's
-     * newer than this duration. If the cache is expired, it's treated as a cache
-     * miss and an error is thrown.
+     * @param cacheDuration If provided, the cached data is only used if it's newer than this
+     *   duration. If the cache is expired, it's treated as a cache miss and an error is thrown.
      */
     public data class CacheOnly(val cacheDuration: Duration? = null) : ReadStrategy {
 
@@ -62,17 +57,16 @@ public sealed interface ReadStrategy {
 /**
  * Strategy for observing data as a Flow in an offline-aware manner.
  *
- * Defines how the Flow is bootstrapped and whether a network request
- * is performed to refresh the local cache.
+ * Defines how the Flow is bootstrapped and whether a network request is performed to refresh the
+ * local cache.
  */
 public enum class FlowReadStrategy {
 
     /**
-     * Emit values from the local cache immediately and in parallel
-     * trigger a network request.
+     * Emit values from the local cache immediately and in parallel trigger a network request.
      *
-     * When the network response arrives, the cache is updated and
-     * the Flow continues emitting future cache changes.
+     * When the network response arrives, the cache is updated and the Flow continues emitting
+     * future cache changes.
      *
      * If the network request fails, the Flow continues emitting cached data without error. The
      * refresh is **self-healing**: it retries for the life of the subscription (a fast ladder, then
@@ -86,12 +80,11 @@ public enum class FlowReadStrategy {
     /**
      * Perform a network request first and wait for it to complete.
      *
-     * Once the response is stored in the cache, start observing
-     * the cache for future changes.
+     * Once the response is stored in the cache, start observing the cache for future changes.
      *
      * If the network is unavailable and the cache holds the query, the Flow observes the cache as
-     * [ReadStrategy.NetworkFirst] falls back to it, at once. With nothing cached, or when the server
-     * answers with an error, the Flow fails.
+     * [ReadStrategy.NetworkFirst] falls back to it, at once. With nothing cached, or when the
+     * server answers with an error, the Flow fails.
      *
      * The bootstrap request is the only refresh this strategy performs — there is no self-healing
      * loop behind it — so it waits out the auth session-restore window before accepting an empty
@@ -106,11 +99,11 @@ public enum class FlowReadStrategy {
     /**
      * Only observe the local cache.
      *
-     * No network request is performed. The Flow emits only
-     * cached data and future cache updates. A read of a shape the cache does not hold
-     * (`single()`, `head`, a count, `csv()`, …) fails with [NoSuchElementException] saying so.
+     * No network request is performed. The Flow emits only cached data and future cache updates. A
+     * read of a shape the cache does not hold (`single()`, `head`, a count, `csv()`, …) fails with
+     * [NoSuchElementException] saying so.
      */
-    CacheOnly
+    CacheOnly,
 }
 
 /**
@@ -131,20 +124,20 @@ public enum class MutationStrategy {
      * Send the mutation through the mutation queue, so it keeps its place among the current
      * identity's writes, and keep it there until the server has accepted or refused it.
      *
-     * The write is saved first, then sent at once when nothing of the same identity is pending ahead
-     * of it, in any table. [MutationOutcome.Applied] carries the server's response. [MutationOutcome.Queued]
-     * means it waits: no connection or no answer, a `503` or `520` after which it may not have run,
-     * earlier writes still pending, or a session still restoring — then it goes out in a later pass,
-     * and a refusal lands on the rejected list instead of being thrown. A write sent at once that the
-     * server refuses or fails with another `5xx` is thrown and does not stay queued. The UI shows the
-     * write immediately.
+     * The write is saved first, then sent at once when nothing of the same identity is pending
+     * ahead of it, in any table. [MutationOutcome.Applied] carries the server's response.
+     * [MutationOutcome.Queued] means it waits: no connection or no answer, a `503` or `520` after
+     * which it may not have run, earlier writes still pending, or a session still restoring — then
+     * it goes out in a later pass, and a refusal lands on the rejected list instead of being
+     * thrown. A write sent at once that the server refuses or fails with another `5xx` is thrown
+     * and does not stay queued. The UI shows the write immediately.
      *
      * A few writes cannot be queued faithfully and are sent directly, as with [OnlineOnly]: a
-     * `dryRun()` write, an UPDATE or DELETE whose filter the queue cannot record exactly, and a write
-     * whose identity cannot be read from the stored session.
+     * `dryRun()` write, an UPDATE or DELETE whose filter the queue cannot record exactly, and a
+     * write whose identity cannot be read from the stored session.
      *
      * A write to a schema other than the client's default cannot be queued yet: it throws
      * [UnsupportedOperationException]. Send it with [OnlineOnly].
      */
-    QueueIfOffline
+    QueueIfOffline,
 }

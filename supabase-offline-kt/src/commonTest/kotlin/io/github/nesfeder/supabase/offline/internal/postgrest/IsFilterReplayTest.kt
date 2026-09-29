@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -16,11 +18,19 @@ import kotlin.test.assertNotNull
  */
 class IsFilterReplayTest {
 
-    private fun newBuilder() = SelectRequestBuilder("public", PropertyConversionMethod.CAMEL_CASE_TO_SNAKE_CASE)
+    private fun newBuilder() =
+        SelectRequestBuilder("public", PropertyConversionMethod.CAMEL_CASE_TO_SNAKE_CASE)
 
-    /** Captures `is.[value]` on `deleted_at` as the queue does, and replays it onto a fresh builder. */
+    /**
+     * Captures `is.[value]` on `deleted_at` as the queue does, and replays it onto a fresh builder.
+     */
     private fun replayed(value: String): List<String>? {
-        val captured = assertNotNull(buildDescriptorStrict(newBuilder().apply { filter { filter("deleted_at", FilterOperator.IS, value) } }))
+        val captured =
+            assertNotNull(
+                buildDescriptorStrict(
+                    newBuilder().apply { filter { filter("deleted_at", FilterOperator.IS, value) } }
+                )
+            )
         val replayBuilder = newBuilder()
         FilterEngine.applyTo(replayBuilder, captured)
         return replayBuilder.params["deleted_at"]

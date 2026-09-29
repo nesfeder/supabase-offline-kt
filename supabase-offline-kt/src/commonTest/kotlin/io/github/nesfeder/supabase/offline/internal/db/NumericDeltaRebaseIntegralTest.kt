@@ -1,11 +1,13 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * The delta rebase writes a value in the form the caller wrote it. An integer column the caller
@@ -20,11 +22,12 @@ class NumericDeltaRebaseIntegralTest {
         val body = json("""{"likes":11}""")
 
         // When
-        val rebased = rebaseNumericDeltas(
-            body = body,
-            serverRow = json("""{"id":1,"likes":12}"""),
-            deltaColumns = listOf(NumericDeltaColumn(column = "likes", snapshotValue = 10.0)),
-        )
+        val rebased =
+            rebaseNumericDeltas(
+                body = body,
+                serverRow = json("""{"id":1,"likes":12}"""),
+                deltaColumns = listOf(NumericDeltaColumn(column = "likes", snapshotValue = 10.0)),
+            )
 
         // Then
         assertEquals("""{"likes":13}""", rebased.toString())
@@ -36,11 +39,12 @@ class NumericDeltaRebaseIntegralTest {
         val body = json("""{"likes":11}""")
 
         // When
-        val rebased = rebaseNumericDeltas(
-            body = body,
-            serverRow = json("""{"likes":12.0}"""),
-            deltaColumns = listOf(NumericDeltaColumn(column = "likes", snapshotValue = 10.0)),
-        )
+        val rebased =
+            rebaseNumericDeltas(
+                body = body,
+                serverRow = json("""{"likes":12.0}"""),
+                deltaColumns = listOf(NumericDeltaColumn(column = "likes", snapshotValue = 10.0)),
+            )
 
         // Then
         assertEquals("""{"likes":13}""", rebased.toString())
@@ -52,11 +56,15 @@ class NumericDeltaRebaseIntegralTest {
         val body = json("""{"likes":0}""")
 
         // When
-        val rebased = rebaseNumericDeltas(
-            body = body,
-            serverRow = json("""{"likes":2}"""),
-            deltaColumns = listOf(NumericDeltaColumn(column = "likes", snapshotValue = 5.0, minValue = 0.0)),
-        )
+        val rebased =
+            rebaseNumericDeltas(
+                body = body,
+                serverRow = json("""{"likes":2}"""),
+                deltaColumns =
+                    listOf(
+                        NumericDeltaColumn(column = "likes", snapshotValue = 5.0, minValue = 0.0)
+                    ),
+            )
 
         // Then
         assertEquals("""{"likes":0}""", rebased.toString())
@@ -68,11 +76,15 @@ class NumericDeltaRebaseIntegralTest {
         val body = json("""{"total":9007199254740995}""")
 
         // When
-        val rebased = rebaseNumericDeltas(
-            body = body,
-            serverRow = json("""{"total":9007199254740997}"""),
-            deltaColumns = listOf(NumericDeltaColumn(column = "total", snapshotValue = 9007199254740994.0)),
-        )
+        val rebased =
+            rebaseNumericDeltas(
+                body = body,
+                serverRow = json("""{"total":9007199254740997}"""),
+                deltaColumns =
+                    listOf(
+                        NumericDeltaColumn(column = "total", snapshotValue = 9007199254740994.0)
+                    ),
+            )
 
         // Then — 9007199254740997 + (9007199254740995 - 9007199254740994) = 9007199254740998
         assertEquals("""{"total":9007199254740998}""", rebased.toString())
@@ -84,11 +96,13 @@ class NumericDeltaRebaseIntegralTest {
         val body = json("""{"minutes":9000.5}""")
 
         // When
-        val rebased = rebaseNumericDeltas(
-            body = body,
-            serverRow = json("""{"minutes":8500}"""),
-            deltaColumns = listOf(NumericDeltaColumn(column = "minutes", snapshotValue = 8000.0)),
-        )
+        val rebased =
+            rebaseNumericDeltas(
+                body = body,
+                serverRow = json("""{"minutes":8500}"""),
+                deltaColumns =
+                    listOf(NumericDeltaColumn(column = "minutes", snapshotValue = 8000.0)),
+            )
 
         // Then
         assertEquals("""{"minutes":9500.5}""", rebased.toString())

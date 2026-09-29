@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.testing
 
 import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
@@ -37,9 +39,11 @@ internal open class InMemoryObjectDao : ObjectDao {
     protected val rows: MutableMap<Pair<String, String>, ObjectRow> = mutableMapOf()
 
     /** One observable slot per observed `(table, signature)`. */
-    protected val observers: MutableMap<Pair<String, String>, MutableStateFlow<ObjectRow?>> = mutableMapOf()
+    protected val observers: MutableMap<Pair<String, String>, MutableStateFlow<ObjectRow?>> =
+        mutableMapOf()
 
-    override suspend fun get(table: String, signature: String): ObjectRow? = rows[table to signature]
+    override suspend fun get(table: String, signature: String): ObjectRow? =
+        rows[table to signature]
 
     override fun observe(table: String, signature: String): Flow<ObjectRow?> =
         observers
@@ -57,15 +61,22 @@ internal open class InMemoryObjectDao : ObjectDao {
         rows.values.filter { it.table == table && it.signature.startsWith(prefix) }
 
     override suspend fun deleteWithSignaturePrefix(table: String, prefix: String) {
-        rows.keys.filter { (rowTable, signature) -> rowTable == table && signature.startsWith(prefix) }.forEach { key -> rows.remove(key) }
+        rows.keys
+            .filter { (rowTable, signature) -> rowTable == table && signature.startsWith(prefix) }
+            .forEach { key -> rows.remove(key) }
     }
 
     override suspend fun deleteOrphanedQueryShapes(): Int {
-        val payloads = rows.values.filter { it.table != RESERVED_TABLE_NAME }.mapTo(mutableSetOf()) { "${it.table}\u001F${it.signature}" }
-        val orphans = rows.keys.filter { (table, signature) ->
-            table == RESERVED_TABLE_NAME && signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) &&
-                signature.removePrefix(QUERY_SHAPE_SIGNATURE_PREFIX) !in payloads
-        }
+        val payloads =
+            rows.values
+                .filter { it.table != RESERVED_TABLE_NAME }
+                .mapTo(mutableSetOf()) { "${it.table}\u001F${it.signature}" }
+        val orphans =
+            rows.keys.filter { (table, signature) ->
+                table == RESERVED_TABLE_NAME &&
+                    signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) &&
+                    signature.removePrefix(QUERY_SHAPE_SIGNATURE_PREFIX) !in payloads
+            }
         orphans.forEach { key -> rows.remove(key) }
         return orphans.size
     }
@@ -83,10 +94,13 @@ internal open class InMemoryObjectDao : ObjectDao {
     }
 
     override suspend fun deleteTable(table: String) {
-        rows.keys.filter { it.first == table }.toList().forEach {
-            rows.remove(it)
-            observers[it]?.value = null
-        }
+        rows.keys
+            .filter { it.first == table }
+            .toList()
+            .forEach {
+                rows.remove(it)
+                observers[it]?.value = null
+            }
     }
 
     override suspend fun deleteAll() {
@@ -100,10 +114,11 @@ internal open class InMemoryObjectDao : ObjectDao {
 
     override suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int {
         if (limit <= 0) return 0
-        val oldest = rows.values
-            .filter { it.table != RESERVED_TABLE_NAME && it.signature !in keptSignatures }
-            .sortedBy { it.updatedAt }
-            .take(limit)
+        val oldest =
+            rows.values
+                .filter { it.table != RESERVED_TABLE_NAME && it.signature !in keptSignatures }
+                .sortedBy { it.updatedAt }
+                .take(limit)
         oldest.forEach { row ->
             rows.remove(row.table to row.signature)
             observers[row.table to row.signature]?.value = null
@@ -135,8 +150,14 @@ internal open class InMemoryStorageDao : StorageDao {
         rows.clear()
     }
 
-    override suspend fun forObject(bucketId: String, path: String, variantPrefix: String): List<StorageRow> =
-        rows.values.filter { it.bucketId == bucketId && (it.path == path || it.path.startsWith(variantPrefix)) }
+    override suspend fun forObject(
+        bucketId: String,
+        path: String,
+        variantPrefix: String,
+    ): List<StorageRow> =
+        rows.values.filter {
+            it.bucketId == bucketId && (it.path == path || it.path.startsWith(variantPrefix))
+        }
 
     override suspend fun all(): List<StorageRow> = rows.values.toList()
 
@@ -165,13 +186,18 @@ internal open class InMemoryMutationDao : MutationDao {
     override suspend fun pendingAll(): List<MutationRow> =
         mutations.value.filter { it.syncedAtMs == null }.sortedBy { it.id }
 
-    override fun pendingAllFlow(): Flow<List<MutationRow>> =
-        mutations.map { all -> all.filter { it.syncedAtMs == null }.sortedBy { it.id } }
+    override fun pendingAllFlow(): Flow<List<MutationRow>> = mutations.map { all ->
+        all.filter { it.syncedAtMs == null }.sortedBy { it.id }
+    }
 
     override suspend fun pendingIdsBefore(id: Long): List<Long> =
-        mutations.value.filter { it.syncedAtMs == null && it.id < id }.sortedBy { it.id }.map { it.id }
+        mutations.value
+            .filter { it.syncedAtMs == null && it.id < id }
+            .sortedBy { it.id }
+            .map { it.id }
 
-    override suspend fun isPending(id: Long): Boolean = mutations.value.any { it.id == id && it.syncedAtMs == null }
+    override suspend fun isPending(id: Long): Boolean =
+        mutations.value.any { it.id == id && it.syncedAtMs == null }
 
     override suspend fun byId(id: Long): MutationRow? = mutations.value.firstOrNull { it.id == id }
 
@@ -183,19 +209,25 @@ internal open class InMemoryMutationDao : MutationDao {
     override suspend fun allIds(): List<Long> = mutations.value.map { it.id }
 
     override suspend fun syncedBefore(syncedBeforeMs: Long): List<MutationRow> =
-        mutations.value.filter { it.syncedAtMs != null && it.syncedAtMs < syncedBeforeMs }.sortedBy { it.id }
+        mutations.value
+            .filter { it.syncedAtMs != null && it.syncedAtMs < syncedBeforeMs }
+            .sortedBy { it.id }
 
     override suspend fun countPending(): Int = mutations.value.count { it.syncedAtMs == null }
 
-    override fun countPendingFlow(): Flow<Int> = mutations.map { all -> all.count { it.syncedAtMs == null } }
+    override fun countPendingFlow(): Flow<Int> = mutations.map { all ->
+        all.count { it.syncedAtMs == null }
+    }
 
-    override suspend fun countForTable(table: String): Int = mutations.value.count { it.table == table }
+    override suspend fun countForTable(table: String): Int =
+        mutations.value.count { it.table == table }
 
     override suspend fun countPendingForTable(table: String): Int =
         mutations.value.count { it.table == table && it.syncedAtMs == null }
 
-    override fun countPendingForTableFlow(table: String): Flow<Int> =
-        mutations.map { all -> all.count { it.table == table && it.syncedAtMs == null } }
+    override fun countPendingForTableFlow(table: String): Flow<Int> = mutations.map { all ->
+        all.count { it.table == table && it.syncedAtMs == null }
+    }
 
     override suspend fun deleteById(id: Long) {
         mutations.update { current -> current.filterNot { it.id == id } }
@@ -204,8 +236,9 @@ internal open class InMemoryMutationDao : MutationDao {
     override suspend fun allForTable(table: String): List<MutationRow> =
         mutations.value.filter { it.table == table }.sortedBy { it.id }
 
-    override fun allForTableFlow(table: String): Flow<List<MutationRow>> =
-        mutations.map { all -> all.filter { it.table == table }.sortedBy { it.id } }
+    override fun allForTableFlow(table: String): Flow<List<MutationRow>> = mutations.map { all ->
+        all.filter { it.table == table }.sortedBy { it.id }
+    }
 
     override suspend fun markSynced(id: Long, syncedAtMs: Long) {
         mutations.update { current ->

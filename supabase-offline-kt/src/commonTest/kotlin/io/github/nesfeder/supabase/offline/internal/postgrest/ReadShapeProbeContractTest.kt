@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseInternal::class, ExperimentalCoroutinesApi::class, SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -12,18 +14,24 @@ import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.jan.supabase.serializer.KotlinXSerializer
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingSupabaseLogs
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_URL
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.plugins.HttpRequestRetry
-import io.github.jan.supabase.serializer.KotlinXSerializer
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingSupabaseLogs
 import io.ktor.client.request.get
 import io.ktor.http.HttpHeaders
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -33,40 +41,50 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Pins the upstream behavior the read-shape check depends on: supabase-kt writes the shape a SELECT
- * asks for only into its method and its `Accept` and `Prefer` headers. Also pins that the check's own
- * PostgREST instance builds the request the app's instance would, that the check sends nothing and
- * stops every request made under it and none made outside it, and that its token never leaves.
+ * asks for only into its method and its `Accept` and `Prefer` headers. Also pins that the check's
+ * own PostgREST instance builds the request the app's instance would, that the check sends nothing
+ * and stops every request made under it and none made outside it, and that its token never leaves.
  */
 class ReadShapeProbeContractTest {
 
     private val server = RecordingPostgrestServer()
-    private val handle = PostgrestQueryBuilderWrapperImpl(server.supabaseClient().postgrest.from("todos"))
+    private val handle =
+        PostgrestQueryBuilderWrapperImpl(server.supabaseClient().postgrest.from("todos"))
 
     @Test
     fun each_read_shape_is_told_without_sending_the_read() = runTest {
         // Given
-        val reads: List<Pair<ReadShape, SelectRequestBuilder.() -> Unit>> = listOf(
-            ReadShape.RowList to { filter { eq("id", 1) } },
-            ReadShape.RowList to { filter { eq("id", 1) }; order("id", Order.ASCENDING); limit(5) },
-            ReadShape.Uncacheable("a single object (single(), maybeSingle())") to { single() },
-            ReadShape.Uncacheable("a single object (single(), maybeSingle())") to { maybeSingle() },
-            ReadShape.Uncacheable("a HEAD request") to { head = true },
-            ReadShape.Uncacheable("a read with a row count") to { count(Count.EXACT) },
-            ReadShape.Uncacheable("another media type (csv(), geojson())") to { csv() },
-            ReadShape.Uncacheable("another media type (csv(), geojson())") to { geojson() },
-            ReadShape.Uncacheable("rows with nulls stripped (stripNulls())") to { stripNulls() },
-            ReadShape.Uncacheable("a query plan (explain())") to { explain() },
-            ReadShape.Uncacheable("a single object (single(), maybeSingle())") to { headers.append("Accept", "application/vnd.pgrst.object+json") },
-        )
+        val reads: List<Pair<ReadShape, SelectRequestBuilder.() -> Unit>> =
+            listOf(
+                ReadShape.RowList to { filter { eq("id", 1) } },
+                ReadShape.RowList to
+                    {
+                        filter { eq("id", 1) }
+                        order("id", Order.ASCENDING)
+                        limit(5)
+                    },
+                ReadShape.Uncacheable("a single object (single(), maybeSingle())") to { single() },
+                ReadShape.Uncacheable("a single object (single(), maybeSingle())") to
+                    {
+                        maybeSingle()
+                    },
+                ReadShape.Uncacheable("a HEAD request") to { head = true },
+                ReadShape.Uncacheable("a read with a row count") to { count(Count.EXACT) },
+                ReadShape.Uncacheable("another media type (csv(), geojson())") to { csv() },
+                ReadShape.Uncacheable("another media type (csv(), geojson())") to { geojson() },
+                ReadShape.Uncacheable("rows with nulls stripped (stripNulls())") to
+                    {
+                        stripNulls()
+                    },
+                ReadShape.Uncacheable("a query plan (explain())") to { explain() },
+                ReadShape.Uncacheable("a single object (single(), maybeSingle())") to
+                    {
+                        headers.append("Accept", "application/vnd.pgrst.object+json")
+                    },
+            )
 
         // When
         val shapes = reads.map { (_, request) -> handle.shapeOf(Columns.ALL, request) }
@@ -85,10 +103,15 @@ class ReadShapeProbeContractTest {
         // When
         supabase.httpClient.httpClient.get("$TEST_SUPABASE_URL/auth/v1/user")
         supabase.postgrest.from("todos").select { filter { eq("id", 1) } }
-        supabase.postgrest.from("todos").update(Json.parseToJsonElement("""{"title":"x"}""")) { filter { eq("id", 1) } }
+        supabase.postgrest.from("todos").update(Json.parseToJsonElement("""{"title":"x"}""")) {
+            filter { eq("id", 1) }
+        }
 
         // Then — each reached the server
-        assertEquals(listOf("user", "todos", "todos"), server.requests.map { request -> request.table })
+        assertEquals(
+            listOf("user", "todos", "todos"),
+            server.requests.map { request -> request.table },
+        )
     }
 
     @Test
@@ -99,14 +122,21 @@ class ReadShapeProbeContractTest {
 
         // When — another service's read, a write, and a read under another host
         listOf<suspend () -> Unit>(
-            { supabase.httpClient.httpClient.get("$TEST_SUPABASE_URL/auth/v1/user") },
-            { supabase.postgrest.from("todos").update(Json.parseToJsonElement("""{"title":"x"}""")) { filter { eq("id", 1) } } },
-            { supabase.httpClient.httpClient.get("https://elsewhere.invalid/rest/v1/todos") },
-        ).forEach { send ->
-            val capture = ReadRequestCapture()
-            runCatching { withContext(capture) { send() } }
-            assertNotNull(capture.url)
-        }
+                { supabase.httpClient.httpClient.get("$TEST_SUPABASE_URL/auth/v1/user") },
+                {
+                    supabase.postgrest.from("todos").update(
+                        Json.parseToJsonElement("""{"title":"x"}""")
+                    ) {
+                        filter { eq("id", 1) }
+                    }
+                },
+                { supabase.httpClient.httpClient.get("https://elsewhere.invalid/rest/v1/todos") },
+            )
+            .forEach { send ->
+                val capture = ReadRequestCapture()
+                runCatching { withContext(capture) { send() } }
+                assertNotNull(capture.url)
+            }
 
         // Then — none reached the server
         assertEquals(emptyList(), server.requests)
@@ -115,34 +145,68 @@ class ReadShapeProbeContractTest {
     @Test
     fun the_checks_own_instance_builds_the_request_the_apps_instance_would() = runTest {
         // Given — an app that configures every PostgREST setting a request is built from
-        val supabase = newTestSupabaseClient(engine = server.engine) {
-            install(Postgrest) {
-                defaultSchema = "app"
-                propertyConversionMethod = PropertyConversionMethod.NONE
-                customUrl = "$TEST_SUPABASE_URL/custom/rest/v1"
-                serializer = KotlinXSerializer(Json { encodeDefaults = true })
-                urlLengthLimit = 4_000
-                timeout = 12.seconds
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest) {
+                    defaultSchema = "app"
+                    propertyConversionMethod = PropertyConversionMethod.NONE
+                    customUrl = "$TEST_SUPABASE_URL/custom/rest/v1"
+                    serializer = KotlinXSerializer(Json { encodeDefaults = true })
+                    urlLengthLimit = 4_000
+                    timeout = 12.seconds
+                }
             }
-        }
         supabase.installReadShapeCheck()
         val check = readShapePostgrestOf(supabase.postgrest)
-        val requests = listOf<SelectRequestBuilder.() -> Unit>(
-            { filter { eq("listId", "A"); isIn("tag", listOf("x,y", "z")) }; order("position", Order.DESCENDING); limit(20) },
-            { schema = "public"; single() },
-            { head = true; count(Count.EXACT) },
-            { csv(); range(0, 9) },
-            { headers.append("X-App", "yes"); params["custom"] = listOf("1") },
-        )
+        val requests =
+            listOf<SelectRequestBuilder.() -> Unit>(
+                {
+                    filter {
+                        eq("listId", "A")
+                        isIn("tag", listOf("x,y", "z"))
+                    }
+                    order("position", Order.DESCENDING)
+                    limit(20)
+                },
+                {
+                    schema = "public"
+                    single()
+                },
+                {
+                    head = true
+                    count(Count.EXACT)
+                },
+                {
+                    csv()
+                    range(0, 9)
+                },
+                {
+                    headers.append("X-App", "yes")
+                    params["custom"] = listOf("1")
+                },
+            )
 
         requests.forEach { request ->
             // When — the same read built by each instance, stopped before it is sent
-            val viaApp = captureOf { supabase.postgrest.from("todos").select(Columns.raw("id,listId")) { request(); noRetry() } }
-            val viaCheck = captureOf { check.from("app", "todos").select(Columns.raw("id,listId")) { request(); noRetry() } }
+            val viaApp = captureOf {
+                supabase.postgrest.from("todos").select(Columns.raw("id,listId")) {
+                    request()
+                    noRetry()
+                }
+            }
+            val viaCheck = captureOf {
+                check.from("app", "todos").select(Columns.raw("id,listId")) {
+                    request()
+                    noRetry()
+                }
+            }
 
             // Then — the same URL and headers, but for the token
             assertEquals(viaApp.url, viaCheck.url)
-            assertEquals(viaApp.headers - HttpHeaders.Authorization, viaCheck.headers - HttpHeaders.Authorization)
+            assertEquals(
+                viaApp.headers - HttpHeaders.Authorization,
+                viaCheck.headers - HttpHeaders.Authorization,
+            )
             assertEquals(viaApp.shape, viaCheck.shape)
         }
         assertEquals(emptyList(), server.requests)
@@ -151,20 +215,21 @@ class ReadShapeProbeContractTest {
     @Test
     fun the_checks_own_instance_copies_each_setting_of_the_apps_but_the_token_and_retries() {
         // Given — every setting away from its default
-        val supabase = newTestSupabaseClient(engine = server.engine) {
-            install(Postgrest) {
-                defaultSchema = "app"
-                propertyConversionMethod = PropertyConversionMethod.NONE
-                requireValidSession = true
-                urlLengthLimit = 4_000
-                timeout = 12.seconds
-                maxRetries = 5
-                customUrl = "$TEST_SUPABASE_URL/custom/rest/v1"
-                serializer = KotlinXSerializer(Json { encodeDefaults = true })
-                logLevel = LogLevel.WARNING
-                jwtToken = "the-apps-own-token"
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest) {
+                    defaultSchema = "app"
+                    propertyConversionMethod = PropertyConversionMethod.NONE
+                    requireValidSession = true
+                    urlLengthLimit = 4_000
+                    timeout = 12.seconds
+                    maxRetries = 5
+                    customUrl = "$TEST_SUPABASE_URL/custom/rest/v1"
+                    serializer = KotlinXSerializer(Json { encodeDefaults = true })
+                    logLevel = LogLevel.WARNING
+                    jwtToken = "the-apps-own-token"
+                }
             }
-        }
         val source = supabase.postgrest.config
 
         // When
@@ -184,13 +249,15 @@ class ReadShapeProbeContractTest {
     fun the_checks_token_never_leaves_the_process() = runTest {
         // Given — every supabase-kt log line recorded
         val logs = RecordingSupabaseLogs()
-        val supabase = newTestSupabaseClient(engine = server.engine) {
-            defaultLogLevel = LogLevel.DEBUG
-            defaultLoggingFactory = { logs }
-            install(Postgrest)
-        }
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                defaultLogLevel = LogLevel.DEBUG
+                defaultLoggingFactory = { logs }
+                install(Postgrest)
+            }
         supabase.installReadShapeCheck()
-        val probe = PipelineReadShapeProbe(readShapePostgrestOf(supabase.postgrest), "todos", "public")
+        val probe =
+            PipelineReadShapeProbe(readShapePostgrestOf(supabase.postgrest), "todos", "public")
 
         // When
         repeat(50) { probe.shapeOf(Columns.ALL) { filter { eq("id", it) } } }
@@ -203,12 +270,19 @@ class ReadShapeProbeContractTest {
     @Test
     fun a_read_whose_request_cannot_be_built_fails_with_the_builders_own_error() = runTest {
         // Given — a URL limit no read fits
-        val supabase = newTestSupabaseClient(engine = server.engine) { install(Postgrest) { urlLengthLimit = 10 } }
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest) { urlLengthLimit = 10 }
+            }
         supabase.installReadShapeCheck()
-        val probe = PipelineReadShapeProbe(readShapePostgrestOf(supabase.postgrest), "todos", "public")
+        val probe =
+            PipelineReadShapeProbe(readShapePostgrestOf(supabase.postgrest), "todos", "public")
 
         // When
-        val failure = runCatching { probe.shapeOf(Columns.ALL) { filter { eq("id", 1) } } }.exceptionOrNull()
+        val failure = runCatching {
+            probe.shapeOf(Columns.ALL) { filter { eq("id", 1) } }
+        }
+            .exceptionOrNull()
 
         // Then — not taken for a list: the error building it raised
         assertTrue(failure?.message.orEmpty().contains("URL length"), "$failure")
@@ -229,12 +303,13 @@ class ReadShapeProbeContractTest {
 
         // When — many first uses at once, released together
         val start = CompletableDeferred<Unit>()
-        val racers = (1..64).map {
-            async(Dispatchers.Default) {
-                start.await()
-                supabase.installReadShapeCheck()
+        val racers =
+            (1..64).map {
+                async(Dispatchers.Default) {
+                    start.await()
+                    supabase.installReadShapeCheck()
+                }
             }
-        }
         start.complete(Unit)
         val installs = racers.awaitAll()
 
@@ -244,22 +319,30 @@ class ReadShapeProbeContractTest {
 
     @Test
     fun an_apps_retry_plugin_does_not_retry_the_check() = runTest {
-        // Given — an app that retries every failed request three times, 400 ms apart, and a list the
-        // cache holds; the server answers on the test scheduler, so only a wait moves the test's clock
-        val onTheTestClock = RecordingPostgrestServer(
-            answer = { okJson("""[{"id":1}]""") },
-            engineDispatcher = StandardTestDispatcher(testScheduler),
-        )
-        val supabase = newTestSupabaseClient(engine = onTheTestClock.engine) {
-            install(Postgrest) { maxRetries = 0 }
-            httpConfig {
-                install(HttpRequestRetry) {
-                    retryOnException(maxRetries = 3, retryOnTimeout = true)
-                    constantDelay(millis = 400)
+        // Given — an app that retries every failed request three times, 400 ms apart, and a list
+        // the
+        // cache holds; the server answers on the test scheduler, so only a wait moves the test's
+        // clock
+        val onTheTestClock =
+            RecordingPostgrestServer(
+                answer = { okJson("""[{"id":1}]""") },
+                engineDispatcher = StandardTestDispatcher(testScheduler),
+            )
+        val supabase =
+            newTestSupabaseClient(engine = onTheTestClock.engine) {
+                install(Postgrest) { maxRetries = 0 }
+                httpConfig {
+                    install(HttpRequestRetry) {
+                        retryOnException(maxRetries = 3, retryOnTimeout = true)
+                        constantDelay(millis = 400)
+                    }
                 }
             }
-        }
-        val builder = OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from("todos"), store = newTestOfflineStore())
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = supabase.postgrest.from("todos"),
+                store = newTestOfflineStore(),
+            )
         builder.select(readStrategy = ReadStrategy.NetworkOnly)
 
         // When — a read the cache answers, timed on the test's clock

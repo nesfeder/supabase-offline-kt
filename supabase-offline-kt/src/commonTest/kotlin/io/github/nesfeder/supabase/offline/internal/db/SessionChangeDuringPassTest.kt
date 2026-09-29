@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -5,10 +7,10 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 
 /**
  * The identity is checked before every request of a pass, not once at its start. A sign-out or an
@@ -27,24 +29,36 @@ class SessionChangeDuringPassTest {
         store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"1"}"""), byId("a"))
         store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"2"}"""), byId("b"))
         store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"3"}"""), byId("c"))
-        val server = RecordingPostgrestServer(
-            answer = {
-                session = USER_B
-                okJson("[]")
-            },
-        )
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
+        val server =
+            RecordingPostgrestServer(
+                answer = {
+                    session = USER_B
+                    okJson("[]")
+                }
+            )
+        val syncer =
+            MutationQueueReplayer(
+                store = store,
+                supabase = server.supabaseClient(),
+                currentIdentity = { session },
+            )
 
         // When
         syncer.sync()
 
         // Then — nothing went out under B, and A's two remaining edits are still queued
         assertEquals(1, server.requests.size, "requests sent: ${server.requests.map { it.body }}")
-        assertEquals(listOf("""{"title":"2"}""", """{"title":"3"}"""), store.allPendingMutations().map { it.bodyJson })
+        assertEquals(
+            listOf("""{"title":"2"}""", """{"title":"3"}"""),
+            store.allPendingMutations().map { it.bodyJson },
+        )
     }
 
     private fun byId(id: String): FilterDescriptor =
-        FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))
+        FilterDescriptor(
+            conditions =
+                listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id))
+        )
 
     private companion object {
         const val TABLE = "tasks"

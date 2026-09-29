@@ -1,15 +1,24 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.postgrest.postgrest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -18,24 +27,16 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlin.time.ExperimentalTime
 
 /**
  * Tests for the stale-refresh watermark in [OfflineStore.addPayload] — the guard that refuses a
  * network SELECT response whose request went out *before* the table's most recent local write.
  *
  * The hazard is ordering, not emptiness. A refresh starts at t0 against server state S0; at t1 a
- * local mutation succeeds online and [OfflineStore.patchCachedQueries] patches every cached
- * payload to S0+M; at t2 the refresh's S0 response arrives and overwrites that patch. Nothing
- * replays M — the online-success path uses an ephemeral overlay carrier and never enqueues — so
- * the row stays gone until some later SELECT happens to run. The user sees "I saved it and it
- * vanished".
+ * local mutation succeeds online and [OfflineStore.patchCachedQueries] patches every cached payload
+ * to S0+M; at t2 the refresh's S0 response arrives and overwrites that patch. Nothing replays M —
+ * the online-success path uses an ephemeral overlay carrier and never enqueues — so the row stays
+ * gone until some later SELECT happens to run. The user sees "I saved it and it vanished".
  *
  * The guard keys purely on **when the request started** relative to the write, which is what makes
  * it compose with the authoritative-empty accept rather than fight it: an in-flight refresh's
@@ -65,12 +66,13 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // And — the in-flight refresh's pre-insert response finally lands
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = oneProject,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = oneProject,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — the response is refused and the just-saved row is still in the cache
         assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
@@ -94,13 +96,14 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // And — the pre-insert `[]` lands afterwards
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = "[]",
-            authoritativeEmpty = true,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = "[]",
+                authoritativeEmpty = true,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — staleness is decided before authority: the empty is refused rather than erasing
         // the row the user just saved
@@ -123,12 +126,13 @@ class OfflineStoreStaleRefreshWatermarkTest {
         tick = 20L
         val requestStartedAtTick = store.monotonicTickNow()
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = bothProjects,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = bothProjects,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — the watermark does not stand in the way of genuinely fresh server state
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
@@ -150,13 +154,14 @@ class OfflineStoreStaleRefreshWatermarkTest {
         tick = 20L
         val requestStartedAtTick = store.monotonicTickNow()
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = "[]",
-            authoritativeEmpty = true,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = "[]",
+                authoritativeEmpty = true,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — the authoritative-empty accept is untouched: the empty replaces the cached rows
         // so a delete performed on another device still converges here
@@ -177,12 +182,13 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — a refresh lands
         tick = 20L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = bothProjects,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = bothProjects,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — no watermark, no drop
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
@@ -200,13 +206,14 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — an auth-ready refresh reports the rows are gone
         tick = 20L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = "[]",
-            authoritativeEmpty = true,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = "[]",
+                authoritativeEmpty = true,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — the empty lands, exactly as it did before the watermark existed
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
@@ -224,11 +231,12 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — a caller with no request behind it writes a payload (no tick to compare)
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = oneProject,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = oneProject,
+            )
 
         // Then — the write goes through; the guard only judges responses it can date
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
@@ -249,12 +257,13 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — the `plans` refresh lands after the unrelated `projects` write
         tick = 30L
-        val outcome = store.addPayload(
-            table = "plans",
-            signature = "sig-P",
-            payload = """[{"id":"plan-2"}]""",
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "plans",
+                signature = "sig-P",
+                payload = """[{"id":"plan-2"}]""",
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — a write to one table never disqualifies another table's refreshes
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
@@ -279,12 +288,13 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // And — the refresh that was already in flight returns the pre-replay server state
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = oneProject,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = oneProject,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — the replay counts as local truth too. Accepting here would rewrite the
         // pre-replay payload *and* retire the overlay in the same pass, losing the write twice
@@ -307,13 +317,14 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // And — the refresh that was still in flight delivers the outgoing user's rows
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = bothProjects,
-            authoritativeEmpty = true,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = bothProjects,
+                authoritativeEmpty = true,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — the response is refused and the wipe holds. Writing it would undo the teardown
         // and put one account's rows in front of the next user.
@@ -333,12 +344,13 @@ class OfflineStoreStaleRefreshWatermarkTest {
         tick = 20L
         val requestStartedAtTick = store.monotonicTickNow()
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = oneProject,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = oneProject,
+                requestStartedAtTick = requestStartedAtTick,
+            )
 
         // Then — teardown disqualifies only what was already in flight; the cache refills
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
@@ -359,12 +371,13 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — that response is accepted (no watermark yet, so nothing disqualifies it)
         tick = 15L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = oneProject,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = oneProject,
+                requestStartedAtTick = requestStartedAtTick,
+            )
         assertEquals(AddPayloadOutcome.WRITTEN, outcome)
 
         // And — the queue drains in the gap before the resolver retires synced mutations
@@ -421,9 +434,8 @@ class OfflineStoreStaleRefreshWatermarkTest {
             table = "projects",
             body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = projectOneFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-            ),
+            deltaColumns =
+                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
         )
         val requestStartedAtTick = store.monotonicTickNow()
 
@@ -431,37 +443,48 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // (the server moved to 8 500 meanwhile) and rebases the delta onto it.
         tick = 20L
         val client = deltaTestClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = "projects",
-            postgrest = client.postgrest,
-            onSelect = {
-                postgrestResultOf("""[{"id":"project-1","total_minutes":8500.0}]""", client.postgrest)
-            },
-            onUpdate = { postgrestResultOf("[]", client.postgrest) },
-        )
-        val synced = MutationQueueReplayer(
-            store = store,
-            supabase = client,
-            postgrestFactory = { _, _ -> wrapper },
-        ).syncTable(table = "projects")
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = "projects",
+                postgrest = client.postgrest,
+                onSelect = {
+                    postgrestResultOf(
+                        """[{"id":"project-1","total_minutes":8500.0}]""",
+                        client.postgrest,
+                    )
+                },
+                onUpdate = { postgrestResultOf("[]", client.postgrest) },
+            )
+        val synced =
+            MutationQueueReplayer(
+                    store = store,
+                    supabase = client,
+                    postgrestFactory = { _, _ -> wrapper },
+                )
+                .syncTable(table = "projects")
 
         // Then — the rebase itself is untouched by the watermark. The read-before-write goes out
         // on the raw PostgREST wrapper, never through addPayload, so nothing can refuse it.
         assertEquals(1, synced)
         assertEquals(
             9500.0,
-            wrapper.recordedUpdateBodies.last().jsonObject
-                .getValue("total_minutes").jsonPrimitive.double,
+            wrapper.recordedUpdateBodies
+                .last()
+                .jsonObject
+                .getValue("total_minutes")
+                .jsonPrimitive
+                .double,
         )
 
         // And — the refresh that was already in flight returns the pre-replay server state
         tick = 30L
-        val outcome = store.addPayload(
-            table = "projects",
-            signature = "sig-A",
-            payload = oneProject,
-            requestStartedAtTick = requestStartedAtTick,
-        )
+        val outcome =
+            store.addPayload(
+                table = "projects",
+                signature = "sig-A",
+                payload = oneProject,
+                requestStartedAtTick = requestStartedAtTick,
+            )
         store.retireCoveredSyncedMutations("projects", requestStartedAtTick)
 
         // Then — a delta-rebased replay establishes new server truth exactly like an absolute one:
@@ -476,16 +499,24 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
-    private val projectOneFilter = FilterDescriptor(
-        mode = FilterDescriptor.Mode.AND,
-        conditions = listOf(
-            FilterDescriptor.Condition(column = "id", operatorId = "eq", value = "project-1"),
-        ),
-    )
+    private val projectOneFilter =
+        FilterDescriptor(
+            mode = FilterDescriptor.Mode.AND,
+            conditions =
+                listOf(
+                    FilterDescriptor.Condition(
+                        column = "id",
+                        operatorId = "eq",
+                        value = "project-1",
+                    )
+                ),
+        )
 
     private fun deltaTestClient(): SupabaseClient = newTestSupabaseClient()
 
-    /** Applies the online-success insert of `project-2` — the write the stale response would erase. */
+    /**
+     * Applies the online-success insert of `project-2` — the write the stale response would erase.
+     */
     private suspend fun OfflineStore.insertProjectTwo(liveSignatures: Set<String>? = null) {
         patchCachedQueries(
             table = "projects",
@@ -497,17 +528,17 @@ class OfflineStoreStaleRefreshWatermarkTest {
         )
     }
 
-    private fun projectTwoBody(): JsonArray = JsonArray(
-        listOf(JsonObject(mapOf("id" to JsonPrimitive("project-2")))),
-    )
+    private fun projectTwoBody(): JsonArray =
+        JsonArray(listOf(JsonObject(mapOf("id" to JsonPrimitive("project-2")))))
 
     private fun buildStore(
         objectDao: ObjectDao,
         mutationDao: MutationDao = FakeMutationDao(),
         tick: () -> Long,
-    ): OfflineStore = newTestOfflineStore(
-        objectDao = objectDao,
-        mutationDao = mutationDao,
-        monotonicTick = tick,
-    )
+    ): OfflineStore =
+        newTestOfflineStore(
+            objectDao = objectDao,
+            mutationDao = mutationDao,
+            monotonicTick = tick,
+        )
 }

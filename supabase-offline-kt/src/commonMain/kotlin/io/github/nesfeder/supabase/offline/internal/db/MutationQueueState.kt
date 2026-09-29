@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalSerializationApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
@@ -162,22 +164,25 @@ internal sealed interface MutationOwners {
      */
     data class Known(val byId: Map<Long, String>) : MutationOwners
 
-    /** The owners row exists but cannot be decoded. Nothing is replayed until local data is cleared. */
+    /**
+     * The owners row exists but cannot be decoded. Nothing is replayed until local data is cleared.
+     */
     data object Unreadable : MutationOwners
 }
 
 /**
  * The mutation queue's records kept in reserved `object_cache` rows (see [RESERVED_TABLE_NAME]) so
- * no schema change is needed: each mutation's owner, the rejected list, which cached payloads already
- * contain each synced mutation, and which INSERTs may already be on the server. Cached in memory after
- * the first read.
+ * no schema change is needed: each mutation's owner, the rejected list, which cached payloads
+ * already contain each synced mutation, and which INSERTs may already be on the server. Cached in
+ * memory after the first read.
  *
- * Callers hold the store's mutation-queue lock, and build each row here before opening a transaction,
- * so no transaction waits on a coroutine lock. An unreadable owner row stops replay
- * ([MutationOwners.Unreadable]); any other unreadable row is kept aside, logged, and started afresh.
+ * Callers hold the store's mutation-queue lock, and build each row here before opening a
+ * transaction, so no transaction waits on a coroutine lock. An unreadable owner row stops replay
+ * ([MutationOwners.Unreadable]); any other unreadable row is kept aside, logged, and started
+ * afresh.
  *
- * @property pendingKeyedInsertIds The pending INSERTs whose rows all carry their table's primary key:
- *   what a missing or unreadable unconfirmed-sends row starts from.
+ * @property pendingKeyedInsertIds The pending INSERTs whose rows all carry their table's primary
+ *   key: what a missing or unreadable unconfirmed-sends row starts from.
  */
 internal class MutationQueueState(
     private val objectDao: ObjectDao,
@@ -188,8 +193,9 @@ internal class MutationQueueState(
 ) {
 
     /**
-     * Held while the coverage or unconfirmed-sends row is first read, and written back when it has to
-     * start afresh, so that write cannot overwrite a change made meanwhile. Innermost of every lock.
+     * Held while the coverage or unconfirmed-sends row is first read, and written back when it has
+     * to start afresh, so that write cannot overwrite a change made meanwhile. Innermost of every
+     * lock.
      */
     private val loadLock = Mutex()
 
@@ -206,8 +212,11 @@ internal class MutationQueueState(
      * @return The owners, or [MutationOwners.Unreadable].
      */
     suspend fun owners(): MutationOwners {
-        ownersCache.value?.let { return it }
-        val loaded = decodeOwners(objectDao.get(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE)?.payload)
+        ownersCache.value?.let {
+            return it
+        }
+        val loaded =
+            decodeOwners(objectDao.get(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE)?.payload)
         ownersCache.compareAndSet(null, loaded)
         return ownersCache.value ?: loaded
     }
@@ -229,15 +238,22 @@ internal class MutationQueueState(
      * @param changes Turns the current map into the new one.
      * @return The row and the new owners, or `null` when the owners cannot be read.
      */
-    suspend fun ownersRowWith(changes: (Map<Long, String>) -> Map<Long, String>): Pair<ObjectRow, MutationOwners.Known>? {
+    suspend fun ownersRowWith(
+        changes: (Map<Long, String>) -> Map<Long, String>
+    ): Pair<ObjectRow, MutationOwners.Known>? {
         val current = owners() as? MutationOwners.Known ?: return null
         val next = MutationOwners.Known(changes(current.byId))
-        val row = ObjectRow(
-            table = RESERVED_TABLE_NAME,
-            signature = MUTATION_OWNERS_SIGNATURE,
-            payload = json.encodeToString(StoredMutationOwners.serializer(), StoredMutationOwners(owners = next.byId)),
-            updatedAt = nowMillis(),
-        )
+        val row =
+            ObjectRow(
+                table = RESERVED_TABLE_NAME,
+                signature = MUTATION_OWNERS_SIGNATURE,
+                payload =
+                    json.encodeToString(
+                        StoredMutationOwners.serializer(),
+                        StoredMutationOwners(owners = next.byId),
+                    ),
+                updatedAt = nowMillis(),
+            )
         return row to next
     }
 
@@ -257,13 +273,16 @@ internal class MutationQueueState(
      * replayed. Such a payload already holds the mutation, so the overlay leaves it out there.
      */
     suspend fun syncedMutationCoverage(): Map<Long, Set<String>> {
-        coverageCache.value?.let { return it }
+        coverageCache.value?.let {
+            return it
+        }
         return loadLock.withLock {
             // From empty only: a clear that ran while this read has already set it
-            coverageCache.value ?: loadSyncedMutationCoverage().let { loaded ->
-                coverageCache.compareAndSet(null, loaded)
-                coverageCache.value ?: loaded
-            }
+            coverageCache.value
+                ?: loadSyncedMutationCoverage().let { loaded ->
+                    coverageCache.compareAndSet(null, loaded)
+                    coverageCache.value ?: loaded
+                }
         }
     }
 
@@ -272,7 +291,9 @@ internal class MutationQueueState(
      * mutation; an unreadable one is kept aside and replaced by an empty row.
      */
     private suspend fun loadSyncedMutationCoverage(): Map<Long, Set<String>> {
-        val payload = objectDao.get(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE)?.payload ?: return emptyMap()
+        val payload =
+            objectDao.get(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE)?.payload
+                ?: return emptyMap()
         decodeOrNull(StoredSyncedMutationCoverage.serializer(), payload)?.let { stored ->
             return stored.coveredSignatures.mapValues { (_, signatures) -> signatures.toSet() }
         }
@@ -289,10 +310,11 @@ internal class MutationQueueState(
 
     /**
      * The coverage row with [changes] applied, for the caller's transaction, or `null` when nothing
-     * changes; commit it with [syncedMutationCoverageWritten]. Caller holds the mutation-queue lock.
+     * changes; commit it with [syncedMutationCoverageWritten]. Caller holds the mutation-queue
+     * lock.
      */
     suspend fun syncedMutationCoverageRowWith(
-        changes: (Map<Long, Set<String>>) -> Map<Long, Set<String>>,
+        changes: (Map<Long, Set<String>>) -> Map<Long, Set<String>>
     ): Pair<ObjectRow, Map<Long, Set<String>>>? {
         val current = syncedMutationCoverage()
         val next = changes(current).filterValues { signatures -> signatures.isNotEmpty() }
@@ -301,8 +323,14 @@ internal class MutationQueueState(
     }
 
     private fun syncedMutationCoverageRow(coverage: Map<Long, Set<String>>): ObjectRow {
-        val stored = StoredSyncedMutationCoverage(coveredSignatures = coverage.mapValues { (_, signatures) -> signatures.sorted() })
-        return reservedRow(SYNCED_MUTATION_COVERAGE_SIGNATURE, json.encodeToString(StoredSyncedMutationCoverage.serializer(), stored))
+        val stored =
+            StoredSyncedMutationCoverage(
+                coveredSignatures = coverage.mapValues { (_, signatures) -> signatures.sorted() }
+            )
+        return reservedRow(
+            SYNCED_MUTATION_COVERAGE_SIGNATURE,
+            json.encodeToString(StoredSyncedMutationCoverage.serializer(), stored),
+        )
     }
 
     /** Records that [coverage] was written. */
@@ -317,25 +345,32 @@ internal class MutationQueueState(
      * tolerate finding their rows already on the server; every other INSERT replays as sent.
      */
     suspend fun unconfirmedSends(): Set<Long> {
-        unconfirmedCache.value?.let { return it }
+        unconfirmedCache.value?.let {
+            return it
+        }
         return loadLock.withLock {
             // From empty only: a clear that ran while this read has already set it
-            unconfirmedCache.value ?: loadUnconfirmedSends().let { loaded ->
-                unconfirmedCache.compareAndSet(null, loaded)
-                unconfirmedCache.value ?: loaded
-            }
+            unconfirmedCache.value
+                ?: loadUnconfirmedSends().let { loaded ->
+                    unconfirmedCache.compareAndSet(null, loaded)
+                    unconfirmedCache.value ?: loaded
+                }
         }
     }
 
     /**
-     * Reads the unconfirmed-sends row. A missing or unreadable one cannot say which sends were never
-     * made, so every keyed INSERT queued so far counts as possibly delivered — the row is read before
-     * this process queues any (see [OfflineStore.enqueueOwnedBy]) — and that set is written in its
-     * place, so a later launch reads it rather than deciding again.
+     * Reads the unconfirmed-sends row. A missing or unreadable one cannot say which sends were
+     * never made, so every keyed INSERT queued so far counts as possibly delivered — the row is
+     * read before this process queues any (see [OfflineStore.enqueueOwnedBy]) — and that set is
+     * written in its place, so a later launch reads it rather than deciding again.
      */
     private suspend fun loadUnconfirmedSends(): Set<Long> {
         val payload = objectDao.get(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload
-        payload?.let { decodeOrNull(StoredUnconfirmedSends.serializer(), it) }?.let { stored -> return stored.mutationIds.toSet() }
+        payload
+            ?.let { decodeOrNull(StoredUnconfirmedSends.serializer(), it) }
+            ?.let { stored ->
+                return stored.mutationIds.toSet()
+            }
         if (payload != null) keepAsideUnreadable(UNCONFIRMED_SENDS_SIGNATURE, payload)
         val possiblyDelivered = pendingKeyedInsertIds()
         writeFreshRow(unconfirmedSendsRow(possiblyDelivered))
@@ -347,7 +382,9 @@ internal class MutationQueueState(
      * when nothing changes; commit it with [unconfirmedSendsWritten]. Caller holds the
      * mutation-queue lock.
      */
-    suspend fun unconfirmedSendsRowWith(changes: (Set<Long>) -> Set<Long>): Pair<ObjectRow, Set<Long>>? {
+    suspend fun unconfirmedSendsRowWith(
+        changes: (Set<Long>) -> Set<Long>
+    ): Pair<ObjectRow, Set<Long>>? {
         val current = unconfirmedSends()
         val next = changes(current)
         if (next == current) return null
@@ -356,7 +393,10 @@ internal class MutationQueueState(
 
     private fun unconfirmedSendsRow(unconfirmed: Set<Long>): ObjectRow {
         val stored = StoredUnconfirmedSends(mutationIds = unconfirmed.sorted())
-        return reservedRow(UNCONFIRMED_SENDS_SIGNATURE, json.encodeToString(StoredUnconfirmedSends.serializer(), stored))
+        return reservedRow(
+            UNCONFIRMED_SENDS_SIGNATURE,
+            json.encodeToString(StoredUnconfirmedSends.serializer(), stored),
+        )
     }
 
     /** Records that [unconfirmed] was written. */
@@ -428,14 +468,16 @@ internal class MutationQueueState(
      * @param id A mutation id.
      * @return `true` when it is on the list.
      */
-    suspend fun hasRejection(id: Long): Boolean = rejectedList().entries.any { entry -> entry.id == id }
+    suspend fun hasRejection(id: Long): Boolean =
+        rejectedList().entries.any { entry -> entry.id == id }
 
     /**
-     * The rejected-list row with [add] added as the newest entry (replacing an earlier entry with the
-     * same id) and the entry with [removeId] removed, bounded to [MAX_REJECTED_MUTATIONS] entries and
-     * [MAX_REJECTED_LIST_CHARS] characters. Oversized bodies and server texts are trimmed first; each
-     * entry that has to go is logged and counted. Write the row in the caller's transaction, then
-     * commit it with [rejectedWritten]. Caller holds the store's mutation-queue lock.
+     * The rejected-list row with [add] added as the newest entry (replacing an earlier entry with
+     * the same id) and the entry with [removeId] removed, bounded to [MAX_REJECTED_MUTATIONS]
+     * entries and [MAX_REJECTED_LIST_CHARS] characters. Oversized bodies and server texts are
+     * trimmed first; each entry that has to go is logged and counted. Write the row in the caller's
+     * transaction, then commit it with [rejectedWritten]. Caller holds the store's mutation-queue
+     * lock.
      *
      * @param add An entry to add, or `null`.
      * @param removeId An entry to remove, or `null`.
@@ -447,10 +489,15 @@ internal class MutationQueueState(
         removeIds: Set<Long> = emptySet(),
     ): Pair<ObjectRow, StoredRejectionList> {
         val current = rejectedList()
-        var entries = current.entries.filterNot { entry -> entry.id == removeId || entry.id in removeIds || entry.id == add?.id }
+        var entries =
+            current.entries.filterNot { entry ->
+                entry.id == removeId || entry.id in removeIds || entry.id == add?.id
+            }
         if (add != null) entries = entries + bounded(add)
         var droppedCount = current.droppedCount
-        while (entries.size > MAX_REJECTED_MUTATIONS || charactersOf(entries) > MAX_REJECTED_LIST_CHARS) {
+        while (
+            entries.size > MAX_REJECTED_MUTATIONS || charactersOf(entries) > MAX_REJECTED_LIST_CHARS
+        ) {
             val dropped = entries.first()
             logger().warning {
                 "Rejected list full: dropped rejected ${dropped.operation} ${dropped.id} on ${dropped.table}"
@@ -483,13 +530,17 @@ internal class MutationQueueState(
     }
 
     private suspend fun rejectedList(): StoredRejectionList {
-        rejectedCache.value?.let { return it }
-        val payload = objectDao.get(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)?.payload
-        val loaded = if (payload == null) {
-            StoredRejectionList()
-        } else {
-            decodeOrNull(StoredRejectionList.serializer(), payload) ?: moveAsideUnreadable(payload)
+        rejectedCache.value?.let {
+            return it
         }
+        val payload = objectDao.get(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)?.payload
+        val loaded =
+            if (payload == null) {
+                StoredRejectionList()
+            } else {
+                decodeOrNull(StoredRejectionList.serializer(), payload)
+                    ?: moveAsideUnreadable(payload)
+            }
         rejectedCache.compareAndSet(null, loaded)
         return rejectedCache.value ?: loaded
     }
@@ -502,16 +553,21 @@ internal class MutationQueueState(
         return fresh
     }
 
-    /** Keeps an unreadable reserved payload under `<signature>.unreadable.<ms>` and logs it at ERROR. */
+    /**
+     * Keeps an unreadable reserved payload under `<signature>.unreadable.<ms>` and logs it at
+     * ERROR.
+     */
     private suspend fun keepAsideUnreadable(signature: String, payload: String) {
         val asideSignature = "$signature.unreadable.${nowMillis()}"
         objectDao.upsert(reservedRow(asideSignature, payload))
-        logger().error { "The mutation queue's $signature record could not be read; kept it aside as $asideSignature and started a new one" }
+        logger().error {
+            "The mutation queue's $signature record could not be read; kept it aside as $asideSignature and started a new one"
+        }
     }
 
     /**
-     * Writes [row], the value a missing or unreadable record starts afresh from. If the write fails the
-     * value still holds in memory, and the record's next change writes it.
+     * Writes [row], the value a missing or unreadable record starts afresh from. If the write fails
+     * the value still holds in memory, and the record's next change writes it.
      */
     private suspend fun writeFreshRow(row: ObjectRow) {
         try {
@@ -519,36 +575,46 @@ internal class MutationQueueState(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
-            logger().warning { "Could not write the mutation queue's ${row.signature} record (${failure::class.simpleName}); its next change writes it" }
+            logger().warning {
+                "Could not write the mutation queue's ${row.signature} record (${failure::class.simpleName}); its next change writes it"
+            }
         }
     }
 
     private fun reservedRow(signature: String, payload: String): ObjectRow =
-        ObjectRow(table = RESERVED_TABLE_NAME, signature = signature, payload = payload, updatedAt = nowMillis())
+        ObjectRow(
+            table = RESERVED_TABLE_NAME,
+            signature = signature,
+            payload = payload,
+            updatedAt = nowMillis(),
+        )
 
     private suspend fun writeRejected(list: StoredRejectionList) {
         objectDao.upsert(rejectedRow(list))
         rejectedWritten(list)
     }
 
-    private fun rejectedRow(list: StoredRejectionList): ObjectRow = ObjectRow(
-        table = RESERVED_TABLE_NAME,
-        signature = REJECTED_MUTATIONS_SIGNATURE,
-        payload = json.encodeToString(StoredRejectionList.serializer(), list),
-        updatedAt = nowMillis(),
-    )
+    private fun rejectedRow(list: StoredRejectionList): ObjectRow =
+        ObjectRow(
+            table = RESERVED_TABLE_NAME,
+            signature = REJECTED_MUTATIONS_SIGNATURE,
+            payload = json.encodeToString(StoredRejectionList.serializer(), list),
+            updatedAt = nowMillis(),
+        )
 
     private fun bounded(entry: StoredRejection): StoredRejection {
-        var bounded = entry.copy(
-            message = entry.message.take(MAX_REJECTED_TEXT_CHARS),
-            serverError = entry.serverError?.let { error ->
-                error.copy(
-                    message = error.message.take(MAX_REJECTED_TEXT_CHARS),
-                    details = error.details?.take(MAX_REJECTED_TEXT_CHARS),
-                    hint = error.hint?.take(MAX_REJECTED_TEXT_CHARS),
-                )
-            },
-        )
+        var bounded =
+            entry.copy(
+                message = entry.message.take(MAX_REJECTED_TEXT_CHARS),
+                serverError =
+                    entry.serverError?.let { error ->
+                        error.copy(
+                            message = error.message.take(MAX_REJECTED_TEXT_CHARS),
+                            details = error.details?.take(MAX_REJECTED_TEXT_CHARS),
+                            hint = error.hint?.take(MAX_REJECTED_TEXT_CHARS),
+                        )
+                    },
+            )
         if (entry.bodyJson.length > MAX_REJECTED_BODY_CHARS) {
             logger().warning {
                 "Rejected ${entry.operation} ${entry.id} on ${entry.table}: its body of " +
@@ -559,23 +625,27 @@ internal class MutationQueueState(
         return bounded
     }
 
-    private fun charactersOf(entries: List<StoredRejection>): Int =
-        entries.sumOf { entry -> json.encodeToString(StoredRejection.serializer(), entry).length }
+    private fun charactersOf(entries: List<StoredRejection>): Int = entries.sumOf { entry ->
+        json.encodeToString(StoredRejection.serializer(), entry).length
+    }
 
     private fun decodeOwners(payload: String?): MutationOwners {
         if (payload == null) return MutationOwners.Known(emptyMap())
         val decoded = decodeOrNull(StoredMutationOwners.serializer(), payload)
         if (decoded == null) {
-            logger().error { "The queue's owner records could not be read; nothing is queued or replayed until local data is cleared" }
+            logger().error {
+                "The queue's owner records could not be read; nothing is queued or replayed until local data is cleared"
+            }
             return MutationOwners.Unreadable
         }
         return MutationOwners.Known(decoded.owners)
     }
 
-    private fun <T> decodeOrNull(serializer: KSerializer<T>, payload: String): T? = try {
-        json.decodeFromString(serializer, payload)
-    } catch (_: IllegalArgumentException) {
-        // SerializationException is an IllegalArgumentException. The payload is never logged.
-        null
-    }
+    private fun <T> decodeOrNull(serializer: KSerializer<T>, payload: String): T? =
+        try {
+            json.decodeFromString(serializer, payload)
+        } catch (_: IllegalArgumentException) {
+            // SerializationException is an IllegalArgumentException. The payload is never logged.
+            null
+        }
 }

@@ -1,15 +1,17 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 
 /**
  * The passes the engine starts on its own are coalesced — at most one runs and one waits, however
@@ -25,11 +27,12 @@ class BackgroundSyncTriggerTest {
         // Given — a pass that is held open
         var passes = 0
         val release = CompletableDeferred<Unit>()
-        val trigger = BackgroundSyncTrigger(scope = backgroundScope, sdkLogger = logger) {
-            passes++
-            if (passes == 1) release.await()
-            SyncReport(0, emptyList(), 0, stop = null)
-        }
+        val trigger =
+            BackgroundSyncTrigger(scope = backgroundScope, sdkLogger = logger) {
+                passes++
+                if (passes == 1) release.await()
+                SyncReport(0, emptyList(), 0, stop = null)
+            }
         trigger.request()
         runCurrent()
 
@@ -46,10 +49,16 @@ class BackgroundSyncTriggerTest {
     fun a_failed_pass_holds_the_next_one_back_and_the_wait_doubles() = runTest {
         // Given — every pass stops on a failure
         var passes = 0
-        val trigger = BackgroundSyncTrigger(scope = backgroundScope, sdkLogger = logger) {
-            passes++
-            SyncReport(0, emptyList(), 1, SyncStop.TransientFailure(IllegalStateException("500")))
-        }
+        val trigger =
+            BackgroundSyncTrigger(scope = backgroundScope, sdkLogger = logger) {
+                passes++
+                SyncReport(
+                    0,
+                    emptyList(),
+                    1,
+                    SyncStop.TransientFailure(IllegalStateException("500")),
+                )
+            }
 
         // When / Then — the first runs at once
         trigger.request()
@@ -76,11 +85,21 @@ class BackgroundSyncTriggerTest {
         // Given — every pass fails and asks for another straight away
         val passTimes = mutableListOf<Long>()
         lateinit var trigger: BackgroundSyncTrigger
-        trigger = BackgroundSyncTrigger(scope = backgroundScope, sdkLogger = logger, maxBackoff = 4.seconds) {
-            passTimes += testScheduler.currentTime
-            if (passTimes.size < 6) trigger.request()
-            SyncReport(0, emptyList(), 1, SyncStop.TransientFailure(IllegalStateException("500")))
-        }
+        trigger =
+            BackgroundSyncTrigger(
+                scope = backgroundScope,
+                sdkLogger = logger,
+                maxBackoff = 4.seconds,
+            ) {
+                passTimes += testScheduler.currentTime
+                if (passTimes.size < 6) trigger.request()
+                SyncReport(
+                    0,
+                    emptyList(),
+                    1,
+                    SyncStop.TransientFailure(IllegalStateException("500")),
+                )
+            }
 
         // When
         trigger.request()
@@ -94,11 +113,14 @@ class BackgroundSyncTriggerTest {
     fun a_pass_that_ends_normally_resets_the_wait() = runTest {
         // Given — a failed pass, then a good one
         var passes = 0
-        val trigger = BackgroundSyncTrigger(scope = backgroundScope, sdkLogger = logger) {
-            passes++
-            val stop = if (passes == 1) SyncStop.TransientFailure(IllegalStateException("500")) else null
-            SyncReport(0, emptyList(), 0, stop)
-        }
+        val trigger =
+            BackgroundSyncTrigger(scope = backgroundScope, sdkLogger = logger) {
+                passes++
+                val stop =
+                    if (passes == 1) SyncStop.TransientFailure(IllegalStateException("500"))
+                    else null
+                SyncReport(0, emptyList(), 0, stop)
+            }
         trigger.request()
         runCurrent()
         trigger.request()

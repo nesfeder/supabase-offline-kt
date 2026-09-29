@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
@@ -5,6 +7,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -13,9 +18,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import okio.Path.Companion.toPath
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNull
 
 /**
  * The store's cache and queue bookkeeping, ported from the previous standalone engine's store
@@ -98,18 +100,21 @@ class OfflineStoreQueueAndCacheTest {
     }
 
     @Test
-    fun observePayload_emitsNullThenPayload() = runTest(UnconfinedTestDispatcher()) {
-        // Given
-        val emissions = mutableListOf<String?>()
-        val collector = launch { store.observePayload(TABLE, SIGNATURE).collect { emissions += it } }
+    fun observePayload_emitsNullThenPayload() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given
+            val emissions = mutableListOf<String?>()
+            val collector = launch {
+                store.observePayload(TABLE, SIGNATURE).collect { emissions += it }
+            }
 
-        // When
-        store.addPayload(TABLE, SIGNATURE, PAYLOAD)
-        collector.cancel()
+            // When
+            store.addPayload(TABLE, SIGNATURE, PAYLOAD)
+            collector.cancel()
 
-        // Then
-        assertEquals(listOf(null, PAYLOAD), emissions)
-    }
+            // Then
+            assertEquals(listOf(null, PAYLOAD), emissions)
+        }
 
     // ─────────────────────────── Overlays ───────────────────────────
 
@@ -135,7 +140,8 @@ class OfflineStoreQueueAndCacheTest {
         val fresh = store.overlayPendingOnResponse(TABLE, SIGNATURE, "[]")
         val offlineFallback = store.overlayCachedPayload(TABLE, "[]")
 
-        // Then — a fresh payload already reflects it; a cached one may predate it, so it is re-applied
+        // Then — a fresh payload already reflects it; a cached one may predate it, so it is
+        // re-applied
         assertEquals("[]", fresh)
         assertEquals("""[{"id":1}]""", offlineFallback)
     }
@@ -146,7 +152,13 @@ class OfflineStoreQueueAndCacheTest {
     fun addGetDeleteStorage_roundTrip() = runTest {
         // Given
         clock = 7L
-        store.addStorage(bucketId = "avatars", path = "u-1/me.png", file = "/base/me.png".toPath(), size = 12L, eTag = "tag")
+        store.addStorage(
+            bucketId = "avatars",
+            path = "u-1/me.png",
+            file = "/base/me.png".toPath(),
+            size = 12L,
+            eTag = "tag",
+        )
 
         // When
         val stored = store.getStorageByKey("avatars", "u-1/me.png")
@@ -175,7 +187,12 @@ class OfflineStoreQueueAndCacheTest {
         // Given — an empty queue
 
         // When
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""), filter = ID_FILTER, defaultToNull = false)
+        store.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":1}]"""),
+            filter = ID_FILTER,
+            defaultToNull = false,
+        )
 
         // Then
         assertEquals(
@@ -237,10 +254,15 @@ class OfflineStoreQueueAndCacheTest {
         // Given — an empty queue
 
         // When
-        store.enqueueUpdate(table = TABLE, body = Json.parseToJsonElement("""{"name":"X"}"""), filter = ID_FILTER)
+        store.enqueueUpdate(
+            table = TABLE,
+            body = Json.parseToJsonElement("""{"name":"X"}"""),
+            filter = ID_FILTER,
+        )
         store.enqueueDelete(table = TABLE, filter = ID_FILTER)
 
-        // Then — an UPDATE carries its body and filter; a DELETE an empty object body and its filter
+        // Then — an UPDATE carries its body and filter; a DELETE an empty object body and its
+        // filter
         val (update, delete) = mutationDao.inserted
         assertEquals("UPDATE", update.operation)
         assertEquals("""{"name":"X"}""", update.bodyJson)
@@ -306,24 +328,28 @@ class OfflineStoreQueueAndCacheTest {
         store.retireCoveredSyncedMutations(TABLE)
 
         // Then
-        assertEquals(listOf("""[{"id":2}]""", """[{"id":3}]"""), mutationDao.inserted.map { it.bodyJson })
+        assertEquals(
+            listOf("""[{"id":2}]""", """[{"id":3}]"""),
+            mutationDao.inserted.map { it.bodyJson },
+        )
     }
 
     @Test
-    fun pendingMutationCountFlow_emitsUpdatedCount_andExcludesSyncedMutations() = runTest(UnconfinedTestDispatcher()) {
-        // Given
-        val counts = mutableListOf<Int>()
-        val collector = launch { store.pendingMutationCountFlow().collect { counts += it } }
+    fun pendingMutationCountFlow_emitsUpdatedCount_andExcludesSyncedMutations() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given
+            val counts = mutableListOf<Int>()
+            val collector = launch { store.pendingMutationCountFlow().collect { counts += it } }
 
-        // When
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
-        store.markMutationSynced(id = mutationDao.inserted.first().id, table = TABLE)
-        collector.cancel()
+            // When
+            store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+            store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
+            store.markMutationSynced(id = mutationDao.inserted.first().id, table = TABLE)
+            collector.cancel()
 
-        // Then
-        assertEquals(listOf(0, 1, 2, 1), counts)
-    }
+            // Then
+            assertEquals(listOf(0, 1, 2, 1), counts)
+        }
 
     /**
      * The per-table count emits only when that table's pending writes change: a write to another
@@ -336,7 +362,9 @@ class OfflineStoreQueueAndCacheTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given
             val counts = mutableListOf<Int>()
-            val collector = launch { store.pendingMutationCountForTableFlow(TABLE).collect { counts += it } }
+            val collector = launch {
+                store.pendingMutationCountForTableFlow(TABLE).collect { counts += it }
+            }
 
             // When
             store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
@@ -372,7 +400,8 @@ class OfflineStoreQueueAndCacheTest {
         const val OTHER_SIGNATURE = "todos?select=*&done=eq.true"
         const val PAYLOAD = """[{"id":1}]"""
 
-        val ID_FILTER = FilterDescriptor(conditions = listOf(FilterDescriptor.Condition("id", "eq", "1")))
+        val ID_FILTER =
+            FilterDescriptor(conditions = listOf(FilterDescriptor.Condition("id", "eq", "1")))
         val ID_FILTER_JSON: String = FilterEngine.encode(ID_FILTER, OfflineJson)
     }
 }

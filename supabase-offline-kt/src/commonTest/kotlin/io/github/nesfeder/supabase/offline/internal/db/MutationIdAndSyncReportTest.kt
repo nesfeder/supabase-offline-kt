@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
@@ -13,25 +15,25 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Instant
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
-import kotlin.time.Instant
 
 /**
  * Every queued mutation has a stable id — the mutation row's autoincrement id — and a replay pass
  * reports what it did.
  *
  * The id serves because SQLite's `AUTOINCREMENT` never reuses a value, even after rows are deleted
- * or the table is emptied, it survives process death with the row, it already orders the queue,
- * and it costs no schema change.
+ * or the table is emptied, it survives process death with the row, it already orders the queue, and
+ * it costs no schema change.
  */
 class MutationIdAndSyncReportTest {
 
@@ -71,13 +73,23 @@ class MutationIdAndSyncReportTest {
     @Test
     fun a_pending_mutation_carries_its_id_operation_body_and_row_keys() = runTest {
         // Given
-        val insertId = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"a","title":"x"},{"title":"no key"}]"""))
-        val updateId = store.enqueueUpdate(table = TABLE, body = Json.parseToJsonElement("""{"done":true}"""), filter = idFilter("b"))
+        val insertId =
+            store.enqueueInsert(
+                table = TABLE,
+                body = rows("""[{"id":"a","title":"x"},{"title":"no key"}]"""),
+            )
+        val updateId =
+            store.enqueueUpdate(
+                table = TABLE,
+                body = Json.parseToJsonElement("""{"done":true}"""),
+                filter = idFilter("b"),
+            )
 
         // When
-        val pending = store.pendingMutationsFlow(null).first().mapNotNull { row ->
-            row.toPendingMutation(store.json, DefaultPrimaryKeys)
-        }
+        val pending =
+            store.pendingMutationsFlow(null).first().mapNotNull { row ->
+                row.toPendingMutation(store.json, DefaultPrimaryKeys)
+            }
 
         // Then
         assertEquals(
@@ -158,7 +170,10 @@ class MutationIdAndSyncReportTest {
     private fun key(id: String): JsonObject = JsonObject(mapOf("id" to JsonPrimitive(id)))
 
     private fun idFilter(id: String): FilterDescriptor =
-        FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))
+        FilterDescriptor(
+            conditions =
+                listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id))
+        )
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
 

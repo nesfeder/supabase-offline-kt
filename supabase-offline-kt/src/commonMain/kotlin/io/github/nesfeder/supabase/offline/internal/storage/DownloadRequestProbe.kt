@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.storage
@@ -35,11 +37,15 @@ internal fun renderImagePathOf(supabase: SupabaseClient): String =
  *
  * @param renderImagePath the encoded path prefix of a transformed download, ending in `/`.
  */
-internal class DownloadRequestProbe(private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH) {
+internal class DownloadRequestProbe(
+    private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH
+) {
 
     private sealed interface Observation {
         data object None : Observation
+
         data object Original : Observation
+
         class Transformed(val query: String) : Observation
     }
 
@@ -59,10 +65,14 @@ internal class DownloadRequestProbe(private val renderImagePath: String = DEFAUL
     /**
      * The cache entry to store what the download fetched in: the variant its request asked for.
      *
-     * @return the entry, or `null` when the request was never seen — bytes whose variant is
-     *   unknown are never stored — or the object cannot be cached.
+     * @return the entry, or `null` when the request was never seen — bytes whose variant is unknown
+     *   are never stored — or the object cannot be cached.
      */
-    fun entryToStore(cache: StorageFileCache, bucketId: String, objectPath: String): StorageCacheEntry? =
+    fun entryToStore(
+        cache: StorageFileCache,
+        bucketId: String,
+        objectPath: String,
+    ): StorageCacheEntry? =
         when (val seen = observation.load()) {
             Observation.None -> null
             Observation.Original -> cache.entryFor(bucketId, objectPath)
@@ -75,22 +85,32 @@ internal class DownloadRequestProbe(private val renderImagePath: String = DEFAUL
      *
      * @return the entry, or `null` when the object cannot be cached.
      */
-    fun entryToServe(cache: StorageFileCache, bucketId: String, objectPath: String): StorageCacheEntry? =
+    fun entryToServe(
+        cache: StorageFileCache,
+        bucketId: String,
+        objectPath: String,
+    ): StorageCacheEntry? =
         when (val seen = observation.load()) {
-            Observation.None, Observation.Original -> cache.entryFor(bucketId, objectPath)
+            Observation.None,
+            Observation.Original -> cache.entryFor(bucketId, objectPath)
             is Observation.Transformed -> cache.variantEntryFor(bucketId, objectPath, seen.query)
         }
 
     private fun record(url: Url) {
         observation.store(
-            if (url.encodedPath.startsWith(renderImagePath)) Observation.Transformed(canonicalTransform(url)) else Observation.Original,
+            if (url.encodedPath.startsWith(renderImagePath))
+                Observation.Transformed(canonicalTransform(url))
+            else Observation.Original
         )
     }
 
     private fun canonicalTransform(url: Url): String =
-        url.parameters.names()
+        url.parameters
+            .names()
             .filter { it !in PARAMETERS_THAT_KEEP_THE_BYTES }
             .sorted()
-            .joinToString("&") { name -> "$name=${url.parameters.getAll(name).orEmpty().joinToString(",")}" }
+            .joinToString("&") { name ->
+                "$name=${url.parameters.getAll(name).orEmpty().joinToString(",")}"
+            }
             .ifEmpty { "render" }
 }

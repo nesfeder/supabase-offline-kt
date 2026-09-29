@@ -1,7 +1,19 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.annotations.SupabaseExperimental
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.PropertyConversionMethod
+import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
+import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
+import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
+import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
+import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
@@ -15,9 +27,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
-import io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapperImpl
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
 import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
@@ -28,16 +40,6 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrest
 import io.github.nesfeder.supabase.offline.internal.postgrest.wasRolledBack
 import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
-import io.github.jan.supabase.annotations.SupabaseExperimental
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.PropertyConversionMethod
-import io.github.jan.supabase.postgrest.query.Columns
-import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
-import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
-import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
-import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
-import io.github.jan.supabase.postgrest.result.PostgrestResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -68,14 +70,14 @@ public interface OfflinePostgrestQueryBuilder {
      * One-shot read that consults the network and the offline cache according to [readStrategy].
      *
      * Only a list of rows is cached. A read that asks for another shape — `single()`,
-     * `maybeSingle()`, `head`, a `count` (with rows or without), `csv()`, `geojson()`, `stripNulls()` or
-     * `explain()` — goes to the network under every strategy but [ReadStrategy.CacheOnly], is not
-     * stored, and offline fails as [ReadStrategy.NetworkOnly] does. Under [ReadStrategy.CacheOnly] it
-     * sends nothing and throws [NoSuchElementException]. To read one row offline, read the list and
-     * take its first row.
+     * `maybeSingle()`, `head`, a `count` (with rows or without), `csv()`, `geojson()`,
+     * `stripNulls()` or `explain()` — goes to the network under every strategy but
+     * [ReadStrategy.CacheOnly], is not stored, and offline fails as [ReadStrategy.NetworkOnly]
+     * does. Under [ReadStrategy.CacheOnly] it sends nothing and throws [NoSuchElementException]. To
+     * read one row offline, read the list and take its first row.
      *
-     * [request] may run several times per call, so it must have no side effects and read no clock or
-     * counter.
+     * [request] may run several times per call, so it must have no side effects and read no clock
+     * or counter.
      *
      * @param columns Columns to select.
      * @param readStrategy How the network and the cache are combined; defaults to
@@ -86,14 +88,14 @@ public interface OfflinePostgrestQueryBuilder {
     public suspend fun select(
         columns: Columns = Columns.ALL,
         readStrategy: ReadStrategy = ReadStrategy.NetworkFirst(),
-        request: SelectRequestBuilder.() -> Unit = {}
+        request: SelectRequestBuilder.() -> Unit = {},
     ): PostgrestResult
 
     /**
      * Reactive read that surfaces per-query read and refresh state in-band as [OfflineReadResult].
      * That is the background [RefreshState] (so a consumer can tell "refresh failed, showing
-     * stale/empty cache" from "genuinely empty") and the typed "no data yet" state (a `null` result)
-     * that replaces the old fabricated empty-array cache seed.
+     * stale/empty cache" from "genuinely empty") and the typed "no data yet" state (a `null`
+     * result) that replaces the old fabricated empty-array cache seed.
      *
      * Consumers that want today's instant-empty-state rendering map the no-data case to
      * `emptyList()` in their repository; consumers that want a Loading state until data is known
@@ -101,11 +103,13 @@ public interface OfflinePostgrestQueryBuilder {
      * affordance and may be ignored today.
      *
      * Every strategy ends the same way when the client closes: a collection live at
-     * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one made after it.
+     * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one made
+     * after it.
      *
-     * A read of a shape the cache does not hold (see [select]) emits the network's answer once, with
-     * [RefreshState.Idle], and completes; offline, it fails. Under [FlowReadStrategy.CacheOnly] it fails
-     * at once with [NoSuchElementException]. [request] may run several times, as for [select].
+     * A read of a shape the cache does not hold (see [select]) emits the network's answer once,
+     * with [RefreshState.Idle], and completes; offline, it fails. Under
+     * [FlowReadStrategy.CacheOnly] it fails at once with [NoSuchElementException]. [request] may
+     * run several times, as for [select].
      *
      * @param columns Columns to select.
      * @param readStrategy Flow read strategy.
@@ -115,13 +119,14 @@ public interface OfflinePostgrestQueryBuilder {
     public fun selectAsFlow(
         columns: Columns = Columns.ALL,
         readStrategy: FlowReadStrategy = FlowReadStrategy.CacheFirstThenNetwork,
-        request: SelectRequestBuilder.() -> Unit = {}
+        request: SelectRequestBuilder.() -> Unit = {},
     ): Flow<OfflineReadResult>
 
     /**
      * Insert [body] rows, reporting whether the INSERT executed on the server
      * ([MutationOutcome.Applied], carrying the PostgREST response) or was queued for offline replay
-     * ([MutationOutcome.Queued]) instead of collapsing a queued write into a synthetic empty result.
+     * ([MutationOutcome.Queued]) instead of collapsing a queued write into a synthetic empty
+     * result.
      *
      * @param body rows to insert, as a JSON array.
      * @param mutationStrategy offline strategy; defaults to [MutationStrategy.QueueIfOffline].
@@ -131,7 +136,7 @@ public interface OfflinePostgrestQueryBuilder {
     public suspend fun insertJson(
         body: JsonArray,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: InsertRequestBuilder.() -> Unit = {}
+        request: InsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
     /**
@@ -147,7 +152,7 @@ public interface OfflinePostgrestQueryBuilder {
         serializer: KSerializer<T>,
         values: List<T>,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: InsertRequestBuilder.() -> Unit = {}
+        request: InsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
     /**
@@ -163,7 +168,7 @@ public interface OfflinePostgrestQueryBuilder {
         serializer: KSerializer<T>,
         value: T,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: InsertRequestBuilder.() -> Unit = {}
+        request: InsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
     /**
@@ -177,7 +182,7 @@ public interface OfflinePostgrestQueryBuilder {
     public suspend fun upsertJson(
         body: JsonArray,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: UpsertRequestBuilder.() -> Unit = {}
+        request: UpsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
     /**
@@ -193,7 +198,7 @@ public interface OfflinePostgrestQueryBuilder {
         serializer: KSerializer<T>,
         values: List<T>,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: UpsertRequestBuilder.() -> Unit = {}
+        request: UpsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
     /**
@@ -209,7 +214,7 @@ public interface OfflinePostgrestQueryBuilder {
         serializer: KSerializer<T>,
         value: T,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: UpsertRequestBuilder.() -> Unit = {}
+        request: UpsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
     /**
@@ -229,7 +234,7 @@ public interface OfflinePostgrestQueryBuilder {
         body: JsonElement,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
         deltaColumns: List<NumericDeltaColumn> = emptyList(),
-        request: PostgrestRequestBuilder.() -> Unit = {}
+        request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
     /**
@@ -247,7 +252,7 @@ public interface OfflinePostgrestQueryBuilder {
         value: T,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
         deltaColumns: List<NumericDeltaColumn> = emptyList(),
-        request: PostgrestRequestBuilder.() -> Unit = {}
+        request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
     /**
@@ -259,25 +264,28 @@ public interface OfflinePostgrestQueryBuilder {
      */
     public suspend fun delete(
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: PostgrestRequestBuilder.() -> Unit = {}
+        request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 }
 
 /**
- * Internal implementation that delegates to the online [PostgrestQueryBuilder] and augments it
- * with offline caching, mutation queuing, and overlay via [OfflineStore].
+ * Internal implementation that delegates to the online [PostgrestQueryBuilder] and augments it with
+ * offline caching, mutation queuing, and overlay via [OfflineStore].
  */
 internal class OfflinePostgrestQueryBuilderImpl(
     private val delegate: PostgrestQueryBuilderWrapper,
     private val store: OfflineStore,
     private val sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-    /** The session a read's request goes out under; built directly, a client without the Auth plugin. */
+    /**
+     * The session a read's request goes out under; built directly, a client without the Auth
+     * plugin.
+     */
     private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
     /** Which read responses may replace what the cache holds. */
     private val trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     /**
-     * Coordinator forwarded to [QueryReader] for single-flight refresh sharing per
-     * `(table, signature)` and the live-signature registry backing materialize-on-write.
+     * Coordinator forwarded to [QueryReader] for single-flight refresh sharing per `(table,
+     * signature)` and the live-signature registry backing materialize-on-write.
      *
      * The real client passes its **client-scoped** instance so it is shared across every builder it
      * creates — single-flight per signature only works when one coordinator spans all builders, so
@@ -290,8 +298,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
     private val refreshCoordinator: RefreshCoordinator = defaultRefreshCoordinator(),
     /**
      * Internal edge-triggered recovery accelerator (auth restored / connectivity regained)
-     * forwarded to [QueryReader] to short-circuit a stalled refresh's backoff. Defaults
-     * to an empty flow (recovery still happens on the capped schedule) for direct construction.
+     * forwarded to [QueryReader] to short-circuit a stalled refresh's backoff. Defaults to an empty
+     * flow (recovery still happens on the capped schedule) for direct construction.
      */
     private val accelerator: Flow<Unit> = emptyFlow(),
     /**
@@ -299,12 +307,15 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * it is queued; see [OfflineStore.enqueueOwnedBy]. `null` from the provider means it cannot be
      * told, and the write is then sent directly, never queued.
      */
-    private val queueIdentity: suspend () -> QueueIdentity? = { delegate.postgrest.supabaseClient.currentQueueIdentity() },
+    private val queueIdentity: suspend () -> QueueIdentity? = {
+        delegate.postgrest.supabaseClient.currentQueueIdentity()
+    },
     /**
      * Asks for a replay pass. Called when a write was queued behind pending writes, and when more
      * are pending after a write sent at the head, so they go out without waiting for the app. Does
      * nothing when built directly. A switch that turns automatic replay off must not stop these
-     * passes: they are what sends an online write that returned `Queued` (see `BackgroundSyncTrigger`).
+     * passes: they are what sends an online write that returned `Queued` (see
+     * `BackgroundSyncTrigger`).
      */
     private val requestSync: () -> Unit = {},
     /** Tells a dry run from a write before the write is queued; see [DryRunProbe]. */
@@ -313,12 +324,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * Sends a queued write at the head of its identity's queue. The real client passes its one
      * syncer, which every builder and replay pass share; built directly, the builder has its own.
      */
-    private val headSender: MutationQueueReplayer = MutationQueueReplayer(
-        store = store,
-        supabase = delegate.postgrest.supabaseClient,
-        sdkLogger = sdkLogger,
-        currentIdentity = queueIdentity,
-    ),
+    private val headSender: MutationQueueReplayer =
+        MutationQueueReplayer(
+            store = store,
+            supabase = delegate.postgrest.supabaseClient,
+            sdkLogger = sdkLogger,
+            currentIdentity = queueIdentity,
+        ),
     /** The client's gate: every read and write passes it, so the client's close waits for them. */
     private val operationGate: ClientOperationGate = ClientOperationGate(),
 ) : OfflinePostgrestQueryBuilder {
@@ -331,14 +343,17 @@ internal class OfflinePostgrestQueryBuilderImpl(
         trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
         refreshCoordinator: RefreshCoordinator = defaultRefreshCoordinator(),
         accelerator: Flow<Unit> = emptyFlow(),
-        queueIdentity: suspend () -> QueueIdentity? = { delegate.postgrest.supabaseClient.currentQueueIdentity() },
+        queueIdentity: suspend () -> QueueIdentity? = {
+            delegate.postgrest.supabaseClient.currentQueueIdentity()
+        },
         requestSync: () -> Unit = {},
-        headSender: MutationQueueReplayer = MutationQueueReplayer(
-            store = store,
-            supabase = delegate.postgrest.supabaseClient,
-            sdkLogger = sdkLogger,
-            currentIdentity = queueIdentity,
-        ),
+        headSender: MutationQueueReplayer =
+            MutationQueueReplayer(
+                store = store,
+                supabase = delegate.postgrest.supabaseClient,
+                sdkLogger = sdkLogger,
+                currentIdentity = queueIdentity,
+            ),
         operationGate: ClientOperationGate = ClientOperationGate(),
         readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
     ) : this(
@@ -356,30 +371,33 @@ internal class OfflinePostgrestQueryBuilderImpl(
     )
 
     private val json: Json = OfflineJson
-    private val queryReader = QueryReader(
-        delegate = delegate,
-        store = store,
-        sdkLogger = sdkLogger,
-        requestSession = requestSession,
-        trustPolicy = trustPolicy,
-        refreshCoordinator = refreshCoordinator,
-        accelerator = accelerator,
-    )
+    private val queryReader =
+        QueryReader(
+            delegate = delegate,
+            store = store,
+            sdkLogger = sdkLogger,
+            requestSession = requestSession,
+            trustPolicy = trustPolicy,
+            refreshCoordinator = refreshCoordinator,
+            accelerator = accelerator,
+        )
 
     override suspend fun select(
         columns: Columns,
         readStrategy: ReadStrategy,
-        request: SelectRequestBuilder.() -> Unit
+        request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult = operationGate.call { queryReader.select(columns, readStrategy, request) }
 
     override fun selectAsFlow(
         columns: Columns,
         readStrategy: FlowReadStrategy,
-        request: SelectRequestBuilder.() -> Unit
+        request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> {
         // Every strategy one way: refused once closed, counted while collected, ended by close()
         operationGate.ensureOpen()
-        return operationGate.callCollecting(queryReader.selectAsFlow(columns, readStrategy, request))
+        return operationGate.callCollecting(
+            queryReader.selectAsFlow(columns, readStrategy, request)
+        )
     }
 
     // INSERT -------------------------------------------------------------------
@@ -387,7 +405,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
     override suspend fun insertJson(
         body: JsonArray,
         mutationStrategy: MutationStrategy,
-        request: InsertRequestBuilder.() -> Unit
+        request: InsertRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
@@ -396,13 +414,16 @@ internal class OfflinePostgrestQueryBuilderImpl(
             verbLabel = "INSERT",
             table = table,
             mutationStrategy = mutationStrategy,
-            writeSchema = { InsertRequestBuilder(delegate.schema, conversionMethod).apply(request).schema },
+            writeSchema = {
+                InsertRequestBuilder(delegate.schema, conversionMethod).apply(request).schema
+            },
             performOnline = { delegate.insert(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
                 // Honor QueueIfOffline's "UI reflects immediately" promise on the online-success
                 // path so reactive `selectAsFlow` observers re-emit without waiting for a re-fetch.
                 // OnlineOnly callers opted out of this — leave their cache untouched.
-                val insertBuilder = InsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
+                val insertBuilder =
+                    InsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(insertBuilder)
                 store.patchCachedQueries(
                     table = table,
@@ -414,14 +435,15 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 )
             },
             captureForQueue = {
-                val insertBuilder = InsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
+                val insertBuilder =
+                    InsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(insertBuilder)
                 QueueCapture.Queueable {
                     enqueueInsert(
                         table = table,
                         body = body,
                         defaultToNull = insertBuilder.defaultToNull,
-                        filter = descriptor
+                        filter = descriptor,
                     )
                 }
             },
@@ -432,7 +454,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         serializer: KSerializer<T>,
         values: List<T>,
         mutationStrategy: MutationStrategy,
-        request: InsertRequestBuilder.() -> Unit
+        request: InsertRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val listSerializer = ListSerializer(serializer)
         val body = json.encodeToJsonElement(listSerializer, values).jsonArray
@@ -443,7 +465,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         serializer: KSerializer<T>,
         value: T,
         mutationStrategy: MutationStrategy,
-        request: InsertRequestBuilder.() -> Unit
+        request: InsertRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val element = json.encodeToJsonElement(serializer, value)
         val body = buildJsonArray { add(element) }
@@ -455,7 +477,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
     override suspend fun upsertJson(
         body: JsonArray,
         mutationStrategy: MutationStrategy,
-        request: UpsertRequestBuilder.() -> Unit
+        request: UpsertRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
@@ -464,10 +486,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
             verbLabel = "UPSERT",
             table = table,
             mutationStrategy = mutationStrategy,
-            writeSchema = { UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request).schema },
+            writeSchema = {
+                UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request).schema
+            },
             performOnline = { delegate.upsert(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
-                val upsertBuilder = UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
+                val upsertBuilder =
+                    UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(upsertBuilder)
                 store.patchCachedQueries(
                     table = table,
@@ -481,7 +506,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 )
             },
             captureForQueue = {
-                val upsertBuilder = UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
+                val upsertBuilder =
+                    UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(upsertBuilder)
                 QueueCapture.Queueable {
                     enqueueUpsert(
@@ -490,7 +516,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                         defaultToNull = upsertBuilder.defaultToNull,
                         onConflict = upsertBuilder.onConflict,
                         ignoreDuplicates = upsertBuilder.ignoreDuplicates,
-                        filter = descriptor
+                        filter = descriptor,
                     )
                 }
             },
@@ -501,7 +527,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         serializer: KSerializer<T>,
         values: List<T>,
         mutationStrategy: MutationStrategy,
-        request: UpsertRequestBuilder.() -> Unit
+        request: UpsertRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val listSerializer = ListSerializer(serializer)
         val body = json.encodeToJsonElement(listSerializer, values).jsonArray
@@ -512,7 +538,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         serializer: KSerializer<T>,
         value: T,
         mutationStrategy: MutationStrategy,
-        request: UpsertRequestBuilder.() -> Unit
+        request: UpsertRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val element = json.encodeToJsonElement(serializer, value)
         val body = buildJsonArray { add(element) }
@@ -525,7 +551,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         body: JsonElement,
         mutationStrategy: MutationStrategy,
         deltaColumns: List<NumericDeltaColumn>,
-        request: PostgrestRequestBuilder.() -> Unit
+        request: PostgrestRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
@@ -534,14 +560,24 @@ internal class OfflinePostgrestQueryBuilderImpl(
             verbLabel = "UPDATE",
             table = table,
             mutationStrategy = mutationStrategy,
-            writeSchema = { SelectRequestBuilder(delegate.schema, conversionMethod).apply(request).schema },
+            writeSchema = {
+                SelectRequestBuilder(delegate.schema, conversionMethod).apply(request).schema
+            },
             // [deltaColumns] deliberately does not touch the online path: the write lands now,
             // against the row the caller just read, so there is no queue window to rebase across
             // — and PostgREST cannot express `col = col + x` in a PATCH anyway.
             performOnline = { delegate.update(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
-                patchFilteredWrite(MutationOperation.UPDATE, table, body.toString(), conversionMethod, request, startedAtTick)
-                // Rows it returned carry what the server set itself, such as a trigger's `updated_at`
+                patchFilteredWrite(
+                    MutationOperation.UPDATE,
+                    table,
+                    body.toString(),
+                    conversionMethod,
+                    request,
+                    startedAtTick,
+                )
+                // Rows it returned carry what the server set itself, such as a trigger's
+                // `updated_at`
                 store.patchReturnedRows(table, body, result.data, startedAtTick)
             },
             captureForQueue = {
@@ -550,7 +586,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                         table = table,
                         body = body,
                         filter = descriptor,
-                        deltaColumns = deltaColumns
+                        deltaColumns = deltaColumns,
                     )
                 }
             },
@@ -562,7 +598,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         value: T,
         mutationStrategy: MutationStrategy,
         deltaColumns: List<NumericDeltaColumn>,
-        request: PostgrestRequestBuilder.() -> Unit
+        request: PostgrestRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val element = json.encodeToJsonElement(serializer, value)
         return updateJson(element, mutationStrategy, deltaColumns, request)
@@ -572,7 +608,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
 
     override suspend fun delete(
         mutationStrategy: MutationStrategy,
-        request: PostgrestRequestBuilder.() -> Unit
+        request: PostgrestRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
@@ -581,16 +617,25 @@ internal class OfflinePostgrestQueryBuilderImpl(
             verbLabel = "DELETE",
             table = table,
             mutationStrategy = mutationStrategy,
-            writeSchema = { SelectRequestBuilder(delegate.schema, conversionMethod).apply(request).schema },
+            writeSchema = {
+                SelectRequestBuilder(delegate.schema, conversionMethod).apply(request).schema
+            },
             performOnline = { delegate.delete(request) },
             applyOnlineSuccessOverlay = { _, startedAtTick ->
-                patchFilteredWrite(MutationOperation.DELETE, table, "{}", conversionMethod, request, startedAtTick)
+                patchFilteredWrite(
+                    MutationOperation.DELETE,
+                    table,
+                    "{}",
+                    conversionMethod,
+                    request,
+                    startedAtTick,
+                )
             },
             captureForQueue = {
                 captureFilteredWrite(conversionMethod, request) { descriptor ->
                     enqueueDelete(
                         table = table,
-                        filter = descriptor
+                        filter = descriptor,
                     )
                 }
             },
@@ -600,9 +645,10 @@ internal class OfflinePostgrestQueryBuilderImpl(
     // --------------------------------------------------------------------------
 
     /**
-     * Patches an UPDATE or DELETE the server applied into the cached queries of [table], by the filter
-     * the queue would record for it. When that filter cannot be recorded exactly, or there is none, no
-     * row is guessed at: the table's cached queries are marked stale and its live readers refresh.
+     * Patches an UPDATE or DELETE the server applied into the cached queries of [table], by the
+     * filter the queue would record for it. When that filter cannot be recorded exactly, or there
+     * is none, no row is guessed at: the table's cached queries are marked stale and its live
+     * readers refresh.
      */
     private suspend fun patchFilteredWrite(
         operation: String,
@@ -612,13 +658,20 @@ internal class OfflinePostgrestQueryBuilderImpl(
         request: PostgrestRequestBuilder.() -> Unit,
         startedAtTick: Long,
     ) {
-        val filter = try {
-            buildDescriptorStrictFromRequest(defaultSchema = delegate.schema, conversionMethod = conversionMethod, request = request)
-        } catch (_: UnsupportedOfflineFilterException) {
-            null
-        }
+        val filter =
+            try {
+                buildDescriptorStrictFromRequest(
+                    defaultSchema = delegate.schema,
+                    conversionMethod = conversionMethod,
+                    request = request,
+                )
+            } catch (_: UnsupportedOfflineFilterException) {
+                null
+            }
         if (filter == null) {
-            sdkLogger.info { "$operation $table: its filter cannot be matched against cached rows; refreshing the table's cached queries" }
+            sdkLogger.info {
+                "$operation $table: its filter cannot be matched against cached rows; refreshing the table's cached queries"
+            }
             store.markCachedQueriesStale(table, startedAtTick)
             refreshCoordinator.requestRefresh(table)
             return
@@ -659,32 +712,40 @@ internal class OfflinePostgrestQueryBuilderImpl(
         request: PostgrestRequestBuilder.() -> Unit,
         enqueue: suspend OfflineStore.(FilterDescriptor) -> Long,
     ): QueueCapture {
-        val descriptor = try {
-            buildDescriptorStrictFromRequest(
-                defaultSchema = delegate.schema,
-                conversionMethod = conversionMethod,
-                request = request
-            )
-        } catch (lossy: UnsupportedOfflineFilterException) {
-            return QueueCapture.Refused(reason = "its filter cannot be captured exactly", detail = lossy.message)
-        }
+        val descriptor =
+            try {
+                buildDescriptorStrictFromRequest(
+                    defaultSchema = delegate.schema,
+                    conversionMethod = conversionMethod,
+                    request = request,
+                )
+            } catch (lossy: UnsupportedOfflineFilterException) {
+                return QueueCapture.Refused(
+                    reason = "its filter cannot be captured exactly",
+                    detail = lossy.message,
+                )
+            }
         return when {
-            descriptor == null -> QueueCapture.Refused("a write without a filter would reach every row")
-            !FilterEngine.replaysFully(descriptor) -> QueueCapture.Refused("its filter cannot be replayed in full")
+            descriptor == null ->
+                QueueCapture.Refused("a write without a filter would reach every row")
+            !FilterEngine.replaysFully(descriptor) ->
+                QueueCapture.Refused("its filter cannot be replayed in full")
             else -> QueueCapture.Queueable { enqueue(descriptor) }
         }
     }
 
     /**
-     * Sends or queues one write. `OnlineOnly` sends it and nothing else. `QueueIfOffline` saves it to
-     * the mutation queue first and sends it at once only at the head of its identity's queue: accepted,
-     * it is `Applied`; unanswered or answered `503`/`520`, so that it may not have run, it stays
-     * `Queued`; refused, it leaves the queue and the failure is thrown; behind other mutations, it
-     * waits and a pass is requested. A write the queue cannot hold faithfully — a dry run, one it cannot classify, a filter
-     * it cannot record, an unknown identity — is sent directly and never queued. The request lambda
-     * runs up to three times: to capture, to classify and to send.
+     * Sends or queues one write. `OnlineOnly` sends it and nothing else. `QueueIfOffline` saves it
+     * to the mutation queue first and sends it at once only at the head of its identity's queue:
+     * accepted, it is `Applied`; unanswered or answered `503`/`520`, so that it may not have run,
+     * it stays `Queued`; refused, it leaves the queue and the failure is thrown; behind other
+     * mutations, it waits and a pass is requested. A write the queue cannot hold faithfully — a dry
+     * run, one it cannot classify, a filter it cannot record, an unknown identity — is sent
+     * directly and never queued. The request lambda runs up to three times: to capture, to classify
+     * and to send.
      *
-     * @param applyOnlineSuccessOverlay Patches the cache with the result, given the write's start tick.
+     * @param applyOnlineSuccessOverlay Patches the cache with the result, given the write's start
+     *   tick.
      * @param captureForQueue How the write would be queued; see [QueueCapture].
      */
     private suspend fun executeMutation(
@@ -696,7 +757,15 @@ internal class OfflinePostgrestQueryBuilderImpl(
         applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
     ): MutationOutcome = operationGate.call {
-        executeMutationNow(verbLabel, table, mutationStrategy, writeSchema, performOnline, applyOnlineSuccessOverlay, captureForQueue)
+        executeMutationNow(
+            verbLabel,
+            table,
+            mutationStrategy,
+            writeSchema,
+            performOnline,
+            applyOnlineSuccessOverlay,
+            captureForQueue,
+        )
     }
 
     /**
@@ -723,36 +792,52 @@ internal class OfflinePostgrestQueryBuilderImpl(
         if (schema.isNotBlank() && schema != delegate.postgrest.config.defaultSchema) {
             throw UnsupportedOperationException(
                 "Queueing a write to the \"$schema\" schema is not supported yet: the mutation queue replays to " +
-                    "the default schema only. Send this write with MutationStrategy.OnlineOnly.",
+                    "the default schema only. Send this write with MutationStrategy.OnlineOnly."
             )
         }
 
         val startedAtTick = store.monotonicTickNow()
         // Taken as the write is issued: a session switch while it is in flight must not re-own it.
         val identity = queueIdentity()
-        val direct = DirectSend(verbLabel, table, performOnline, applyOnlineSuccessOverlay, startedAtTick)
+        val direct =
+            DirectSend(verbLabel, table, performOnline, applyOnlineSuccessOverlay, startedAtTick)
 
-        val queueable = when (val capture = captureForQueue()) {
-            is QueueCapture.Queueable -> capture
-            // Replaying it would target a broader row set than the caller wrote.
-            is QueueCapture.Refused -> {
-                capture.detail?.let { detail -> sdkLogger.debug { "Offline $verbLabel for $table would not be queued: $detail" } }
-                return direct.send(OfflineLogLevel.ERROR) { "Refusing to queue offline $verbLabel for $table: ${capture.reason}" }
+        val queueable =
+            when (val capture = captureForQueue()) {
+                is QueueCapture.Queueable -> capture
+                // Replaying it would target a broader row set than the caller wrote.
+                is QueueCapture.Refused -> {
+                    capture.detail?.let { detail ->
+                        sdkLogger.debug {
+                            "Offline $verbLabel for $table would not be queued: $detail"
+                        }
+                    }
+                    return direct.send(OfflineLogLevel.ERROR) {
+                        "Refusing to queue offline $verbLabel for $table: ${capture.reason}"
+                    }
+                }
             }
-        }
         if (identity == null) {
-            return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: the session's identity cannot be told" }
+            return direct.send(OfflineLogLevel.WARNING) {
+                "Not queueing offline $verbLabel for $table: the session's identity cannot be told"
+            }
         }
         when (val verdict = dryRunProbe.classify(performOnline)) {
             DryRunVerdict.NotDryRun -> Unit
             DryRunVerdict.DryRun ->
-                return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: a dry run is never queued" }
+                return direct.send(OfflineLogLevel.INFO) {
+                    "Not queueing offline $verbLabel for $table: a dry run is never queued"
+                }
             // The write's own failure, before any request: sending it directly reports it as it is.
             is DryRunVerdict.NotBuilt ->
-                return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: its request could not be built" }
+                return direct.send(OfflineLogLevel.INFO) {
+                    "Not queueing offline $verbLabel for $table: its request could not be built"
+                }
             DryRunVerdict.Unavailable -> {
                 reportUnclassifiableWriteOnce()
-                return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: it may be a dry run" }
+                return direct.send(OfflineLogLevel.WARNING) {
+                    "Not queueing offline $verbLabel for $table: it may be a dry run"
+                }
             }
             is DryRunVerdict.Sent -> {
                 reportUnclassifiableWriteOnce()
@@ -760,22 +845,36 @@ internal class OfflinePostgrestQueryBuilderImpl(
             }
         }
 
-        val mutationId = when (val enqueued = store.enqueueOwnedBy(identity.storedValue, startedAtTick) { queueable.enqueue(this) }) {
-            is EnqueueOutcome.Queued -> enqueued.id
-            EnqueueOutcome.LocalDataCleared ->
-                return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: local data was cleared while it was in flight" }
-            EnqueueOutcome.OwnershipUnreadable ->
-                return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: the queue's owner records cannot be read" }
-        }
+        val mutationId =
+            when (
+                val enqueued =
+                    store.enqueueOwnedBy(identity.storedValue, startedAtTick) {
+                        queueable.enqueue(this)
+                    }
+            ) {
+                is EnqueueOutcome.Queued -> enqueued.id
+                EnqueueOutcome.LocalDataCleared ->
+                    return direct.send(OfflineLogLevel.INFO) {
+                        "Not queueing offline $verbLabel for $table: local data was cleared while it was in flight"
+                    }
+                EnqueueOutcome.OwnershipUnreadable ->
+                    return direct.send(OfflineLogLevel.WARNING) {
+                        "Not queueing offline $verbLabel for $table: the queue's owner records cannot be read"
+                    }
+            }
 
-        val sent = try {
-            headSender.sendAtHead(mutationId, identity, performOnline) { result -> direct.overlay(result) }
-        } catch (cancellation: CancellationException) {
-            // Cancelled on the wire: whether the server got it is not known, so it stays queued, and
-            // a pass sends it.
-            requestSync()
-            throw cancellation
-        }
+        val sent =
+            try {
+                headSender.sendAtHead(mutationId, identity, performOnline) { result ->
+                    direct.overlay(result)
+                }
+            } catch (cancellation: CancellationException) {
+                // Cancelled on the wire: whether the server got it is not known, so it stays
+                // queued, and
+                // a pass sends it.
+                requestSync()
+                throw cancellation
+            }
         return when (sent) {
             MutationQueueReplayer.HeadSendOutcome.NotAtHead -> {
                 sdkLogger.info { "$verbLabel $table queued behind pending mutations" }
@@ -807,19 +906,27 @@ internal class OfflinePostgrestQueryBuilderImpl(
             }
 
             is MutationQueueReplayer.HeadSendOutcome.Cleared -> {
-                sdkLogger.info { "$verbLabel $table returned after local data was cleared; the cache is left as it was" }
+                sdkLogger.info {
+                    "$verbLabel $table returned after local data was cleared; the cache is left as it was"
+                }
                 requestPassIfPending(identity)
-                sent.result?.let { result -> MutationOutcome.Applied(result) } ?: throw checkNotNull(sent.cause)
+                sent.result?.let { result -> MutationOutcome.Applied(result) }
+                    ?: throw checkNotNull(sent.cause)
             }
         }
     }
 
-    /** Asks for a pass when [identity] has mutations queued, which the head it just left held back. */
+    /**
+     * Asks for a pass when [identity] has mutations queued, which the head it just left held back.
+     */
     private suspend fun requestPassIfPending(identity: QueueIdentity) {
         if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) requestSync()
     }
 
-    /** Logs, once per store, that the dry-run check cannot tell: such writes lose their offline safety net. */
+    /**
+     * Logs, once per store, that the dry-run check cannot tell: such writes lose their offline
+     * safety net.
+     */
     private fun reportUnclassifiableWriteOnce() {
         if (store.claimUnclassifiableWriteReport()) {
             sdkLogger.error {
@@ -829,14 +936,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
         }
     }
 
-    /**
-     * A write sent directly, outside the queue, and the cache patch that follows its success.
-     */
+    /** A write sent directly, outside the queue, and the cache patch that follows its success. */
     private inner class DirectSend(
         private val verbLabel: String,
         private val table: String,
         private val performOnline: suspend () -> PostgrestResult,
-        private val applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
+        private val applyOnlineSuccessOverlay:
+            suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         private val startedAtTick: Long,
     ) {
 
@@ -849,12 +955,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
          * @return [MutationOutcome.Applied].
          */
         suspend fun send(level: OfflineLogLevel, whyNotQueued: () -> String): MutationOutcome {
-            val result = try {
-                performOnline()
-            } catch (failure: Exception) {
-                if (failure.isNetworkOrConnectivityFailure()) sdkLogger.log(level, whyNotQueued)
-                throw failure
-            }
+            val result =
+                try {
+                    performOnline()
+                } catch (failure: Exception) {
+                    if (failure.isNetworkOrConnectivityFailure()) sdkLogger.log(level, whyNotQueued)
+                    throw failure
+                }
             return applied(result)
         }
 
@@ -872,10 +979,14 @@ internal class OfflinePostgrestQueryBuilderImpl(
         suspend fun overlay(result: PostgrestResult) {
             when {
                 result.wasRolledBack ->
-                    sdkLogger.debug { "$verbLabel $table was rolled back (a dry run); the cache is left as it was" }
+                    sdkLogger.debug {
+                        "$verbLabel $table was rolled back (a dry run); the cache is left as it was"
+                    }
 
                 store.wasClearedSince(startedAtTick) ->
-                    sdkLogger.info { "$verbLabel $table returned after local data was cleared; the cache is left as it was" }
+                    sdkLogger.info {
+                        "$verbLabel $table returned after local data was cleared; the cache is left as it was"
+                    }
 
                 else -> applyOnlineSuccessOverlay(result, startedAtTick)
             }
@@ -891,28 +1002,29 @@ internal class OfflinePostgrestQueryBuilderImpl(
          * A standalone coordinator for a builder constructed directly, as tests do; the client
          * injects its own. Its engine scope contains any failure a share leaks.
          */
-        private fun defaultRefreshCoordinator(): RefreshCoordinator = RefreshCoordinator(newEngineScope(sdkLogger = null))
+        private fun defaultRefreshCoordinator(): RefreshCoordinator =
+            RefreshCoordinator(newEngineScope(sdkLogger = null))
     }
 }
 
 /**
- * Prefer the server response payload as the mutation body for cache overlay when it carries
- * usable row data; otherwise fall back to the original request body.
+ * Prefer the server response payload as the mutation body for cache overlay when it carries usable
+ * row data; otherwise fall back to the original request body.
  *
- * For INSERT/UPSERT the request body typically omits server-assigned columns (`id`,
- * `created_at`, `updated_at`). If a live `selectAsFlow` collector was subscribed with
- * `CacheFirstThenNetwork` and the parallel network SELECT hasn't yet written the full server
- * row, [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.patchCachedQueries] will overlay
- * the request body onto the cache — producing a row where the assigned id is missing
- * (decodes as an empty string via @Serializable defaults). Any downstream join keyed on that
- * id (e.g., `attachmentsByNoteId[note.id]`) then silently misses, so the UI renders the row as
- * "saved but empty" until a tab-switch forces a fresh subscription.
+ * For INSERT/UPSERT the request body typically omits server-assigned columns (`id`, `created_at`,
+ * `updated_at`). If a live `selectAsFlow` collector was subscribed with `CacheFirstThenNetwork` and
+ * the parallel network SELECT hasn't yet written the full server row,
+ * [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.patchCachedQueries] will overlay
+ * the request body onto the cache — producing a row where the assigned id is missing (decodes as an
+ * empty string via @Serializable defaults). Any downstream join keyed on that id (e.g.,
+ * `attachmentsByNoteId[note.id]`) then silently misses, so the UI renders the row as "saved but
+ * empty" until a tab-switch forces a fresh subscription.
  *
- * When the caller asked for the row back (`select()` on the request), the server response is
- * the authoritative post-write shape, so overlaying that into the cache keeps live collectors
- * consistent with what the server now has. When the response is empty (e.g. a `minimal`
- * INSERT that didn't request returning rows), we fall back to the request body — which is the
- * legacy behavior and matches the existing INSERT/UPSERT overlay semantics.
+ * When the caller asked for the row back (`select()` on the request), the server response is the
+ * authoritative post-write shape, so overlaying that into the cache keeps live collectors
+ * consistent with what the server now has. When the response is empty (e.g. a `minimal` INSERT that
+ * didn't request returning rows), we fall back to the request body — which is the legacy behavior
+ * and matches the existing INSERT/UPSERT overlay semantics.
  *
  * Top-level so unit tests can exercise the branches without faking a full PostgREST delegate.
  */

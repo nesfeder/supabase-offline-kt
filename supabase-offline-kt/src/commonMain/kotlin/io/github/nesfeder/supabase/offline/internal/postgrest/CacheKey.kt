@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -33,7 +35,11 @@ internal fun cacheSlotOf(
     val builder = builderFactory().apply(request)
     val schema = builder.schema
     val cachedTable = if (schema.isBlank() || schema == defaultSchema) table else "$schema.$table"
-    return CacheSlot(table = cachedTable, cacheKey = keyOf(cachedTable, columns, builder), shape = queryShapeOf(columns, builder))
+    return CacheSlot(
+        table = cachedTable,
+        cacheKey = keyOf(cachedTable, columns, builder),
+        shape = queryShapeOf(columns, builder),
+    )
 }
 
 /**
@@ -45,7 +51,7 @@ internal fun cacheKeyOf(
     table: String,
     columns: Columns = ALL,
     builderFactory: () -> SelectRequestBuilder,
-    request: SelectRequestBuilder.() -> Unit
+    request: SelectRequestBuilder.() -> Unit,
 ): String = keyOf(table, columns, builderFactory().apply(request))
 
 /** The key [cacheKeyOf] describes, of a [builder] its request has already configured. */
@@ -56,13 +62,16 @@ private fun keyOf(table: String, columns: Columns, builder: SelectRequestBuilder
     }
 
     // Keys sorted; each key's values kept in the order they were added
-    val query = params.keys.sorted().joinToString("&") { key ->
-        val values = params[key].orEmpty()
-        if (values.isEmpty()) key else values.joinToString("&") { value -> "$key=$value" }
-    }
+    val query =
+        params.keys.sorted().joinToString("&") { key ->
+            val values = params[key].orEmpty()
+            if (values.isEmpty()) key else values.joinToString("&") { value -> "$key=$value" }
+        }
 
     // A Range header's window, without its `items=` unit
-    val rangePart = builder.headers.build()["Range"]?.let { range -> "|range=${range.removePrefix("items=")}" } ?: ""
+    val rangePart =
+        builder.headers.build()["Range"]?.let { range -> "|range=${range.removePrefix("items=")}" }
+            ?: ""
 
     return buildString {
         append(table)

@@ -1,11 +1,13 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import okio.Path.Companion.toPath
 
 /**
  * Mapping of a bucket object path to its on-disk cache location under `<base>/storage/<bucket>/`,
@@ -54,7 +56,8 @@ class CacheFilePathsTest {
 
     @Test
     fun a_leading_slash_is_never_cached() {
-        // Given / When / Then — it used to be stripped, which also turned "//x" into an absolute path
+        // Given / When / Then — it used to be stripped, which also turned "//x" into an absolute
+        // path
         assertNull(objectFilePathOrNull(baseDir, "bucket", "/file.txt"))
         assertNull(objectFilePathOrNull(baseDir, "bucket", "//etc/passwd"))
     }
@@ -62,24 +65,27 @@ class CacheFilePathsTest {
     @Test
     fun paths_that_could_leave_the_bucket_directory_are_never_cached() {
         // Given
-        val refused = listOf(
-            "",
-            "../x",
-            "a/../../x",
-            "a/..",
-            ".",
-            "./x",
-            "a//b",
-            "a/",
-            "..\\x",
-            "a\\..\\..\\x",
-            "nul\u0000",
-            "line\nbreak",
-            "del\u007F",
-        )
+        val refused =
+            listOf(
+                "",
+                "../x",
+                "a/../../x",
+                "a/..",
+                ".",
+                "./x",
+                "a//b",
+                "a/",
+                "..\\x",
+                "a\\..\\..\\x",
+                "nul\u0000",
+                "line\nbreak",
+                "del\u007F",
+            )
 
         // When / Then
-        refused.forEach { path -> assertNull(objectFilePathOrNull(baseDir, "bucket", path), "cached \"$path\"") }
+        refused.forEach { path ->
+            assertNull(objectFilePathOrNull(baseDir, "bucket", path), "cached \"$path\"")
+        }
     }
 
     @Test
@@ -94,7 +100,8 @@ class CacheFilePathsTest {
     @Test
     fun ordinary_names_with_spaces_and_punctuation_are_cached() {
         // Given / When / Then — only what could escape or be misread is refused
-        listOf("a b/my file%?#.png", "élan.txt", "...", "..hidden", ".profile", "a.b.c").forEach { path ->
+        listOf("a b/my file%?#.png", "élan.txt", "...", "..hidden", ".profile", "a.b.c").forEach {
+            path ->
             assertTrue(isCacheableObjectPath(path), "refused \"$path\"")
         }
     }

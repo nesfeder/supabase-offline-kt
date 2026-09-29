@@ -1,15 +1,17 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * A replayed mutation stays in the queue, marked synced, for as long as a cached query still needs
@@ -23,7 +25,12 @@ class SyncedRetirementScopeTest {
     private val objectDao = FakeObjectDao()
     private val mutationDao = FakeMutationDao()
     private var tick = 0L
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, monotonicTick = { tick })
+    private val store =
+        newTestOfflineStore(
+            objectDao = objectDao,
+            mutationDao = mutationDao,
+            monotonicTick = { tick },
+        )
 
     @Test
     fun refreshing_one_query_keeps_a_synced_write_another_cached_query_still_needs() = runTest {
@@ -88,7 +95,8 @@ class SyncedRetirementScopeTest {
         val server = RecordingPostgrestServer()
 
         // When
-        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced =
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — no cached query needs them, so they do not accumulate
         assertEquals(2, synced)

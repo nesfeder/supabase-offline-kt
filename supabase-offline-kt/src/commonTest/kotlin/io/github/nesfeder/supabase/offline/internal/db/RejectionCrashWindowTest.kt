@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.result.PostgrestResult
@@ -6,12 +8,12 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestPostgrest
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * A rejection is recorded and its mutation row removed as one step. If a crash still leaves both —
@@ -25,7 +27,10 @@ class RejectionCrashWindowTest {
     @Test
     fun a_rejection_recorded_before_a_crash_is_cleared_when_the_write_later_syncs() = runTest {
         // Given — the process died between writing the rejected entry and deleting the mutation row
-        store.enqueueInsert(table = NOTES, body = Json.parseToJsonElement("""[{"id":"n1","title":"x"}]""") as JsonArray)
+        store.enqueueInsert(
+            table = NOTES,
+            body = Json.parseToJsonElement("""[{"id":"n1","title":"x"}]""") as JsonArray,
+        )
         val pending = store.allPendingMutations().single()
         store.mutationQueueState.addRejection(
             StoredRejection(
@@ -36,11 +41,12 @@ class RejectionCrashWindowTest {
                 createdAtMs = 0,
                 rejectedAtMs = 0,
                 message = "refused before the crash",
-            ),
+            )
         )
 
         // When — the write replays and this time the server accepts it
-        MutationQueueReplayer(store = store, supabase = RecordingPostgrestServer().supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = RecordingPostgrestServer().supabaseClient())
+            .syncAllTables()
 
         // Then — it is not still reported as rejected
         assertEquals(0, store.pendingMutationCount())
@@ -50,19 +56,40 @@ class RejectionCrashWindowTest {
     @Test
     fun a_rejection_left_by_a_crash_is_cleared_when_the_write_is_accepted_at_the_head() = runTest {
         // Given — a queued write with a stale rejected entry of the same id
-        val id = (store.enqueueOwnedBy(USER) { enqueueInsert(table = NOTES, body = Json.parseToJsonElement("""[{"id":"n1"}]""") as JsonArray) }
-            as EnqueueOutcome.Queued).id
+        val id =
+            (store.enqueueOwnedBy(USER) {
+                    enqueueInsert(
+                        table = NOTES,
+                        body = Json.parseToJsonElement("""[{"id":"n1"}]""") as JsonArray,
+                    )
+                } as EnqueueOutcome.Queued)
+                .id
         store.mutationQueueState.addRejection(
-            StoredRejection(id = id, table = NOTES, operation = MutationOperation.INSERT, bodyJson = "[]", createdAtMs = 0, rejectedAtMs = 0, message = "stale"),
+            StoredRejection(
+                id = id,
+                table = NOTES,
+                operation = MutationOperation.INSERT,
+                bodyJson = "[]",
+                createdAtMs = 0,
+                rejectedAtMs = 0,
+                message = "stale",
+            )
         )
-        val syncer = MutationQueueReplayer(
-            store = store,
-            supabase = RecordingPostgrestServer().supabaseClient(),
-            currentIdentity = { QueueIdentity.User("user-a") },
-        )
+        val syncer =
+            MutationQueueReplayer(
+                store = store,
+                supabase = RecordingPostgrestServer().supabaseClient(),
+                currentIdentity = { QueueIdentity.User("user-a") },
+            )
 
         // When — its caller sends it at the head and the server accepts it
-        val outcome = syncer.sendAtHead(id, QueueIdentity.User("user-a"), send = { acceptedResult() }, onAccepted = {})
+        val outcome =
+            syncer.sendAtHead(
+                id,
+                QueueIdentity.User("user-a"),
+                send = { acceptedResult() },
+                onAccepted = {},
+            )
 
         // Then
         assertIs<MutationQueueReplayer.HeadSendOutcome.Sent>(outcome)

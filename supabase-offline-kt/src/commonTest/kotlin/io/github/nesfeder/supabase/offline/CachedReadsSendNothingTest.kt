@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline
@@ -21,18 +23,18 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 /**
  * A read the cache answers sends nothing and asks nobody for a token: not the Auth plugin, whose
@@ -47,52 +49,81 @@ class CachedReadsSendNothingTest {
     /** The supabase-kt client [items] built last. */
     private lateinit var supabase: SupabaseClient
 
-    private fun items(server: RecordingPostgrestServer, configure: SupabaseClientBuilder.() -> Unit): OfflinePostgrestQueryBuilder {
-        supabase = newTestSupabaseClient(engine = server.engine) {
-            defaultLogLevel = LogLevel.DEBUG
-            defaultLoggingFactory = { logs }
-            configure()
-        }
-        return newTestOfflineClient(supabase = supabase, store = newTestOfflineStore(objectDao = objectDao), coordinatorScope = idleCoroutineScope()).from(TABLE)
+    private fun items(
+        server: RecordingPostgrestServer,
+        configure: SupabaseClientBuilder.() -> Unit,
+    ): OfflinePostgrestQueryBuilder {
+        supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                defaultLogLevel = LogLevel.DEBUG
+                defaultLoggingFactory = { logs }
+                configure()
+            }
+        return newTestOfflineClient(
+                supabase = supabase,
+                store = newTestOfflineStore(objectDao = objectDao),
+                coordinatorScope = idleCoroutineScope(),
+            )
+            .from(TABLE)
     }
 
-    /** A client signed in with a session that expired a minute ago, which supabase-kt would refresh inline. */
-    private suspend fun expiredSessionItems(server: RecordingPostgrestServer, configure: SupabaseClientBuilder.() -> Unit = {}): OfflinePostgrestQueryBuilder {
-        val items = items(server) {
-            install(Postgrest)
-            install(Auth) {
-                sessionManager = MemorySessionManager()
-                codeVerifierCache = MemoryCodeVerifierCache()
-                autoLoadFromStorage = false
-                alwaysAutoRefresh = true
-                enableLifecycleCallbacks = false
+    /**
+     * A client signed in with a session that expired a minute ago, which supabase-kt would refresh
+     * inline.
+     */
+    private suspend fun expiredSessionItems(
+        server: RecordingPostgrestServer,
+        configure: SupabaseClientBuilder.() -> Unit = {},
+    ): OfflinePostgrestQueryBuilder {
+        val items =
+            items(server) {
+                install(Postgrest)
+                install(Auth) {
+                    sessionManager = MemorySessionManager()
+                    codeVerifierCache = MemoryCodeVerifierCache()
+                    autoLoadFromStorage = false
+                    alwaysAutoRefresh = true
+                    enableLifecycleCallbacks = false
+                }
+                configure()
             }
-            configure()
-        }
         supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing }
         supabase.signInForTest("u-1", expiresInSeconds = -60)
         return items
     }
 
     private suspend fun cachedReads(items: OfflinePostgrestQueryBuilder) {
-        repeat(100) { assertEquals(ROWS, items.select(readStrategy = ReadStrategy.CacheFirst()).data) }
-        repeat(100) { assertEquals(ROWS, items.select(readStrategy = ReadStrategy.CacheOnly()).data) }
-        repeat(20) { assertEquals(ROWS, items.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly).first().result?.data) }
+        repeat(100) {
+            assertEquals(ROWS, items.select(readStrategy = ReadStrategy.CacheFirst()).data)
+        }
+        repeat(100) {
+            assertEquals(ROWS, items.select(readStrategy = ReadStrategy.CacheOnly()).data)
+        }
+        repeat(20) {
+            assertEquals(
+                ROWS,
+                items.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly).first().result?.data,
+            )
+        }
     }
 
     @Test
-    fun with_an_expired_session_offline_a_cached_read_refreshes_nothing_and_logs_no_error() = runTest {
-        // Given — a session that expired a minute ago, and no network
-        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val items = expiredSessionItems(server)
+    fun with_an_expired_session_offline_a_cached_read_refreshes_nothing_and_logs_no_error() =
+        runTest {
+            // Given — a session that expired a minute ago, and no network
+            val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+            val items = expiredSessionItems(server)
 
-        // When
-        cachedReads(items)
+            // When
+            cachedReads(items)
 
-        // Then — no token refresh or anything else sent, and no ERROR from supabase-kt
-        assertEquals(emptyList(), server.requests.map { request -> "${request.method} ${request.table}" })
-        assertEquals(emptyList(), logs.at(LogLevel.ERROR))
-    }
+            // Then — no token refresh or anything else sent, and no ERROR from supabase-kt
+            assertEquals(
+                emptyList(),
+                server.requests.map { request -> "${request.method} ${request.table}" },
+            )
+            assertEquals(emptyList(), logs.at(LogLevel.ERROR))
+        }
 
     @Test
     fun on_a_network_that_hangs_a_cached_read_answers_at_once() = runTest {
@@ -103,7 +134,9 @@ class CachedReadsSendNothingTest {
         // When / Then — ten cached reads well inside one request timeout, on the real clock
         withContext(Dispatchers.Default) {
             withTimeout(2.seconds) {
-                repeat(10) { assertEquals(ROWS, items.select(readStrategy = ReadStrategy.CacheOnly()).data) }
+                repeat(10) {
+                    assertEquals(ROWS, items.select(readStrategy = ReadStrategy.CacheOnly()).data)
+                }
             }
         }
     }
@@ -113,13 +146,14 @@ class CachedReadsSendNothingTest {
         // Given — no Auth plugin; the app supplies tokens itself
         val calls = AtomicInt(0)
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val items = items(server) {
-            accessToken = {
-                calls.incrementAndFetch()
-                testJwt("third-party-user")
+        val items =
+            items(server) {
+                accessToken = {
+                    calls.incrementAndFetch()
+                    testJwt("third-party-user")
+                }
+                install(Postgrest)
             }
-            install(Postgrest)
-        }
 
         // When
         cachedReads(items)

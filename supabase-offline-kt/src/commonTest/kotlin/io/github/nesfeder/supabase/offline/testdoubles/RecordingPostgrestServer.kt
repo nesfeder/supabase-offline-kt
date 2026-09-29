@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.SupabaseClient
@@ -20,19 +22,21 @@ import kotlinx.serialization.json.put
 
 /**
  * A scripted PostgREST server on a Ktor [MockEngine] that records every request it receives, so a
- * test can assert exactly what the engine put on the wire: method, table, query parameters (filters,
- * `on_conflict`, `columns`), the `Prefer` header, the schema headers and the body.
+ * test can assert exactly what the engine put on the wire: method, table, query parameters
+ * (filters, `on_conflict`, `columns`), the `Prefer` header, the schema headers and the body.
  *
  * Build a client on it with [supabaseClient]. Every request is answered by [answer], which can
  * return a canned response ([okJson], [postgrestError]) or throw to simulate a transport failure
  * ([connectivityFailure]).
  *
  * @property answer decides the response for each recorded request; by default `200 []`.
- * @param engineDispatcher where the engine runs requests; by default its own I/O threads. A test that
- *   passes its own test dispatcher keeps every request on the test scheduler.
+ * @param engineDispatcher where the engine runs requests; by default its own I/O threads. A test
+ *   that passes its own test dispatcher keeps every request on the test scheduler.
  */
 internal class RecordingPostgrestServer(
-    var answer: suspend MockRequestHandleScope.(RecordedRequest) -> HttpResponseData = { okJson("[]") },
+    var answer: suspend MockRequestHandleScope.(RecordedRequest) -> HttpResponseData = {
+        okJson("[]")
+    },
     engineDispatcher: CoroutineDispatcher? = null,
 ) {
 
@@ -62,7 +66,10 @@ internal class RecordingPostgrestServer(
          */
         var accept: String? = null
 
-        /** The `Authorization` header, or `null`: whose token the request carried. Outside equality too. */
+        /**
+         * The `Authorization` header, or `null`: whose token the request carried. Outside equality
+         * too.
+         */
         var authorization: String? = null
     }
 
@@ -70,35 +77,42 @@ internal class RecordingPostgrestServer(
     val requests: MutableList<RecordedRequest> = mutableListOf()
 
     /** The engine to install on a client (see [supabaseClient]). */
-    val engine: MockEngine = MockEngine(
-        MockEngineConfig().apply {
-            dispatcher = engineDispatcher
-            addHandler { request ->
-                val recorded = RecordedRequest(
-                    method = request.method.value,
-                    table = request.url.encodedPath.substringAfterLast('/'),
-                    query = request.url.parameters.names().associateWith { name -> request.url.parameters[name].orEmpty() },
-                    prefer = request.headers["Prefer"],
-                    contentProfile = request.headers["Content-Profile"],
-                    acceptProfile = request.headers["Accept-Profile"],
-                    body = request.body.toByteArray().decodeToString(),
-                ).apply {
-                    accept = request.headers.getAll("Accept")?.joinToString(",")
-                    authorization = request.headers["Authorization"]
+    val engine: MockEngine =
+        MockEngine(
+            MockEngineConfig().apply {
+                dispatcher = engineDispatcher
+                addHandler { request ->
+                    val recorded =
+                        RecordedRequest(
+                                method = request.method.value,
+                                table = request.url.encodedPath.substringAfterLast('/'),
+                                query =
+                                    request.url.parameters.names().associateWith { name ->
+                                        request.url.parameters[name].orEmpty()
+                                    },
+                                prefer = request.headers["Prefer"],
+                                contentProfile = request.headers["Content-Profile"],
+                                acceptProfile = request.headers["Accept-Profile"],
+                                body = request.body.toByteArray().decodeToString(),
+                            )
+                            .apply {
+                                accept = request.headers.getAll("Accept")?.joinToString(",")
+                                authorization = request.headers["Authorization"]
+                            }
+                    requests += recorded
+                    answer(recorded)
                 }
-                requests += recorded
-                answer(recorded)
             }
-        },
-    )
+        )
 
     /**
      * A supabase-kt client whose PostgREST requests reach this server. Automatic retries are off,
      * so a scripted failure surfaces on the first attempt.
      */
-    fun supabaseClient(): SupabaseClient = newTestSupabaseClient(engine = engine) {
-        install(Postgrest) { maxRetries = 0 }
-    }
+    fun supabaseClient(): SupabaseClient =
+        newTestSupabaseClient(engine = engine) {
+            install(Postgrest) { maxRetries = 0 }
+        }
 
     companion object {
         /**
@@ -106,19 +120,23 @@ internal class RecordingPostgrestServer(
          *
          * @param extraHeaders further response headers, e.g. `Preference-Applied`.
          */
-        fun MockRequestHandleScope.okJson(body: String, extraHeaders: Map<String, String> = emptyMap()): HttpResponseData =
+        fun MockRequestHandleScope.okJson(
+            body: String,
+            extraHeaders: Map<String, String> = emptyMap(),
+        ): HttpResponseData =
             respond(
                 content = body,
                 status = HttpStatusCode.OK,
-                headers = headers {
-                    append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-                    extraHeaders.forEach { (name, value) -> append(name, value) }
-                },
+                headers =
+                    headers {
+                        append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                        extraHeaders.forEach { (name, value) -> append(name, value) }
+                    },
             )
 
         /**
-         * A PostgREST error response: [status] with PostgREST's error body, which supabase-kt raises
-         * as a `PostgrestRestException` carrying that status and these fields.
+         * A PostgREST error response: [status] with PostgREST's error body, which supabase-kt
+         * raises as a `PostgrestRestException` carrying that status and these fields.
          *
          * @param code the Postgres SQLSTATE or PostgREST error code.
          * @param message PostgREST's `message` field.
@@ -131,16 +149,19 @@ internal class RecordingPostgrestServer(
             message: String = "rejected by the test server",
             details: String? = null,
             hint: String? = null,
-        ): HttpResponseData = respond(
-            content = buildJsonObject {
-                put("code", code)
-                put("message", message)
-                put("details", details)
-                put("hint", hint)
-            }.toString(),
-            status = status,
-            headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-        )
+        ): HttpResponseData =
+            respond(
+                content = buildJsonObject {
+                        put("code", code)
+                        put("message", message)
+                        put("details", details)
+                        put("hint", hint)
+                    }
+                        .toString(),
+                status = status,
+                headers =
+                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
 
         /** A transport failure: the request never reaches a server. */
         fun connectivityFailure(): Nothing = throw IOException("network unreachable")

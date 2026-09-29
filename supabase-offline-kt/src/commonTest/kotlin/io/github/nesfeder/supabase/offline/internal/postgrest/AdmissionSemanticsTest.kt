@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -6,15 +8,15 @@ import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 /**
  * Which locally written rows a cached query admits: a row that fails a condition the engine can
@@ -23,10 +25,14 @@ import kotlin.test.assertTrue
  */
 class AdmissionSemanticsTest {
 
-    /** The shape of a SELECT whose builder holds [params], as supabase-kt holds a request's filters. */
+    /**
+     * The shape of a SELECT whose builder holds [params], as supabase-kt holds a request's filters.
+     */
     private fun shapeOf(vararg params: Pair<String, String>): QueryShape {
         val builder = SelectRequestBuilder("public", PropertyConversionMethod.NONE)
-        params.forEach { (name, value) -> builder.params[name] = builder.params[name].orEmpty() + value }
+        params.forEach { (name, value) ->
+            builder.params[name] = builder.params[name].orEmpty() + value
+        }
         return queryShapeOf(Columns.ALL, builder)
     }
 
@@ -42,7 +48,13 @@ class AdmissionSemanticsTest {
     @Test
     fun an_ordered_limited_query_excludes_a_row_of_another_list() {
         // Given
-        val shape = shapeOf("limit" to "20", "list_id" to "eq.A", "offset" to "40", "order" to "position.asc.nullslast")
+        val shape =
+            shapeOf(
+                "limit" to "20",
+                "list_id" to "eq.A",
+                "offset" to "40",
+                "order" to "position.asc.nullslast",
+            )
 
         // When / Then
         assertFalse(admits(shape, rowWith("list_id", JsonPrimitive("B"))))
@@ -51,11 +63,20 @@ class AdmissionSemanticsTest {
 
     @Test
     fun a_condition_that_fails_excludes_the_row_even_beside_one_the_engine_cannot_evaluate() {
-        // Given — an evaluable condition that says no and a pattern condition that cannot be evaluated
+        // Given — an evaluable condition that says no and a pattern condition that cannot be
+        // evaluated
         val shape = shapeOf("list_id" to "eq.A", "title" to "like.*milk*")
 
         // When / Then
-        assertFalse(admits(shape, buildJsonObject { put("list_id", "B"); put("title", "milk") }))
+        assertFalse(
+            admits(
+                shape,
+                buildJsonObject {
+                    put("list_id", "B")
+                    put("title", "milk")
+                },
+            )
+        )
     }
 
     // Null semantics
@@ -76,14 +97,26 @@ class AdmissionSemanticsTest {
 
     @Test
     fun neq_admits_a_different_value_and_excludes_the_same_one() {
-        assertTrue(admits(shapeOf("status" to "neq.archived"), rowWith("status", JsonPrimitive("open"))))
-        assertFalse(admits(shapeOf("status" to "neq.archived"), rowWith("status", JsonPrimitive("archived"))))
+        assertTrue(
+            admits(shapeOf("status" to "neq.archived"), rowWith("status", JsonPrimitive("open")))
+        )
+        assertFalse(
+            admits(
+                shapeOf("status" to "neq.archived"),
+                rowWith("status", JsonPrimitive("archived")),
+            )
+        )
     }
 
     @Test
     fun is_null_admits_a_null_column_and_excludes_a_value() {
         assertTrue(admits(shapeOf("deleted_at" to "is.null"), rowWith("deleted_at", JsonNull)))
-        assertFalse(admits(shapeOf("deleted_at" to "is.null"), rowWith("deleted_at", JsonPrimitive("2026-01-01T00:00:00Z"))))
+        assertFalse(
+            admits(
+                shapeOf("deleted_at" to "is.null"),
+                rowWith("deleted_at", JsonPrimitive("2026-01-01T00:00:00Z")),
+            )
+        )
     }
 
     @Test
@@ -116,8 +149,12 @@ class AdmissionSemanticsTest {
 
     @Test
     fun in_with_quoted_members_admits_a_member_holding_a_comma() {
-        assertTrue(admits(shapeOf("tag" to "in.(\"a,b\",plain)"), rowWith("tag", JsonPrimitive("a,b"))))
-        assertFalse(admits(shapeOf("tag" to "in.(\"a,b\",plain)"), rowWith("tag", JsonPrimitive("a"))))
+        assertTrue(
+            admits(shapeOf("tag" to "in.(\"a,b\",plain)"), rowWith("tag", JsonPrimitive("a,b")))
+        )
+        assertFalse(
+            admits(shapeOf("tag" to "in.(\"a,b\",plain)"), rowWith("tag", JsonPrimitive("a")))
+        )
     }
 
     @Test
@@ -130,10 +167,15 @@ class AdmissionSemanticsTest {
     @Test
     fun a_row_without_the_filtered_column_is_admitted() {
         // Given — the column is filled by a server default, e.g. the signed-in user's id
-        val row = buildJsonObject { put("id", "row-1"); put("title", "new") }
+        val row = buildJsonObject {
+            put("id", "row-1")
+            put("title", "new")
+        }
 
         // When / Then
-        assertTrue(admits(shapeOf("owner_id" to "eq.u-1", "order" to "created_at.desc.nullslast"), row))
+        assertTrue(
+            admits(shapeOf("owner_id" to "eq.u-1", "order" to "created_at.desc.nullslast"), row)
+        )
     }
 
     @Test
@@ -155,7 +197,9 @@ class AdmissionSemanticsTest {
     fun numbers_compare_by_value() {
         assertTrue(admits(shapeOf("priority" to "eq.5"), rowWith("priority", JsonPrimitive(5.0))))
         assertFalse(admits(shapeOf("priority" to "eq.5"), rowWith("priority", JsonPrimitive(6))))
-        assertTrue(admits(shapeOf("priority" to "in.(1,2,5)"), rowWith("priority", JsonPrimitive(5))))
+        assertTrue(
+            admits(shapeOf("priority" to "in.(1,2,5)"), rowWith("priority", JsonPrimitive(5)))
+        )
     }
 
     @Test
@@ -166,7 +210,10 @@ class AdmissionSemanticsTest {
 
     @Test
     fun an_array_or_object_column_is_admitted() {
-        val arrayRow = buildJsonObject { put("id", "row-1"); put("tags", buildJsonArray { add(JsonPrimitive("x")) }) }
+        val arrayRow = buildJsonObject {
+            put("id", "row-1")
+            put("tags", buildJsonArray { add(JsonPrimitive("x")) })
+        }
         assertTrue(admits(shapeOf("tags" to "eq.x"), arrayRow))
     }
 
@@ -185,34 +232,37 @@ class AdmissionSemanticsTest {
             put("created_at", "2020-01-01T00:00:00Z")
             put("data", buildJsonObject { put("kind", "other") })
         }
-        val unknownFamilies = listOf(
-            shapeOf("or" to "(done.eq.true,archived.eq.true)"),
-            shapeOf("and" to "(priority.gte.1,priority.lte.3)"),
-            shapeOf("not.or" to "(done.eq.false,archived.eq.false)"),
-            shapeOf("done" to "not.eq.false"),
-            shapeOf("priority" to "gt.5"),
-            shapeOf("priority" to "gte.5"),
-            shapeOf("priority" to "lt.-5"),
-            shapeOf("created_at" to "lte.2019-01-01"),
-            shapeOf("window" to "sl.(5,10)"),
-            shapeOf("window" to "adj.(5,10)"),
-            shapeOf("title" to "like.*milk*"),
-            shapeOf("title" to "ilike.*milk*"),
-            shapeOf("title" to "match.^milk$"),
-            shapeOf("title" to "imatch.^MILK$"),
-            shapeOf("body" to "fts.milk"),
-            shapeOf("body" to "plfts(english).milk"),
-            shapeOf("tags" to "cs.{work}"),
-            shapeOf("tags" to "cd.{work}"),
-            shapeOf("tags" to "ov.{work}"),
-            shapeOf("status" to "isdistinct.open"),
-            shapeOf("lists.name" to "eq.Home", "select" to "*,lists!inner(name)"),
-            shapeOf("comments.or" to "(author.eq.a)", "select" to "id,comments(body)"),
-            shapeOf("data->>kind" to "eq.idea"),
-            shapeOf("created_at::date" to "eq.2026-01-01"),
-        )
+        val unknownFamilies =
+            listOf(
+                shapeOf("or" to "(done.eq.true,archived.eq.true)"),
+                shapeOf("and" to "(priority.gte.1,priority.lte.3)"),
+                shapeOf("not.or" to "(done.eq.false,archived.eq.false)"),
+                shapeOf("done" to "not.eq.false"),
+                shapeOf("priority" to "gt.5"),
+                shapeOf("priority" to "gte.5"),
+                shapeOf("priority" to "lt.-5"),
+                shapeOf("created_at" to "lte.2019-01-01"),
+                shapeOf("window" to "sl.(5,10)"),
+                shapeOf("window" to "adj.(5,10)"),
+                shapeOf("title" to "like.*milk*"),
+                shapeOf("title" to "ilike.*milk*"),
+                shapeOf("title" to "match.^milk$"),
+                shapeOf("title" to "imatch.^MILK$"),
+                shapeOf("body" to "fts.milk"),
+                shapeOf("body" to "plfts(english).milk"),
+                shapeOf("tags" to "cs.{work}"),
+                shapeOf("tags" to "cd.{work}"),
+                shapeOf("tags" to "ov.{work}"),
+                shapeOf("status" to "isdistinct.open"),
+                shapeOf("lists.name" to "eq.Home", "select" to "*,lists!inner(name)"),
+                shapeOf("comments.or" to "(author.eq.a)", "select" to "id,comments(body)"),
+                shapeOf("data->>kind" to "eq.idea"),
+                shapeOf("created_at::date" to "eq.2026-01-01"),
+            )
 
         // When / Then
-        unknownFamilies.forEach { shape -> assertTrue(admits(shape, row), "$shape excluded a row it cannot evaluate") }
+        unknownFamilies.forEach { shape ->
+            assertTrue(admits(shape, row), "$shape excluded a row it cannot evaluate")
+        }
     }
 }

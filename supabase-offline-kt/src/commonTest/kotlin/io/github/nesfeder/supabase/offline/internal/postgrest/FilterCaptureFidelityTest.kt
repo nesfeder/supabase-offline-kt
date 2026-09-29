@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
@@ -11,16 +13,16 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 
 /**
  * A captured filter value is stored exactly as the caller wrote it, so a queued write replays
- * against the rows it was written for. Trimming whitespace or stripping quotes made
- * `eq("code", "'X'")` replay as `eq.X` and `eq("name", " Bob")` as `eq.Bob` — a different row set.
+ * against the rows it was written for. Trimming whitespace or stripping quotes made `eq("code",
+ * "'X'")` replay as `eq.X` and `eq("name", " Bob")` as `eq.Bob` — a different row set.
  */
 class FilterCaptureFidelityTest {
 
@@ -36,7 +38,8 @@ class FilterCaptureFidelityTest {
         }
 
         // When
-        val descriptor = assertNotNull(buildDescriptorStrictFromRequest(SCHEMA, CONVERSION, request))
+        val descriptor =
+            assertNotNull(buildDescriptorStrictFromRequest(SCHEMA, CONVERSION, request))
 
         // Then
         assertEquals(
@@ -48,12 +51,13 @@ class FilterCaptureFidelityTest {
     @Test
     fun lenient_capture_keeps_quotes_and_surrounding_whitespace() {
         // Given
-        val builder = SelectRequestBuilder(SCHEMA, CONVERSION).apply {
-            filter {
-                eq("code", "'X'")
-                eq("name", " Bob ")
+        val builder =
+            SelectRequestBuilder(SCHEMA, CONVERSION).apply {
+                filter {
+                    eq("code", "'X'")
+                    eq("name", " Bob ")
+                }
             }
-        }
 
         // When
         val descriptor = assertNotNull(buildDescriptorFromBuilder(builder))
@@ -67,11 +71,15 @@ class FilterCaptureFidelityTest {
         // Given — the write is queued while offline
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val store = newTestOfflineStore()
-        val builder = OfflinePostgrestQueryBuilderImpl(
-            delegate = server.supabaseClient().postgrest.from(TABLE),
-            store = store,
-        )
-        builder.updateJson(Json.parseToJsonElement("""{"done":true}"""), MutationStrategy.QueueIfOffline) {
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from(TABLE),
+                store = store,
+            )
+        builder.updateJson(
+            Json.parseToJsonElement("""{"done":true}"""),
+            MutationStrategy.QueueIfOffline,
+        ) {
             filter {
                 eq("code", "'X'")
                 eq("name", " Bob")

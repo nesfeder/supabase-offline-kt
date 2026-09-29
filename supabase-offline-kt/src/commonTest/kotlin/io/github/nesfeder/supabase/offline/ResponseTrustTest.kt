@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline
@@ -18,6 +20,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -29,17 +35,13 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * When a response may replace what the cache holds. A client with no Auth plugin, or with its own
- * access-token provider, trusts what the server says, an empty result included; so does a signed-out
- * session, for the anonymous identity. Only a session still restoring, or whose refresh failed, is
- * gated: its requests go out on the anon key, so nothing they return is written, and the reactive read
- * keeps trying until the session settles.
+ * access-token provider, trusts what the server says, an empty result included; so does a
+ * signed-out session, for the anonymous identity. Only a session still restoring, or whose refresh
+ * failed, is gated: its requests go out on the anon key, so nothing they return is written, and the
+ * reactive read keeps trying until the session settles.
  */
 class ResponseTrustTest {
 
@@ -55,8 +57,8 @@ class ResponseTrustTest {
     }
 
     /**
-     * Runs [block] with a client over [supabase] whose work, the reader and the server all run on this
-     * test's scheduler, then stops them.
+     * Runs [block] with a client over [supabase] whose work, the reader and the server all run on
+     * this test's scheduler, then stops them.
      */
     private suspend fun TestScope.observing(
         supabase: (TestDispatcher) -> Pair<SupabaseClient, RecordingPostgrestServer>,
@@ -66,12 +68,13 @@ class ResponseTrustTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
         val (client, server) = supabase(dispatcher)
-        val offline = newTestOfflineClient(
-            supabase = client,
-            store = newTestOfflineStore(objectDao = objectDao),
-            coordinatorScope = scope,
-            responseTrust = responseTrust,
-        )
+        val offline =
+            newTestOfflineClient(
+                supabase = client,
+                store = newTestOfflineStore(objectDao = objectDao),
+                coordinatorScope = scope,
+                responseTrust = responseTrust,
+            )
         val observed = Observed()
         scope.launch {
             offline.from(TABLE).selectAsFlow().collect { read ->
@@ -86,14 +89,21 @@ class ResponseTrustTest {
         }
     }
 
-    private fun serverOn(dispatcher: TestDispatcher) = RecordingPostgrestServer(answer = { okJson(rows) }, engineDispatcher = dispatcher)
+    private fun serverOn(dispatcher: TestDispatcher) =
+        RecordingPostgrestServer(answer = { okJson(rows) }, engineDispatcher = dispatcher)
 
-    private fun withoutAuth(dispatcher: TestDispatcher): Pair<SupabaseClient, RecordingPostgrestServer> {
+    private fun withoutAuth(
+        dispatcher: TestDispatcher
+    ): Pair<SupabaseClient, RecordingPostgrestServer> {
         val server = serverOn(dispatcher)
-        return newTestSupabaseClient(engine = server.engine) { install(Postgrest) { maxRetries = 0 } } to server
+        return newTestSupabaseClient(engine = server.engine) {
+            install(Postgrest) { maxRetries = 0 }
+        } to server
     }
 
-    private fun withTokenProvider(dispatcher: TestDispatcher): Pair<SupabaseClient, RecordingPostgrestServer> {
+    private fun withTokenProvider(
+        dispatcher: TestDispatcher
+    ): Pair<SupabaseClient, RecordingPostgrestServer> {
         val server = serverOn(dispatcher)
         return newTestSupabaseClient(engine = server.engine) {
             accessToken = { testJwt("third-party-user") }
@@ -101,7 +111,11 @@ class ResponseTrustTest {
         } to server
     }
 
-    private fun withAuth(dispatcher: TestDispatcher, sessions: SessionManager, autoLoad: Boolean): Pair<SupabaseClient, RecordingPostgrestServer> {
+    private fun withAuth(
+        dispatcher: TestDispatcher,
+        sessions: SessionManager,
+        autoLoad: Boolean,
+    ): Pair<SupabaseClient, RecordingPostgrestServer> {
         val server = serverOn(dispatcher)
         return newTestSupabaseClient(engine = server.engine) {
             coroutineDispatcher = dispatcher
@@ -116,9 +130,14 @@ class ResponseTrustTest {
         } to server
     }
 
-    private fun RecordingPostgrestServer.reads(): Int = requests.count { request -> request.method == "GET" }
+    private fun RecordingPostgrestServer.reads(): Int = requests.count { request ->
+        request.method == "GET"
+    }
 
-    /** Lets the client's work run for longer than the refresh's longest retry wait, then stops the clock. */
+    /**
+     * Lets the client's work run for longer than the refresh's longest retry wait, then stops the
+     * clock.
+     */
     private fun TestScope.settle() {
         advanceTimeBy(SETTLE_FOR)
         runCurrent()
@@ -154,17 +173,18 @@ class ResponseTrustTest {
     }
 
     @Test
-    fun with_its_own_token_provider_an_empty_table_settles_to_an_empty_list_with_one_request() = runTest {
-        observing(::withTokenProvider) { server, observed ->
-            // When
-            settle()
+    fun with_its_own_token_provider_an_empty_table_settles_to_an_empty_list_with_one_request() =
+        runTest {
+            observing(::withTokenProvider) { server, observed ->
+                // When
+                settle()
 
-            // Then
-            assertEquals("[]", observed.shown.last())
-            assertEquals(RefreshState.Idle, observed.refresh)
-            assertEquals(1, server.reads())
+                // Then
+                assertEquals("[]", observed.shown.last())
+                assertEquals(RefreshState.Idle, observed.refresh)
+                assertEquals(1, server.reads())
+            }
         }
-    }
 
     @Test
     fun with_its_own_token_provider_a_row_deleted_elsewhere_leaves_the_cached_list() = runTest {
@@ -182,7 +202,9 @@ class ResponseTrustTest {
     @Test
     fun signed_out_an_empty_table_is_trusted_for_the_anonymous_identity() = runTest {
         // Given — Auth installed, nobody signed in
-        observing({ dispatcher -> withAuth(dispatcher, MemorySessionManager(), autoLoad = false) }) { server, observed ->
+        observing({ dispatcher ->
+            withAuth(dispatcher, MemorySessionManager(), autoLoad = false)
+        }) { server, observed ->
             // When
             settle()
 
@@ -197,13 +219,19 @@ class ResponseTrustTest {
     fun a_session_still_restoring_is_gated_then_the_read_settles_when_it_does() = runTest {
         // Given — the stored session is still loading when the read starts
         val sessions = FakeHeldSessionManager(signedInSession())
-        observing({ dispatcher -> withAuth(dispatcher, sessions, autoLoad = true) }) { server, observed ->
+        observing({ dispatcher -> withAuth(dispatcher, sessions, autoLoad = true) }) {
+            server,
+            observed ->
             advanceTimeBy(RESTORING_FOR)
             runCurrent()
 
             // Then — nothing the anon key returned was taken as the user's data
             assertEquals(listOf<String?>(null), observed.shown.distinct())
-            assertEquals(true, observed.refresh !is RefreshState.Idle, "the read settled while the session was restoring")
+            assertEquals(
+                true,
+                observed.refresh !is RefreshState.Idle,
+                "the read settled while the session was restoring",
+            )
             assertEquals(true, server.reads() >= 1)
 
             // When — the session finishes restoring as a signed-in user
@@ -222,15 +250,26 @@ class ResponseTrustTest {
         objectDao.seedPayload(TABLE, TABLE, """[{"id":"public"},{"id":"my-draft"}]""")
         rows = """[{"id":"public"}]"""
         val sessions = FakeHeldSessionManager(signedInSession())
-        observing({ dispatcher -> withAuth(dispatcher, sessions, autoLoad = true) }) { _, observed ->
+        observing({ dispatcher -> withAuth(dispatcher, sessions, autoLoad = true) }) { _, observed
+            ->
             // When — the refresh goes out while the session restores
             advanceTimeBy(RESTORING_FOR)
             runCurrent()
 
             // Then — the cache still holds the user's rows, and the refresh has not settled
-            assertEquals("""[{"id":"public"},{"id":"my-draft"}]""", objectDao.getRow(TABLE, TABLE)?.payload)
-            assertEquals(listOf<String?>("""[{"id":"public"},{"id":"my-draft"}]"""), observed.shown.distinct())
-            assertEquals(true, observed.refresh !is RefreshState.Idle, "the narrowed response ended the refresh")
+            assertEquals(
+                """[{"id":"public"},{"id":"my-draft"}]""",
+                objectDao.getRow(TABLE, TABLE)?.payload,
+            )
+            assertEquals(
+                listOf<String?>("""[{"id":"public"},{"id":"my-draft"}]"""),
+                observed.shown.distinct(),
+            )
+            assertEquals(
+                true,
+                observed.refresh !is RefreshState.Idle,
+                "the narrowed response ended the refresh",
+            )
 
             // When — the session restores, and the user's request sees both rows
             rows = """[{"id":"public"},{"id":"my-draft"}]"""
@@ -239,59 +278,78 @@ class ResponseTrustTest {
 
             // Then
             assertEquals(RefreshState.Idle, observed.refresh)
-            assertEquals("""[{"id":"public"},{"id":"my-draft"}]""", objectDao.getRow(TABLE, TABLE)?.payload)
+            assertEquals(
+                """[{"id":"public"},{"id":"my-draft"}]""",
+                objectDao.getRow(TABLE, TABLE)?.payload,
+            )
         }
     }
 
     @Test
     fun under_the_authenticated_only_rule_an_empty_table_without_auth_never_settles() = runTest {
         // Given — the rule the engine followed before, set explicitly
-        observing(::withoutAuth, responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY) { server, observed ->
+        observing(::withoutAuth, responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY) {
+            server,
+            observed ->
             // When
             settle()
 
             // Then — no data, still retrying, as before
             assertEquals(listOf<String?>(null), observed.shown.distinct())
-            assertEquals(true, observed.refresh is RefreshState.Stalled, "the read settled under the authenticated-only rule")
+            assertEquals(
+                true,
+                observed.refresh is RefreshState.Stalled,
+                "the read settled under the authenticated-only rule",
+            )
             assertEquals(true, server.reads() > 1)
         }
     }
 
     @Test
-    fun under_the_authenticated_only_rule_a_narrowed_response_while_restoring_is_not_written() = runTest {
-        // Given — the signed-in user's list, cached; the anon key sees only the public row
-        objectDao.seedPayload(TABLE, TABLE, """[{"id":"public"},{"id":"my-draft"}]""")
-        rows = """[{"id":"public"}]"""
-        val sessions = FakeHeldSessionManager(signedInSession())
-        observing(
-            supabase = { dispatcher -> withAuth(dispatcher, sessions, autoLoad = true) },
-            responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
-        ) { _, observed ->
-            // When — the refresh goes out while the session restores
-            advanceTimeBy(RESTORING_FOR)
-            runCurrent()
+    fun under_the_authenticated_only_rule_a_narrowed_response_while_restoring_is_not_written() =
+        runTest {
+            // Given — the signed-in user's list, cached; the anon key sees only the public row
+            objectDao.seedPayload(TABLE, TABLE, """[{"id":"public"},{"id":"my-draft"}]""")
+            rows = """[{"id":"public"}]"""
+            val sessions = FakeHeldSessionManager(signedInSession())
+            observing(
+                supabase = { dispatcher -> withAuth(dispatcher, sessions, autoLoad = true) },
+                responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
+            ) { _, observed ->
+                // When — the refresh goes out while the session restores
+                advanceTimeBy(RESTORING_FOR)
+                runCurrent()
 
-            // Then — the user's rows stay, and the refresh has not settled
-            assertEquals("""[{"id":"public"},{"id":"my-draft"}]""", objectDao.getRow(TABLE, TABLE)?.payload)
-            assertEquals(true, observed.refresh !is RefreshState.Idle, "the narrowed response ended the refresh")
+                // Then — the user's rows stay, and the refresh has not settled
+                assertEquals(
+                    """[{"id":"public"},{"id":"my-draft"}]""",
+                    objectDao.getRow(TABLE, TABLE)?.payload,
+                )
+                assertEquals(
+                    true,
+                    observed.refresh !is RefreshState.Idle,
+                    "the narrowed response ended the refresh",
+                )
 
-            // When — the session restores, and the user's request sees both rows
-            rows = """[{"id":"public"},{"id":"my-draft"},{"id":"new"}]"""
-            sessions.release()
-            settle()
+                // When — the session restores, and the user's request sees both rows
+                rows = """[{"id":"public"},{"id":"my-draft"},{"id":"new"}]"""
+                sessions.release()
+                settle()
 
-            // Then — the read settles on the user's full data
-            assertEquals(RefreshState.Idle, observed.refresh)
-            assertEquals(rows, observed.shown.last())
+                // Then — the read settles on the user's full data
+                assertEquals(RefreshState.Idle, observed.refresh)
+                assertEquals(rows, observed.shown.last())
+            }
         }
-    }
 
     @Test
     fun under_the_authenticated_only_rule_a_non_empty_response_signed_out_is_written() = runTest {
         // Given — Auth installed, nobody signed in, a table public by design
         rows = """[{"id":"public"}]"""
         observing(
-            supabase = { dispatcher -> withAuth(dispatcher, MemorySessionManager(), autoLoad = false) },
+            supabase = { dispatcher ->
+                withAuth(dispatcher, MemorySessionManager(), autoLoad = false)
+            },
             responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
         ) { server, observed ->
             // When
@@ -308,7 +366,11 @@ class ResponseTrustTest {
     fun a_one_shot_read_without_auth_caches_an_empty_result() = runTest {
         // Given
         val server = RecordingPostgrestServer(answer = { okJson("[]") })
-        val client = newTestOfflineClient(supabase = server.supabaseClient(), store = newTestOfflineStore(objectDao = objectDao))
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                store = newTestOfflineStore(objectDao = objectDao),
+            )
 
         // When
         val network = client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly)
@@ -318,7 +380,13 @@ class ResponseTrustTest {
         assertEquals("[]", client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly()).data)
     }
 
-    private fun signedInSession() = UserSession(accessToken = testJwt("u-1"), refreshToken = "refresh-token", expiresIn = 3600, tokenType = "bearer")
+    private fun signedInSession() =
+        UserSession(
+            accessToken = testJwt("u-1"),
+            refreshToken = "refresh-token",
+            expiresIn = 3600,
+            tokenType = "bearer",
+        )
 
     private companion object {
         const val TABLE = "todos"

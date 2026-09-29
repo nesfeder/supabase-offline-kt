@@ -1,7 +1,10 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -9,7 +12,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -19,9 +24,6 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
  * Size-based eviction never removes a payload a live reader shows (S-28): it takes the oldest
@@ -29,46 +31,70 @@ import kotlin.test.assertTrue
  */
 class LiveEvictionTest {
 
-    /** Runs one reader of list A under [strategy] while a large read pushes the cache over its limit. */
-    private fun TestScope.evictWhileListAIsShown(strategy: FlowReadStrategy): Pair<List<String>, List<String?>> {
+    /**
+     * Runs one reader of list A under [strategy] while a large read pushes the cache over its
+     * limit.
+     */
+    private fun TestScope.evictWhileListAIsShown(
+        strategy: FlowReadStrategy
+    ): Pair<List<String>, List<String?>> {
         var clock = 0L
         val objectDao = FakeObjectDao()
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val server = RecordingPostgrestServer(
-            answer = { request ->
-                when (request.query["list_id"]) {
-                    "eq.A" -> okJson(LIST_A)
-                    "eq.B" -> okJson(LIST_B)
-                    else -> okJson(LARGE_LIST)
-                }
-            },
-            engineDispatcher = dispatcher,
-        )
+        val server =
+            RecordingPostgrestServer(
+                answer = { request ->
+                    when (request.query["list_id"]) {
+                        "eq.A" -> okJson(LIST_A)
+                        "eq.B" -> okJson(LIST_B)
+                        else -> okJson(LARGE_LIST)
+                    }
+                },
+                engineDispatcher = dispatcher,
+            )
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
-        val items = newTestOfflineClient(
-            supabase = newTestSupabaseClient(engine = server.engine) { install(Postgrest) { maxRetries = 0 } },
-            store = newTestOfflineStore(
-                objectDao = objectDao,
-                // The large list and list A fit together; one more list does not
-                settings = OfflineCacheSettings(maxDbSizeBytes = (LARGE_LIST.length + LIST_A.length + 1).toLong(), evictionBatchSize = 1, minRetainedBytes = 0),
-                nowMillis = { clock },
-            ),
-            coordinatorScope = scope,
-        ).from(TABLE)
+        val items =
+            newTestOfflineClient(
+                    supabase =
+                        newTestSupabaseClient(engine = server.engine) {
+                            install(Postgrest) { maxRetries = 0 }
+                        },
+                    store =
+                        newTestOfflineStore(
+                            objectDao = objectDao,
+                            // The large list and list A fit together; one more list does not
+                            settings =
+                                OfflineCacheSettings(
+                                    maxDbSizeBytes =
+                                        (LARGE_LIST.length + LIST_A.length + 1).toLong(),
+                                    evictionBatchSize = 1,
+                                    minRetainedBytes = 0,
+                                ),
+                            nowMillis = { clock },
+                        ),
+                    coordinatorScope = scope,
+                )
+                .from(TABLE)
         val shown = mutableListOf<String?>()
 
         // List A cached first, so it is the oldest, and shown; then list B; then the large list
         scope.launch {
             clock = 1
             items.select(readStrategy = ReadStrategy.NetworkOnly) { filter { eq("list_id", "A") } }
-            launch { items.selectAsFlow(readStrategy = strategy) { filter { eq("list_id", "A") } }.collect { read -> shown += read.result?.data } }
+            launch {
+                items
+                    .selectAsFlow(readStrategy = strategy) { filter { eq("list_id", "A") } }
+                    .collect { read -> shown += read.result?.data }
+            }
         }
         advanceUntilIdle()
         scope.launch {
             clock = 2
             items.select(readStrategy = ReadStrategy.NetworkOnly) { filter { eq("list_id", "B") } }
             clock = 3
-            items.select(readStrategy = ReadStrategy.NetworkOnly) { filter { eq("list_id", "large") } }
+            items.select(readStrategy = ReadStrategy.NetworkOnly) {
+                filter { eq("list_id", "large") }
+            }
         }
         advanceUntilIdle()
         scope.cancel()

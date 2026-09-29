@@ -1,11 +1,9 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.applyTo
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
@@ -13,6 +11,10 @@ import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder
 import io.github.jan.supabase.postgrest.query.filter.TextSearchType
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.applyTo
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
@@ -27,23 +29,26 @@ import kotlinx.serialization.json.Json
  */
 @Serializable
 internal data class FilterDescriptor(
-    /** How conditions are combined. AND is the common case; OR uses PostgREST logical expressions. */
+    /**
+     * How conditions are combined. AND is the common case; OR uses PostgREST logical expressions.
+     */
     val mode: Mode = Mode.AND,
-    val conditions: List<Condition>
+    val conditions: List<Condition>,
 ) {
     @Serializable
-    enum class Mode { AND, OR }
+    enum class Mode {
+        AND,
+        OR,
+    }
 
-    /**
-     * A single condition like: `eq("id", "123")` or `ilike("name", "%foo%")`.
-     */
+    /** A single condition like: `eq("id", "123")` or `ilike("name", "%foo%")`. */
     @Serializable
     data class Condition(
         val column: String,
         /** FilterOperator.identifier, e.g. "eq", "lt", "ilike" */
         val operatorId: String,
         /** Raw value as string (we’ll coerce heuristically when comparing / replaying) */
-        val value: String
+        val value: String,
     ) {
         val operator: FilterOperator?
             get() = offlineFilterOperatorOrNull(operatorId)
@@ -69,16 +74,15 @@ internal fun offlineFilterOperatorOrNull(identifier: String): FilterOperator? =
  *
  * We only handle the simple, common case:
  *
- *   column -> ["eq.value"]
+ * column -> ["eq.value"]
  *
- * via PostgrestFilterBuilder’s `eq("column", value)` etc.  Complex DSL usage
- * (`and(...)`, `or(...)`, foreign-table filters) is intentionally ignored so we
- * don’t risk wrong offline behaviour.
+ * via PostgrestFilterBuilder’s `eq("column", value)` etc. Complex DSL usage (`and(...)`, `or(...)`,
+ * foreign-table filters) is intentionally ignored so we don’t risk wrong offline behaviour.
  */
 internal fun buildDescriptorFromRequest(
     defaultSchema: String,
     conversionMethod: PropertyConversionMethod,
-    request: PostgrestRequestBuilder.() -> Unit
+    request: PostgrestRequestBuilder.() -> Unit,
 ): FilterDescriptor? {
     // PostgrestRequestBuilder is abstract since supabase-kt 3.6.0; SelectRequestBuilder is the
     // concrete variant whose construction only populates `params`, which is all the descriptor
@@ -87,9 +91,7 @@ internal fun buildDescriptorFromRequest(
     return buildDescriptorFromBuilder(builder)
 }
 
-internal fun buildDescriptorFromBuilder(
-    builder: PostgrestRequestBuilder
-): FilterDescriptor? {
+internal fun buildDescriptorFromBuilder(builder: PostgrestRequestBuilder): FilterDescriptor? {
     val conditions = mutableListOf<FilterDescriptor.Condition>()
 
     builder.params.forEach { (key, values) ->
@@ -104,22 +106,22 @@ internal fun buildDescriptorFromBuilder(
         val opIdentifier = parts[0]
         val rawValue = parts[1]
 
-        val operator = offlineFilterOperatorOrNull(opIdentifier)
-            ?: return@forEach
+        val operator = offlineFilterOperatorOrNull(opIdentifier) ?: return@forEach
 
         // Stored exactly as encoded: trimming whitespace or quotes would replay (and overlay) a
         // different value than the caller wrote.
-        conditions += FilterDescriptor.Condition(
-            column = key,
-            operatorId = operator.identifier,
-            value = rawValue
-        )
+        conditions +=
+            FilterDescriptor.Condition(
+                column = key,
+                operatorId = operator.identifier,
+                value = rawValue,
+            )
     }
 
     if (conditions.isEmpty()) return null
     return FilterDescriptor(
         mode = FilterDescriptor.Mode.AND,
-        conditions = conditions
+        conditions = conditions,
     )
 }
 
@@ -128,11 +130,12 @@ internal fun buildDescriptorFromBuilder(
  * offline descriptor format cannot represent faithfully — a logical group (`or(...)` / `and(...)`),
  * a foreign-table dotted key, or a negated/unrecognized operator prefix such as `not.`.
  *
- * The offline-queue branches of [io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder] catch this and
- * fail the caller's original write instead of enqueuing a mutation that would later replay against a
- * broader row set than the caller targeted.
+ * The offline-queue branches of [io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder]
+ * catch this and fail the caller's original write instead of enqueuing a mutation that would later
+ * replay against a broader row set than the caller targeted.
  */
-internal class UnsupportedOfflineFilterException(message: String) : IllegalArgumentException(message)
+internal class UnsupportedOfflineFilterException(message: String) :
+    IllegalArgumentException(message)
 
 /**
  * PostgREST query parameters that [buildDescriptorStrict] must not read as filter conditions.
@@ -143,28 +146,28 @@ internal class UnsupportedOfflineFilterException(message: String) : IllegalArgum
  *
  * Everything else stays fail-closed, and for two distinct reasons — neither of which is "it is not
  * a filter":
- *  - `limit` / `offset` / `order` narrow which **rows** the mutation reaches. Dropping one replays
- *    against more rows than the caller wrote.
- *  - `columns` narrows which **columns** of the body the server applies. The descriptor cannot
- *    carry it, so dropping it would replay a wider write than the caller made — the same "wrote
- *    more than was asked for" failure, one axis over. (Today it is unreachable here: supabase-kt's
- *    `PostgrestRequestBuilder` only exposes it on inserts, which never take this path. Listing it
- *    as a skip would be a fail-open exemption waiting for that to change.)
+ * - `limit` / `offset` / `order` narrow which **rows** the mutation reaches. Dropping one replays
+ *   against more rows than the caller wrote.
+ * - `columns` narrows which **columns** of the body the server applies. The descriptor cannot carry
+ *   it, so dropping it would replay a wider write than the caller made — the same "wrote more than
+ *   was asked for" failure, one axis over. (Today it is unreachable here: supabase-kt's
+ *   `PostgrestRequestBuilder` only exposes it on inserts, which never take this path. Listing it as
+ *   a skip would be a fail-open exemption waiting for that to change.)
  */
 private val NON_FILTER_PARAMS: Set<String> = setOf("select")
 
 /**
- * Strict counterpart to [buildDescriptorFromBuilder], used on the **replay** path (queued
- * UPDATE / DELETE) where silently dropping an un-capturable condition would replay the mutation
- * against more rows than the caller intended.
+ * Strict counterpart to [buildDescriptorFromBuilder], used on the **replay** path (queued UPDATE /
+ * DELETE) where silently dropping an un-capturable condition would replay the mutation against more
+ * rows than the caller intended.
  *
  * Captures the simple `column -> "op.value"` shape exactly like [buildDescriptorFromBuilder], but
  * instead of skipping anything it cannot represent it throws [UnsupportedOfflineFilterException]
  * when [PostgrestRequestBuilder.params] contains:
- *  - a key with `(`, `)` or `.` — a logical group (`or(...)` / `and(...)`) or a foreign-table
- *    dotted key; neither is representable in the flat offline descriptor
- *  - a first value whose operator prefix is not a known [FilterOperator] identifier — this covers
- *    `not.`-negated operators and any group expression encoded into the value
+ * - a key with `(`, `)` or `.` — a logical group (`or(...)` / `and(...)`) or a foreign-table dotted
+ *   key; neither is representable in the flat offline descriptor
+ * - a first value whose operator prefix is not a known [FilterOperator] identifier — this covers
+ *   `not.`-negated operators and any group expression encoded into the value
  *
  * Returns `null` only for a genuinely filter-free request (no capturable params), mirroring
  * [buildDescriptorFromBuilder]'s empty-conditions contract.
@@ -178,9 +181,7 @@ private val NON_FILTER_PARAMS: Set<String> = setOf("select")
  * @return a faithful [FilterDescriptor], or `null` when no filter conditions are present.
  * @throws UnsupportedOfflineFilterException when a condition cannot be captured without broadening.
  */
-internal fun buildDescriptorStrict(
-    builder: PostgrestRequestBuilder
-): FilterDescriptor? {
+internal fun buildDescriptorStrict(builder: PostgrestRequestBuilder): FilterDescriptor? {
     val conditions = mutableListOf<FilterDescriptor.Condition>()
 
     builder.params.forEach { (key, values) ->
@@ -213,17 +214,18 @@ internal fun buildDescriptorStrict(
         }
 
         // Stored exactly as encoded, so replay sends the very value the caller's request did.
-        conditions += FilterDescriptor.Condition(
-            column = key,
-            operatorId = operator.identifier,
-            value = parts[1]
-        )
+        conditions +=
+            FilterDescriptor.Condition(
+                column = key,
+                operatorId = operator.identifier,
+                value = parts[1],
+            )
     }
 
     if (conditions.isEmpty()) return null
     return FilterDescriptor(
         mode = FilterDescriptor.Mode.AND,
-        conditions = conditions
+        conditions = conditions,
     )
 }
 
@@ -241,7 +243,7 @@ internal fun buildDescriptorStrict(
 internal fun buildDescriptorStrictFromRequest(
     defaultSchema: String,
     conversionMethod: PropertyConversionMethod,
-    request: PostgrestRequestBuilder.() -> Unit
+    request: PostgrestRequestBuilder.() -> Unit,
 ): FilterDescriptor? {
     val builder = SelectRequestBuilder(defaultSchema, conversionMethod).apply(request)
     return buildDescriptorStrict(builder)
@@ -251,8 +253,8 @@ internal fun buildDescriptorStrictFromRequest(
  * Encodes / decodes filter descriptors and replays them on demand.
  *
  * - [encode] / [decodeOrNull] : store & restore conditions for UPDATE/DELETE mutations
- * - [applyTo]           : replay a FilterDescriptor onto PostgrestRequestBuilder
- * - [inListMembersOf]   : read an `in` list the way replay does, for [rowMatch]
+ * - [applyTo] : replay a FilterDescriptor onto PostgrestRequestBuilder
+ * - [inListMembersOf] : read an `in` list the way replay does, for [rowMatch]
  */
 internal object FilterEngine {
 
@@ -265,10 +267,10 @@ internal object FilterEngine {
     private const val SCRATCH_SCHEMA = "public"
 
     /**
-     * Property-conversion method for that same throwaway builder. `CAMEL_CASE_TO_SNAKE_CASE`
-     * rather than `SERIAL_NAME`, which is JVM/Android-only and would not link on the iOS target.
-     * The value is inert either way: replay addresses columns by their captured `String` names,
-     * which no conversion method touches.
+     * Property-conversion method for that same throwaway builder. `CAMEL_CASE_TO_SNAKE_CASE` rather
+     * than `SERIAL_NAME`, which is JVM/Android-only and would not link on the iOS target. The value
+     * is inert either way: replay addresses columns by their captured `String` names, which no
+     * conversion method touches.
      */
     private val SCRATCH_CONVERSION = PropertyConversionMethod.CAMEL_CASE_TO_SNAKE_CASE
 
@@ -281,7 +283,8 @@ internal object FilterEngine {
         if (filterJson.isNullOrBlank()) return null
         return runCatching {
             json.decodeFromString(FilterDescriptor.serializer(), filterJson)
-        }.getOrNull()
+        }
+            .getOrNull()
     }
 
     /* ───────────────────── Replay onto PostgREST ───────────────────── */
@@ -291,22 +294,22 @@ internal object FilterEngine {
      *
      * Used by MutationQueueReplayer when syncing UPDATE / DELETE operations.
      *
-     * - For [FilterDescriptor.Mode.AND], we just call each condition on the filter DSL:
-     *   `filter { eq(...); lt(...); ilike(...) }`
+     * - For [FilterDescriptor.Mode.AND], we just call each condition on the filter DSL: `filter {
+     *   eq(...); lt(...); ilike(...) }`
      *
-     * - For [FilterDescriptor.Mode.OR], we wrap the conditions in a logical OR block:
-     *   `filter { or { eq(...); lt(...); } }`
+     * - For [FilterDescriptor.Mode.OR], we wrap the conditions in a logical OR block: `filter { or
+     *   { eq(...); lt(...); } }`
      *
-     * The underlying `PostgrestFilterBuilder` takes care of building the correct
-     * `or=(...)` / `and=(...)` query params.
+     * The underlying `PostgrestFilterBuilder` takes care of building the correct `or=(...)` /
+     * `and=(...)` query params.
      *
-     * @return how many of [FilterDescriptor.conditions] actually landed on [builder]. A count
-     *   below `descriptor.conditions.size` means the replayed request targets a broader row set
-     *   than the caller captured — see [replaysFully], which is how callers check that.
+     * @return how many of [FilterDescriptor.conditions] actually landed on [builder]. A count below
+     *   `descriptor.conditions.size` means the replayed request targets a broader row set than the
+     *   caller captured — see [replaysFully], which is how callers check that.
      */
     fun applyTo(
         builder: PostgrestRequestBuilder,
-        descriptor: FilterDescriptor
+        descriptor: FilterDescriptor,
     ): Int {
         var applied = 0
         builder.filter {
@@ -339,15 +342,14 @@ internal object FilterEngine {
      * replay can be dropped instead of broadened.
      *
      * The check replays onto a throwaway builder rather than re-deriving the parse rules, so it
-     * cannot drift from [applyTo] when a new operator branch is added. The scratch builder's
-     * schema and property-conversion method are arbitrary: replay addresses columns by the
-     * `String` names captured in the descriptor, so neither value can change whether a condition
-     * lands.
+     * cannot drift from [applyTo] when a new operator branch is added. The scratch builder's schema
+     * and property-conversion method are arbitrary: replay addresses columns by the `String` names
+     * captured in the descriptor, so neither value can change whether a condition lands.
      *
      * A descriptor carrying **no** conditions is reported as not replayable, even though it
      * vacuously loses nothing. [buildDescriptorStrict] returns `null` rather than an empty
-     * descriptor, so an empty one can only come from a corrupted or hand-written stored row —
-     * and replaying it produces exactly the unfiltered request the null-descriptor guard already
+     * descriptor, so an empty one can only come from a corrupted or hand-written stored row — and
+     * replaying it produces exactly the unfiltered request the null-descriptor guard already
      * refuses. Treating it as replayable would let it through the one gate meant to catch it.
      *
      * @param descriptor the stored filter about to be replayed.
@@ -361,11 +363,11 @@ internal object FilterEngine {
     }
 
     /**
-     * Apply a single condition to the [PostgrestFilterBuilder] using the same
-     * DSL that callers would use online.
+     * Apply a single condition to the [PostgrestFilterBuilder] using the same DSL that callers
+     * would use online.
      *
-     * @return true when the condition landed on the builder; false when its stored value could
-     *   not be parsed back into the shape the operator needs and the condition was skipped.
+     * @return true when the condition landed on the builder; false when its stored value could not
+     *   be parsed back into the shape the operator needs and the condition was skipped.
      */
     private fun PostgrestFilterBuilder.applyCondition(cond: FilterDescriptor.Condition): Boolean {
         val operator = cond.operator ?: return false
@@ -400,13 +402,15 @@ internal object FilterEngine {
 
             // Array / JSON operators. Each accepts two encodings — a `{a,b}` element list and an
             // `[a,b]` range — so both must be recognised; see [applyArrayOrRangeCondition].
-            FilterOperator.CS -> return applyArrayOrRangeCondition(cond, FilterOperator.CS) { list ->
-                cs(cond.column, list)
-            }
+            FilterOperator.CS ->
+                return applyArrayOrRangeCondition(cond, FilterOperator.CS) { list ->
+                    cs(cond.column, list)
+                }
 
-            FilterOperator.CD -> return applyArrayOrRangeCondition(cond, FilterOperator.CD) { list ->
-                cd(cond.column, list)
-            }
+            FilterOperator.CD ->
+                return applyArrayOrRangeCondition(cond, FilterOperator.CD) { list ->
+                    cd(cond.column, list)
+                }
 
             // Ranges
             FilterOperator.SL -> {
@@ -434,9 +438,10 @@ internal object FilterEngine {
                 adjacent(cond.column, range)
             }
 
-            FilterOperator.OV -> return applyArrayOrRangeCondition(cond, FilterOperator.OV) { list ->
-                ov(cond.column, list)
-            }
+            FilterOperator.OV ->
+                return applyArrayOrRangeCondition(cond, FilterOperator.OV) { list ->
+                    ov(cond.column, list)
+                }
 
             // Full text search: map onto textSearch + TextSearchType
             FilterOperator.FTS -> textSearch(cond.column, rawValue, TextSearchType.NONE)
@@ -488,9 +493,9 @@ internal object FilterEngine {
     /**
      * Recognises supabase-kt's `[min,max]` range encoding for the array operators.
      *
-     * Returns `null` for anything else — including a genuine JSON string array (`["a","b"]`),
-     * which stays a list so the older capture form keeps decoding as it always has. That check
-     * is what makes the two bracket forms separable: only the JSON one decodes.
+     * Returns `null` for anything else — including a genuine JSON string array (`["a","b"]`), which
+     * stays a list so the older capture form keeps decoding as it always has. That check is what
+     * makes the two bracket forms separable: only the JSON one decodes.
      */
     private fun parsePostgrestRangeLiteral(raw: String?): Pair<Any, Any>? {
         val trimmed = raw?.trim() ?: return null
@@ -503,10 +508,11 @@ internal object FilterEngine {
     }
 
     /**
-     * The members of an `in` value — `(a,"b,c")`, or a JSON array of strings — read exactly as replay
-     * reads them, or `null` when it is neither.
+     * The members of an `in` value — `(a,"b,c")`, or a JSON array of strings — read exactly as
+     * replay reads them, or `null` when it is neither.
      */
-    fun inListMembersOf(value: String): List<String>? = parseArray(value)?.map { member -> member.toString() }
+    fun inListMembersOf(value: String): List<String>? =
+        parseArray(value)?.map { member -> member.toString() }
 
     /**
      * Parse Condition.value into a list of strings for array-like operators:
@@ -518,12 +524,12 @@ internal object FilterEngine {
      *   supabase-kt encodes them differently — see [splitPostgrestListValue].
      *
      * A wrapped-but-empty value (`()` / `{}`) returns an empty list — distinct from `null` — so
-     * replay can reproduce the caller's original empty filter instead of dropping the condition
-     * and broadening the mutation's target set. `null` means "unparseable"; callers skip the
-     * condition only in that case.
+     * replay can reproduce the caller's original empty filter instead of dropping the condition and
+     * broadening the mutation's target set. `null` means "unparseable"; callers skip the condition
+     * only in that case.
      *
-     * [rowMatch]'s `in` evaluation parses through here too, so the overlay and the replayed
-     * request cannot end up with different element lists for the same stored value.
+     * [rowMatch]'s `in` evaluation parses through here too, so the overlay and the replayed request
+     * cannot end up with different element lists for the same stored value.
      */
     private fun parseArray(raw: String?): List<Any>? {
         if (raw == null) return null
@@ -548,7 +554,8 @@ internal object FilterEngine {
     /** Decodes a JSON array of strings, or `null` when [raw] is not one. */
     private fun decodeJsonStringList(raw: String): List<String>? = runCatching {
         json.decodeFromString(ListSerializer(String.serializer()), raw)
-    }.getOrNull()
+    }
+        .getOrNull()
 
     /**
      * Tokenizes a captured list value, choosing the tokenizer from **how supabase-kt encoded the
@@ -557,11 +564,11 @@ internal object FilterEngine {
      * supabase-kt has exactly one list encoder that escapes its elements — `encodeAsList`, which
      * emits the `in` operator's `(a,b)` and runs every element through `escapeValue`. Every other
      * list or range body is interpolated verbatim: `encodeOverlapAsArray` (`cs`/`cd`/`ov`'s
-     * `{a,b}`) joins plain `toString()` output, and `encodeAsRange` / `encodeOverlapAsRange`
-     * build `"(${first},${second})"` / `"[${first},${second}]"` by raw string interpolation.
-     * Applying the escaped tokenizer to one of those verbatim bodies deletes the element's real
-     * `"` and `\` characters and replays a filter that targets different rows — the exact failure
-     * class this parser exists to prevent.
+     * `{a,b}`) joins plain `toString()` output, and `encodeAsRange` / `encodeOverlapAsRange` build
+     * `"(${first},${second})"` / `"[${first},${second}]"` by raw string interpolation. Applying the
+     * escaped tokenizer to one of those verbatim bodies deletes the element's real `"` and `\`
+     * characters and replays a filter that targets different rows — the exact failure class this
+     * parser exists to prevent.
      *
      * @param value The captured value, wrapper included.
      * @return the value's elements, wrapper stripped.
@@ -587,14 +594,14 @@ internal object FilterEngine {
         length >= 2 && startsWith('(') && endsWith(')')
 
     /**
-     * Splits a body supabase-kt interpolated verbatim — `{a,b}` (`encodeOverlapAsArray`),
-     * `[a,b]` (`encodeOverlapAsRange`) and the range operators' `(a,b)` (`encodeAsRange`).
+     * Splits a body supabase-kt interpolated verbatim — `{a,b}` (`encodeOverlapAsArray`), `[a,b]`
+     * (`encodeOverlapAsRange`) and the range operators' `(a,b)` (`encodeAsRange`).
      *
      * None of those encoders calls `escapeValue`, so every byte between the commas is literal
      * element content: unescaping a `\` or stripping a `"` here would replay a *different* value.
      * The flip side is that an element containing a `,` is unrecoverable — the encoder emitted no
-     * marker separating it from a real delimiter, so the loss happens before capture and the
-     * parser cannot undo it.
+     * marker separating it from a real delimiter, so the loss happens before capture and the parser
+     * cannot undo it.
      */
     private fun splitVerbatimElements(body: String): List<String> = body.split(',')
 
@@ -603,17 +610,17 @@ internal object FilterEngine {
      * `escapeValue` applies. This is the **only** body that gets escape handling; see
      * [splitPostgrestListValue] for why.
      *
-     * `escapeValue` backslash-escapes `\` and `"`, then wraps the element in double quotes when
-     * it contains any of `,` `.` `:` `(` `)`. A naive `split(',')` therefore tears
-     * `isIn(col, listOf("a,b"))` — encoded `in.("a,b")` — into `a` and `b` and replays
-     * `in.(a,b)`, which matches a different set of rows than the caller asked for. (Before the
-     * wrapper strip landed the same value produced inert garbage; correcting the wrapper is what
-     * made this leg reachable.)
+     * `escapeValue` backslash-escapes `\` and `"`, then wraps the element in double quotes when it
+     * contains any of `,` `.` `:` `(` `)`. A naive `split(',')` therefore tears `isIn(col,
+     * listOf("a,b"))` — encoded `in.("a,b")` — into `a` and `b` and replays `in.(a,b)`, which
+     * matches a different set of rows than the caller asked for. (Before the wrapper strip landed
+     * the same value produced inert garbage; correcting the wrapper is what made this leg
+     * reachable.)
      *
      * A quoted element is taken verbatim; an unquoted one is trimmed, preserving the previous
-     * behaviour for the ordinary case. An unterminated quote — which `escapeValue` cannot emit —
-     * is closed implicitly at the end of the input rather than rejected, since returning "no
-     * elements" would drop the condition and broaden the mutation.
+     * behaviour for the ordinary case. An unterminated quote — which `escapeValue` cannot emit — is
+     * closed implicitly at the end of the input rather than rejected, since returning "no elements"
+     * would drop the condition and broaden the mutation.
      */
     private fun splitEscapedElements(body: String): List<String> {
         val elements = mutableListOf<String>()
@@ -662,8 +669,8 @@ internal object FilterEngine {
      *
      * Supported string forms:
      * - JSON array: `["min","max"]`
-     * - Comma-separated, with or without the `(min,max)` wrapper supabase-kt encodes for the
-     *   range operators (`sl` / `sr` / `nxl` / `nxr` / `adj`) — the strict capture preserves it.
+     * - Comma-separated, with or without the `(min,max)` wrapper supabase-kt encodes for the range
+     *   operators (`sl` / `sr` / `nxl` / `nxr` / `adj`) — the strict capture preserves it.
      *
      * Bounds are tokenized verbatim ([splitVerbatimElements]). `encodeAsRange` builds the value as
      * `"(${range.first},${range.second})"` — raw interpolation, never `escapeValue` — so a bound's
@@ -695,8 +702,8 @@ internal object FilterEngine {
         // from a bound of "a" and a bound of "b". There is no way to recover which, and guessing
         // the first two replays a filter the caller never wrote. Returning null instead makes the
         // condition un-replayable, which [replaysFully] turns into a refusal upstream.
-        val parts = splitVerbatimElements(trimmed.stripPostgrestListWrapper())
-            .filter { it.isNotEmpty() }
+        val parts =
+            splitVerbatimElements(trimmed.stripPostgrestListWrapper()).filter { it.isNotEmpty() }
         if (parts.size == 2) {
             return parts[0] to parts[1]
         }
@@ -705,23 +712,27 @@ internal object FilterEngine {
     }
 
     /**
-     * Strips one matching pair of PostgREST value delimiters: the `(...)` wrapper supabase-kt
-     * emits for `in` and range operator values, or the `{...}` wrapper it emits for `cs` / `cd` /
-     * `ov` array values. The strict capture stores condition values exactly as encoded, so without
-     * this the comma-split leaves a stray delimiter on the first and last element (`"(a"`, `"c)"`)
-     * and the replayed filter targets corrupted values. Unwrapped values pass through unchanged.
+     * Strips one matching pair of PostgREST value delimiters: the `(...)` wrapper supabase-kt emits
+     * for `in` and range operator values, or the `{...}` wrapper it emits for `cs` / `cd` / `ov`
+     * array values. The strict capture stores condition values exactly as encoded, so without this
+     * the comma-split leaves a stray delimiter on the first and last element (`"(a"`, `"c)"`) and
+     * the replayed filter targets corrupted values. Unwrapped values pass through unchanged.
      */
-    private fun String.stripPostgrestListWrapper(): String = when {
-        length >= 2 && startsWith('(') && endsWith(')') -> substring(1, length - 1)
-        length >= 2 && startsWith('{') && endsWith('}') -> substring(1, length - 1)
-        // `[...]` is `encodeOverlapAsRange`'s wrapper, and [parseRange] is the only caller that
-        // reaches it — but only because every other path returns before getting here, not because
-        // a `[`-shaped value is impossible. [parseArray] returns at its JSON branch for any
-        // `[`-prefixed value (`null` when it is not decodable JSON), the array operators route the
-        // range form through [applyArrayOrRangeCondition] first, and [rowMatch]'s `in`
-        // evaluation parses via [parseArray] rather than stripping wrappers itself — which is what
-        // keeps the overlay from matching the bounds of a value the replay path drops.
-        length >= 2 && startsWith('[') && endsWith(']') -> substring(1, length - 1)
-        else -> this
-    }
+    private fun String.stripPostgrestListWrapper(): String =
+        when {
+            length >= 2 && startsWith('(') && endsWith(')') -> substring(1, length - 1)
+            length >= 2 && startsWith('{') && endsWith('}') -> substring(1, length - 1)
+            // `[...]` is `encodeOverlapAsRange`'s wrapper, and [parseRange] is the only caller that
+            // reaches it — but only because every other path returns before getting here, not
+            // because
+            // a `[`-shaped value is impossible. [parseArray] returns at its JSON branch for any
+            // `[`-prefixed value (`null` when it is not decodable JSON), the array operators route
+            // the
+            // range form through [applyArrayOrRangeCondition] first, and [rowMatch]'s `in`
+            // evaluation parses via [parseArray] rather than stripping wrappers itself — which is
+            // what
+            // keeps the overlay from matching the bounds of a value the replay path drops.
+            length >= 2 && startsWith('[') && endsWith(']') -> substring(1, length - 1)
+            else -> this
+        }
 }

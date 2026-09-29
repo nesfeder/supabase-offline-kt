@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -10,21 +12,21 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * Replay order across tables.
  *
  * The queue is one global list in insertion order. A sweep replays it front to back and stops at
- * the first write that cannot go through for a reason that may pass (offline, a server error), so
- * a later write can never overtake an earlier one — not in its own table, and not in a table it
+ * the first write that cannot go through for a reason that may pass (offline, a server error), so a
+ * later write can never overtake an earlier one — not in its own table, and not in a table it
  * depends on through a foreign key or a row-level-security policy.
  */
 class MutationQueueReplayOrderTest {
@@ -37,7 +39,10 @@ class MutationQueueReplayOrderTest {
     fun a_child_queued_after_its_parent_in_another_table_reaches_the_server() = runTest {
         // Given — photos reference tasks; offline the user edits an existing photo, creates a
         // task, then attaches a photo to the new task
-        val server = FakeRelationalPostgrestServer(foreignKeys = mapOf(PHOTOS to ForeignKey("task_id", TASKS)))
+        val server =
+            FakeRelationalPostgrestServer(
+                foreignKeys = mapOf(PHOTOS to ForeignKey("task_id", TASKS))
+            )
         server.seed(TASKS, row("id" to "t0"))
         server.seed(PHOTOS, row("id" to "p0", "task_id" to "t0", "caption" to "old"))
         store.enqueueUpdate(table = PHOTOS, body = row("caption" to "new"), filter = idFilter("p0"))
@@ -52,7 +57,10 @@ class MutationQueueReplayOrderTest {
         assertEquals(3, synced)
         assertEquals(setOf("t0", "t1"), server.rows(TASKS).map { it.string("id") }.toSet())
         assertEquals(setOf("p0", "p1"), server.rows(PHOTOS).map { it.string("id") }.toSet())
-        assertEquals("new", server.rows(PHOTOS).single { it.string("id") == "p0" }.string("caption"))
+        assertEquals(
+            "new",
+            server.rows(PHOTOS).single { it.string("id") == "p0" }.string("caption"),
+        )
         assertEquals(0, store.pendingMutationCount())
     }
 
@@ -78,9 +86,12 @@ class MutationQueueReplayOrderTest {
         // Given — a write to one table, then a write to another; the first cannot reach the server
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1")))
-        val server = RecordingPostgrestServer(
-            answer = { request -> if (request.table == TASKS) connectivityFailure() else okJson("[]") },
-        )
+        val server =
+            RecordingPostgrestServer(
+                answer = { request ->
+                    if (request.table == TASKS) connectivityFailure() else okJson("[]")
+                }
+            )
         val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
@@ -94,14 +105,17 @@ class MutationQueueReplayOrderTest {
 
     @Test
     fun a_server_error_stops_the_whole_sweep_instead_of_skipping_ahead() = runTest {
-        // Given — the server fails the first table's write with a 500; a later write waits behind it
+        // Given — the server fails the first table's write with a 500; a later write waits behind
+        // it
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1")))
-        val server = RecordingPostgrestServer(
-            answer = { request ->
-                if (request.table == TASKS) postgrestError(HttpStatusCode.InternalServerError) else okJson("[]")
-            },
-        )
+        val server =
+            RecordingPostgrestServer(
+                answer = { request ->
+                    if (request.table == TASKS) postgrestError(HttpStatusCode.InternalServerError)
+                    else okJson("[]")
+                }
+            )
         val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
@@ -116,7 +130,10 @@ class MutationQueueReplayOrderTest {
     @Test
     fun a_conflict_behind_an_earlier_pending_write_in_another_table_is_held() = runTest {
         // Given — the parent task is still queued; only the photo table is synced
-        val server = FakeRelationalPostgrestServer(foreignKeys = mapOf(PHOTOS to ForeignKey("task_id", TASKS)))
+        val server =
+            FakeRelationalPostgrestServer(
+                foreignKeys = mapOf(PHOTOS to ForeignKey("task_id", TASKS))
+            )
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
         val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
@@ -154,9 +171,11 @@ class MutationQueueReplayOrderTest {
 
     private fun rows(vararg objects: JsonObject): JsonArray = JsonArray(objects.toList())
 
-    private fun idFilter(id: String): FilterDescriptor = FilterDescriptor(
-        conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)),
-    )
+    private fun idFilter(id: String): FilterDescriptor =
+        FilterDescriptor(
+            conditions =
+                listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id))
+        )
 
     private fun JsonObject.string(key: String): String = (getValue(key) as JsonPrimitive).content
 

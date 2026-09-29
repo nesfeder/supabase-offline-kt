@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMARY_KEY
@@ -10,17 +12,17 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
- * Every row of an upsert reaches the cached queries once: matched by the conflict columns, or by the
- * table's primary key when none are given, online and queued, and still once after a restart.
+ * Every row of an upsert reaches the cached queries once: matched by the conflict columns, or by
+ * the table's primary key when none are given, online and queued, and still once after a restart.
  * The primary key is `id` unless the client is told otherwise for a table, composite keys included.
  */
 class UpsertOverlayTest {
@@ -31,21 +33,21 @@ class UpsertOverlayTest {
 
     private var client: SupabaseOfflineClient = newClient()
 
-    private fun newClient(primaryKeys: PrimaryKeys = DefaultPrimaryKeys): SupabaseOfflineClient = newTestOfflineClient(
-        supabase = server.supabaseClient(),
-        store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao),
-        coordinatorScope = idleCoroutineScope(),
-        primaryKeys = primaryKeys,
-    )
+    private fun newClient(primaryKeys: PrimaryKeys = DefaultPrimaryKeys): SupabaseOfflineClient =
+        newTestOfflineClient(
+            supabase = server.supabaseClient(),
+            store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao),
+            coordinatorScope = idleCoroutineScope(),
+            primaryKeys = primaryKeys,
+        )
 
     /** A new client over the same database, as after the app restarts. */
     private fun restart(primaryKeys: PrimaryKeys = DefaultPrimaryKeys) {
         client = newClient(primaryKeys)
     }
 
-    private suspend fun cached(table: String): List<JsonObject> = rows(
-        client.from(table).select(readStrategy = ReadStrategy.CacheOnly()).data,
-    )
+    private suspend fun cached(table: String): List<JsonObject> =
+        rows(client.from(table).select(readStrategy = ReadStrategy.CacheOnly()).data)
 
     private suspend fun cache(table: String) {
         client.from(table).select(readStrategy = ReadStrategy.NetworkOnly)
@@ -62,7 +64,11 @@ class UpsertOverlayTest {
         cache(TABLE)
 
         // When
-        client.from(TABLE).upsertJson(rows("""[{"id":"1","v":2},{"id":"2","v":2},{"id":"3","v":2}]""").let(::JsonArray)) { onConflict = "id" }
+        client.from(TABLE).upsertJson(
+            rows("""[{"id":"1","v":2},{"id":"2","v":2},{"id":"3","v":2}]""").let(::JsonArray)
+        ) {
+            onConflict = "id"
+        }
 
         // Then
         val expected = rows("""[{"id":"1","v":2},{"id":"2","v":2},{"id":"3","v":2}]""")
@@ -92,7 +98,11 @@ class UpsertOverlayTest {
         goOffline()
 
         // When
-        client.from(TABLE).upsertJson(rows("""[{"id":"1","v":2},{"id":"3","v":2}]""").let(::JsonArray)) { onConflict = "id" }
+        client.from(TABLE).upsertJson(
+            rows("""[{"id":"1","v":2},{"id":"3","v":2}]""").let(::JsonArray)
+        ) {
+            onConflict = "id"
+        }
 
         // Then
         val expected = rows("""[{"id":"1","v":2},{"id":"2","v":1},{"id":"3","v":2}]""")
@@ -109,7 +119,11 @@ class UpsertOverlayTest {
         goOffline()
 
         // When
-        client.from(TABLE).upsertJson(rows("""[{"email":"a@example.com","v":2}]""").let(::JsonArray)) { onConflict = "email" }
+        client.from(TABLE).upsertJson(
+            rows("""[{"email":"a@example.com","v":2}]""").let(::JsonArray)
+        ) {
+            onConflict = "email"
+        }
 
         // Then
         val expected = rows("""[{"id":"1","email":"a@example.com","v":2}]""")
@@ -127,7 +141,11 @@ class UpsertOverlayTest {
         goOffline()
 
         // When
-        client.from(MEMBERSHIPS).upsertJson(rows("""[{"team_id":"t","member_id":"m","role":"editor"}]""").let(::JsonArray))
+        client
+            .from(MEMBERSHIPS)
+            .upsertJson(
+                rows("""[{"team_id":"t","member_id":"m","role":"editor"}]""").let(::JsonArray)
+            )
 
         // Then
         val expected = rows("""[{"team_id":"t","member_id":"m","role":"editor"}]""")
@@ -144,14 +162,19 @@ class UpsertOverlayTest {
         cache(MEMBERSHIPS)
         val online = server.recorder.answer
         goOffline()
-        client.from(MEMBERSHIPS).insertJson(rows("""[{"id":"t","team_id":"t","member_id":"m2"}]""").let(::JsonArray))
+        client
+            .from(MEMBERSHIPS)
+            .insertJson(rows("""[{"id":"t","team_id":"t","member_id":"m2"}]""").let(::JsonArray))
 
         // When — it replays, and the cached query has not refreshed since
         server.recorder.answer = online
         client.syncAllPendingMutations()
 
         // Then
-        val expected = rows("""[{"id":"t","team_id":"t","member_id":"m1"},{"id":"t","team_id":"t","member_id":"m2"}]""")
+        val expected =
+            rows(
+                """[{"id":"t","team_id":"t","member_id":"m1"},{"id":"t","team_id":"t","member_id":"m2"}]"""
+            )
         assertEquals(expected, cached(MEMBERSHIPS))
         restart(MEMBERSHIP_KEYS)
         assertEquals(expected, cached(MEMBERSHIPS))
@@ -159,11 +182,14 @@ class UpsertOverlayTest {
 
     private fun row(json: String): JsonObject = Json.parseToJsonElement(json).jsonObject
 
-    private fun rows(json: String): List<JsonObject> = (Json.parseToJsonElement(json) as JsonArray).map { it.jsonObject }
+    private fun rows(json: String): List<JsonObject> =
+        (Json.parseToJsonElement(json) as JsonArray).map { it.jsonObject }
 
     private companion object {
         const val TABLE = "contacts"
         const val MEMBERSHIPS = "memberships"
-        val MEMBERSHIP_KEYS = PrimaryKeys { table -> if (table == MEMBERSHIPS) listOf("team_id", "member_id") else DEFAULT_PRIMARY_KEY }
+        val MEMBERSHIP_KEYS = PrimaryKeys { table ->
+            if (table == MEMBERSHIPS) listOf("team_id", "member_id") else DEFAULT_PRIMARY_KEY
+        }
     }
 }

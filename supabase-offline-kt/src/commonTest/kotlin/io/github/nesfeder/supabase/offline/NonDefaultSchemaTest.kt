@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -5,13 +7,13 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * A table in a schema other than the client's default is its own cached query: it never shares a
@@ -21,15 +23,27 @@ import kotlin.test.assertTrue
  */
 class NonDefaultSchemaTest {
 
-    /** Answers a read with one row naming the schema it was asked in; `online` off, it cannot connect. */
+    /**
+     * Answers a read with one row naming the schema it was asked in; `online` off, it cannot
+     * connect.
+     */
     private var online = true
-    private val server = RecordingPostgrestServer(
-        answer = { request ->
-            if (!online) connectivityFailure()
-            okJson(if (request.method == "GET") """[{"id":1,"schema":"${request.acceptProfile}"}]""" else "[]")
-        },
-    )
-    private val client = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = idleCoroutineScope())
+    private val server =
+        RecordingPostgrestServer(
+            answer = { request ->
+                if (!online) connectivityFailure()
+                okJson(
+                    if (request.method == "GET")
+                        """[{"id":1,"schema":"${request.acceptProfile}"}]"""
+                    else "[]"
+                )
+            }
+        )
+    private val client =
+        newTestOfflineClient(
+            supabase = server.supabaseClient(),
+            coordinatorScope = idleCoroutineScope(),
+        )
 
     @Test
     fun the_same_table_in_two_schemas_is_cached_apart() = runTest {
@@ -38,7 +52,8 @@ class NonDefaultSchemaTest {
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly)
 
         // When
-        val other = client.from(OTHER_SCHEMA, TABLE).select(readStrategy = ReadStrategy.CacheOnly()).data
+        val other =
+            client.from(OTHER_SCHEMA, TABLE).select(readStrategy = ReadStrategy.CacheOnly()).data
         val default = client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly()).data
 
         // Then
@@ -53,7 +68,11 @@ class NonDefaultSchemaTest {
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly)
 
         // When
-        val other = client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly()) { schema = OTHER_SCHEMA }.data
+        val other =
+            client
+                .from(TABLE)
+                .select(readStrategy = ReadStrategy.CacheOnly()) { schema = OTHER_SCHEMA }
+                .data
 
         // Then
         assertEquals("""[{"id":1,"schema":"$OTHER_SCHEMA"}]""", other)
@@ -65,12 +84,16 @@ class NonDefaultSchemaTest {
         online = false
 
         // When
-        val refusal = assertFailsWith<UnsupportedOperationException> {
-            client.from(OTHER_SCHEMA, TABLE).insertJson(rows("""[{"id":2}]"""))
-        }
+        val refusal =
+            assertFailsWith<UnsupportedOperationException> {
+                client.from(OTHER_SCHEMA, TABLE).insertJson(rows("""[{"id":2}]"""))
+            }
 
         // Then — nothing was queued to replay into the default schema
-        assertTrue(OTHER_SCHEMA in refusal.message.orEmpty(), "the error does not name the schema: ${refusal.message}")
+        assertTrue(
+            OTHER_SCHEMA in refusal.message.orEmpty(),
+            "the error does not name the schema: ${refusal.message}",
+        )
         assertEquals(0, client.pendingMutationCount())
     }
 
@@ -78,7 +101,11 @@ class NonDefaultSchemaTest {
     fun a_queued_write_to_another_schema_is_refused_while_online_too() = runTest {
         // When
         assertFailsWith<UnsupportedOperationException> {
-            client.from(OTHER_SCHEMA, TABLE).updateJson(Json.parseToJsonElement("""{"done":true}""")) { filter { eq("id", 1) } }
+            client.from(OTHER_SCHEMA, TABLE).updateJson(
+                Json.parseToJsonElement("""{"done":true}""")
+            ) {
+                filter { eq("id", 1) }
+            }
         }
 
         // Then — not sent either
@@ -88,11 +115,17 @@ class NonDefaultSchemaTest {
     @Test
     fun an_online_only_write_to_another_schema_is_sent_to_it() = runTest {
         // When
-        val outcome = client.from(OTHER_SCHEMA, TABLE).insertJson(rows("""[{"id":2}]"""), mutationStrategy = MutationStrategy.OnlineOnly)
+        val outcome =
+            client
+                .from(OTHER_SCHEMA, TABLE)
+                .insertJson(rows("""[{"id":2}]"""), mutationStrategy = MutationStrategy.OnlineOnly)
 
         // Then
         assertTrue(outcome is MutationOutcome.Applied)
-        assertEquals(OTHER_SCHEMA, server.requests.single { request -> request.method == "POST" }.contentProfile)
+        assertEquals(
+            OTHER_SCHEMA,
+            server.requests.single { request -> request.method == "POST" }.contentProfile,
+        )
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

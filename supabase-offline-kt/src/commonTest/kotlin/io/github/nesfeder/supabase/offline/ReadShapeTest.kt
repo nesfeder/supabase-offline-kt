@@ -1,7 +1,16 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.MemoryCodeVerifierCache
+import io.github.jan.supabase.auth.MemorySessionManager
+import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.jan.supabase.auth.user.UserSession
+import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
@@ -14,31 +23,24 @@ import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
-import io.github.jan.supabase.auth.Auth
-import io.github.jan.supabase.auth.MemoryCodeVerifierCache
-import io.github.jan.supabase.auth.user.UserSession
-import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import io.github.jan.supabase.auth.MemorySessionManager
-import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.auth.status.SessionStatus
-import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.currentTime
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.fail
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runTest
 
 /**
  * Reads whose response is not a JSON array of rows — `single()`, `maybeSingle()`, `head`, a
@@ -50,44 +52,125 @@ class ReadShapeTest {
 
     private var online = true
     private var noRowForOne = false
-    private val server = RecordingPostgrestServer(
-        answer = { request ->
-            if (!online) connectivityFailure()
-            val accept = request.accept.orEmpty()
-            when {
-                request.method == "HEAD" -> respond("", HttpStatusCode.OK, headersOf("Content-Range", "*/2"))
-                accept.startsWith(OBJECT) && noRowForOne ->
-                    postgrestError(HttpStatusCode.NotAcceptable, code = "PGRST116", message = "no rows")
-                accept.startsWith(OBJECT) -> okJson(ONE_ROW)
-                // The client adds its own media types after the one the read asks for
-                accept.startsWith(CSV) -> respond(CSV_BODY, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, CSV))
-                accept.startsWith(GEOJSON) -> okJson(GEOJSON_BODY)
-                accept.contains("nulls=stripped") -> okJson(STRIPPED_ROWS)
-                accept.startsWith(PLAN) -> respond(PLAN_BODY, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, ContentType.Text.Plain.toString()))
-                request.prefer.orEmpty().contains("count=") -> okJson(ROWS, mapOf("Content-Range" to "0-1/2"))
-                else -> okJson(ROWS)
+    private val server =
+        RecordingPostgrestServer(
+            answer = { request ->
+                if (!online) connectivityFailure()
+                val accept = request.accept.orEmpty()
+                when {
+                    request.method == "HEAD" ->
+                        respond("", HttpStatusCode.OK, headersOf("Content-Range", "*/2"))
+                    accept.startsWith(OBJECT) && noRowForOne ->
+                        postgrestError(
+                            HttpStatusCode.NotAcceptable,
+                            code = "PGRST116",
+                            message = "no rows",
+                        )
+                    accept.startsWith(OBJECT) -> okJson(ONE_ROW)
+                    // The client adds its own media types after the one the read asks for
+                    accept.startsWith(CSV) ->
+                        respond(
+                            CSV_BODY,
+                            HttpStatusCode.OK,
+                            headersOf(HttpHeaders.ContentType, CSV),
+                        )
+                    accept.startsWith(GEOJSON) -> okJson(GEOJSON_BODY)
+                    accept.contains("nulls=stripped") -> okJson(STRIPPED_ROWS)
+                    accept.startsWith(PLAN) ->
+                        respond(
+                            PLAN_BODY,
+                            HttpStatusCode.OK,
+                            headersOf(HttpHeaders.ContentType, ContentType.Text.Plain.toString()),
+                        )
+                    request.prefer.orEmpty().contains("count=") ->
+                        okJson(ROWS, mapOf("Content-Range" to "0-1/2"))
+                    else -> okJson(ROWS)
+                }
             }
-        },
-    )
+        )
     private val objectDao = FakeObjectDao()
-    private val client = newTestOfflineClient(supabase = server.supabaseClient(), store = newTestOfflineStore(objectDao = objectDao), coordinatorScope = idleCoroutineScope())
+    private val client =
+        newTestOfflineClient(
+            supabase = server.supabaseClient(),
+            store = newTestOfflineStore(objectDao = objectDao),
+            coordinatorScope = idleCoroutineScope(),
+        )
     private val items = client.from(TABLE)
 
     /** Each read shape the cache cannot hold, with what the server answers it. */
-    private val shapes: List<Triple<String, SelectRequestBuilder.() -> Unit, String>> = listOf(
-        Triple("single", { filter { eq("list_id", "A") }; single() }, ONE_ROW),
-        Triple("maybeSingle", { filter { eq("list_id", "A") }; maybeSingle() }, ONE_ROW),
-        Triple("head", { filter { eq("list_id", "A") }; head = true; count(Count.EXACT) }, ""),
-        Triple("count", { filter { eq("list_id", "A") }; count(Count.EXACT) }, ROWS),
-        Triple("csv", { filter { eq("list_id", "A") }; csv() }, CSV_BODY),
-        Triple("geojson", { filter { eq("list_id", "A") }; geojson() }, GEOJSON_BODY),
-        Triple("stripNulls", { filter { eq("list_id", "A") }; stripNulls() }, STRIPPED_ROWS),
-        Triple("explain", { filter { eq("list_id", "A") }; explain() }, PLAN_BODY),
-    )
+    private val shapes: List<Triple<String, SelectRequestBuilder.() -> Unit, String>> =
+        listOf(
+            Triple(
+                "single",
+                {
+                    filter { eq("list_id", "A") }
+                    single()
+                },
+                ONE_ROW,
+            ),
+            Triple(
+                "maybeSingle",
+                {
+                    filter { eq("list_id", "A") }
+                    maybeSingle()
+                },
+                ONE_ROW,
+            ),
+            Triple(
+                "head",
+                {
+                    filter { eq("list_id", "A") }
+                    head = true
+                    count(Count.EXACT)
+                },
+                "",
+            ),
+            Triple(
+                "count",
+                {
+                    filter { eq("list_id", "A") }
+                    count(Count.EXACT)
+                },
+                ROWS,
+            ),
+            Triple(
+                "csv",
+                {
+                    filter { eq("list_id", "A") }
+                    csv()
+                },
+                CSV_BODY,
+            ),
+            Triple(
+                "geojson",
+                {
+                    filter { eq("list_id", "A") }
+                    geojson()
+                },
+                GEOJSON_BODY,
+            ),
+            Triple(
+                "stripNulls",
+                {
+                    filter { eq("list_id", "A") }
+                    stripNulls()
+                },
+                STRIPPED_ROWS,
+            ),
+            Triple(
+                "explain",
+                {
+                    filter { eq("list_id", "A") }
+                    explain()
+                },
+                PLAN_BODY,
+            ),
+        )
 
     private val listOfA: SelectRequestBuilder.() -> Unit = { filter { eq("list_id", "A") } }
 
-    private suspend fun cachedList(): String = items.select(readStrategy = ReadStrategy.CacheOnly(), request = listOfA).data
+    private suspend fun cachedList(): String =
+        items.select(readStrategy = ReadStrategy.CacheOnly(), request = listOfA).data
 
     @Test
     fun each_shape_is_answered_by_the_network_and_never_stored_over_the_list() = runTest {
@@ -127,49 +210,74 @@ class ReadShapeTest {
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = listOfA)
         online = false
 
-        listOf(ReadStrategy.NetworkOnly, ReadStrategy.CacheFirst(), ReadStrategy.NetworkFirst()).forEach { strategy ->
-            shapes.forEach { (name, request, _) ->
-                // When
-                val failure = runCatching { items.select(readStrategy = strategy, request = request) }.exceptionOrNull()
+        listOf(ReadStrategy.NetworkOnly, ReadStrategy.CacheFirst(), ReadStrategy.NetworkFirst())
+            .forEach { strategy ->
+                shapes.forEach { (name, request, _) ->
+                    // When
+                    val failure = runCatching {
+                        items.select(readStrategy = strategy, request = request)
+                    }
+                        .exceptionOrNull()
 
-                // Then — the connectivity failure, never the list in another shape's place
-                assertTrue(failure?.isNetworkOrConnectivityFailure() == true, "$name via $strategy gave $failure")
+                    // Then — the connectivity failure, never the list in another shape's place
+                    assertTrue(
+                        failure?.isNetworkOrConnectivityFailure() == true,
+                        "$name via $strategy gave $failure",
+                    )
+                }
             }
-        }
     }
 
     @Test
-    fun a_cache_only_read_of_each_shape_sends_nothing_and_says_the_cache_cannot_answer_it() = runTest {
-        // Given — the list of the same filters cached
-        items.select(readStrategy = ReadStrategy.NetworkOnly, request = listOfA)
-        val sentBefore = server.requests.size
+    fun a_cache_only_read_of_each_shape_sends_nothing_and_says_the_cache_cannot_answer_it() =
+        runTest {
+            // Given — the list of the same filters cached
+            items.select(readStrategy = ReadStrategy.NetworkOnly, request = listOfA)
+            val sentBefore = server.requests.size
 
-        shapes.forEach { (name, request, _) ->
-            // When
-            val oneShot = runCatching { items.select(readStrategy = ReadStrategy.CacheOnly(), request = request) }.exceptionOrNull()
-            val reactive = runCatching { items.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = request).first() }.exceptionOrNull()
+            shapes.forEach { (name, request, _) ->
+                // When
+                val oneShot = runCatching {
+                    items.select(readStrategy = ReadStrategy.CacheOnly(), request = request)
+                }
+                    .exceptionOrNull()
+                val reactive = runCatching {
+                    items
+                        .selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = request)
+                        .first()
+                }
+                    .exceptionOrNull()
 
-            // Then — a clear error, never the list in the shape's place, and nothing sent
-            listOf(oneShot, reactive).forEach { failure ->
-                assertIs<NoSuchElementException>(failure, "$name")
-                assertTrue(failure.message.orEmpty().contains("the cache holds lists of rows"), "$name: ${failure.message}")
+                // Then — a clear error, never the list in the shape's place, and nothing sent
+                listOf(oneShot, reactive).forEach { failure ->
+                    assertIs<NoSuchElementException>(failure, "$name")
+                    assertTrue(
+                        failure.message.orEmpty().contains("the cache holds lists of rows"),
+                        "$name: ${failure.message}",
+                    )
+                }
             }
+            assertEquals(sentBefore, server.requests.size)
         }
-        assertEquals(sentBefore, server.requests.size)
-    }
 
     @Test
     fun a_reactive_read_of_each_shape_emits_the_network_answer_once() = runTest {
-        listOf(FlowReadStrategy.CacheFirstThenNetwork, FlowReadStrategy.NetworkFirstThenCache).forEach { strategy ->
-            shapes.forEach { (name, request, answer) ->
-                // When
-                val emissions = items.selectAsFlow(readStrategy = strategy, request = request).toList()
+        listOf(FlowReadStrategy.CacheFirstThenNetwork, FlowReadStrategy.NetworkFirstThenCache)
+            .forEach { strategy ->
+                shapes.forEach { (name, request, answer) ->
+                    // When
+                    val emissions =
+                        items.selectAsFlow(readStrategy = strategy, request = request).toList()
 
-                // Then
-                assertEquals(listOf(answer), emissions.map { read -> read.result?.data }, "$name via $strategy")
-                assertEquals(RefreshState.Idle, emissions.single().refresh)
+                    // Then
+                    assertEquals(
+                        listOf(answer),
+                        emissions.map { read -> read.result?.data },
+                        "$name via $strategy",
+                    )
+                    assertEquals(RefreshState.Idle, emissions.single().refresh)
+                }
             }
-        }
         assertEquals(emptyList(), objectDao.rowsOf(TABLE), "a shape read was stored")
     }
 
@@ -178,15 +286,22 @@ class ReadShapeTest {
         // Given
         online = false
 
-        listOf(FlowReadStrategy.CacheFirstThenNetwork, FlowReadStrategy.NetworkFirstThenCache).forEach { strategy ->
-            shapes.forEach { (name, request, _) ->
-                // When
-                val failure = runCatching { items.selectAsFlow(readStrategy = strategy, request = request).toList() }.exceptionOrNull()
+        listOf(FlowReadStrategy.CacheFirstThenNetwork, FlowReadStrategy.NetworkFirstThenCache)
+            .forEach { strategy ->
+                shapes.forEach { (name, request, _) ->
+                    // When
+                    val failure = runCatching {
+                        items.selectAsFlow(readStrategy = strategy, request = request).toList()
+                    }
+                        .exceptionOrNull()
 
-                // Then
-                assertTrue(failure?.isNetworkOrConnectivityFailure() == true, "$name via $strategy gave $failure")
+                    // Then
+                    assertTrue(
+                        failure?.isNetworkOrConnectivityFailure() == true,
+                        "$name via $strategy gave $failure",
+                    )
+                }
             }
-        }
     }
 
     @Test
@@ -194,21 +309,39 @@ class ReadShapeTest {
         // Given — a session still restoring, and no row for the filter
         noRowForOne = true
         val dispatcher = StandardTestDispatcher(testScheduler)
-        val restoring = newTestSupabaseClient(engine = server.engine) {
-            coroutineDispatcher = dispatcher
-            install(Postgrest) { maxRetries = 0 }
-            install(Auth) {
-                sessionManager = FakeHeldSessionManager(UserSession(accessToken = testJwt("u-1"), refreshToken = "r", expiresIn = 3600, tokenType = "bearer"))
-                codeVerifierCache = MemoryCodeVerifierCache()
-                autoLoadFromStorage = true
-                alwaysAutoRefresh = false
-                enableLifecycleCallbacks = false
+        val restoring =
+            newTestSupabaseClient(engine = server.engine) {
+                coroutineDispatcher = dispatcher
+                install(Postgrest) { maxRetries = 0 }
+                install(Auth) {
+                    sessionManager =
+                        FakeHeldSessionManager(
+                            UserSession(
+                                accessToken = testJwt("u-1"),
+                                refreshToken = "r",
+                                expiresIn = 3600,
+                                tokenType = "bearer",
+                            )
+                        )
+                    codeVerifierCache = MemoryCodeVerifierCache()
+                    autoLoadFromStorage = true
+                    alwaysAutoRefresh = false
+                    enableLifecycleCallbacks = false
+                }
             }
-        }
-        val reader = newTestOfflineClient(supabase = restoring, store = newTestOfflineStore(objectDao = objectDao), coordinatorScope = idleCoroutineScope())
+        val reader =
+            newTestOfflineClient(
+                supabase = restoring,
+                store = newTestOfflineStore(objectDao = objectDao),
+                coordinatorScope = idleCoroutineScope(),
+            )
 
         // When
-        val read = reader.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) { filter { eq("id", 404) }; maybeSingle() }
+        val read =
+            reader.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) {
+                filter { eq("id", 404) }
+                maybeSingle()
+            }
 
         // Then — upstream's empty result, from one request, with no wait for the session
         assertEquals("", read.data)
@@ -219,61 +352,102 @@ class ReadShapeTest {
 
     /**
      * The list of the filters cached, then a client over the same cache that cannot build a request
-     * with a token: a session that expired while the network is down, a session required while nobody
-     * is signed in, and a token provider that throws. In each, a shape the cache cannot hold is never
-     * answered with that list.
+     * with a token: a session that expired while the network is down, a session required while
+     * nobody is signed in, and a token provider that throws. In each, a shape the cache cannot hold
+     * is never answered with that list.
      */
     @Test
     fun a_client_that_cannot_resolve_a_token_never_answers_a_shape_from_the_list() = runTest {
         // Given — the list cached, and a server that is down
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = listOfA)
         online = false
-        val clients = listOf(
-            "expired offline" to suspend {
-                newTestSupabaseClient(engine = server.engine) {
-                    install(Postgrest)
-                    install(Auth) {
-                        sessionManager = MemorySessionManager()
-                        codeVerifierCache = MemoryCodeVerifierCache()
-                        autoLoadFromStorage = false
-                        alwaysAutoRefresh = true
-                        enableLifecycleCallbacks = false
-                    }
-                }.also { supabase ->
-                    supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing }
-                    supabase.signInForTest("u-1", expiresInSeconds = -60)
-                }
-            },
-            "session required, signed out" to suspend {
-                newTestSupabaseClient(engine = server.engine) {
-                    install(Postgrest) { requireValidSession = true }
-                    install(Auth) {
-                        sessionManager = MemorySessionManager()
-                        codeVerifierCache = MemoryCodeVerifierCache()
-                        autoLoadFromStorage = false
-                        enableLifecycleCallbacks = false
-                    }
-                }.also { supabase -> supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing } }
-            },
-            "token provider throws" to suspend {
-                newTestSupabaseClient(engine = server.engine) {
-                    accessToken = { error("the app's token provider failed") }
-                    install(Postgrest)
-                }
-            },
-        )
+        val clients =
+            listOf(
+                "expired offline" to
+                    suspend {
+                        newTestSupabaseClient(engine = server.engine) {
+                                install(Postgrest)
+                                install(Auth) {
+                                    sessionManager = MemorySessionManager()
+                                    codeVerifierCache = MemoryCodeVerifierCache()
+                                    autoLoadFromStorage = false
+                                    alwaysAutoRefresh = true
+                                    enableLifecycleCallbacks = false
+                                }
+                            }
+                            .also { supabase ->
+                                supabase.auth.sessionStatus.first { status ->
+                                    status !is SessionStatus.Initializing
+                                }
+                                supabase.signInForTest("u-1", expiresInSeconds = -60)
+                            }
+                    },
+                "session required, signed out" to
+                    suspend {
+                        newTestSupabaseClient(engine = server.engine) {
+                                install(Postgrest) { requireValidSession = true }
+                                install(Auth) {
+                                    sessionManager = MemorySessionManager()
+                                    codeVerifierCache = MemoryCodeVerifierCache()
+                                    autoLoadFromStorage = false
+                                    enableLifecycleCallbacks = false
+                                }
+                            }
+                            .also { supabase ->
+                                supabase.auth.sessionStatus.first { status ->
+                                    status !is SessionStatus.Initializing
+                                }
+                            }
+                    },
+                "token provider throws" to
+                    suspend {
+                        newTestSupabaseClient(engine = server.engine) {
+                            accessToken = { error("the app's token provider failed") }
+                            install(Postgrest)
+                        }
+                    },
+            )
 
         clients.forEach { (label, build) ->
-            val cached = newTestOfflineClient(supabase = build(), store = newTestOfflineStore(objectDao = objectDao), coordinatorScope = idleCoroutineScope()).from(TABLE)
-            shapes.filter { (name, _, _) -> name in listOf("single", "maybeSingle", "head", "count") }.forEach { (name, request, _) ->
-                // When
-                val reads = listOf(ReadStrategy.CacheOnly(), ReadStrategy.CacheFirst()).map { strategy ->
-                    strategy to runCatching { cached.select(readStrategy = strategy, request = request).data }
-                } + (FlowReadStrategy.CacheOnly to runCatching { cached.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = request).first().result?.data })
+            val cached =
+                newTestOfflineClient(
+                        supabase = build(),
+                        store = newTestOfflineStore(objectDao = objectDao),
+                        coordinatorScope = idleCoroutineScope(),
+                    )
+                    .from(TABLE)
+            shapes
+                .filter { (name, _, _) -> name in listOf("single", "maybeSingle", "head", "count") }
+                .forEach { (name, request, _) ->
+                    // When
+                    val reads =
+                        listOf(ReadStrategy.CacheOnly(), ReadStrategy.CacheFirst()).map { strategy
+                            ->
+                            strategy to
+                                runCatching {
+                                    cached.select(readStrategy = strategy, request = request).data
+                                }
+                        } +
+                            (FlowReadStrategy.CacheOnly to
+                                runCatching {
+                                    cached
+                                        .selectAsFlow(
+                                            readStrategy = FlowReadStrategy.CacheOnly,
+                                            request = request,
+                                        )
+                                        .first()
+                                        .result
+                                        ?.data
+                                })
 
-                // Then — each fails; none returns the cached list
-                reads.forEach { (strategy, read) -> assertTrue(read.isFailure, "$label, $name via $strategy gave ${read.getOrNull()}") }
-            }
+                    // Then — each fails; none returns the cached list
+                    reads.forEach { (strategy, read) ->
+                        assertTrue(
+                            read.isFailure,
+                            "$label, $name via $strategy gave ${read.getOrNull()}",
+                        )
+                    }
+                }
         }
     }
 
@@ -283,7 +457,8 @@ class ReadShapeTest {
         const val CSV = "text/csv"
         const val GEOJSON = "application/geo+json"
         const val PLAN = "application/vnd.pgrst.plan"
-        const val ROWS = """[{"id":1,"list_id":"A","note":null},{"id":2,"list_id":"A","note":"x"}]"""
+        const val ROWS =
+            """[{"id":1,"list_id":"A","note":null},{"id":2,"list_id":"A","note":"x"}]"""
         const val ONE_ROW = """{"id":1,"list_id":"A","note":null}"""
         const val STRIPPED_ROWS = """[{"id":1,"list_id":"A"},{"id":2,"list_id":"A","note":"x"}]"""
         const val CSV_BODY = "id,list_id\n1,A\n2,A"

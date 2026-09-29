@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import kotlinx.serialization.json.JsonElement
@@ -12,7 +14,10 @@ import kotlinx.serialization.json.JsonObject
  */
 internal class QueryAdmission(val conditions: List<FilterDescriptor.Condition>) {
 
-    /** Whether [row] may appear in the query. A row that is not an object cannot be judged and is admitted. */
+    /**
+     * Whether [row] may appear in the query. A row that is not an object cannot be judged and is
+     * admitted.
+     */
     fun admits(row: JsonElement): Boolean {
         val rowObject = row as? JsonObject ?: return true
         return conditions.none { condition -> rowMatch(rowObject, condition) == RowMatch.EXCLUDED }

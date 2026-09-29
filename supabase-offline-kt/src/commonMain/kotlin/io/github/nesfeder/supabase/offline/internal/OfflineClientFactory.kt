@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.jan.supabase.SupabaseClient
@@ -23,9 +25,11 @@ import okio.SYSTEM
 /**
  * Claims the database and data directory, opens the database and builds the client over it. Its
  * [SupabaseOfflineClient.close] closes the database and releases the claim. A configured
- * [databasePath] brings along a database kept at [defaultDatabasePath] (see [adoptDefaultDatabase]).
+ * [databasePath] brings along a database kept at [defaultDatabasePath] (see
+ * [adoptDefaultDatabase]).
  *
- * @throws IllegalStateException when another open client already uses the database or the directory.
+ * @throws IllegalStateException when another open client already uses the database or the
+ *   directory.
  */
 internal fun openOfflineClient(
     supabase: SupabaseClient,
@@ -36,18 +40,21 @@ internal fun openOfflineClient(
     defaultDatabasePath: Path? = null,
 ): SupabaseOfflineClient {
     val sdkLogger = SdkLogger(config.logger, config.minLogLevel)
-    val openedPath = if (defaultDatabasePath == null) databasePath else adoptDefaultDatabase(databasePath, defaultDatabasePath, sdkLogger)
+    val openedPath =
+        if (defaultDatabasePath == null) databasePath
+        else adoptDefaultDatabase(databasePath, defaultDatabasePath, sdkLogger)
     val registration = OpenDatabaseRegistry.register(openedPath, dataDirectory)
     try {
         openedPath.parent?.let { directory -> FileSystem.SYSTEM.createDirectories(directory) }
         val database = openDatabase(openedPath)
-        val store = OfflineStore(
-            objectDao = database.objectDao(),
-            storageDao = database.storageDao(),
-            mutationDao = database.mutationDao(),
-            dbPathProvider = FixedDbPathProvider(openedPath),
-            settings = config.toCacheSettings(),
-        )
+        val store =
+            OfflineStore(
+                objectDao = database.objectDao(),
+                storageDao = database.storageDao(),
+                mutationDao = database.mutationDao(),
+                dbPathProvider = FixedDbPathProvider(openedPath),
+                settings = config.toCacheSettings(),
+            )
         return SupabaseOfflineClientImpl(
             supabase = supabase,
             store = store,
@@ -58,7 +65,9 @@ internal fun openOfflineClient(
             prepareFileCacheDirectories = true,
             scrubDatabase = {
                 if (!database.scrubDeletedRows()) {
-                    sdkLogger.warning { "Clearing local data could not empty the database's write-ahead log; the next checkpoint will" }
+                    sdkLogger.warning {
+                        "Clearing local data could not empty the database's write-ahead log; the next checkpoint will"
+                    }
                 }
             },
             onClose = {
@@ -81,8 +90,8 @@ private val DATABASE_SIDE_FILE_SUFFIXES: List<String> = listOf("-wal", "-shm", "
 
 /**
  * The database a client with a configured data directory opens. [default] is moved to [configured],
- * with its side files, when only it exists and no client here holds it. Otherwise it is the one that
- * can be opened without abandoning a queue, with a warning whenever the other is left behind.
+ * with its side files, when only it exists and no client here holds it. Otherwise it is the one
+ * that can be opened without abandoning a queue, with a warning whenever the other is left behind.
  */
 internal fun adoptDefaultDatabase(
     configured: Path,
@@ -90,7 +99,8 @@ internal fun adoptDefaultDatabase(
     sdkLogger: SdkLogger,
     fileSystem: FileSystem = FileSystem.SYSTEM,
 ): Path {
-    if (configured.resolvedOrNormalized(fileSystem) == default.resolvedOrNormalized(fileSystem)) return configured
+    if (configured.resolvedOrNormalized(fileSystem) == default.resolvedOrNormalized(fileSystem))
+        return configured
     val defaultExists = fileSystem.exists(default)
     if (fileSystem.exists(configured)) {
         if (defaultExists) {
@@ -102,12 +112,15 @@ internal fun adoptDefaultDatabase(
     }
     if (!defaultExists) return configured
     // Hold the default database while it moves, so no client in this process opens it meanwhile.
-    val claim = try {
-        OpenDatabaseRegistry.register(default)
-    } catch (_: IllegalStateException) {
-        sdkLogger.warning { "The offline database at the default location is open in another client; keeping it in use" }
-        return default
-    }
+    val claim =
+        try {
+            OpenDatabaseRegistry.register(default)
+        } catch (_: IllegalStateException) {
+            sdkLogger.warning {
+                "The offline database at the default location is open in another client; keeping it in use"
+            }
+            return default
+        }
     try {
         configured.parent?.let { directory -> fileSystem.createDirectories(directory) }
         val moved = mutableListOf<Pair<Path, Path>>()
@@ -137,7 +150,9 @@ internal fun adoptDefaultDatabase(
             }
             return default
         }
-        sdkLogger.info { "Moved the offline database from the default location into the configured directory" }
+        sdkLogger.info {
+            "Moved the offline database from the default location into the configured directory"
+        }
         return configured
     } catch (failure: IOException) {
         sdkLogger.warning {
@@ -151,15 +166,23 @@ internal fun adoptDefaultDatabase(
 }
 
 /** The object-cache eviction settings [SupabaseOfflineConfig.cacheSizeBytes] asks for. */
-internal fun SupabaseOfflineConfig.toCacheSettings(): OfflineCacheSettings = OfflineCacheSettings(
-    // Unlimited disables size-based eviction; anything else is held above the minimum Room file.
-    maxDbSizeBytes = if (cacheSizeBytes == CACHE_SIZE_UNLIMITED) null else maxOf(cacheSizeBytes, MIN_CACHE_SIZE_BYTES),
-    // Evict a small batch of rows per pass; the size reduction per batch depends on payload sizes.
-    evictionBatchSize = 10,
-    // Keep ~50 MB during a cleanup pass so a burst across the limit doesn't wipe everything.
-    minRetainedBytes = 50L * 1024L * 1024L,
-)
+internal fun SupabaseOfflineConfig.toCacheSettings(): OfflineCacheSettings =
+    OfflineCacheSettings(
+        // Unlimited disables size-based eviction; anything else is held above the minimum Room
+        // file.
+        maxDbSizeBytes =
+            if (cacheSizeBytes == CACHE_SIZE_UNLIMITED) null
+            else maxOf(cacheSizeBytes, MIN_CACHE_SIZE_BYTES),
+        // Evict a small batch of rows per pass; the size reduction per batch depends on payload
+        // sizes.
+        evictionBatchSize = 10,
+        // Keep ~50 MB during a cleanup pass so a burst across the limit doesn't wipe everything.
+        minRetainedBytes = 50L * 1024L * 1024L,
+    )
 
-/** The Storage file cache bound [SupabaseOfflineConfig.fileCacheSizeBytes] asks for, or `null` for none. */
+/**
+ * The Storage file cache bound [SupabaseOfflineConfig.fileCacheSizeBytes] asks for, or `null` for
+ * none.
+ */
 internal fun SupabaseOfflineConfig.fileCacheBoundOrNull(): Long? =
     if (fileCacheSizeBytes == CACHE_SIZE_UNLIMITED) null else fileCacheSizeBytes.coerceAtLeast(0L)

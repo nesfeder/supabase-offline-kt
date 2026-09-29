@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.testdoubles
@@ -22,13 +24,16 @@ internal class RecordingStorageDao : InMemoryStorageDao() {
     private val deleteAllCalls = AtomicInt(0)
 
     /** How many times every row was loaded. */
-    val scans: Int get() = allCalls.load()
+    val scans: Int
+        get() = allCalls.load()
 
     /** How many times the total size was summed. */
-    val totalSizeQueries: Int get() = totalSizeCalls.load()
+    val totalSizeQueries: Int
+        get() = totalSizeCalls.load()
 
     /** How many times every row was deleted. */
-    val clears: Int get() = deleteAllCalls.load()
+    val clears: Int
+        get() = deleteAllCalls.load()
 
     /** Forgets the calls recorded so far. */
     fun resetCounts() {
@@ -37,7 +42,8 @@ internal class RecordingStorageDao : InMemoryStorageDao() {
     }
 
     override suspend fun upsert(row: StorageRow) {
-        if (failUpserts) throw IllegalStateException("database or disk is full (code 13 SQLITE_FULL)")
+        if (failUpserts)
+            throw IllegalStateException("database or disk is full (code 13 SQLITE_FULL)")
         super.upsert(row)
     }
 

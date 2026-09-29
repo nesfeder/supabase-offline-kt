@@ -1,12 +1,14 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.SYSTEM
 
 /**
  * The engine's reserved `object_cache` rows on a real iOS database file: an older build that opens
@@ -16,8 +18,9 @@ import kotlin.test.Test
  */
 class OfflineDatabaseReservedRowsIosTest {
 
-    private val directory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
-        "supabase-offline-reserved-rows-${Random.nextLong()}"
+    private val directory =
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "supabase-offline-reserved-rows-${Random.nextLong()}"
     private val dbPath = (directory / "supabase_offline.db").toString()
     private val scenarios = ReservedRowsDatabaseScenarios { path, callback ->
         getRoomDatabase(getDatabaseBuilder(path).addCallback(callback))

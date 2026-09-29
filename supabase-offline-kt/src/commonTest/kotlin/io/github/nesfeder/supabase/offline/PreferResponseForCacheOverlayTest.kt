@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline
@@ -5,6 +7,11 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -13,27 +20,21 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlin.time.ExperimentalTime
 
 /**
- * Regression coverage for the "saved but empty" bug where a live `selectAsFlow` collector
- * surfaces a parent row whose own columns are correct but whose joined child rows (looked up
- * by the parent's server-assigned id) are missing, even after the save succeeded.
+ * Regression coverage for the "saved but empty" bug where a live `selectAsFlow` collector surfaces
+ * a parent row whose own columns are correct but whose joined child rows (looked up by the parent's
+ * server-assigned id) are missing, even after the save succeeded.
  *
  * Root cause: `OfflinePostgrestQueryBuilder` was patching the object_cache using the *request*
- * body, which for INSERT/UPSERT omits server-assigned columns (`id`, `created_at`, etc.).
- * The overlaid cache row decoded with `id = ""`, so a downstream
- * `childrenByParentId[parent.id]` lookup in the consumer's reactive join
- * silently missed. A tab-switch forced a fresh subscription whose network SELECT replaced
- * the cache with the full server payload, at which point the join worked.
+ * body, which for INSERT/UPSERT omits server-assigned columns (`id`, `created_at`, etc.). The
+ * overlaid cache row decoded with `id = ""`, so a downstream `childrenByParentId[parent.id]` lookup
+ * in the consumer's reactive join silently missed. A tab-switch forced a fresh subscription whose
+ * network SELECT replaced the cache with the full server payload, at which point the join worked.
  *
- * The fix ([preferResponseForCacheOverlay]) prefers the server response payload as the
- * overlay body when the caller asked for the row back, so live collectors see the same
- * fully-formed row the server has.
+ * The fix ([preferResponseForCacheOverlay]) prefers the server response payload as the overlay body
+ * when the caller asked for the row back, so live collectors see the same fully-formed row the
+ * server has.
  */
 class PreferResponseForCacheOverlayTest {
 
@@ -43,10 +44,12 @@ class PreferResponseForCacheOverlayTest {
     fun prefers_response_when_it_is_a_non_empty_json_array() {
         // Given
         val requestBody = buildJsonArray {
-            add(buildJsonObject {
-                put("user_id", "u-1")
-                put("external_id", 42L)
-            })
+            add(
+                buildJsonObject {
+                    put("user_id", "u-1")
+                    put("external_id", 42L)
+                }
+            )
         }
         val serverResponse = """[{"id":"server-assigned","user_id":"u-1","external_id":42}]"""
 
@@ -74,11 +77,13 @@ class PreferResponseForCacheOverlayTest {
     fun falls_back_to_request_body_when_response_is_empty_array() {
         // Given — the INSERT-without-select() case, where the server returns []
         val requestBody = buildJsonArray {
-            add(buildJsonObject {
-                put("note_id", "log-1")
-                put("user_id", "u-1")
-                put("project_id", "project-xyz")
-            })
+            add(
+                buildJsonObject {
+                    put("note_id", "log-1")
+                    put("user_id", "u-1")
+                    put("project_id", "project-xyz")
+                }
+            )
         }
         val emptyResponse = "[]"
 
@@ -119,10 +124,12 @@ class PreferResponseForCacheOverlayTest {
 
         // Request body: the parent's upsert DTO — no id (server will assign it).
         val requestBody = buildJsonArray {
-            add(buildJsonObject {
-                put("user_id", "u-1")
-                put("external_id", 42L)
-            })
+            add(
+                buildJsonObject {
+                    put("user_id", "u-1")
+                    put("external_id", 42L)
+                }
+            )
         }
         // Response body from Supabase upsert+select(): full row including the server-assigned id.
         val serverResponse =
@@ -157,6 +164,4 @@ private data class NoteDtoForTest(
 )
 
 private fun PreferResponseForCacheOverlayTest.buildStore(objectDao: FakeObjectDao): OfflineStore =
-    newTestOfflineStore(
-        objectDao = objectDao,
-    )
+    newTestOfflineStore(objectDao = objectDao)

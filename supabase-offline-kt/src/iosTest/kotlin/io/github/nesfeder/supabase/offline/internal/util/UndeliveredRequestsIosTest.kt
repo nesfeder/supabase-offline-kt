@@ -1,13 +1,15 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.util
 
+import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.io.IOException
 import platform.Foundation.NSError
 import platform.Foundation.NSLocalizedDescriptionKey
 import platform.Foundation.NSURLErrorDomain
 import platform.Foundation.NSUnderlyingErrorKey
-import kotlin.test.Test
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 /**
  * On iOS the Darwin engine's failure carries its `NSError` in its message: the codes for no
@@ -34,9 +36,20 @@ class UndeliveredRequestsIosTest {
     fun a_never_sent_code_underneath_another_error_does_not() {
         val offline = urlError(-1009L)
         listOf(
-            NSError.errorWithDomain(NSURLErrorDomain, -1005L, mapOf<Any?, Any?>(NSUnderlyingErrorKey to offline)),
-            NSError.errorWithDomain("kCFErrorDomainCFNetwork", -1005L, mapOf<Any?, Any?>(NSUnderlyingErrorKey to offline)),
-        ).forEach { error -> assertFalse(darwinFailure(error).provesRequestNeverSent(), "$error") }
+                NSError.errorWithDomain(
+                    NSURLErrorDomain,
+                    -1005L,
+                    mapOf<Any?, Any?>(NSUnderlyingErrorKey to offline),
+                ),
+                NSError.errorWithDomain(
+                    "kCFErrorDomainCFNetwork",
+                    -1005L,
+                    mapOf<Any?, Any?>(NSUnderlyingErrorKey to offline),
+                ),
+            )
+            .forEach { error ->
+                assertFalse(darwinFailure(error).provesRequestNeverSent(), "$error")
+            }
     }
 
     @Test
@@ -45,8 +58,13 @@ class UndeliveredRequestsIosTest {
     }
 
     private fun urlError(code: Long): NSError =
-        NSError.errorWithDomain(NSURLErrorDomain, code, mapOf<Any?, Any?>(NSLocalizedDescriptionKey to "Localised text, any language"))
+        NSError.errorWithDomain(
+            NSURLErrorDomain,
+            code,
+            mapOf<Any?, Any?>(NSLocalizedDescriptionKey to "Localised text, any language"),
+        )
 
     /** The failure as the Darwin engine raises it: its message is the `NSError`'s description. */
-    private fun darwinFailure(error: NSError): IOException = IOException("Exception in http request: $error")
+    private fun darwinFailure(error: NSError): IOException =
+        IOException("Exception in http request: $error")
 }

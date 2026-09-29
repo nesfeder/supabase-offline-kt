@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import kotlinx.serialization.Serializable
@@ -14,7 +16,6 @@ import kotlinx.serialization.Serializable
  * heals it.
  *
  * Declaring a column here makes the queue store the user's *intent* instead:
- *
  * ```
  * intent  = body[column] - snapshotValue
  * replay  = serverCurrent + intent
@@ -33,12 +34,12 @@ import kotlinx.serialization.Serializable
  *   it, or carries a non-numeric value.
  * @property snapshotValue What the caller believed [column] held when it computed the body — the
  *   base the intent is measured against.
- * @property minValue Floor the rebased value is clamped to, or `null` to allow any result. A
- *   rebase adds the caller's intent to a number the caller never saw, so a *downward* intent can
- *   land below the column's domain when the server moved down as well — a total the user corrected
- *   to zero while another device removed some of its own contributions rebases negative. The
- *   absolute body could never do that, so a column with a natural floor (a running total, a
- *   count) should state it here rather than let the rebase invent a value the column cannot hold.
+ * @property minValue Floor the rebased value is clamped to, or `null` to allow any result. A rebase
+ *   adds the caller's intent to a number the caller never saw, so a *downward* intent can land
+ *   below the column's domain when the server moved down as well — a total the user corrected to
+ *   zero while another device removed some of its own contributions rebases negative. The absolute
+ *   body could never do that, so a column with a natural floor (a running total, a count) should
+ *   state it here rather than let the rebase invent a value the column cannot hold.
  */
 @Serializable
 public data class NumericDeltaColumn(

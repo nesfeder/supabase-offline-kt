@@ -1,19 +1,21 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.SdkLogger
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 
 /**
- * Runs the replay passes the engine starts on its own — after a write is queued behind pending ones,
- * after a write sent at the head left more pending, and when the session settles into an identity
- * with mutations queued — coalesced and backed off.
+ * Runs the replay passes the engine starts on its own — after a write is queued behind pending
+ * ones, after a write sent at the head left more pending, and when the session settles into an
+ * identity with mutations queued — coalesced and backed off.
  *
  * - **Coalesced:** requests are conflated. At most one pass runs and at most one more is waiting,
  *   however many requests arrive meanwhile, so a burst of writes queued behind the head starts one
@@ -27,8 +29,8 @@ import kotlin.time.Duration.Companion.seconds
  *
  * A switch that turns automatic replay off, when one is added, must stop the session-settle trigger
  * (and any connectivity trigger added with it), and must not stop the two write-path triggers: with
- * write-ahead an online write returns `Queued` whenever anything of its identity is pending ahead of
- * it, and only those passes send it. So the switch goes at each trigger, not in this class.
+ * write-ahead an online write returns `Queued` whenever anything of its identity is pending ahead
+ * of it, and only those passes send it. So the switch goes at each trigger, not in this class.
  *
  * @property scope Hosts the worker; cancelling it stops the trigger.
  * @property sdkLogger Where a pass that throws is logged.
@@ -58,19 +60,23 @@ internal class BackgroundSyncTrigger(
         var backoff = Duration.ZERO
         while (true) {
             requests.receive()
-            val report = try {
-                pass()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: Exception) {
-                sdkLogger.warning { "Background mutation replay failed: ${failure::class.simpleName}" }
-                null
-            }
-            backoff = if (report == null || report.stop.mayPass()) {
-                if (backoff == Duration.ZERO) initialBackoff else minOf(backoff * 2, maxBackoff)
-            } else {
-                Duration.ZERO
-            }
+            val report =
+                try {
+                    pass()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    sdkLogger.warning {
+                        "Background mutation replay failed: ${failure::class.simpleName}"
+                    }
+                    null
+                }
+            backoff =
+                if (report == null || report.stop.mayPass()) {
+                    if (backoff == Duration.ZERO) initialBackoff else minOf(backoff * 2, maxBackoff)
+                } else {
+                    Duration.ZERO
+                }
             if (backoff > Duration.ZERO) delay(backoff)
         }
     }

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.jan.supabase.postgrest.Postgrest
@@ -12,25 +14,19 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 
 /**
- * A wrapper around [PostgrestQueryBuilder] that provides a consistent interface for
- * PostgREST operations, facilitating testing and decoupling. It is also the [DryRunProbe] for the
- * writes it issues and the [ReadShapeProbe] for its reads.
+ * A wrapper around [PostgrestQueryBuilder] that provides a consistent interface for PostgREST
+ * operations, facilitating testing and decoupling. It is also the [DryRunProbe] for the writes it
+ * issues and the [ReadShapeProbe] for its reads.
  */
 internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
 
-    /**
-     * The name of the table this builder targets.
-     */
+    /** The name of the table this builder targets. */
     val table: String
 
-    /**
-     * The database schema this builder targets.
-     */
+    /** The database schema this builder targets. */
     val schema: String
 
-    /**
-     * The underlying [Postgrest] client instance.
-     */
+    /** The underlying [Postgrest] client instance. */
     val postgrest: Postgrest
 
     /**
@@ -42,7 +38,7 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
      */
     suspend fun select(
         columns: Columns,
-        request: SelectRequestBuilder.() -> Unit
+        request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult
 
     /**
@@ -54,7 +50,7 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
      */
     suspend fun insert(
         body: JsonArray,
-        request: InsertRequestBuilder.() -> Unit
+        request: InsertRequestBuilder.() -> Unit,
     ): PostgrestResult
 
     /**
@@ -66,7 +62,7 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
      */
     suspend fun upsert(
         body: JsonArray,
-        request: UpsertRequestBuilder.() -> Unit
+        request: UpsertRequestBuilder.() -> Unit,
     ): PostgrestResult
 
     /**
@@ -78,7 +74,7 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
      */
     suspend fun update(
         body: JsonElement,
-        request: PostgrestRequestBuilder.() -> Unit
+        request: PostgrestRequestBuilder.() -> Unit,
     ): PostgrestResult
 
     /**
@@ -87,15 +83,12 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
      * @param request Configuration block for the [PostgrestRequestBuilder].
      * @return The result of the query.
      */
-    suspend fun delete(
-        request: PostgrestRequestBuilder.() -> Unit
-    ): PostgrestResult
-
+    suspend fun delete(request: PostgrestRequestBuilder.() -> Unit): PostgrestResult
 }
 
 /**
- * Default implementation of [PostgrestQueryBuilderWrapper] that delegates to a
- * real [PostgrestQueryBuilder].
+ * Default implementation of [PostgrestQueryBuilderWrapper] that delegates to a real
+ * [PostgrestQueryBuilder].
  *
  * @property builder The underlying [PostgrestQueryBuilder] instance.
  * @param readShapePostgrest the instance the read-shape check builds reads through; see
@@ -116,79 +109,65 @@ internal class PostgrestQueryBuilderWrapperImpl(
 
     private val dryRunProbe = PreferHeaderDryRunProbe(builder.postgrest.supabaseClient)
 
-    private val readShapeProbe = PipelineReadShapeProbe(readShapePostgrest, builder.table, builder.schema)
+    private val readShapeProbe =
+        PipelineReadShapeProbe(readShapePostgrest, builder.table, builder.schema)
 
-    /**
-     * @see PostgrestQueryBuilderWrapper.table
-     */
+    /** @see PostgrestQueryBuilderWrapper.table */
     override val table: String
         get() = builder.table
 
-    /**
-     * @see PostgrestQueryBuilderWrapper.schema
-     */
+    /** @see PostgrestQueryBuilderWrapper.schema */
     override val schema: String
         get() = builder.schema
 
-    /**
-     * @see PostgrestQueryBuilderWrapper.postgrest
-     */
+    /** @see PostgrestQueryBuilderWrapper.postgrest */
     override val postgrest: Postgrest
         get() = builder.postgrest
 
-    /**
-     * @see PostgrestQueryBuilderWrapper.select
-     */
+    /** @see PostgrestQueryBuilderWrapper.select */
     override suspend fun select(
         columns: Columns,
-        request: SelectRequestBuilder.() -> Unit
+        request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult {
         return builder.select(columns, request)
     }
 
-    /**
-     * @see PostgrestQueryBuilderWrapper.insert
-     */
+    /** @see PostgrestQueryBuilderWrapper.insert */
     override suspend fun insert(
         body: JsonArray,
-        request: InsertRequestBuilder.() -> Unit
+        request: InsertRequestBuilder.() -> Unit,
     ): PostgrestResult {
         return builder.insert(body, request)
     }
 
-    /**
-     * @see PostgrestQueryBuilderWrapper.upsert
-     */
+    /** @see PostgrestQueryBuilderWrapper.upsert */
     override suspend fun upsert(
         body: JsonArray,
-        request: UpsertRequestBuilder.() -> Unit
+        request: UpsertRequestBuilder.() -> Unit,
     ): PostgrestResult {
         return builder.upsert(body, request)
     }
 
-    /**
-     * @see PostgrestQueryBuilderWrapper.update
-     */
+    /** @see PostgrestQueryBuilderWrapper.update */
     override suspend fun update(
         body: JsonElement,
-        request: PostgrestRequestBuilder.() -> Unit
+        request: PostgrestRequestBuilder.() -> Unit,
     ): PostgrestResult {
         return builder.update(body, request)
     }
 
-    /**
-     * @see PostgrestQueryBuilderWrapper.delete
-     */
-    override suspend fun delete(
-        request: PostgrestRequestBuilder.() -> Unit
-    ): PostgrestResult {
+    /** @see PostgrestQueryBuilderWrapper.delete */
+    override suspend fun delete(request: PostgrestRequestBuilder.() -> Unit): PostgrestResult {
         return builder.delete(request)
     }
 
     /** @see PreferHeaderDryRunProbe */
-    override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict = dryRunProbe.classify(write)
+    override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict =
+        dryRunProbe.classify(write)
 
     /** @see PipelineReadShapeProbe */
-    override suspend fun shapeOf(columns: Columns, request: SelectRequestBuilder.() -> Unit): ReadShape =
-        readShapeProbe.shapeOf(columns, request)
+    override suspend fun shapeOf(
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+    ): ReadShape = readShapeProbe.shapeOf(columns, request)
 }

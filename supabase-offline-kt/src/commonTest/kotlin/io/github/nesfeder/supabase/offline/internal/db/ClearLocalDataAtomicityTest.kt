@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -6,17 +8,18 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 
 /**
  * Clearing local data at sign-out removes the mutation queue and its owner records together. A
  * clear that fails part-way — the process dies, or a delete throws — must never leave one user's
- * pending mutations without an owner, where the next user would see them and send them as their own.
+ * pending mutations without an owner, where the next user would see them and send them as their
+ * own.
  */
 class ClearLocalDataAtomicityTest {
 
@@ -28,7 +31,11 @@ class ClearLocalDataAtomicityTest {
     fun a_clear_that_fails_part_way_does_not_hand_one_users_mutations_to_the_next() = runTest {
         // Given — user A's pending edit, and a clear that fails part-way
         store.enqueueOwnedBy(USER_A.storedValue) {
-            enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"A's private edit"}"""), byId("1"))
+            enqueueUpdate(
+                TABLE,
+                Json.parseToJsonElement("""{"title":"A's private edit"}"""),
+                byId("1"),
+            )
         }
         mutationDao.failNextDeleteAll = true
         val cleared = runCatching { store.clearAll() }
@@ -39,7 +46,12 @@ class ClearLocalDataAtomicityTest {
         objectDao.seedPayload(TABLE, TABLE, """[{"id":"1","title":"B's row"}]""")
         val shownToB = next.overlaidPayloadFlow(TABLE, TABLE).first()
         val server = RecordingPostgrestServer()
-        MutationQueueReplayer(store = next, supabase = server.supabaseClient(), currentIdentity = { USER_B }).sync()
+        MutationQueueReplayer(
+                store = next,
+                supabase = server.supabaseClient(),
+                currentIdentity = { USER_B },
+            )
+            .sync()
 
         // Then — A's edit is neither shown to B, counted for B, nor sent as B
         assertTrue(cleared.isFailure)
@@ -55,9 +67,10 @@ class ClearLocalDataAtomicityTest {
         store.clearAll()
 
         // When — the write reaches the mutation queue
-        val outcome = store.enqueueOwnedBy(USER_A.storedValue, startedAtTick) {
-            enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"stale"}"""), byId("1"))
-        }
+        val outcome =
+            store.enqueueOwnedBy(USER_A.storedValue, startedAtTick) {
+                enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"stale"}"""), byId("1"))
+            }
 
         // Then — it belongs to the identity that was cleared, so it is not queued
         assertEquals(EnqueueOutcome.LocalDataCleared, outcome)
@@ -65,7 +78,10 @@ class ClearLocalDataAtomicityTest {
     }
 
     private fun byId(id: String): FilterDescriptor =
-        FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))
+        FilterDescriptor(
+            conditions =
+                listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id))
+        )
 
     private companion object {
         const val TABLE = "tasks"

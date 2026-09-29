@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline
@@ -14,6 +16,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_KEY
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -22,9 +27,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Writes made while a stored session is still restoring: a `QueueIfOffline` write is queued for the
@@ -35,22 +37,38 @@ class WritesWhileRestoringTest {
 
     private var online = true
     private lateinit var server: RecordingPostgrestServer
-    private val sessions = FakeHeldSessionManager(UserSession(accessToken = testJwt("u-1"), refreshToken = "refresh-token", expiresIn = 3600, tokenType = "bearer"))
+    private val sessions =
+        FakeHeldSessionManager(
+            UserSession(
+                accessToken = testJwt("u-1"),
+                refreshToken = "refresh-token",
+                expiresIn = 3600,
+                tokenType = "bearer",
+            )
+        )
 
     private fun TestScope.restoringItems(): OfflinePostgrestQueryBuilder {
         val dispatcher = StandardTestDispatcher(testScheduler)
-        server = RecordingPostgrestServer(answer = { if (!online) connectivityFailure(); okJson("") }, engineDispatcher = dispatcher)
-        val supabase = newTestSupabaseClient(engine = server.engine) {
-            coroutineDispatcher = dispatcher
-            install(Postgrest) { maxRetries = 0 }
-            install(Auth) {
-                sessionManager = sessions
-                codeVerifierCache = MemoryCodeVerifierCache()
-                autoLoadFromStorage = true
-                alwaysAutoRefresh = false
-                enableLifecycleCallbacks = false
+        server =
+            RecordingPostgrestServer(
+                answer = {
+                    if (!online) connectivityFailure()
+                    okJson("")
+                },
+                engineDispatcher = dispatcher,
+            )
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                coroutineDispatcher = dispatcher
+                install(Postgrest) { maxRetries = 0 }
+                install(Auth) {
+                    sessionManager = sessions
+                    codeVerifierCache = MemoryCodeVerifierCache()
+                    autoLoadFromStorage = true
+                    alwaysAutoRefresh = false
+                    enableLifecycleCallbacks = false
+                }
             }
-        }
         val client = newTestOfflineClient(supabase = supabase, coordinatorScope = backgroundScope)
         // The plugin starts loading the stored session, the load the held store keeps waiting
         runCurrent()
@@ -101,12 +119,18 @@ class WritesWhileRestoringTest {
         // When
         val outcome = items.insertJson(ROW, mutationStrategy = MutationStrategy.OnlineOnly)
 
-        // Then — sent now, as supabase-kt sends any request while the session loads: on the anon key
+        // Then — sent now, as supabase-kt sends any request while the session loads: on the anon
+        // key
         assertEquals(true, outcome is MutationOutcome.Applied)
-        assertEquals("Bearer $TEST_SUPABASE_KEY", server.requests.single { request -> request.method == "POST" }.authorization)
+        assertEquals(
+            "Bearer $TEST_SUPABASE_KEY",
+            server.requests.single { request -> request.method == "POST" }.authorization,
+        )
     }
 
-    private fun RecordingPostgrestServer.writes(): Int = requests.count { request -> request.method != "GET" }
+    private fun RecordingPostgrestServer.writes(): Int = requests.count { request ->
+        request.method != "GET"
+    }
 
     private companion object {
         const val TABLE = "items"

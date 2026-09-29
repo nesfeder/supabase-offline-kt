@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
@@ -8,29 +10,30 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
- * Under `QueueIfOffline`, a write made while online waits in the queue when any earlier write of the
- * same identity is pending, in any table, so it cannot overtake them. Sent straight away, it would
- * land first and the older offline write would replay over it — the user's latest edit lost, and the
- * screen flipped back to the older value the moment the online write returned.
+ * Under `QueueIfOffline`, a write made while online waits in the queue when any earlier write of
+ * the same identity is pending, in any table, so it cannot overtake them. Sent straight away, it
+ * would land first and the older offline write would replay over it — the user's latest edit lost,
+ * and the screen flipped back to the older value the moment the online write returned.
  */
 class OnlineWriteJoinsQueueTest {
 
     private val server = RecordingPostgrestServer()
     private val objectDao = FakeObjectDao()
     private val store = newTestOfflineStore(objectDao = objectDao)
-    private val builder = OfflinePostgrestQueryBuilderImpl(
-        delegate = server.supabaseClient().postgrest.from(TABLE),
-        store = store,
-    )
+    private val builder =
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = store,
+        )
 
     private suspend fun rename(title: String): MutationOutcome =
         builder.updateJson(patch(title), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
@@ -67,8 +70,15 @@ class OnlineWriteJoinsQueueTest {
 
         // Then — the edit is queued behind A without reaching the server, and the overlay shows B
         assertEquals(MutationOutcome.Queued, outcome)
-        assertEquals(requestsBefore, server.requests.size, "a write that joins the queue is not sent")
-        assertEquals("""[{"id":1,"title":"B"}]""", store.overlaidPayloadFlow(TABLE, SIGNATURE).first())
+        assertEquals(
+            requestsBefore,
+            server.requests.size,
+            "a write that joins the queue is not sent",
+        )
+        assertEquals(
+            """[{"id":1,"title":"B"}]""",
+            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
+        )
     }
 
     @Test
@@ -91,7 +101,10 @@ class OnlineWriteJoinsQueueTest {
     fun an_online_write_waits_behind_a_pending_write_in_another_table() = runTest {
         // Given — another table has a pending write, this one has none
         server.answer = { connectivityFailure() }
-        OfflinePostgrestQueryBuilderImpl(delegate = server.supabaseClient().postgrest.from("other"), store = store)
+        OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from("other"),
+                store = store,
+            )
             .updateJson(patch("x"), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
         // When
@@ -105,23 +118,29 @@ class OnlineWriteJoinsQueueTest {
     }
 
     @Test
-    fun an_online_write_with_nothing_pending_is_applied_at_once_and_leaves_no_queue_row() = runTest {
-        // Given — nothing pending
-        objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
+    fun an_online_write_with_nothing_pending_is_applied_at_once_and_leaves_no_queue_row() =
+        runTest {
+            // Given — nothing pending
+            objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
 
-        // When
-        val outcome = rename("B")
+            // When
+            val outcome = rename("B")
 
-        // Then — applied, overlaid, and gone from the queue
-        assertEquals(MutationOutcome.Applied::class, outcome::class)
-        assertEquals(0, store.allPendingMutations().size)
-        assertEquals("""[{"id":1,"title":"B"}]""", objectDao.getRow(TABLE, SIGNATURE)?.payload)
-    }
+            // Then — applied, overlaid, and gone from the queue
+            assertEquals(MutationOutcome.Applied::class, outcome::class)
+            assertEquals(0, store.allPendingMutations().size)
+            assertEquals("""[{"id":1,"title":"B"}]""", objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        }
 
     @Test
     fun a_write_that_joins_the_queue_is_sent_by_a_pass_the_engine_starts_itself() = runTest {
         // Given — a client whose background work runs on the test scheduler, with a pending edit
-        val client = newTestOfflineClient(supabase = server.supabaseClient(), store = store, coordinatorScope = backgroundScope)
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                store = store,
+                coordinatorScope = backgroundScope,
+            )
         server.answer = { connectivityFailure() }
         client.from(TABLE).updateJson(patch("A")) { filter { eq("id", 1) } }
 
@@ -138,7 +157,8 @@ class OnlineWriteJoinsQueueTest {
         )
     }
 
-    private fun patch(title: String): JsonElement = Json.parseToJsonElement("""{"title":"$title"}""")
+    private fun patch(title: String): JsonElement =
+        Json.parseToJsonElement("""{"title":"$title"}""")
 
     private companion object {
         const val TABLE = "todos"

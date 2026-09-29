@@ -1,33 +1,35 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.jan.supabase.postgrest.query.Order
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
-import io.github.jan.supabase.postgrest.query.Order
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 
 /**
- * Tests for [OfflineStore.patchCachedQueries] — the online-success overlay path that
- * honors [io.github.nesfeder.supabase.offline.MutationStrategy.QueueIfOffline]'s "UI reflects immediately"
+ * Tests for [OfflineStore.patchCachedQueries] — the online-success overlay path that honors
+ * [io.github.nesfeder.supabase.offline.MutationStrategy.QueueIfOffline]'s "UI reflects immediately"
  * promise without requiring a round-trip SELECT.
  *
- * The whole point is: after any successful online mutation, the `object_cache` payloads that
- * drive `selectAsFlow(...)` must be patched so reactive observers emit the new state within
- * flow dispatch latency — no tab switch, no pull-to-refresh.
+ * The whole point is: after any successful online mutation, the `object_cache` payloads that drive
+ * `selectAsFlow(...)` must be patched so reactive observers emit the new state within flow dispatch
+ * latency — no tab switch, no pull-to-refresh.
  */
 class OfflineStoreApplyLocalMutationTest {
 
@@ -187,8 +189,9 @@ class OfflineStoreApplyLocalMutationTest {
         objectDao.seedPayload(
             table = "ratings",
             signature = "ratings?user_id=eq.user-uuid",
-            payload = """[{"id":"r1","user_id":"user-uuid","item_id":1,"payload":{"rating":80}},""" +
-                """{"id":"r2","user_id":"user-uuid","item_id":2,"payload":{"rating":75}}]""",
+            payload =
+                """[{"id":"r1","user_id":"user-uuid","item_id":1,"payload":{"rating":80}},""" +
+                    """{"id":"r2","user_id":"user-uuid","item_id":2,"payload":{"rating":75}}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
@@ -197,7 +200,8 @@ class OfflineStoreApplyLocalMutationTest {
         store.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
-            bodyJson = """[{"id":"r2","user_id":"user-uuid","item_id":2,"payload":{"rating":92}}]""",
+            bodyJson =
+                """[{"id":"r2","user_id":"user-uuid","item_id":2,"payload":{"rating":92}}]""",
             filterJson = null,
             onConflict = "user_id,item_id",
         )
@@ -208,7 +212,10 @@ class OfflineStoreApplyLocalMutationTest {
         val updated = objectDao.getRow("ratings", "ratings?user_id=eq.user-uuid")?.payload
         assertNotNull(updated)
         assertTrue(updated.contains("\"item_id\":1"))
-        assertTrue(updated.contains("\"rating\":80"), "item 1 rating should remain 80, got $updated")
+        assertTrue(
+            updated.contains("\"rating\":80"),
+            "item 1 rating should remain 80, got $updated",
+        )
         assertTrue(updated.contains("\"item_id\":2"))
         assertTrue(updated.contains("\"rating\":92"), "item 2 rating should be 92, got $updated")
         assertFalse(updated.contains("\"rating\":75"), "stale rating 75 must not survive overlay")
@@ -427,8 +434,14 @@ class OfflineStoreApplyLocalMutationTest {
         // Then — the merge into the matching row is unaffected by the gate
         val updated = objectDao.getRow("notes", "notes?type=eq.OPEN")?.payload
         assertNotNull(updated)
-        assertTrue(updated.contains("\"notes\":\"new\""), "matching row should be merged, got $updated")
-        assertFalse(updated.contains("\"notes\":\"old\""), "stale value must not survive, got $updated")
+        assertTrue(
+            updated.contains("\"notes\":\"new\""),
+            "matching row should be merged, got $updated",
+        )
+        assertFalse(
+            updated.contains("\"notes\":\"old\""),
+            "stale value must not survive, got $updated",
+        )
     }
 
     // ── UPDATE ────────────────────────────────────────────────────────────────
@@ -445,12 +458,14 @@ class OfflineStoreApplyLocalMutationTest {
         )
         val store = buildStore(objectDao, mutationDao)
 
-        val filter = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                FilterDescriptor.Condition(column = "id", operatorId = "eq", value = "s2"),
-            ),
-        )
+        val filter =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(column = "id", operatorId = "eq", value = "s2")
+                    ),
+            )
 
         // When — update retire=true for id s2
         store.patchCachedQueries(
@@ -478,31 +493,50 @@ class OfflineStoreApplyLocalMutationTest {
         objectDao.seedPayload(
             table = "summaries",
             signature = "summaries?user_id=eq.user-uuid",
-            payload = """[{"user_id":"user-uuid","period_id":"2026-P26","read_at":null},""" +
-                """{"user_id":"user-uuid","period_id":"2026-P25","read_at":"2026-06-22T08:00:00Z"}]""",
+            payload =
+                """[{"user_id":"user-uuid","period_id":"2026-P26","read_at":null},""" +
+                    """{"user_id":"user-uuid","period_id":"2026-P25","read_at":"2026-06-22T08:00:00Z"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        fun markReadFilter(periodId: String) = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                FilterDescriptor.Condition(column = "user_id", operatorId = "eq", value = "user-uuid"),
-                FilterDescriptor.Condition(column = "period_id", operatorId = "eq", value = periodId),
-                FilterDescriptor.Condition(column = "read_at", operatorId = "is", value = "null"),
-            ),
-        )
+        fun markReadFilter(periodId: String) =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(
+                            column = "user_id",
+                            operatorId = "eq",
+                            value = "user-uuid",
+                        ),
+                        FilterDescriptor.Condition(
+                            column = "period_id",
+                            operatorId = "eq",
+                            value = periodId,
+                        ),
+                        FilterDescriptor.Condition(
+                            column = "read_at",
+                            operatorId = "is",
+                            value = "null",
+                        ),
+                    ),
+            )
 
         // When — mark the unread period read, then re-mark the already-read period
         store.patchCachedQueries(
             table = "summaries",
             operation = MutationOperation.UPDATE,
-            bodyJson = buildJsonObject { put("read_at", JsonPrimitive("2026-06-29T09:00:00Z")) }.toString(),
+            bodyJson =
+                buildJsonObject { put("read_at", JsonPrimitive("2026-06-29T09:00:00Z")) }
+                    .toString(),
             filterJson = FilterEngine.encode(markReadFilter("2026-P26"), json),
         )
         store.patchCachedQueries(
             table = "summaries",
             operation = MutationOperation.UPDATE,
-            bodyJson = buildJsonObject { put("read_at", JsonPrimitive("2026-06-29T09:05:00Z")) }.toString(),
+            bodyJson =
+                buildJsonObject { put("read_at", JsonPrimitive("2026-06-29T09:05:00Z")) }
+                    .toString(),
             filterJson = FilterEngine.encode(markReadFilter("2026-P25"), json),
         )
 
@@ -532,16 +566,23 @@ class OfflineStoreApplyLocalMutationTest {
         objectDao.seedPayload(
             table = "note_attachments",
             signature = "sig-A",
-            payload = """[{"note_id":"a","attachment_id":"att1"},{"note_id":"a","attachment_id":"att2"}]""",
+            payload =
+                """[{"note_id":"a","attachment_id":"att1"},{"note_id":"a","attachment_id":"att2"}]""",
         )
         val store = buildStore(objectDao, mutationDao)
 
-        val filter = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                FilterDescriptor.Condition(column = "attachment_id", operatorId = "eq", value = "att1"),
-            ),
-        )
+        val filter =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(
+                            column = "attachment_id",
+                            operatorId = "eq",
+                            value = "att1",
+                        )
+                    ),
+            )
 
         store.patchCachedQueries(
             table = "note_attachments",
@@ -600,17 +641,21 @@ class OfflineStoreApplyLocalMutationTest {
 
     // ── Fixtures ──────────────────────────────────────────────────────────────
 
-    /** A store over the DAOs, knowing the shape of each filtered query these tests cache, as reading it would. */
+    /**
+     * A store over the DAOs, knowing the shape of each filtered query these tests cache, as reading
+     * it would.
+     */
     private suspend fun buildStore(objectDao: ObjectDao, mutationDao: MutationDao): OfflineStore =
         newTestOfflineStore(
-            objectDao = objectDao,
-            mutationDao = mutationDao,
-        ).apply {
-            recordQueryShape("notes", "notes?type=eq.OPEN") { filter { eq("type", "OPEN") } }
-            recordQueryShape("notes", "notes?type=eq.DONE") { filter { eq("type", "DONE") } }
-            recordQueryShape("notes", "notes?type=eq.OPEN&order=created_at.desc") {
-                filter { eq("type", "OPEN") }
-                order("created_at", Order.DESCENDING)
+                objectDao = objectDao,
+                mutationDao = mutationDao,
+            )
+            .apply {
+                recordQueryShape("notes", "notes?type=eq.OPEN") { filter { eq("type", "OPEN") } }
+                recordQueryShape("notes", "notes?type=eq.DONE") { filter { eq("type", "DONE") } }
+                recordQueryShape("notes", "notes?type=eq.OPEN&order=created_at.desc") {
+                    filter { eq("type", "OPEN") }
+                    order("created_at", Order.DESCENDING)
+                }
             }
-        }
 }

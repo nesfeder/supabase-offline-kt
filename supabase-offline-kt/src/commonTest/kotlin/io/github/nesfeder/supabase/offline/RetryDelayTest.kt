@@ -1,7 +1,10 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -10,13 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.ktor.http.HttpStatusCode
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.currentTime
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -24,6 +21,11 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runTest
 
 /**
  * How long a read waits on supabase-kt's own retries, measured on the real upstream client with its
@@ -32,22 +34,30 @@ import kotlin.time.Duration.Companion.seconds
  */
 class RetryDelayTest {
 
-    /** What the server does with the next request: answer the list, fail the transport, or a status. */
+    /**
+     * What the server does with the next request: answer the list, fail the transport, or a status.
+     */
     private var answer: () -> HttpStatusCode? = { HttpStatusCode.OK }
 
     private fun TestScope.newItems(): Pair<RecordingPostgrestServer, OfflinePostgrestQueryBuilder> {
-        val server = RecordingPostgrestServer(
-            answer = {
-                when (val status = answer()) {
-                    null -> connectivityFailure()
-                    HttpStatusCode.OK -> okJson(ROWS)
-                    else -> postgrestError(status, code = "", message = "unavailable")
-                }
-            },
-            engineDispatcher = StandardTestDispatcher(testScheduler),
-        )
+        val server =
+            RecordingPostgrestServer(
+                answer = {
+                    when (val status = answer()) {
+                        null -> connectivityFailure()
+                        HttpStatusCode.OK -> okJson(ROWS)
+                        else -> postgrestError(status, code = "", message = "unavailable")
+                    }
+                },
+                engineDispatcher = StandardTestDispatcher(testScheduler),
+            )
         // The upstream default: nothing here sets maxRetries
-        val client = newTestOfflineClient(supabase = newTestSupabaseClient(engine = server.engine), store = newTestOfflineStore(), coordinatorScope = idleCoroutineScope())
+        val client =
+            newTestOfflineClient(
+                supabase = newTestSupabaseClient(engine = server.engine),
+                store = newTestOfflineStore(),
+                coordinatorScope = idleCoroutineScope(),
+            )
         return server to client.from(TABLE)
     }
 
@@ -72,7 +82,10 @@ class RetryDelayTest {
         // Then — the cached list, with no wait for retries the cache makes pointless
         assertEquals(ROWS, read.getOrThrow().data)
         val attempts = server.requests.size - sentBefore
-        assertTrue(waited == Duration.ZERO && attempts == 1, "waited $waited over $attempts attempts before the fallback")
+        assertTrue(
+            waited == Duration.ZERO && attempts == 1,
+            "waited $waited over $attempts attempts before the fallback",
+        )
     }
 
     @Test
@@ -108,22 +121,26 @@ class RetryDelayTest {
     }
 
     @Test
-    fun a_network_first_read_with_a_warm_cache_still_rides_out_a_server_that_is_briefly_unavailable() = runTest {
-        // Given — the list cached, then a server that answers 503 three times before it recovers
-        val (server, items) = newItems()
-        items.select(readStrategy = ReadStrategy.NetworkOnly)
-        var unavailable = 3
-        answer = { if (unavailable-- > 0) HttpStatusCode.ServiceUnavailable else HttpStatusCode.OK }
-        val sentBefore = server.requests.size
+    fun a_network_first_read_with_a_warm_cache_still_rides_out_a_server_that_is_briefly_unavailable() =
+        runTest {
+            // Given — the list cached, then a server that answers 503 three times before it
+            // recovers
+            val (server, items) = newItems()
+            items.select(readStrategy = ReadStrategy.NetworkOnly)
+            var unavailable = 3
+            answer = {
+                if (unavailable-- > 0) HttpStatusCode.ServiceUnavailable else HttpStatusCode.OK
+            }
+            val sentBefore = server.requests.size
 
-        // When
-        val (read, waited) = timed { items.select(readStrategy = ReadStrategy.NetworkFirst()) }
+            // When
+            val (read, waited) = timed { items.select(readStrategy = ReadStrategy.NetworkFirst()) }
 
-        // Then — the fresh answer, after upstream's own waits, as before
-        assertEquals(ROWS, read.getOrThrow().data)
-        assertEquals(7.seconds, waited)
-        assertEquals(4, server.requests.size - sentBefore)
-    }
+            // Then — the fresh answer, after upstream's own waits, as before
+            assertEquals(ROWS, read.getOrThrow().data)
+            assertEquals(7.seconds, waited)
+            assertEquals(4, server.requests.size - sentBefore)
+        }
 
     @Test
     fun a_network_first_read_that_turns_retries_off_is_not_retried() = runTest {
@@ -134,7 +151,8 @@ class RetryDelayTest {
         val sentBefore = server.requests.size
 
         // When — the app asks for no retries on this read
-        val (read, waited) = timed { items.select(readStrategy = ReadStrategy.NetworkFirst()) { noRetry() } }
+        val (read, waited) =
+            timed { items.select(readStrategy = ReadStrategy.NetworkFirst()) { noRetry() } }
 
         // Then — the server's error at once, from one request
         assertIs<PostgrestRestException>(read.exceptionOrNull())

@@ -1,14 +1,11 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.Path
-import okio.Path.Companion.toPath
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -18,6 +15,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.Path
+import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /**
  * How [CachingBucketApi] keeps its disk cache in step with the bucket operations it forwards:
@@ -36,7 +38,9 @@ class OfflineBucketApiCacheMaintenanceTest {
 
     @BeforeTest
     fun setUp() {
-        baseDir = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-bucket-maintenance-${Random.nextLong()}"
+        baseDir =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-bucket-maintenance-${Random.nextLong()}"
         store = newTestOfflineStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
         api = newTestBucketApi(delegate = delegate, baseDirectory = baseDir, store = store)
@@ -50,7 +54,7 @@ class OfflineBucketApiCacheMaintenanceTest {
     /** Downloads [path] once through the wrapper so its file and cache row exist. */
     private suspend fun primeCache(path: String, bytes: ByteArray) {
         delegate.onDownload = { bytes }
-        api.downloadPublic(path) { }
+        api.downloadPublic(path) {}
     }
 
     @Test

@@ -1,14 +1,16 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * The overlay keeps one row per primary key where the row may already be on the server: an INSERT
@@ -28,11 +30,17 @@ class OverlayPrimaryKeyTest {
         objectDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"from the server"}]""")
 
         // When — an insert already replayed, kept for queries fetched before it
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","title":"from the server"}]"""))
+        store.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"x","title":"from the server"}]"""),
+        )
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
 
         // Then
-        assertEquals("""[{"id":"x","title":"from the server"}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
+        assertEquals(
+            """[{"id":"x","title":"from the server"}]""",
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+        )
     }
 
     @Test
@@ -44,7 +52,10 @@ class OverlayPrimaryKeyTest {
         store.enqueueUpsert(table = TABLE, bodyJson = rows("""[{"id":"x","title":"new"}]"""))
 
         // Then
-        assertEquals("""[{"id":"x","title":"new","done":false}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
+        assertEquals(
+            """[{"id":"x","title":"new","done":false}]""",
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+        )
     }
 
     @Test
@@ -53,10 +64,17 @@ class OverlayPrimaryKeyTest {
         objectDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"old"}]""")
 
         // When
-        store.enqueueUpsert(table = TABLE, bodyJson = rows("""[{"id":"x","title":"new"}]"""), ignoreDuplicates = true)
+        store.enqueueUpsert(
+            table = TABLE,
+            bodyJson = rows("""[{"id":"x","title":"new"}]"""),
+            ignoreDuplicates = true,
+        )
 
         // Then
-        assertEquals("""[{"id":"x","title":"old"}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
+        assertEquals(
+            """[{"id":"x","title":"old"}]""",
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+        )
     }
 
     @Test
@@ -83,7 +101,10 @@ class OverlayPrimaryKeyTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"same"}]"""))
 
         // Then
-        assertEquals("""[{"title":"same"},{"title":"same"}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
+        assertEquals(
+            """[{"title":"same"},{"title":"same"}]""",
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+        )
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 pluginManagement {
     repositories {
         google {
@@ -28,4 +30,5 @@ dependencyResolutionManagement {
 rootProject.name = "supabase-offline-kt"
 
 include(":supabase-offline-kt")
+
 include(":supabase-offline-kt-testing")

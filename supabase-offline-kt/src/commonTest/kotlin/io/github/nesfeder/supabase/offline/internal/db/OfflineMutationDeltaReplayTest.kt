@@ -1,14 +1,22 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.postgrest.postgrest
 import io.ktor.client.network.sockets.ConnectTimeoutException
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -16,12 +24,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlin.time.ExperimentalTime
 
 /**
  * Behavioural pins for the delta-encoded UPDATE mutation kind — the read-before-write replay that
@@ -29,8 +31,8 @@ import kotlin.time.ExperimentalTime
  * absolute (see [io.github.nesfeder.supabase.offline.NumericDeltaColumn]).
  *
  * The failure it exists to stop: a write queued while offline computes its value from what the
- * client could see at enqueue time. For a running total that several writers move — another
- * device, or this device's own earlier queued writes draining first — replaying that number erases
+ * client could see at enqueue time. For a running total that several writers move — another device,
+ * or this device's own earlier queued writes draining first — replaying that number erases
  * everything that landed in between, and no later read heals it because the number is, as far as
  * the server can tell, simply the newest write.
  *
@@ -51,15 +53,15 @@ class OfflineMutationDeltaReplayTest {
             table = table,
             body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-            ),
+            deltaColumns =
+                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
         )
         val client = testClient()
-        val wrapper = wrapper(
-            client = client,
-            selectPayload = """[{"id":"project-1","total_minutes":8500.0}]""",
-        )
+        val wrapper =
+            wrapper(
+                client = client,
+                selectPayload = """[{"id":"project-1","total_minutes":8500.0}]""",
+            )
 
         // When
         val synced = syncer(store, client, wrapper).syncTable(table = table)
@@ -78,15 +80,15 @@ class OfflineMutationDeltaReplayTest {
             table = table,
             body = buildJsonObject { put("total_minutes", JsonPrimitive(6000.0)) },
             filter = idFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-            ),
+            deltaColumns =
+                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
         )
         val client = testClient()
-        val wrapper = wrapper(
-            client = client,
-            selectPayload = """[{"id":"project-1","total_minutes":8500.0}]""",
-        )
+        val wrapper =
+            wrapper(
+                client = client,
+                selectPayload = """[{"id":"project-1","total_minutes":8500.0}]""",
+            )
 
         // When
         syncer(store, client, wrapper).syncTable(table = table)
@@ -105,19 +107,21 @@ class OfflineMutationDeltaReplayTest {
             table = table,
             body = buildJsonObject { put("total_minutes", JsonPrimitive(0.0)) },
             filter = idFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(
-                    column = "total_minutes",
-                    snapshotValue = 8000.0,
-                    minValue = 0.0,
+            deltaColumns =
+                listOf(
+                    NumericDeltaColumn(
+                        column = "total_minutes",
+                        snapshotValue = 8000.0,
+                        minValue = 0.0,
+                    )
                 ),
-            ),
         )
         val client = testClient()
-        val wrapper = wrapper(
-            client = client,
-            selectPayload = """[{"id":"project-1","total_minutes":500.0}]""",
-        )
+        val wrapper =
+            wrapper(
+                client = client,
+                selectPayload = """[{"id":"project-1","total_minutes":500.0}]""",
+            )
 
         // When
         syncer(store, client, wrapper).syncTable(table = table)
@@ -136,15 +140,15 @@ class OfflineMutationDeltaReplayTest {
             table = table,
             body = buildJsonObject { put("total_minutes", JsonPrimitive(0.0)) },
             filter = idFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-            ),
+            deltaColumns =
+                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
         )
         val client = testClient()
-        val wrapper = wrapper(
-            client = client,
-            selectPayload = """[{"id":"project-1","total_minutes":500.0}]""",
-        )
+        val wrapper =
+            wrapper(
+                client = client,
+                selectPayload = """[{"id":"project-1","total_minutes":500.0}]""",
+            )
 
         // When
         syncer(store, client, wrapper).syncTable(table = table)
@@ -159,22 +163,23 @@ class OfflineMutationDeltaReplayTest {
         val store = buildStore()
         store.enqueueUpdate(
             table = table,
-            body = buildJsonObject {
-                put("nickname", JsonPrimitive("Sunday pair"))
-                put("starting_minutes", JsonPrimitive(2000.0))
-                put("total_minutes", JsonPrimitive(9000.0))
-            },
+            body =
+                buildJsonObject {
+                    put("nickname", JsonPrimitive("Sunday pair"))
+                    put("starting_minutes", JsonPrimitive(2000.0))
+                    put("total_minutes", JsonPrimitive(9000.0))
+                },
             filter = idFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-            ),
+            deltaColumns =
+                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
         )
         val client = testClient()
-        val wrapper = wrapper(
-            client = client,
-            selectPayload =
-                """[{"id":"project-1","total_minutes":8500.0,"starting_minutes":1000.0}]""",
-        )
+        val wrapper =
+            wrapper(
+                client = client,
+                selectPayload =
+                    """[{"id":"project-1","total_minutes":8500.0,"starting_minutes":1000.0}]""",
+            )
 
         // When
         syncer(store, client, wrapper).syncTable(table = table)
@@ -198,11 +203,12 @@ class OfflineMutationDeltaReplayTest {
             filter = idFilter,
         )
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onUpdate = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onUpdate = { postgrestResultOf("[]", client.postgrest) },
+            )
 
         // When
         val synced = syncer(store, client, wrapper).syncTable(table = table)
@@ -220,9 +226,8 @@ class OfflineMutationDeltaReplayTest {
             table = table,
             body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-            ),
+            deltaColumns =
+                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
         )
         val client = testClient()
         val wrapper = wrapper(client = client, selectPayload = "[]")
@@ -245,17 +250,17 @@ class OfflineMutationDeltaReplayTest {
             table = table,
             body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-            ),
+            deltaColumns =
+                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
         )
         val client = testClient()
-        val wrapper = wrapper(
-            client = client,
-            selectPayload =
-                """[{"id":"project-1","total_minutes":8500.0},""" +
-                    """{"id":"project-2","total_minutes":100.0}]""",
-        )
+        val wrapper =
+            wrapper(
+                client = client,
+                selectPayload =
+                    """[{"id":"project-1","total_minutes":8500.0},""" +
+                        """{"id":"project-2","total_minutes":100.0}]""",
+            )
 
         // When
         syncer(store, client, wrapper).syncTable(table = table)
@@ -273,17 +278,17 @@ class OfflineMutationDeltaReplayTest {
                 table = table,
                 body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
                 filter = idFilter,
-                deltaColumns = listOf(
-                    NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-                ),
+                deltaColumns =
+                    listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
             )
             val client = testClient()
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = table,
-                postgrest = client.postgrest,
-                onSelect = { throw ConnectTimeoutException("connect timed out", null) },
-                onUpdate = { postgrestResultOf("[]", client.postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = table,
+                    postgrest = client.postgrest,
+                    onSelect = { throw ConnectTimeoutException("connect timed out", null) },
+                    onUpdate = { postgrestResultOf("[]", client.postgrest) },
+                )
 
             // When
             val synced = syncer(store, client, wrapper).syncTable(table = table)
@@ -303,15 +308,15 @@ class OfflineMutationDeltaReplayTest {
             table = table,
             body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
             filter = idFilter,
-            deltaColumns = listOf(
-                NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0),
-            ),
+            deltaColumns =
+                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
         )
         val client = testClient()
-        val wrapper = wrapper(
-            client = client,
-            selectPayload = """[{"id":"project-1","total_minutes":null}]""",
-        )
+        val wrapper =
+            wrapper(
+                client = client,
+                selectPayload = """[{"id":"project-1","total_minutes":null}]""",
+            )
 
         // When
         syncer(store, client, wrapper).syncTable(table = table)
@@ -322,12 +327,18 @@ class OfflineMutationDeltaReplayTest {
 
     // ── Fixture ──────────────────────────────────────────────────────────────
 
-    private val idFilter = FilterDescriptor(
-        mode = FilterDescriptor.Mode.AND,
-        conditions = listOf(
-            FilterDescriptor.Condition(column = "id", operatorId = "eq", value = "project-1"),
-        ),
-    )
+    private val idFilter =
+        FilterDescriptor(
+            mode = FilterDescriptor.Mode.AND,
+            conditions =
+                listOf(
+                    FilterDescriptor.Condition(
+                        column = "id",
+                        operatorId = "eq",
+                        value = "project-1",
+                    )
+                ),
+        )
 
     private fun FakePostgrestQueryBuilderWrapper.lastUpdateBody(): JsonObject =
         recordedUpdateBodies.last().jsonObject
@@ -338,22 +349,24 @@ class OfflineMutationDeltaReplayTest {
     private fun wrapper(
         client: SupabaseClient,
         selectPayload: String,
-    ): FakePostgrestQueryBuilderWrapper = FakePostgrestQueryBuilderWrapper(
-        table = table,
-        postgrest = client.postgrest,
-        onSelect = { postgrestResultOf(selectPayload, client.postgrest) },
-        onUpdate = { postgrestResultOf("[]", client.postgrest) },
-    )
+    ): FakePostgrestQueryBuilderWrapper =
+        FakePostgrestQueryBuilderWrapper(
+            table = table,
+            postgrest = client.postgrest,
+            onSelect = { postgrestResultOf(selectPayload, client.postgrest) },
+            onUpdate = { postgrestResultOf("[]", client.postgrest) },
+        )
 
     private fun syncer(
         store: OfflineStore,
         client: SupabaseClient,
         wrapper: FakePostgrestQueryBuilderWrapper,
-    ): MutationQueueReplayer = MutationQueueReplayer(
-        store = store,
-        supabase = client,
-        postgrestFactory = { _, _ -> wrapper },
-    )
+    ): MutationQueueReplayer =
+        MutationQueueReplayer(
+            store = store,
+            supabase = client,
+            postgrestFactory = { _, _ -> wrapper },
+        )
 
     private fun testClient(): SupabaseClient = newTestSupabaseClient()
 

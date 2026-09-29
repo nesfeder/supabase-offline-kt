@@ -1,20 +1,22 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.util
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * How long [awaitReplaySafeSession] waits for the user JWT to become available before giving up.
  * Cold-start restore normally completes well under a second, and a post-reconnect token refresh
  * within a few; the bound only exists so a misbehaving auth layer cannot suspend a sync trigger
- * forever. A caller that awaits its own session-settle bound before triggering a sync composes
- * with this one serially, so the worst-case wait is the sum of the two.
+ * forever. A caller that awaits its own session-settle bound before triggering a sync composes with
+ * this one serially, so the worst-case wait is the sum of the two.
  */
 internal val AUTH_SESSION_SETTLE_TIMEOUT: Duration = 10.seconds
 
@@ -32,8 +34,7 @@ internal val AUTH_SESSION_SETTLE_TIMEOUT: Duration = 10.seconds
  * still the identity, but requests would go out on the anon key, turning that user's owner-scoped
  * writes into RLS refusals.
  *
- * Extracted as a pure function so the mapping is unit-testable without a real Supabase auth
- * client.
+ * Extracted as a pure function so the mapping is unit-testable without a real Supabase auth client.
  */
 internal fun isReplaySafeSessionStatus(status: SessionStatus): Boolean =
     status is SessionStatus.Authenticated || status is SessionStatus.NotAuthenticated
@@ -52,13 +53,14 @@ internal fun isReplaySafeSessionStatus(status: SessionStatus): Boolean =
  *   session model at all, so the probe failure is treated as settled (fail-open).
  */
 internal suspend fun SupabaseClient.awaitReplaySafeSession(
-    timeout: Duration = AUTH_SESSION_SETTLE_TIMEOUT,
-): Boolean = try {
-    withTimeoutOrNull(timeout) {
-        auth.sessionStatus.first { status -> isReplaySafeSessionStatus(status) }
-    } != null
-} catch (cancellation: CancellationException) {
-    throw cancellation
-} catch (_: Throwable) {
-    true
-}
+    timeout: Duration = AUTH_SESSION_SETTLE_TIMEOUT
+): Boolean =
+    try {
+        withTimeoutOrNull(timeout) {
+            auth.sessionStatus.first { status -> isReplaySafeSessionStatus(status) }
+        } != null
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Throwable) {
+        true
+    }

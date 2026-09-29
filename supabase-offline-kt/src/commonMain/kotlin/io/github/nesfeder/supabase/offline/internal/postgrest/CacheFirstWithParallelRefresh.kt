@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.RefreshState
@@ -16,9 +18,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * Number of attempts in the fast retry ladder before a refresh is reported as
  * [RefreshState.Stalled].
  *
- * Internal rather than private because the one-shot restore-window ladder in
- * [QueryReader] derives its wait budget from this: the two ladders are deliberately the
- * same shape, and deriving one from the other keeps them from drifting apart if this is retuned.
+ * Internal rather than private because the one-shot restore-window ladder in [QueryReader] derives
+ * its wait budget from this: the two ladders are deliberately the same shape, and deriving one from
+ * the other keeps them from drifting apart if this is retuned.
  */
 internal const val FAST_LADDER_ATTEMPTS: Int = 4
 
@@ -34,20 +36,21 @@ internal const val FAST_LADDER_ATTEMPTS: Int = 4
  * @param failures Number of consecutive failures so far (1-based).
  * @return Milliseconds to sleep before the next attempt.
  */
-internal fun defaultRefreshBackoffMillis(failures: Int): Long = when (failures) {
-    1 -> 300L
-    2 -> 900L
-    3 -> 2_400L
-    4 -> 5_000L
-    5 -> 15_000L
-    else -> 60_000L
-}
+internal fun defaultRefreshBackoffMillis(failures: Int): Long =
+    when (failures) {
+        1 -> 300L
+        2 -> 900L
+        3 -> 2_400L
+        4 -> 5_000L
+        5 -> 15_000L
+        else -> 60_000L
+    }
 
 /**
  * Combinator that forwards emissions from [cache] to the downstream collector while running a
  * self-healing network [refresh] in parallel. Used by
- * [QueryReader][io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader] to refresh
- * the cache from the network without blocking cached emissions.
+ * [QueryReader][io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader] to refresh the
+ * cache from the network without blocking cached emissions.
  *
  * Why this exists as a separate helper: the original implementation wrapped the network refresh in
  * `onStart { coroutineScope { launch { ... } } }`. [kotlinx.coroutines.coroutineScope] suspends
@@ -65,11 +68,11 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long = when (failures) 
  *
  * ### Recovery accelerator
  * [accelerator] is an optional edge-triggered wake-up (auth restored / connectivity regained, built
- * by [io.github.nesfeder.supabase.offline.buildRefreshAccelerator]). An edge that lands while the loop is sleeping
- * cancels the current backoff delay and retries immediately. Edges are conflated, so a burst buys
- * exactly one immediate attempt, and — being strict transitions — a persistently-failing refresh
- * can never hot-loop. The accelerator is a hint only: with an empty [accelerator] the loop still
- * recovers on its capped schedule.
+ * by [io.github.nesfeder.supabase.offline.buildRefreshAccelerator]). An edge that lands while the
+ * loop is sleeping cancels the current backoff delay and retries immediately. Edges are conflated,
+ * so a burst buys exactly one immediate attempt, and — being strict transitions — a
+ * persistently-failing refresh can never hot-loop. The accelerator is a hint only: with an empty
+ * [accelerator] the loop still recovers on its capped schedule.
  *
  * ### State reporting
  * [onRefreshState] observes the refresh lifecycle: [RefreshState.InFlight] at start,
@@ -148,14 +151,16 @@ internal suspend fun runSelfHealingRefresh(
     try {
         var failures = 0
         while (true) {
-            val failure = try {
-                refresh()
-                null
-            } catch (error: Exception) {
-                // Rethrow real cancellation of this coroutine; treat everything else as retryable.
-                currentCoroutineContext().ensureActive()
-                error
-            }
+            val failure =
+                try {
+                    refresh()
+                    null
+                } catch (error: Exception) {
+                    // Rethrow real cancellation of this coroutine; treat everything else as
+                    // retryable.
+                    currentCoroutineContext().ensureActive()
+                    error
+                }
 
             if (failure == null) {
                 onRefreshState(RefreshState.Idle)

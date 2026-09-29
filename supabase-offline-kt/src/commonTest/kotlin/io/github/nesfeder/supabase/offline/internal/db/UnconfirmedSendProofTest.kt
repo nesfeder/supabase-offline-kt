@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseInternal::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
@@ -22,15 +24,15 @@ import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
 /**
  * A keyed INSERT is taken as never sent — and replayed as a plain INSERT, so a duplicate id is
@@ -59,17 +61,21 @@ class UnconfirmedSendProofTest {
                     server.loseResponseAfterCommit = { lost -> lost.method == "POST" }
                     answer(request)
                 }
-                request.method == "POST" && attempts == 2 -> throw ConnectTimeoutException("connect timed out", null)
+                request.method == "POST" && attempts == 2 ->
+                    throw ConnectTimeoutException("connect timed out", null)
                 else -> answer(request)
             }
         }
-        val outcome = builderOn(clientRetryingOn(server.recorder)).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val outcome =
+            builderOn(clientRetryingOn(server.recorder))
+                .insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
         server.recorder.answer = answer
 
         // When
         val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
-        // Then — the replay took the committed row as its own rather than refusing it as a duplicate
+        // Then — the replay took the committed row as its own rather than refusing it as a
+        // duplicate
         assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(2, attempts)
         assertEquals(emptyList(), report.rejected)
@@ -81,19 +87,26 @@ class UnconfirmedSendProofTest {
     fun a_response_to_an_earlier_attempt_proves_the_request_left_the_device() = runTest {
         // Given — a gateway answers the first attempt 502; the retry cannot connect
         var attempts = 0
-        val server = RecordingPostgrestServer(
-            answer = { request ->
-                if (request.method == "POST") attempts++
-                if (attempts == 1) {
-                    respond(content = "bad gateway", status = HttpStatusCode.BadGateway, headers = headersOf(HttpHeaders.ContentType, "text/plain"))
-                } else {
-                    throw ConnectTimeoutException("connect timed out", null)
+        val server =
+            RecordingPostgrestServer(
+                answer = { request ->
+                    if (request.method == "POST") attempts++
+                    if (attempts == 1) {
+                        respond(
+                            content = "bad gateway",
+                            status = HttpStatusCode.BadGateway,
+                            headers = headersOf(HttpHeaders.ContentType, "text/plain"),
+                        )
+                    } else {
+                        throw ConnectTimeoutException("connect timed out", null)
+                    }
                 }
-            },
-        )
+            )
 
         // When
-        val outcome = builderOn(clientRetryingOn(server)).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val outcome =
+            builderOn(clientRetryingOn(server))
+                .insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // Then — something answered, so the send stays possibly delivered
         assertIs<MutationOutcome.Queued>(outcome)
@@ -102,33 +115,38 @@ class UnconfirmedSendProofTest {
     }
 
     @Test
-    fun a_connect_failure_carrying_an_earlier_delivered_attempt_is_not_taken_for_never_sent() = runTest {
-        // Given — the insert commits, then the engine reports a failed reconnect that carries the
-        // delivered attempt as a suppressed exception, as OkHttp's own retry does
-        val server = FakeRelationalPostgrestServer()
-        val answer = server.recorder.answer
-        var first = true
-        server.recorder.answer = { request ->
-            val response = answer(request)
-            if (request.method == "POST" && first) {
-                first = false
-                throw ConnectTimeoutException("connect timed out", null).apply {
-                    addSuppressed(IOException("unexpected end of stream"))
+    fun a_connect_failure_carrying_an_earlier_delivered_attempt_is_not_taken_for_never_sent() =
+        runTest {
+            // Given — the insert commits, then the engine reports a failed reconnect that carries
+            // the
+            // delivered attempt as a suppressed exception, as OkHttp's own retry does
+            val server = FakeRelationalPostgrestServer()
+            val answer = server.recorder.answer
+            var first = true
+            server.recorder.answer = { request ->
+                val response = answer(request)
+                if (request.method == "POST" && first) {
+                    first = false
+                    throw ConnectTimeoutException("connect timed out", null).apply {
+                        addSuppressed(IOException("unexpected end of stream"))
+                    }
                 }
+                response
             }
-            response
+            val outcome =
+                builderOn(server.supabaseClient())
+                    .insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+
+            // When
+            val report =
+                MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+
+            // Then
+            assertIs<MutationOutcome.Queued>(outcome)
+            assertEquals(emptyList(), report.rejected)
+            assertEquals(1, report.syncedCount)
+            assertEquals(1, server.rows(TABLE).size)
         }
-        val outcome = builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
-
-        // When
-        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
-
-        // Then
-        assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(emptyList(), report.rejected)
-        assertEquals(1, report.syncedCount)
-        assertEquals(1, server.rows(TABLE).size)
-    }
 
     @Test
     fun a_proxy_503_after_the_insert_committed_keeps_the_send_unconfirmed() = runTest {
@@ -149,7 +167,9 @@ class UnconfirmedSendProofTest {
                 response
             }
         }
-        val outcome = builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val outcome =
+            builderOn(server.supabaseClient())
+                .insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // When
         val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
@@ -164,7 +184,10 @@ class UnconfirmedSendProofTest {
     @Test
     fun postgrest_own_503_at_the_head_proves_the_write_did_not_run() = runTest {
         // Given — PostgREST could not reach the database, and said so with its own code
-        val server = RecordingPostgrestServer(answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST002") })
+        val server =
+            RecordingPostgrestServer(
+                answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST002") }
+            )
         builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
         server.answer = { okJson("[]") }
 
@@ -178,7 +201,10 @@ class UnconfirmedSendProofTest {
     @Test
     fun a_postgrest_client_error_503_at_the_head_leaves_the_send_unconfirmed() = runTest {
         // Given — PGRST001: the database connection broke during the request, which may have run
-        val server = RecordingPostgrestServer(answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST001") })
+        val server =
+            RecordingPostgrestServer(
+                answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST001") }
+            )
         builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
         server.answer = { okJson("[]") }
 
@@ -186,14 +212,21 @@ class UnconfirmedSendProofTest {
         MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then
-        assertTrue("resolution=ignore-duplicates" in server.requests.last().prefer.orEmpty().split(','))
+        assertTrue(
+            "resolution=ignore-duplicates" in server.requests.last().prefer.orEmpty().split(',')
+        )
     }
 
     @Test
     fun a_replay_that_never_connected_clears_its_record() = runTest {
         // Given — a queued keyed INSERT whose first replay cannot connect
-        store.enqueueOwnedBy(null) { enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]""")) }
-        val server = RecordingPostgrestServer(answer = { throw ConnectTimeoutException("connect timed out", null) })
+        store.enqueueOwnedBy(null) {
+            enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        }
+        val server =
+            RecordingPostgrestServer(
+                answer = { throw ConnectTimeoutException("connect timed out", null) }
+            )
         val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
         replayer.sync()
         server.answer = { okJson("[]") }
@@ -208,8 +241,13 @@ class UnconfirmedSendProofTest {
     @Test
     fun a_replay_answered_by_postgrest_own_503_clears_its_record() = runTest {
         // Given
-        store.enqueueOwnedBy(null) { enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]""")) }
-        val server = RecordingPostgrestServer(answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST000") })
+        store.enqueueOwnedBy(null) {
+            enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        }
+        val server =
+            RecordingPostgrestServer(
+                answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST000") }
+            )
         val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
         replayer.sync()
         server.answer = { okJson("[]") }
@@ -230,7 +268,8 @@ class UnconfirmedSendProofTest {
         objectDao.seedPayload(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE, "{not json")
 
         // When — the next launch replays it
-        val report = MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
+        val report =
+            MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
 
         // Then
         assertEquals(emptyList(), report.rejected)
@@ -247,7 +286,8 @@ class UnconfirmedSendProofTest {
         objectDao.delete(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)
 
         // When
-        val report = MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
+        val report =
+            MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
 
         // Then
         assertEquals(emptyList(), report.rejected)
@@ -258,7 +298,8 @@ class UnconfirmedSendProofTest {
     @Test
     fun a_missing_record_starts_from_the_queued_keyed_inserts_only() = runTest {
         // Given — a keyed INSERT, a keyless one and an UPDATE queued, and no record
-        val keyed = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val keyed =
+            store.enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"no key"}]"""))
         store.enqueueUpdate(table = TABLE, body = Json.parseToJsonElement("""{"title":"new"}"""))
         objectDao.delete(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)
@@ -268,30 +309,43 @@ class UnconfirmedSendProofTest {
 
         // Then — only the INSERT whose replay can take its rows as already there is recorded
         assertEquals(setOf(keyed), next.mutationQueueState.unconfirmedSends())
-        assertEquals("""{"version":1,"mutationIds":[$keyed]}""", objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload)
+        assertEquals(
+            """{"version":1,"mutationIds":[$keyed]}""",
+            objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload,
+        )
     }
 
     @Test
-    fun an_insert_this_build_queued_and_never_sent_is_still_refused_as_a_duplicate_after_a_relaunch() = runTest {
-        // Given — another row already has the id of an insert that was queued and never sent
-        store.enqueueOwnedBy(null) { enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]""")) }
-        val server = FakeRelationalPostgrestServer()
-        server.seed(TABLE, row("""{"id":"k1","title":"someone else's"}"""))
+    fun an_insert_this_build_queued_and_never_sent_is_still_refused_as_a_duplicate_after_a_relaunch() =
+        runTest {
+            // Given — another row already has the id of an insert that was queued and never sent
+            store.enqueueOwnedBy(null) {
+                enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
+            }
+            val server = FakeRelationalPostgrestServer()
+            server.seed(TABLE, row("""{"id":"k1","title":"someone else's"}"""))
 
-        // When — the next launch replays it
-        val report = MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
+            // When — the next launch replays it
+            val report =
+                MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
 
-        // Then — nothing on the server can be its own, so the duplicate is refused
-        assertEquals("23505", report.rejected.single().serverError?.code)
-    }
+            // Then — nothing on the server can be its own, so the duplicate is refused
+            assertEquals("23505", report.rejected.single().serverError?.code)
+        }
 
     @Test
     fun a_retried_rejection_is_refused_again_as_a_duplicate_when_the_record_was_lost() = runTest {
         // Given — an insert refused as a duplicate, then a launch that finds no record at all
         val server = FakeRelationalPostgrestServer()
         server.seed(TABLE, row("""{"id":"k1","title":"someone else's"}"""))
-        store.enqueueOwnedBy(null) { enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]""")) }
-        val refused = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync().rejected.single()
+        store.enqueueOwnedBy(null) {
+            enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        }
+        val refused =
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .sync()
+                .rejected
+                .single()
         objectDao.delete(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)
         val next = relaunch()
 
@@ -303,7 +357,8 @@ class UnconfirmedSendProofTest {
         assertEquals("23505", report.rejected.single().serverError?.code)
     }
 
-    private fun relaunch(): OfflineStore = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+    private fun relaunch(): OfflineStore =
+        newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
 
     private fun builderOn(supabase: SupabaseClient): OfflinePostgrestQueryBuilderImpl =
         OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from(TABLE), store = store)

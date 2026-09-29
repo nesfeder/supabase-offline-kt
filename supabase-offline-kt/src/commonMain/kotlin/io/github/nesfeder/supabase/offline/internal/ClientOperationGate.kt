@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
@@ -34,10 +36,12 @@ internal class ClientOperationGate {
     private val closing = CompletableDeferred<Unit>()
 
     /** Whether [close] has run. */
-    val isClosed: Boolean get() = state.value.closed
+    val isClosed: Boolean
+        get() = state.value.closed
 
     /** How many calls are in flight. */
-    val inFlight: Int get() = state.value.inFlight
+    val inFlight: Int
+        get() = state.value.inFlight
 
     /** Throws the client's closed error once [close] has run. */
     fun ensureOpen() {
@@ -59,10 +63,17 @@ internal class ClientOperationGate {
 
     /**
      * Runs [block] as a call that cancelling [scope] stops: a child of [scope] on the caller's
-     * dispatcher. Stopped that way after [close], its caller gets the closed error, not a cancellation.
+     * dispatcher. Stopped that way after [close], its caller gets the closed error, not a
+     * cancellation.
      */
     suspend fun <T> cancellableCall(scope: CoroutineScope, block: suspend () -> T): T = call {
-        val work = scope.async(currentCoroutineContext().minusKey(Job), start = CoroutineStart.UNDISPATCHED) { block() }
+        val work =
+            scope.async(
+                currentCoroutineContext().minusKey(Job),
+                start = CoroutineStart.UNDISPATCHED,
+            ) {
+                block()
+            }
         try {
             work.await()
         } catch (cancellation: CancellationException) {
@@ -83,9 +94,13 @@ internal class ClientOperationGate {
      */
     fun <T> callCollecting(flow: Flow<T>): Flow<T> = channelFlow {
         call {
-            // Leaves the gate only once the collection has ended, even when the collector is cancelled
+            // Leaves the gate only once the collection has ended, even when the collector is
+            // cancelled
             coroutineScope {
-                val upstream = launch(start = CoroutineStart.UNDISPATCHED) { flow.collect { value -> send(value) } }
+                val upstream =
+                    launch(start = CoroutineStart.UNDISPATCHED) {
+                        flow.collect { value -> send(value) }
+                    }
                 val onClose = closing.invokeOnCompletion {
                     // The error first: once cancelled, the collection may end the channel cleanly
                     this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
@@ -98,7 +113,8 @@ internal class ClientOperationGate {
                 }
             }
         }
-    }.buffer(Channel.RENDEZVOUS)
+    }
+        .buffer(Channel.RENDEZVOUS)
 
     /**
      * Refuses every call from now on and ends the flows being collected.

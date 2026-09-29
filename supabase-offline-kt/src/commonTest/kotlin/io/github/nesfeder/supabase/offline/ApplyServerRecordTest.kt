@@ -1,9 +1,20 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class, ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -14,24 +25,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import kotlin.time.ExperimentalTime
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /**
- * Tests for [SupabaseOfflineClient.applyServerRecord] / [SupabaseOfflineClient.applyServerDelete]
- * — the realtime primitives that merge a server-authored row into every cached SELECT payload
- * for a table by primary key, without a caller-visible cache signature.
+ * Tests for [SupabaseOfflineClient.applyServerRecord] / [SupabaseOfflineClient.applyServerDelete] —
+ * the realtime primitives that merge a server-authored row into every cached SELECT payload for a
+ * table by primary key, without a caller-visible cache signature.
  *
  * These run the real [SupabaseOfflineClientImpl] over a real [OfflineStore] backed by in-memory
- * fake DAOs; the [SupabaseClient][io.github.jan.supabase.SupabaseClient] is a mock-engine stub
- * that these methods never touch (they read/write only the local store).
+ * fake DAOs; the [SupabaseClient][io.github.jan.supabase.SupabaseClient] is a mock-engine stub that
+ * these methods never touch (they read/write only the local store).
  */
 class ApplyServerRecordTest {
 
@@ -94,15 +96,22 @@ class ApplyServerRecordTest {
         objectDao.seedPayload(
             table = "summaries",
             signature = "summaries?user_id=eq.u-1",
-            payload = """[{"user_id":"u-1","period_id":"2026-P26","total":50},""" +
-                """{"user_id":"u-1","period_id":"2026-P25","total":40}]""",
+            payload =
+                """[{"user_id":"u-1","period_id":"2026-P26","total":50},""" +
+                    """{"user_id":"u-1","period_id":"2026-P25","total":40}]""",
         )
         val client = buildClient(objectDao)
 
         // When — a regenerated P26 arrives with a new rating
         client.applyServerRecord(
             table = "summaries",
-            record = summaryRecord(userId = "u-1", periodId = "2026-P26", total = 99, generatedAt = "2026-06-29T12:00:00Z"),
+            record =
+                summaryRecord(
+                    userId = "u-1",
+                    periodId = "2026-P26",
+                    total = 99,
+                    generatedAt = "2026-06-29T12:00:00Z",
+                ),
             primaryKeys = listOf("user_id", "period_id"),
         )
 
@@ -111,7 +120,10 @@ class ApplyServerRecordTest {
         assertNotNull(updated)
         assertTrue(updated.contains("\"total\":99"), "P26 should be recomputed, got $updated")
         assertTrue(updated.contains("\"total\":40"), "P25 must remain, got $updated")
-        assertFalse(updated.contains("\"total\":50"), "stale P26 rating must not survive, got $updated")
+        assertFalse(
+            updated.contains("\"total\":50"),
+            "stale P26 rating must not survive, got $updated",
+        )
     }
 
     @Test
@@ -121,14 +133,21 @@ class ApplyServerRecordTest {
         objectDao.seedPayload(
             table = "summaries",
             signature = "summaries?user_id=eq.u-1",
-            payload = """[{"user_id":"u-1","period_id":"2026-P25","generated_at":"2026-06-22T12:00:00Z"}]""",
+            payload =
+                """[{"user_id":"u-1","period_id":"2026-P25","generated_at":"2026-06-22T12:00:00Z"}]""",
         )
         val client = buildClient(objectDao)
 
         // When — a newer period arrives via realtime
         client.applyServerRecord(
             table = "summaries",
-            record = summaryRecord(userId = "u-1", periodId = "2026-P26", total = 60, generatedAt = "2026-06-29T12:00:00Z"),
+            record =
+                summaryRecord(
+                    userId = "u-1",
+                    periodId = "2026-P26",
+                    total = 60,
+                    generatedAt = "2026-06-29T12:00:00Z",
+                ),
             primaryKeys = listOf("user_id", "period_id"),
         )
 
@@ -181,7 +200,8 @@ class ApplyServerRecordTest {
 
     @Test
     fun applyServerRecord_drops_record_missing_a_primary_key_and_warns() = runTest {
-        // Given — a summaries cache and a record missing period_id (so the composite PK can't be built)
+        // Given — a summaries cache and a record missing period_id (so the composite PK can't be
+        // built)
         val objectDao = FakeObjectDao()
         objectDao.seedPayload(
             table = "summaries",
@@ -207,37 +227,46 @@ class ApplyServerRecordTest {
             """[{"user_id":"u-1","period_id":"2026-P25"}]""",
             objectDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload,
         )
-        assertTrue(warnings.any { it.contains("applyServerRecord") }, "expected a warning, got $warnings")
+        assertTrue(
+            warnings.any { it.contains("applyServerRecord") },
+            "expected a warning, got $warnings",
+        )
     }
 
     @Test
-    fun applyServerRecord_live_collector_observes_merged_row() = runTest(UnconfinedTestDispatcher()) {
-        // Given — a live collector on a seeded-empty cache slot, mirroring a subscribed selectAsFlow
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload("reports", "reports-period-sig", "[]")
-        val client = buildClient(objectDao)
+    fun applyServerRecord_live_collector_observes_merged_row() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given — a live collector on a seeded-empty cache slot, mirroring a subscribed
+            // selectAsFlow
+            val objectDao = FakeObjectDao()
+            objectDao.seedPayload("reports", "reports-period-sig", "[]")
+            val client = buildClient(objectDao)
 
-        val cacheFlow = objectDao.observe("reports", "reports-period-sig")
-            .filterNotNull()
-            .map { it.payload }
-        val firstMergedEmission = async {
-            withTimeoutOrNull(timeMillis = 500) {
-                cacheFlow.first { it.contains("rep-1") }
+            val cacheFlow =
+                objectDao.observe("reports", "reports-period-sig").filterNotNull().map {
+                    it.payload
+                }
+            val firstMergedEmission = async {
+                withTimeoutOrNull(timeMillis = 500) {
+                    cacheFlow.first { it.contains("rep-1") }
+                }
             }
+
+            // When — a realtime record is merged into the cache
+            client.applyServerRecord(
+                table = "reports",
+                record = reportRecord(id = "rep-1", userId = "u-1", kind = "WEEK", total = 88),
+                primaryKeys = listOf("id"),
+            )
+
+            // Then — the collector re-emits with the merged row within flow-dispatch latency
+            val emitted = firstMergedEmission.await()
+            assertNotNull(emitted, "live collector must observe the merged realtime row")
+            assertTrue(
+                emitted.contains("\"total\":88"),
+                "emitted payload should carry the new row, got $emitted",
+            )
         }
-
-        // When — a realtime record is merged into the cache
-        client.applyServerRecord(
-            table = "reports",
-            record = reportRecord(id = "rep-1", userId = "u-1", kind = "WEEK", total = 88),
-            primaryKeys = listOf("id"),
-        )
-
-        // Then — the collector re-emits with the merged row within flow-dispatch latency
-        val emitted = firstMergedEmission.await()
-        assertNotNull(emitted, "live collector must observe the merged realtime row")
-        assertTrue(emitted.contains("\"total\":88"), "emitted payload should carry the new row, got $emitted")
-    }
 
     // ── applyServerDelete ──────────────────────────────────────────────────────
 
@@ -248,14 +277,21 @@ class ApplyServerRecordTest {
         objectDao.seedPayload(
             table = "summaries",
             signature = "summaries?user_id=eq.u-1",
-            payload = """[{"user_id":"u-1","period_id":"2026-P26"},{"user_id":"u-1","period_id":"2026-P25"}]""",
+            payload =
+                """[{"user_id":"u-1","period_id":"2026-P26"},{"user_id":"u-1","period_id":"2026-P25"}]""",
         )
         val client = buildClient(objectDao)
 
         // When — a DELETE event for P26 arrives
         client.applyServerDelete(
             table = "summaries",
-            oldRecord = summaryRecord(userId = "u-1", periodId = "2026-P26", total = 0, generatedAt = "2026-06-29T12:00:00Z"),
+            oldRecord =
+                summaryRecord(
+                    userId = "u-1",
+                    periodId = "2026-P26",
+                    total = 0,
+                    generatedAt = "2026-06-29T12:00:00Z",
+                ),
             primaryKeys = listOf("user_id", "period_id"),
         )
 
@@ -290,7 +326,10 @@ class ApplyServerRecordTest {
 
         // Then — nothing removed, a warning emitted
         assertEquals(0, objectDao.writes)
-        assertTrue(warnings.any { it.contains("applyServerDelete") }, "expected a warning, got $warnings")
+        assertTrue(
+            warnings.any { it.contains("applyServerDelete") },
+            "expected a warning, got $warnings",
+        )
     }
 
     // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -303,19 +342,24 @@ class ApplyServerRecordTest {
             put("total", total)
         }
 
-    private fun summaryRecord(userId: String, periodId: String, total: Int, generatedAt: String): JsonObject =
-        buildJsonObject {
-            put("user_id", userId)
-            put("period_id", periodId)
-            put("total", total)
-            put("generated_at", generatedAt)
-        }
+    private fun summaryRecord(
+        userId: String,
+        periodId: String,
+        total: Int,
+        generatedAt: String,
+    ): JsonObject = buildJsonObject {
+        put("user_id", userId)
+        put("period_id", periodId)
+        put("total", total)
+        put("generated_at", generatedAt)
+    }
 
     private fun buildClient(
         objectDao: FakeObjectDao,
         sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-    ): SupabaseOfflineClientImpl = newTestOfflineClient(
-        store = newTestOfflineStore(objectDao = objectDao),
-        sdkLogger = sdkLogger,
-    )
+    ): SupabaseOfflineClientImpl =
+        newTestOfflineClient(
+            store = newTestOfflineStore(objectDao = objectDao),
+            sdkLogger = sdkLogger,
+        )
 }

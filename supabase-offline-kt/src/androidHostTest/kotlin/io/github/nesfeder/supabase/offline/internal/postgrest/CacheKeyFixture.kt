@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -47,10 +49,10 @@ internal data class CacheKeyFixtureCase(
  * A call is a JSON array whose first element names it. Filters: `eq`, `neq`, `gt`, `gte`, `lt`,
  * `lte`, `like`, `ilike`, `match`, `imatch`, `is`, `isdistinct`, `in`, `cs`, `cd`, `ov` (a list),
  * `cs_range`, `cd_range`, `ov_range`, `sl`, `sr`, `nxl`, `nxr`, `adj` (a two-element range), `fts`,
- * `plfts`, `phfts`, `wfts` (a query and an optional configuration), `not` (column, operator, value),
- * and `or` / `and` (a list of calls and optional `negate` / `referencedTable`). The rest: `order`,
- * `limit`, `range`, `schema` (set on the request), `param` (a raw query parameter) and `header`. A JSON number is passed as its
- * literal text, which is what supabase-kt writes for it.
+ * `plfts`, `phfts`, `wfts` (a query and an optional configuration), `not` (column, operator,
+ * value), and `or` / `and` (a list of calls and optional `negate` / `referencedTable`). The rest:
+ * `order`, `limit`, `range`, `schema` (set on the request), `param` (a raw query parameter) and
+ * `header`. A JSON number is passed as its literal text, which is what supabase-kt writes for it.
  */
 internal object CacheKeyFixture {
 
@@ -59,8 +61,11 @@ internal object CacheKeyFixture {
 
     /** Every case of the fixture, in file order. */
     fun cases(): List<CacheKeyFixtureCase> {
-        val text = checkNotNull(CacheKeyFixture::class.java.getResourceAsStream(RESOURCE)) { "missing $RESOURCE" }
-            .use { stream -> stream.readBytes().decodeToString() }
+        val text =
+            checkNotNull(CacheKeyFixture::class.java.getResourceAsStream(RESOURCE)) {
+                    "missing $RESOURCE"
+                }
+                .use { stream -> stream.readBytes().decodeToString() }
         return Json.parseToJsonElement(text).jsonObject.getValue("cases").jsonArray.map { element ->
             val case = element.jsonObject
             CacheKeyFixtureCase(
@@ -87,26 +92,33 @@ internal object CacheKeyFixture {
         val name = call[0].jsonPrimitive.content
         val options = call.lastOrNull() as? JsonObject
         when (name) {
-            "order" -> order(
-                column = call[1].jsonPrimitive.content,
-                order = if (call[2].jsonPrimitive.content == "desc") Order.DESCENDING else Order.ASCENDING,
-                nullsFirst = options?.get("nullsFirst")?.jsonPrimitive?.booleanOrNull ?: false,
-                referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content,
-            )
+            "order" ->
+                order(
+                    column = call[1].jsonPrimitive.content,
+                    order =
+                        if (call[2].jsonPrimitive.content == "desc") Order.DESCENDING
+                        else Order.ASCENDING,
+                    nullsFirst = options?.get("nullsFirst")?.jsonPrimitive?.booleanOrNull ?: false,
+                    referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content,
+                )
 
-            "limit" -> limit(
-                count = checkNotNull(call[1].jsonPrimitive.longOrNull),
-                referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content,
-            )
+            "limit" ->
+                limit(
+                    count = checkNotNull(call[1].jsonPrimitive.longOrNull),
+                    referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content,
+                )
 
-            "range" -> range(
-                from = checkNotNull(call[1].jsonPrimitive.longOrNull),
-                to = checkNotNull(call[2].jsonPrimitive.longOrNull),
-                referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content,
-            )
+            "range" ->
+                range(
+                    from = checkNotNull(call[1].jsonPrimitive.longOrNull),
+                    to = checkNotNull(call[2].jsonPrimitive.longOrNull),
+                    referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content,
+                )
 
             "schema" -> schema = call[1].jsonPrimitive.content
-            "param" -> params[call[1].jsonPrimitive.content] = call[2].jsonArray.map { value -> value.jsonPrimitive.content }
+            "param" ->
+                params[call[1].jsonPrimitive.content] =
+                    call[2].jsonArray.map { value -> value.jsonPrimitive.content }
             "header" -> headers.append(call[1].jsonPrimitive.content, call[2].jsonPrimitive.content)
             else -> filter { applyFilter(call) }
         }
@@ -116,27 +128,53 @@ internal object CacheKeyFixture {
         val name = call[0].jsonPrimitive.content
         val options = call.lastOrNull() as? JsonObject
         when (name) {
-            "or", "and" -> {
+            "or",
+            "and" -> {
                 val nested = call[1].jsonArray
                 val negate = options?.get("negate")?.jsonPrimitive?.booleanOrNull ?: false
                 val referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content
                 if (name == "or") {
-                    or(negate = negate, referencedTable = referencedTable) { nested.forEach { inner -> applyFilter(inner.jsonArray) } }
+                    or(negate = negate, referencedTable = referencedTable) {
+                        nested.forEach { inner -> applyFilter(inner.jsonArray) }
+                    }
                 } else {
-                    and(negate = negate, referencedTable = referencedTable) { nested.forEach { inner -> applyFilter(inner.jsonArray) } }
+                    and(negate = negate, referencedTable = referencedTable) {
+                        nested.forEach { inner -> applyFilter(inner.jsonArray) }
+                    }
                 }
             }
 
-            "not" -> filterNot(call[1].jsonPrimitive.content, operatorOf(call[2].jsonPrimitive.content), valueOf(call[3]))
-            "fts", "plfts", "phfts", "wfts" -> textSearch(
-                column = call[1].jsonPrimitive.content,
-                query = call[2].jsonPrimitive.content,
-                textSearchType = TextSearchType.entries.first { type -> "${type.identifier}fts" == name },
-                config = (call.getOrNull(3) as? JsonPrimitive)?.content,
-            )
+            "not" ->
+                filterNot(
+                    call[1].jsonPrimitive.content,
+                    operatorOf(call[2].jsonPrimitive.content),
+                    valueOf(call[3]),
+                )
+            "fts",
+            "plfts",
+            "phfts",
+            "wfts" ->
+                textSearch(
+                    column = call[1].jsonPrimitive.content,
+                    query = call[2].jsonPrimitive.content,
+                    textSearchType =
+                        TextSearchType.entries.first { type -> "${type.identifier}fts" == name },
+                    config = (call.getOrNull(3) as? JsonPrimitive)?.content,
+                )
 
-            "cs_range", "cd_range", "ov_range" -> filter(call[1].jsonPrimitive.content, operatorOf(name.removeSuffix("_range")), pairOf(call[2]))
-            "sl", "sr", "nxl", "nxr", "adj" -> filter(call[1].jsonPrimitive.content, operatorOf(name), pairOf(call[2]))
+            "cs_range",
+            "cd_range",
+            "ov_range" ->
+                filter(
+                    call[1].jsonPrimitive.content,
+                    operatorOf(name.removeSuffix("_range")),
+                    pairOf(call[2]),
+                )
+            "sl",
+            "sr",
+            "nxl",
+            "nxr",
+            "adj" -> filter(call[1].jsonPrimitive.content, operatorOf(name), pairOf(call[2]))
             else -> filter(call[1].jsonPrimitive.content, operatorOf(name), valueOf(call[2]))
         }
     }
@@ -149,10 +187,12 @@ internal object CacheKeyFixture {
         return bounds[0] to bounds[1]
     }
 
-    private fun valueOf(element: JsonElement): Any? = when (element) {
-        JsonNull -> null
-        is JsonArray -> element.map { item -> checkNotNull(valueOf(item)) }
-        is JsonPrimitive -> if (element.isString) element.content else element.booleanOrNull ?: element.content
-        is JsonObject -> error("a call argument is never an object")
-    }
+    private fun valueOf(element: JsonElement): Any? =
+        when (element) {
+            JsonNull -> null
+            is JsonArray -> element.map { item -> checkNotNull(valueOf(item)) }
+            is JsonPrimitive ->
+                if (element.isString) element.content else element.booleanOrNull ?: element.content
+            is JsonObject -> error("a call argument is never an object")
+        }
 }

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingMutationDao
@@ -11,11 +13,11 @@ import kotlin.test.assertTrue
  * The reserved-row and queue-order scenarios both platform test classes run against a real Room
  * database on disk. Only opening the database differs by platform, so it is passed in.
  *
- * @param open Opens the file at the given path through the library's own database builder, with
- *   the given callback added.
+ * @param open Opens the file at the given path through the library's own database builder, with the
+ *   given callback added.
  */
 internal class ReservedRowsDatabaseScenarios(
-    private val open: (path: String, callback: RecordingRoomCallback) -> OfflineDatabase,
+    private val open: (path: String, callback: RecordingRoomCallback) -> OfflineDatabase
 ) {
 
     /**
@@ -39,9 +41,15 @@ internal class ReservedRowsDatabaseScenarios(
         PreviousEngineQueries.deleteOldest(path, limit = 2)
 
         // Then — table reads saw only app rows; its eviction took the reserved rows, being oldest
-        assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.map { row -> row.signature }.toSet(), appRows.toSet())
+        assertEquals(
+            ShippedDatabaseFixture.OBJECT_ROWS.map { row -> row.signature }.toSet(),
+            appRows.toSet(),
+        )
         assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, appRows.size)
-        assertTrue(sizeWithReservedRows > ShippedDatabaseFixture.OBJECT_ROWS.sumOf { row -> row.payload.length.toLong() })
+        assertTrue(
+            sizeWithReservedRows >
+                ShippedDatabaseFixture.OBJECT_ROWS.sumOf { row -> row.payload.length.toLong() }
+        )
         assertEquals(0L, PreviousEngineQueries.reservedRowCount(path))
 
         // And — this build reopens it in place, and reads the now-missing rows as nothing recorded
@@ -49,7 +57,11 @@ internal class ReservedRowsDatabaseScenarios(
         val reopened = open(path, callback)
         try {
             assertEquals(SHIPPED_FIXTURE_CONTENTS, reopened.readShippedFixtureContents())
-            val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
+            val store =
+                newTestOfflineStore(
+                    objectDao = reopened.objectDao(),
+                    mutationDao = reopened.mutationDao(),
+                )
             assertEquals(emptyList(), store.mutationQueueState.rejections())
             assertEquals(MutationOwners.Known(emptyMap()), store.mutationQueueState.owners())
         } finally {
@@ -57,7 +69,10 @@ internal class ReservedRowsDatabaseScenarios(
         }
         assertEquals(0, callback.creates)
         assertEquals(0, callback.destructiveMigrations)
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(path))
+        assertEquals(
+            ShippedDatabaseFixture.IDENTITY_HASH,
+            ShippedDatabaseFixture.readIdentityHash(path),
+        )
     }
 
     /** Reserved rows survive a close and reopen, and leave every shipped row as it was. */
@@ -74,12 +89,21 @@ internal class ReservedRowsDatabaseScenarios(
         // When
         val callback = RecordingRoomCallback()
         val reopened = open(path, callback)
-        val (contents, rejections, owners) = try {
-            val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
-            Triple(reopened.readShippedFixtureContents(), store.mutationQueueState.rejections(), store.mutationQueueState.owners())
-        } finally {
-            reopened.close()
-        }
+        val (contents, rejections, owners) =
+            try {
+                val store =
+                    newTestOfflineStore(
+                        objectDao = reopened.objectDao(),
+                        mutationDao = reopened.mutationDao(),
+                    )
+                Triple(
+                    reopened.readShippedFixtureContents(),
+                    store.mutationQueueState.rejections(),
+                    store.mutationQueueState.owners(),
+                )
+            } finally {
+                reopened.close()
+            }
 
         // Then
         assertEquals(SHIPPED_FIXTURE_CONTENTS, contents)
@@ -88,7 +112,10 @@ internal class ReservedRowsDatabaseScenarios(
         assertEquals(0, callback.creates)
         assertEquals(0, callback.destructiveMigrations)
         assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(path))
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(path))
+        assertEquals(
+            ShippedDatabaseFixture.IDENTITY_HASH,
+            ShippedDatabaseFixture.readIdentityHash(path),
+        )
     }
 
     /** This build's size and eviction queries leave reserved rows out, on real SQLite. */
@@ -102,10 +129,14 @@ internal class ReservedRowsDatabaseScenarios(
 
             // When
             val size = objectDao.totalPayloadBytes()
-            val evicted = objectDao.deleteOldestPayloadRows(limit = 10, keptSignatures = emptyList())
+            val evicted =
+                objectDao.deleteOldestPayloadRows(limit = 10, keptSignatures = emptyList())
 
             // Then — only the cache rows counted and only they were evicted
-            assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.sumOf { row -> row.payload.length.toLong() }, size)
+            assertEquals(
+                ShippedDatabaseFixture.OBJECT_ROWS.sumOf { row -> row.payload.length.toLong() },
+                size,
+            )
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, evicted)
             assertEquals(2L, PreviousEngineQueries.reservedRowCount(path))
         } finally {
@@ -114,8 +145,8 @@ internal class ReservedRowsDatabaseScenarios(
     }
 
     /**
-     * Room's queries over query-shape records: found and deleted by prefix, and those whose payload is
-     * gone deleted as orphans, while the rest stay.
+     * Room's queries over query-shape records: found and deleted by prefix, and those whose payload
+     * is gone deleted as orphans, while the rest stay.
      */
     suspend fun roomFindsAndDropsQueryShapeRecords(path: String) {
         // Given — one cached payload, its shape record, and a record whose payload is gone
@@ -131,16 +162,29 @@ internal class ReservedRowsDatabaseScenarios(
             // When / Then — both found by prefix; the orphan dropped; the rest by prefix
             assertEquals(2, objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).size)
             assertEquals(1, objectDao.deleteOrphanedQueryShapes())
-            assertEquals(listOf(prefix + payload.signature), objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).map { row -> row.signature })
+            assertEquals(
+                listOf(prefix + payload.signature),
+                objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).map { row ->
+                    row.signature
+                },
+            )
             objectDao.deleteWithSignaturePrefix(RESERVED_TABLE_NAME, prefix)
-            assertEquals(emptyList(), objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix))
-            assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, objectDao.signaturesForTable(payload.table).size)
+            assertEquals(
+                emptyList(),
+                objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix),
+            )
+            assertEquals(
+                ShippedDatabaseFixture.OBJECT_ROWS.size,
+                objectDao.signaturesForTable(payload.table).size,
+            )
         } finally {
             database.close()
         }
     }
 
-    /** Room's eviction query passes over the signatures it is told to keep, however old they are. */
+    /**
+     * Room's eviction query passes over the signatures it is told to keep, however old they are.
+     */
     suspend fun roomEvictionKeepsTheListedSignatures(path: String) {
         // Given — the shipped database's cache rows
         ShippedDatabaseFixture.writeTo(path)
@@ -150,7 +194,11 @@ internal class ReservedRowsDatabaseScenarios(
             val kept = ShippedDatabaseFixture.OBJECT_ROWS.first()
 
             // When — every row is evicted but one a live reader shows
-            val evicted = objectDao.deleteOldestPayloadRows(limit = 100, keptSignatures = listOf(kept.signature))
+            val evicted =
+                objectDao.deleteOldestPayloadRows(
+                    limit = 100,
+                    keptSignatures = listOf(kept.signature),
+                )
 
             // Then
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size - 1, evicted)
@@ -169,7 +217,11 @@ internal class ReservedRowsDatabaseScenarios(
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
         try {
-            val store = newTestOfflineStore(objectDao = database.objectDao(), mutationDao = database.mutationDao())
+            val store =
+                newTestOfflineStore(
+                    objectDao = database.objectDao(),
+                    mutationDao = database.mutationDao(),
+                )
 
             // When
             assertTrue(store.adoptOwnerlessMutations("user:user-a"))
@@ -180,13 +232,30 @@ internal class ReservedRowsDatabaseScenarios(
         // Then — after reopening, every pending write is the adopting user's, in the same order
         val reopened = open(path, RecordingRoomCallback())
         try {
-            val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
+            val store =
+                newTestOfflineStore(
+                    objectDao = reopened.objectDao(),
+                    mutationDao = reopened.mutationDao(),
+                )
             assertEquals(
-                MutationOwners.Known(mapOf(1L to "user:user-a", 2L to "user:user-a", 3L to "user:user-a", 4L to "user:user-a")),
+                MutationOwners.Known(
+                    mapOf(
+                        1L to "user:user-a",
+                        2L to "user:user-a",
+                        3L to "user:user-a",
+                        4L to "user:user-a",
+                    )
+                ),
                 store.mutationQueueState.owners(),
             )
-            assertEquals(listOf(1L, 2L, 3L, 4L), store.pendingMutationsOf("user:user-a")?.map { row -> row.id })
-            assertEquals(emptyList(), store.pendingMutationsOf("user:user-b")?.map { row -> row.id })
+            assertEquals(
+                listOf(1L, 2L, 3L, 4L),
+                store.pendingMutationsOf("user:user-a")?.map { row -> row.id },
+            )
+            assertEquals(
+                emptyList(),
+                store.pendingMutationsOf("user:user-b")?.map { row -> row.id },
+            )
         } finally {
             reopened.close()
         }
@@ -252,21 +321,29 @@ internal class ReservedRowsDatabaseScenarios(
         }
     }
 
-    private suspend fun aClearThatFailsPartWayChangesNothing(path: String, storeFailingIn: (OfflineDatabase) -> OfflineStore) {
+    private suspend fun aClearThatFailsPartWayChangesNothing(
+        path: String,
+        storeFailingIn: (OfflineDatabase) -> OfflineStore,
+    ) {
         // Given — the shipped database with owner records, and a clear that fails part-way
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
-        val cleared = try {
-            database.writeReservedRows()
-            runCatching { storeFailingIn(database).clearAll() }
-        } finally {
-            database.close()
-        }
+        val cleared =
+            try {
+                database.writeReservedRows()
+                runCatching { storeFailingIn(database).clearAll() }
+            } finally {
+                database.close()
+            }
 
         // When
         val reopened = open(path, RecordingRoomCallback())
         try {
-            val store = newTestOfflineStore(objectDao = reopened.objectDao(), mutationDao = reopened.mutationDao())
+            val store =
+                newTestOfflineStore(
+                    objectDao = reopened.objectDao(),
+                    mutationDao = reopened.mutationDao(),
+                )
 
             // Then — nothing was cleared: every mutation still has the owner it had
             assertTrue(cleared.isFailure)
@@ -286,11 +363,12 @@ internal class ReservedRowsDatabaseScenarios(
 
         // When
         val database = open(path, RecordingRoomCallback())
-        val ids = try {
-            database.mutationDao().pendingAll().map { row -> row.id }
-        } finally {
-            database.close()
-        }
+        val ids =
+            try {
+                database.mutationDao().pendingAll().map { row -> row.id }
+            } finally {
+                database.close()
+            }
 
         // Then — insertion order; the older build's clock order would have put it first
         assertEquals(listOf(1L, 2L, 3L, 4L, 10L), ids)

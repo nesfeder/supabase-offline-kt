@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
@@ -12,15 +14,15 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
  * A cached query's shape — its columns and filters, captured from its request — is kept beside its
@@ -32,14 +34,18 @@ class QueryShapeRecordsTest {
 
     private val objectDao = FakeObjectDao()
     private val mutationDao = FakeMutationDao()
-    private val server = RecordingPostgrestServer(
-        answer = { request ->
-            when (request.method) {
-                "GET" -> okJson("""[{"id":"${request.query["list_id"]?.removePrefix("eq.") ?: "x"}1","list_id":"${request.query["list_id"]?.removePrefix("eq.") ?: "x"}"}]""")
-                else -> okJson("")
+    private val server =
+        RecordingPostgrestServer(
+            answer = { request ->
+                when (request.method) {
+                    "GET" ->
+                        okJson(
+                            """[{"id":"${request.query["list_id"]?.removePrefix("eq.") ?: "x"}1","list_id":"${request.query["list_id"]?.removePrefix("eq.") ?: "x"}"}]"""
+                        )
+                    else -> okJson("")
+                }
             }
-        },
-    )
+        )
 
     /** Every stamp the store writes is later than the one before. */
     private var clock = 0L
@@ -49,21 +55,45 @@ class QueryShapeRecordsTest {
 
     /** A client over the same database, as each launch of the app builds one. */
     private fun launch(settings: OfflineCacheSettings? = null): SupabaseOfflineClient {
-        store = if (settings == null) {
-            newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, nowMillis = { ++clock })
-        } else {
-            newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, settings = settings, nowMillis = { ++clock })
-        }
-        return newTestOfflineClient(supabase = server.supabaseClient(), store = store, coordinatorScope = idleCoroutineScope())
+        store =
+            if (settings == null) {
+                newTestOfflineStore(
+                    objectDao = objectDao,
+                    mutationDao = mutationDao,
+                    nowMillis = { ++clock },
+                )
+            } else {
+                newTestOfflineStore(
+                    objectDao = objectDao,
+                    mutationDao = mutationDao,
+                    settings = settings,
+                    nowMillis = { ++clock },
+                )
+            }
+        return newTestOfflineClient(
+            supabase = server.supabaseClient(),
+            store = store,
+            coordinatorScope = idleCoroutineScope(),
+        )
     }
 
-    private fun list(name: String): SelectRequestBuilder.() -> Unit = { filter { eq("list_id", name) } }
+    private fun list(name: String): SelectRequestBuilder.() -> Unit = {
+        filter { eq("list_id", name) }
+    }
 
     private fun cachedIds(list: String): List<String> =
-        objectDao.rowsOf(TABLE).single { row -> row.signature == "$TABLE?list_id=eq.$list" }.payload
-            .let { payload -> Json.parseToJsonElement(payload).jsonArray.map { element -> element.jsonObject.getValue("id").jsonPrimitive.content } }
+        objectDao
+            .rowsOf(TABLE)
+            .single { row -> row.signature == "$TABLE?list_id=eq.$list" }
+            .payload
+            .let { payload ->
+                Json.parseToJsonElement(payload).jsonArray.map { element ->
+                    element.jsonObject.getValue("id").jsonPrimitive.content
+                }
+            }
 
-    private fun row(id: String, list: String) = Json.parseToJsonElement("""[{"id":"$id","list_id":"$list"}]""") as JsonArray
+    private fun row(id: String, list: String) =
+        Json.parseToJsonElement("""[{"id":"$id","list_id":"$list"}]""") as JsonArray
 
     @Test
     fun a_cached_query_keeps_its_shape_across_a_restart() = runTest {
@@ -83,7 +113,12 @@ class QueryShapeRecordsTest {
     @Test
     fun a_query_cached_without_a_shape_admits_every_row_until_it_is_read() = runTest {
         // Given — list A cached by a build that kept no shapes
-        objectDao.seedPayload(table = TABLE, signature = "$TABLE?list_id=eq.A", payload = """[{"id":"A1","list_id":"A"}]""", updatedAt = 1)
+        objectDao.seedPayload(
+            table = TABLE,
+            signature = "$TABLE?list_id=eq.A",
+            payload = """[{"id":"A1","list_id":"A"}]""",
+            updatedAt = 1,
+        )
         val client = launch()
 
         // When — a row of list B is written before list A is read, and another after
@@ -91,7 +126,8 @@ class QueryShapeRecordsTest {
         client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly(), request = list("A"))
         client.from(TABLE).insertJson(row("B3", "B"))
 
-        // Then — unknown conditions admitted the first; the shape the read recorded kept out the second
+        // Then — unknown conditions admitted the first; the shape the read recorded kept out the
+        // second
         assertEquals(listOf("A1", "B2"), cachedIds("A"))
     }
 
@@ -99,9 +135,19 @@ class QueryShapeRecordsTest {
     fun two_queries_sharing_a_cache_key_are_trusted_for_neither() = runTest {
         // Given — one value holding `&` and two filters, which key the same
         val client = launch()
-        client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) { filter { eq("list_id", "A&note=eq.x") } }
-        assertEquals(listOf("$TABLE?list_id=eq.A&note=eq.x"), objectDao.rowsOf(TABLE).map { row -> row.signature })
-        client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) { filter { eq("list_id", "A"); eq("note", "x") } }
+        client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) {
+            filter { eq("list_id", "A&note=eq.x") }
+        }
+        assertEquals(
+            listOf("$TABLE?list_id=eq.A&note=eq.x"),
+            objectDao.rowsOf(TABLE).map { row -> row.signature },
+        )
+        client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) {
+            filter {
+                eq("list_id", "A")
+                eq("note", "x")
+            }
+        }
 
         // When
         val shape = store.queryShapes.shapeOf(TABLE, "$TABLE?list_id=eq.A&note=eq.x")
@@ -113,18 +159,34 @@ class QueryShapeRecordsTest {
     @Test
     fun a_query_evicted_from_the_cache_leaves_no_shape_behind() = runTest {
         // Given — a cache with room for one list, and two lists read into it
-        val client = launch(OfflineCacheSettings(maxDbSizeBytes = 70, evictionBatchSize = 1, minRetainedBytes = 0))
+        val client =
+            launch(
+                OfflineCacheSettings(
+                    maxDbSizeBytes = 70,
+                    evictionBatchSize = 1,
+                    minRetainedBytes = 0,
+                )
+            )
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = list("A"))
 
         // When — the second list pushes the first out
-        client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = list("BBBBBBBBBBBBBB"))
+        client
+            .from(TABLE)
+            .select(readStrategy = ReadStrategy.NetworkOnly, request = list("BBBBBBBBBBBBBB"))
         store.enforceDbSizeLimitIfNeeded()
 
         // Then — one payload, and one shape record, for it
         val payloads = objectDao.rowsOf(TABLE).map { row -> row.signature }
-        val shapes = objectDao.rowsOf(RESERVED_TABLE_NAME).map { row -> row.signature }.filter { signature -> signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) }
+        val shapes =
+            objectDao
+                .rowsOf(RESERVED_TABLE_NAME)
+                .map { row -> row.signature }
+                .filter { signature -> signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) }
         assertEquals(1, payloads.size)
-        assertEquals(listOf("$QUERY_SHAPE_SIGNATURE_PREFIX$TABLE\u001F${payloads.single()}"), shapes)
+        assertEquals(
+            listOf("$QUERY_SHAPE_SIGNATURE_PREFIX$TABLE\u001F${payloads.single()}"),
+            shapes,
+        )
     }
 
     @Test
@@ -137,7 +199,11 @@ class QueryShapeRecordsTest {
         client.clearAllCache()
 
         // Then
-        assertTrue(objectDao.rowsOf(RESERVED_TABLE_NAME).none { row -> row.signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) })
+        assertTrue(
+            objectDao.rowsOf(RESERVED_TABLE_NAME).none { row ->
+                row.signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX)
+            }
+        )
     }
 
     private companion object {

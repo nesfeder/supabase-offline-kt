@@ -1,6 +1,11 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,14 +20,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * A collection through the gate counts until its own work has stopped, so close() never closes the
- * database under a query the collection is still running; and closing ends it however its
- * collector is stuck.
+ * database under a query the collection is still running; and closing ends it however its collector
+ * is stuck.
  */
 class ClientOperationGateTest {
 
@@ -58,7 +60,11 @@ class ClientOperationGateTest {
         }
 
         // Then — the collection counts until that work has finished, and not after
-        assertEquals(1, gate.inFlight, "the collection left the gate while its work was still running")
+        assertEquals(
+            1,
+            gate.inFlight,
+            "the collection left the gate while its work was still running",
+        )
         finish.complete(Unit)
         withContext(Dispatchers.Default) { withTimeout(5.seconds) { gate.awaitNoCallsInFlight() } }
     }
@@ -92,18 +98,28 @@ class ClientOperationGateTest {
             // Given — a collector waiting for a value that never comes
             val gate = ClientOperationGate()
             val entered = CompletableDeferred<Unit>()
-            val collection = async(Dispatchers.Default) {
-                runCatching {
-                    gate.callCollecting(flow { emit(1); awaitCancellation() }).collect { entered.complete(Unit) }
-                }.exceptionOrNull()
-            }
+            val collection =
+                async(Dispatchers.Default) {
+                    runCatching {
+                        gate
+                            .callCollecting(
+                                flow {
+                                    emit(1)
+                                    awaitCancellation()
+                                }
+                            )
+                            .collect { entered.complete(Unit) }
+                    }
+                        .exceptionOrNull()
+                }
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
 
             // When
             gate.close()
 
             // Then — it ended with the closed error, never as if the flow were done
-            val failure = withContext(Dispatchers.Default) { withTimeout(5.seconds) { collection.await() } }
+            val failure =
+                withContext(Dispatchers.Default) { withTimeout(5.seconds) { collection.await() } }
             assertClientClosedError(failure, "attempt $attempt: the collection live at close()")
             assertEquals(0, gate.inFlight)
         }

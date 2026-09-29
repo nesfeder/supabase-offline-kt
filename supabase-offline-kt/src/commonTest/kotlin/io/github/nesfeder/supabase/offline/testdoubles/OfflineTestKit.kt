@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.SupabaseClient
@@ -8,30 +10,35 @@ import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.jan.supabase.storage.BucketApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
-import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.newEngineScope
+import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
-import io.github.jan.supabase.storage.BucketApi
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -40,11 +47,6 @@ import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.SYSTEM
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
-import kotlin.time.Clock
-import kotlin.time.Duration
 
 /*
  * The one place the engine's tests build the offline stack. Start here when writing a test:
@@ -65,11 +67,12 @@ internal const val TEST_SUPABASE_URL: String = "https://unit-test.supabase.co"
 internal const val TEST_SUPABASE_KEY: String = "unit-test-anon-key"
 
 /** Cache settings with size-based eviction off — what every test but the eviction tests uses. */
-internal val UNLIMITED_TEST_CACHE_SETTINGS: OfflineCacheSettings = OfflineCacheSettings(
-    maxDbSizeBytes = null,
-    evictionBatchSize = 0,
-    minRetainedBytes = 0,
-)
+internal val UNLIMITED_TEST_CACHE_SETTINGS: OfflineCacheSettings =
+    OfflineCacheSettings(
+        maxDbSizeBytes = null,
+        evictionBatchSize = 0,
+        minRetainedBytes = 0,
+    )
 
 /**
  * Builds a real [OfflineStore] over in-memory DAOs, so a test drives the store's real logic without
@@ -90,28 +93,29 @@ internal fun newTestOfflineStore(
     settings: OfflineCacheSettings = UNLIMITED_TEST_CACHE_SETTINGS,
     nowMillis: () -> Long = { 0L },
     monotonicTick: (() -> Long)? = null,
-): OfflineStore = if (monotonicTick == null) {
-    OfflineStore(
-        objectDao = objectDao,
-        storageDao = storageDao,
-        mutationDao = mutationDao,
-        dbPathProvider = InMemoryDbPathProvider,
-        settings = settings,
-        nowMillis = nowMillis,
-        dbSizeProvider = { null },
-    )
-} else {
-    OfflineStore(
-        objectDao = objectDao,
-        storageDao = storageDao,
-        mutationDao = mutationDao,
-        dbPathProvider = InMemoryDbPathProvider,
-        settings = settings,
-        nowMillis = nowMillis,
-        dbSizeProvider = { null },
-        monotonicTick = monotonicTick,
-    )
-}
+): OfflineStore =
+    if (monotonicTick == null) {
+        OfflineStore(
+            objectDao = objectDao,
+            storageDao = storageDao,
+            mutationDao = mutationDao,
+            dbPathProvider = InMemoryDbPathProvider,
+            settings = settings,
+            nowMillis = nowMillis,
+            dbSizeProvider = { null },
+        )
+    } else {
+        OfflineStore(
+            objectDao = objectDao,
+            storageDao = storageDao,
+            mutationDao = mutationDao,
+            dbPathProvider = InMemoryDbPathProvider,
+            settings = settings,
+            nowMillis = nowMillis,
+            dbSizeProvider = { null },
+            monotonicTick = monotonicTick,
+        )
+    }
 
 /**
  * Builds a real supabase-kt client whose HTTP goes to [engine] instead of the network.
@@ -123,13 +127,14 @@ internal fun newTestOfflineStore(
 internal fun newTestSupabaseClient(
     engine: HttpClientEngine = MockEngine { respondOk("[]") },
     plugins: SupabaseClientBuilder.() -> Unit = { install(Postgrest) },
-): SupabaseClient = createSupabaseClient(
-    supabaseUrl = TEST_SUPABASE_URL,
-    supabaseKey = TEST_SUPABASE_KEY,
-) {
-    httpEngine = engine
-    plugins()
-}
+): SupabaseClient =
+    createSupabaseClient(
+        supabaseUrl = TEST_SUPABASE_URL,
+        supabaseKey = TEST_SUPABASE_KEY,
+    ) {
+        httpEngine = engine
+        plugins()
+    }
 
 /** The [Postgrest] plugin of a default [newTestSupabaseClient]. */
 internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
@@ -148,7 +153,11 @@ internal suspend fun OfflineStore.recordQueryShape(
     persist: Boolean = false,
     request: SelectRequestBuilder.() -> Unit,
 ) {
-    val shape = queryShapeOf(columns, SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply(request))
+    val shape =
+        queryShapeOf(
+            columns,
+            SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply(request),
+        )
     queryShapes.remember(table, signature, shape, persist)
 }
 
@@ -160,9 +169,9 @@ internal suspend fun OfflineStore.recordQueryShape(
  * @param baseDirectoryProvider base directory for downloaded storage files.
  * @param sdkLogger the SDK logger.
  * @param onClose what the client's `close()` releases, as the factories wire the database.
- * @param coordinatorScope the parent of the client's own scope, whose dispatcher runs its background
- *   work (refresh loops, replay passes it starts itself); pass `runTest`'s `backgroundScope` to drive
- *   it from the test scheduler.
+ * @param coordinatorScope the parent of the client's own scope, whose dispatcher runs its
+ *   background work (refresh loops, replay passes it starts itself); pass `runTest`'s
+ *   `backgroundScope` to drive it from the test scheduler.
  * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
  *   database's scrub.
  * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose
@@ -185,19 +194,20 @@ internal fun newTestOfflineClient(
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
-): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
-    supabase = supabase,
-    store = store,
-    baseDirectoryProvider = baseDirectoryProvider,
-    sdkLogger = sdkLogger,
-    coordinatorScope = coordinatorScope,
-    scrubDatabase = scrubDatabase,
-    onClose = onClose,
-    closeWait = closeWait,
-    onStillClosing = onStillClosing,
-    primaryKeys = primaryKeys,
-    responseTrust = responseTrust,
-)
+): SupabaseOfflineClientImpl =
+    SupabaseOfflineClientImpl(
+        supabase = supabase,
+        store = store,
+        baseDirectoryProvider = baseDirectoryProvider,
+        sdkLogger = sdkLogger,
+        coordinatorScope = coordinatorScope,
+        scrubDatabase = scrubDatabase,
+        onClose = onClose,
+        closeWait = closeWait,
+        onStillClosing = onStillClosing,
+        primaryKeys = primaryKeys,
+        responseTrust = responseTrust,
+    )
 
 /**
  * Builds the Storage file cache over [store], under [baseDirectory] (a real directory: the storage
@@ -218,14 +228,15 @@ internal fun newTestFileCache(
     fileSystem: FileSystem = FileSystem.SYSTEM,
     maxSizeBytes: Long? = null,
     nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
-): StorageFileCache = StorageFileCache(
-    store = store,
-    dataDirectoryProvider = { baseDirectory },
-    maxSizeBytes = maxSizeBytes,
-    sdkLogger = sdkLogger,
-    fileSystem = fileSystem,
-    nowMillis = nowMillis,
-)
+): StorageFileCache =
+    StorageFileCache(
+        store = store,
+        dataDirectoryProvider = { baseDirectory },
+        maxSizeBytes = maxSizeBytes,
+        sdkLogger = sdkLogger,
+        fileSystem = fileSystem,
+        nowMillis = nowMillis,
+    )
 
 /**
  * Builds the offline bucket over [delegate], caching under [baseDirectory] (a real directory: the
@@ -239,7 +250,8 @@ internal fun newTestFileCache(
  * @param cache the file cache; by default one over [baseDirectory], [store] and [sdkLogger].
  * @param backgroundScope where the bucket waits for resumable uploads to finish; by default an
  *   engine scope of its own, as the client's is.
- * @param operationGate the gate every member passes; pass one to close it as the client's close does.
+ * @param operationGate the gate every member passes; pass one to close it as the client's close
+ *   does.
  * @return the offline bucket.
  */
 internal fun newTestBucketApi(
@@ -247,16 +259,18 @@ internal fun newTestBucketApi(
     baseDirectory: Path,
     store: OfflineStore = newTestOfflineStore(),
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-    cache: StorageFileCache = newTestFileCache(baseDirectory = baseDirectory, store = store, sdkLogger = sdkLogger),
+    cache: StorageFileCache =
+        newTestFileCache(baseDirectory = baseDirectory, store = store, sdkLogger = sdkLogger),
     backgroundScope: CoroutineScope = newEngineScope(sdkLogger),
     operationGate: ClientOperationGate = ClientOperationGate(),
-): CachingBucketApi = CachingBucketApi(
-    delegate = delegate,
-    cache = cache,
-    sdkLogger = sdkLogger,
-    backgroundScope = backgroundScope,
-    operationGate = operationGate,
-)
+): CachingBucketApi =
+    CachingBucketApi(
+        delegate = delegate,
+        cache = cache,
+        sdkLogger = sdkLogger,
+        backgroundScope = backgroundScope,
+        operationGate = operationGate,
+    )
 
 /**
  * Runs [block] with this client, then closes it, whatever [block] does — the suspending `close()`'s
@@ -265,7 +279,9 @@ internal fun newTestBucketApi(
  * @param block what to do with the client.
  * @return what [block] returns.
  */
-internal suspend fun <T> SupabaseOfflineClient.closingAfter(block: suspend (SupabaseOfflineClient) -> T): T =
+internal suspend fun <T> SupabaseOfflineClient.closingAfter(
+    block: suspend (SupabaseOfflineClient) -> T
+): T =
     try {
         block(this)
     } finally {
@@ -279,7 +295,8 @@ internal suspend fun <T> SupabaseOfflineClient.closingAfter(block: suspend (Supa
  *
  * @return the scope.
  */
-internal fun idleCoroutineScope(): CoroutineScope = CoroutineScope(StandardTestDispatcher(TestCoroutineScheduler()))
+internal fun idleCoroutineScope(): CoroutineScope =
+    CoroutineScope(StandardTestDispatcher(TestCoroutineScheduler()))
 
 /**
  * Asserts [failure] is the client's closed error: an [IllegalStateException] saying so, and never a

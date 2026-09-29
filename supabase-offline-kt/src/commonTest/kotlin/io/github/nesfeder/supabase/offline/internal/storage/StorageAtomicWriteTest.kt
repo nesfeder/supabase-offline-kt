@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
@@ -6,11 +8,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import kotlinx.io.IOException
-import okio.FileSystem
-import okio.Path
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -19,6 +16,11 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlinx.coroutines.test.runTest
+import kotlinx.io.IOException
+import okio.FileSystem
+import okio.Path
+import okio.SYSTEM
 
 /**
  * Cache writes are atomic: a download is written to a temporary file beside its target and renamed
@@ -34,7 +36,9 @@ class StorageAtomicWriteTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-atomic-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-atomic-${Random.nextLong().toULong()}"
         store = newTestOfflineStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
@@ -44,23 +48,31 @@ class StorageAtomicWriteTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun bucket() = newTestBucketApi(
-        delegate = delegate,
-        baseDirectory = dataDirectory,
-        store = store,
-        cache = newTestFileCache(baseDirectory = dataDirectory, store = store, fileSystem = fileSystem),
-    )
+    private fun bucket() =
+        newTestBucketApi(
+            delegate = delegate,
+            baseDirectory = dataDirectory,
+            store = store,
+            cache =
+                newTestFileCache(
+                    baseDirectory = dataDirectory,
+                    store = store,
+                    fileSystem = fileSystem,
+                ),
+        )
 
-    private val target: Path get() = objectFilePathOrNull(dataDirectory, BUCKET, PATH) ?: error("uncacheable fixture path")
+    private val target: Path
+        get() =
+            objectFilePathOrNull(dataDirectory, BUCKET, PATH) ?: error("uncacheable fixture path")
 
     private suspend fun primeWithOldCopy() {
         delegate.onDownload = { OLD }
-        bucket().downloadAuthenticated(PATH) { }
+        bucket().downloadAuthenticated(PATH) {}
     }
 
     private suspend fun readOffline(): ByteArray {
         delegate.onDownload = { throw IOException("network unreachable") }
-        return bucket().downloadAuthenticated(PATH) { }
+        return bucket().downloadAuthenticated(PATH) {}
     }
 
     @Test
@@ -71,9 +83,10 @@ class StorageAtomicWriteTest {
         delegate.onDownload = { NEW }
 
         // When
-        val downloaded = bucket().downloadAuthenticated(PATH) { }
+        val downloaded = bucket().downloadAuthenticated(PATH) {}
 
-        // Then — the caller has the new bytes; the cache still has the whole old copy and no fragment
+        // Then — the caller has the new bytes; the cache still has the whole old copy and no
+        // fragment
         assertContentEquals(NEW, downloaded)
         fileSystem.failWritesAfterBytes = null
         assertContentEquals(OLD, FileSystem.SYSTEM.read(target) { readByteArray() })
@@ -91,7 +104,7 @@ class StorageAtomicWriteTest {
         delegate.onDownload = { large }
 
         // When
-        val downloaded = bucket().downloadAuthenticated(PATH) { }
+        val downloaded = bucket().downloadAuthenticated(PATH) {}
 
         // Then
         assertContentEquals(large, downloaded)
@@ -108,7 +121,7 @@ class StorageAtomicWriteTest {
         delegate.onDownload = { NEW }
 
         // When
-        bucket().downloadAuthenticated(PATH) { }
+        bucket().downloadAuthenticated(PATH) {}
 
         // Then — the only file written was a temporary one in the target's directory
         val written = fileSystem.sinksOpened.single()
@@ -126,7 +139,7 @@ class StorageAtomicWriteTest {
         delegate.onDownload = { NEW }
 
         // When
-        val downloaded = bucket().downloadAuthenticated(PATH) { }
+        val downloaded = bucket().downloadAuthenticated(PATH) {}
 
         // Then
         assertContentEquals(NEW, downloaded)
@@ -145,7 +158,7 @@ class StorageAtomicWriteTest {
 
         // When — this process's first download through the cache
         delegate.onDownload = { "other".encodeToByteArray() }
-        bucket().downloadAuthenticated("u-1/other.png") { }
+        bucket().downloadAuthenticated("u-1/other.png") {}
 
         // Then — the orphan is gone and the cached copy was never replaced by it
         assertTrue(!FileSystem.SYSTEM.exists(orphan), "the orphaned temporary file survived")

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline
@@ -9,6 +11,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestSe
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -23,12 +27,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * A locally written row appears in exactly the cached lists whose filters admit it, whatever their
@@ -39,7 +40,11 @@ import kotlin.test.assertEquals
 class ListMembershipTest {
 
     private val server = FakeRelationalPostgrestServer()
-    private val client = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = idleCoroutineScope())
+    private val client =
+        newTestOfflineClient(
+            supabase = server.supabaseClient(),
+            coordinatorScope = idleCoroutineScope(),
+        )
     private val items = client.from(TABLE)
 
     /** Caches list [list] (ordered and limited) from the server. */
@@ -53,14 +58,30 @@ class ListMembershipTest {
 
     /** The ids a reactive cache read of list [list] shows first. */
     private suspend fun liveIds(list: String): List<String> =
-        idsOf(checkNotNull(items.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = listQuery(list)).first().result).data)
+        idsOf(
+            checkNotNull(
+                    items
+                        .selectAsFlow(
+                            readStrategy = FlowReadStrategy.CacheOnly,
+                            request = listQuery(list),
+                        )
+                        .first()
+                        .result
+                )
+                .data
+        )
 
     private fun goOffline() {
         server.recorder.answer = { connectivityFailure() }
     }
 
     private fun seedTwoLists() {
-        server.seed(TABLE, row("a1", list = "A", position = 1), row("a2", list = "A", position = 2), row("b1", list = "B", position = 1))
+        server.seed(
+            TABLE,
+            row("a1", list = "A", position = 1),
+            row("a2", list = "A", position = 2),
+            row("b1", list = "B", position = 1),
+        )
     }
 
     @Test
@@ -105,7 +126,9 @@ class ListMembershipTest {
         cacheList("B")
 
         // When
-        items.upsertJson(JsonArray(listOf(row("new-b", list = "B", position = 5)))) { onConflict = "id" }
+        items.upsertJson(JsonArray(listOf(row("new-b", list = "B", position = 5)))) {
+            onConflict = "id"
+        }
 
         // Then
         assertEquals(listOf("a1", "a2"), cachedIds("A"))
@@ -152,12 +175,15 @@ class ListMembershipTest {
         // Given — list B cached, list A observed but never fetched
         seedTwoLists()
         cacheList("B")
-        val observedA = items.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = listQuery("A"))
+        val observedA =
+            items.selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = listQuery("A"))
         var aCreated = false
 
         // When — an insert into B while A is observed
         coroutineScope {
-            val reader = launch { observedA.collect { read -> if (read.result != null) aCreated = true } }
+            val reader = launch {
+                observedA.collect { read -> if (read.result != null) aCreated = true }
+            }
             testScheduler.runCurrent()
             items.insertJson(JsonArray(listOf(row("new-b", list = "B", position = 5))))
             testScheduler.runCurrent()
@@ -172,7 +198,11 @@ class ListMembershipTest {
     @Test
     fun an_online_update_moves_a_row_between_lists_once() = runTest {
         // Given — an open list and a done list, both cached
-        server.seed(TABLE, row("x", list = "A", position = 1, done = false), row("y", list = "A", position = 2, done = true))
+        server.seed(
+            TABLE,
+            row("x", list = "A", position = 1, done = false),
+            row("y", list = "A", position = 2, done = true),
+        )
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = doneList(false))
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = doneList(true))
 
@@ -180,14 +210,30 @@ class ListMembershipTest {
         items.updateJson(buildJsonObject { put("done", true) }) { filter { eq("id", "x") } }
 
         // Then — it leaves the open list and joins the done list once
-        assertEquals(emptyList(), idsOf(items.select(readStrategy = ReadStrategy.CacheOnly(), request = doneList(false)).data))
-        assertEquals(listOf("y", "x"), idsOf(items.select(readStrategy = ReadStrategy.CacheOnly(), request = doneList(true)).data))
+        assertEquals(
+            emptyList(),
+            idsOf(
+                items
+                    .select(readStrategy = ReadStrategy.CacheOnly(), request = doneList(false))
+                    .data
+            ),
+        )
+        assertEquals(
+            listOf("y", "x"),
+            idsOf(
+                items.select(readStrategy = ReadStrategy.CacheOnly(), request = doneList(true)).data
+            ),
+        )
     }
 
     @Test
     fun a_queued_update_moves_a_queued_row_between_lists_once() = runTest {
         // Given — both lists cached, then offline a new open row
-        server.seed(TABLE, row("z", list = "A", position = 3, done = false), row("y", list = "A", position = 2, done = true))
+        server.seed(
+            TABLE,
+            row("z", list = "A", position = 3, done = false),
+            row("y", list = "A", position = 2, done = true),
+        )
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = doneList(false))
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = doneList(true))
         goOffline()
@@ -197,27 +243,60 @@ class ListMembershipTest {
         items.updateJson(buildJsonObject { put("done", true) }) { filter { eq("id", "x") } }
 
         // Then
-        assertEquals(listOf("z"), idsOf(items.select(readStrategy = ReadStrategy.CacheOnly(), request = doneList(false)).data))
-        assertEquals(listOf("y", "x"), idsOf(items.select(readStrategy = ReadStrategy.CacheOnly(), request = doneList(true)).data))
+        assertEquals(
+            listOf("z"),
+            idsOf(
+                items
+                    .select(readStrategy = ReadStrategy.CacheOnly(), request = doneList(false))
+                    .data
+            ),
+        )
+        assertEquals(
+            listOf("y", "x"),
+            idsOf(
+                items.select(readStrategy = ReadStrategy.CacheOnly(), request = doneList(true)).data
+            ),
+        )
     }
 
     @Test
-    fun an_online_delete_with_a_filter_the_cache_cannot_represent_leaves_other_rows_alone() = runTest {
-        // Given — list A holds an open row and a done one
-        server.seed(TABLE, row("a1", list = "A", position = 1, done = false), row("a2", list = "A", position = 2, done = true))
-        cacheList("A")
+    fun an_online_delete_with_a_filter_the_cache_cannot_represent_leaves_other_rows_alone() =
+        runTest {
+            // Given — list A holds an open row and a done one
+            server.seed(
+                TABLE,
+                row("a1", list = "A", position = 1, done = false),
+                row("a2", list = "A", position = 2, done = true),
+            )
+            cacheList("A")
 
-        // When — the done rows of list A are deleted online, through an `or` group
-        items.delete { filter { eq("list_id", "A"); or { eq("done", true); eq("archived", true) } } }
+            // When — the done rows of list A are deleted online, through an `or` group
+            items.delete {
+                filter {
+                    eq("list_id", "A")
+                    or {
+                        eq("done", true)
+                        eq("archived", true)
+                    }
+                }
+            }
 
-        // Then — the open row is still there
-        assertEquals(true, "a1" in cachedIds("A"), "a row the delete never reached left the cache")
-    }
+            // Then — the open row is still there
+            assertEquals(
+                true,
+                "a1" in cachedIds("A"),
+                "a row the delete never reached left the cache",
+            )
+        }
 
     @Test
     fun an_online_update_with_a_negated_condition_leaves_excluded_rows_alone() = runTest {
         // Given — list A holds an open row and a done one
-        server.seed(TABLE, row("a1", list = "A", position = 1, done = false), row("a2", list = "A", position = 2, done = true))
+        server.seed(
+            TABLE,
+            row("a1", list = "A", position = 1, done = false),
+            row("a2", list = "A", position = 2, done = true),
+        )
         cacheList("A")
 
         // When — every row of list A that is not done is renamed
@@ -229,7 +308,13 @@ class ListMembershipTest {
         }
 
         // Then — the done row keeps its title
-        val done = rowsOf(items.select(readStrategy = ReadStrategy.CacheOnly(), request = listQuery("A")).data).single { it.idOf() == "a2" }
+        val done =
+            rowsOf(
+                    items
+                        .select(readStrategy = ReadStrategy.CacheOnly(), request = listQuery("A"))
+                        .data
+                )
+                .single { it.idOf() == "a2" }
         assertEquals(JsonPrimitive("a2 title"), done["title"])
     }
 
@@ -240,21 +325,42 @@ class ListMembershipTest {
         val testDispatcher = StandardTestDispatcher(testScheduler)
         val scope = CoroutineScope(SupervisorJob() + testDispatcher)
         val liveServer = FakeRelationalPostgrestServer(engineDispatcher = testDispatcher)
-        liveServer.seed(TABLE, row("a1", list = "A", position = 1, done = false), row("a2", list = "A", position = 2, done = true))
-        val liveItems = newTestOfflineClient(supabase = liveServer.supabaseClient(), coordinatorScope = scope).from(TABLE)
+        liveServer.seed(
+            TABLE,
+            row("a1", list = "A", position = 1, done = false),
+            row("a2", list = "A", position = 2, done = true),
+        )
+        val liveItems =
+            newTestOfflineClient(supabase = liveServer.supabaseClient(), coordinatorScope = scope)
+                .from(TABLE)
         val shown = mutableListOf<List<String>>()
-        scope.launch { liveItems.selectAsFlow(request = listQuery("A")).collect { read -> read.result?.let { shown += idsOf(it.data) } } }
+        scope.launch {
+            liveItems.selectAsFlow(request = listQuery("A")).collect { read ->
+                read.result?.let { shown += idsOf(it.data) }
+            }
+        }
         advanceUntilIdle()
         val readsBefore = liveServer.requests.count { request -> request.method == "GET" }
 
         // When — rows are deleted through an `or` group
-        liveItems.delete { filter { eq("list_id", "A"); or { eq("done", true); eq("archived", true) } } }
+        liveItems.delete {
+            filter {
+                eq("list_id", "A")
+                or {
+                    eq("done", true)
+                    eq("archived", true)
+                }
+            }
+        }
         advanceUntilIdle()
         scope.cancel()
 
         // Then — the live list read the table again, and never lost a row the delete did not reach
         assertEquals(1, readsBefore)
-        assertEquals(readsBefore + 1, liveServer.requests.count { request -> request.method == "GET" })
+        assertEquals(
+            readsBefore + 1,
+            liveServer.requests.count { request -> request.method == "GET" },
+        )
         assertEquals(listOf("a1", "a2"), shown.last())
         assertEquals(true, shown.all { ids -> "a1" in ids })
     }
@@ -270,15 +376,17 @@ class ListMembershipTest {
         order("position", Order.ASCENDING)
     }
 
-    private fun row(id: String, list: String, position: Int, done: Boolean = false): JsonObject = buildJsonObject {
-        put("id", id)
-        put("list_id", list)
-        put("position", position)
-        put("done", done)
-        put("title", "$id title")
-    }
+    private fun row(id: String, list: String, position: Int, done: Boolean = false): JsonObject =
+        buildJsonObject {
+            put("id", id)
+            put("list_id", list)
+            put("position", position)
+            put("done", done)
+            put("title", "$id title")
+        }
 
-    private fun rowsOf(payload: String): List<JsonObject> = (Json.parseToJsonElement(payload) as JsonArray).map { it.jsonObject }
+    private fun rowsOf(payload: String): List<JsonObject> =
+        (Json.parseToJsonElement(payload) as JsonArray).map { it.jsonObject }
 
     private fun idsOf(payload: String): List<String> = rowsOf(payload).map { row -> row.idOf() }
 

@@ -1,16 +1,18 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertNull
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlin.test.Test
-import kotlin.test.assertNull
 
 /**
  * An overlay already patching the cache when local data is cleared must not write the outgoing
@@ -34,8 +36,16 @@ class OverlayTeardownRaceTest {
             }
         }
         val server = RecordingPostgrestServer()
-        val builder = OfflinePostgrestQueryBuilderImpl(delegate = server.supabaseClient().postgrest.from(NOTES), store = store)
-        val write = async { builder.insertJson(Json.parseToJsonElement("""[{"id":"a2","title":"A's new row"}]""") as JsonArray) }
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from(NOTES),
+                store = store,
+            )
+        val write = async {
+            builder.insertJson(
+                Json.parseToJsonElement("""[{"id":"a2","title":"A's new row"}]""") as JsonArray
+            )
+        }
         parked.await()
 
         // When — local data is cleared (sign-out), then the overlay resumes

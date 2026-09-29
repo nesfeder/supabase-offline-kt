@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -18,16 +20,13 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 /**
  * `FilterOperator.ISDISTINCT` arrived in supabase-kt 3.8.0. The engine captures it and replays it
@@ -49,7 +48,9 @@ class IsDistinctOperatorTest {
     @Test
     fun strict_capture_captures_an_isdistinct_filter() {
         // Given
-        val request: PostgrestRequestBuilder.() -> Unit = { filter { filter("status", FilterOperator.ISDISTINCT, "done") } }
+        val request: PostgrestRequestBuilder.() -> Unit = {
+            filter { filter("status", FilterOperator.ISDISTINCT, "done") }
+        }
 
         // When
         val descriptor = buildDescriptorStrictFromRequest(SCHEMA, CONVERSION, request)
@@ -93,11 +94,17 @@ class IsDistinctOperatorTest {
     @Test
     fun a_cached_query_filtered_on_isdistinct_admits_any_row() {
         // Given / When
-        val builder = SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply { filter { filter("status", FilterOperator.ISDISTINCT, "done") } }
+        val builder =
+            SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply {
+                filter { filter("status", FilterOperator.ISDISTINCT, "done") }
+            }
         val admission = queryShapeOf(Columns.ALL, builder).admission
 
         // Then — the condition is not evaluated, so it never hides a row
-        assertEquals(RowMatch.UNKNOWN, rowMatch(buildJsonObject { put("status", "done") }, admission.conditions.single()))
+        assertEquals(
+            RowMatch.UNKNOWN,
+            rowMatch(buildJsonObject { put("status", "done") }, admission.conditions.single()),
+        )
         assertTrue(admission.admits(buildJsonObject { put("status", "done") }))
     }
 
@@ -107,17 +114,23 @@ class IsDistinctOperatorTest {
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
-        val builder = OfflinePostgrestQueryBuilderImpl(
-            delegate = server.supabaseClient().postgrest.from("todos"),
-            store = store,
-        )
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from("todos"),
+                store = store,
+            )
 
         // When — the write is made offline, then the queue replays online
-        val outcome = builder.updateJson(Json.parseToJsonElement("""{"done":true}"""), MutationStrategy.QueueIfOffline) {
-            filter { filter("status", FilterOperator.ISDISTINCT, "done") }
-        }
+        val outcome =
+            builder.updateJson(
+                Json.parseToJsonElement("""{"done":true}"""),
+                MutationStrategy.QueueIfOffline,
+            ) {
+                filter { filter("status", FilterOperator.ISDISTINCT, "done") }
+            }
         server.answer = { okJson("[]") }
-        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced =
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — it was queued, and the replay carries the caller's own filter
         assertEquals(MutationOutcome.Queued, outcome)
@@ -130,6 +143,7 @@ class IsDistinctOperatorTest {
     private companion object {
         const val SCHEMA = "public"
         val CONVERSION = PropertyConversionMethod.CAMEL_CASE_TO_SNAKE_CASE
-        val ISDISTINCT_DONE = FilterDescriptor.Condition(column = "status", operatorId = "isdistinct", value = "done")
+        val ISDISTINCT_DONE =
+            FilterDescriptor.Condition(column = "status", operatorId = "isdistinct", value = "done")
     }
 }
