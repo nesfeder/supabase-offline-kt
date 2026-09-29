@@ -67,7 +67,11 @@ internal data class FilterDescriptor(
  * @return The operator, or `null` when the identifier is unknown (including a `not.` negation).
  */
 internal fun offlineFilterOperatorOrNull(identifier: String): FilterOperator? =
-    FilterOperator.entries.firstOrNull { operator -> operator.identifier == identifier }
+    OPERATORS_BY_IDENTIFIER[identifier]
+
+/** Every [FilterOperator] by its identifier, so a lookup per row and condition is one hash. */
+private val OPERATORS_BY_IDENTIFIER: Map<String, FilterOperator> =
+    FilterOperator.entries.associateBy { operator -> operator.identifier }
 
 /**
  * Extract a best-effort [FilterDescriptor] from a [PostgrestRequestBuilder].

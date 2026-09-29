@@ -47,9 +47,9 @@ import org.junit.runner.RunWith
 
 /**
  * Measures the read path on a real database: a cached list read against 0, 100 and 1,000 pending
- * mutations on its table, the recompute 20 live readers do for one queued write, and a cold start
- * that restores 50 cached queries. Prints its figures; runs only when `SUPABASE_OFFLINE_BENCHMARK`
- * is set in the environment of the Gradle run.
+ * mutations on its table, of each kind and mixed, the recompute 20 live readers do for one queued
+ * write, and a cold start that restores 50 cached queries. Prints its figures; runs only when
+ * `SUPABASE_OFFLINE_BENCHMARK` is set in the environment of the Gradle run.
  */
 @RunWith(AndroidJUnit4::class)
 class ReadPathCostAndroidTest {
@@ -117,6 +117,97 @@ class ReadPathCostAndroidTest {
                 }
             }
         }
+
+    /**
+     * The kinds of pending mutation a cached read overlays: half of each reach the list read, half
+     * do not.
+     */
+    private enum class PendingKind {
+        INSERT,
+        UPDATE,
+        UPSERT,
+        DELETE,
+        MIXED,
+    }
+
+    @Test
+    fun a_cached_list_read_against_each_kind_of_pending_mutation() =
+        runTest(timeout = 60.minutes) {
+            assumeBenchmark()
+            for (kind in PendingKind.entries) {
+                online.value = true
+                withClient(File(directory, kind.name)) { client ->
+                    // Given — one cached list of 50 rows, read back ordered, as a list screen does
+                    val items = client.from(TABLE)
+                    items.select(readStrategy = ReadStrategy.NetworkOnly, request = listQuery("L0"))
+                    online.value = false
+
+                    var pending = 0
+                    for (target in listOf(0, 100, 1_000)) {
+                        // When — the table gains pending mutations of this kind
+                        while (pending < target) {
+                            queue(kind, items, pending)
+                            pending++
+                        }
+                        val oneShot = timeMillis {
+                            items.select(
+                                readStrategy = ReadStrategy.CacheOnly(),
+                                request = listQuery("L0"),
+                            )
+                        }
+                        val reactive = timeMillis {
+                            items
+                                .selectAsFlow(
+                                    readStrategy = FlowReadStrategy.CacheOnly,
+                                    request = listQuery("L0"),
+                                )
+                                .first()
+                        }
+
+                        // Then
+                        report("cached-read one-shot kind=$kind pending=$pending", oneShot)
+                        report("cached-read reactive-first kind=$kind pending=$pending", reactive)
+                    }
+                }
+            }
+        }
+
+    /**
+     * Queues the [index]th mutation of [kind]: even ones reach the list read, odd ones do not. An
+     * update or delete of the list goes by id, one of the other by a text column no row holds.
+     */
+    private suspend fun queue(kind: PendingKind, items: OfflinePostgrestQueryBuilder, index: Int) {
+        val position = index % 50
+        val reaches = index % 2 == 0
+        when (if (kind == PendingKind.MIXED) PendingKind.entries[index % 4] else kind) {
+            PendingKind.INSERT ->
+                queueInsert(items, list = if (reaches) "L0" else "L1", position = 1_000 + index)
+            PendingKind.UPDATE ->
+                items.updateJson(buildJsonObject { put("title", "edit $index") }) {
+                    if (reaches) filter { eq("id", "L0-$position") }
+                    else filter { eq("owner", "someone-else") }
+                }
+            PendingKind.UPSERT ->
+                items.upsertJson(
+                    buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("id", if (reaches) "L0-$position" else "L1-new-$index")
+                                put("list_id", if (reaches) "L0" else "L1")
+                                put("position", position)
+                                put("title", "upserted $index")
+                            }
+                        )
+                    }
+                )
+            PendingKind.DELETE ->
+                items.delete {
+                    if (reaches) filter { eq("id", "L0-$position") }
+                    else filter { eq("owner", "someone-else") }
+                }
+            PendingKind.MIXED -> error("a mixed run queues one of the other kinds")
+        }
+    }
 
     @Test
     fun twenty_live_readers_recompute_for_one_queued_write() =
@@ -235,12 +326,15 @@ class ReadPathCostAndroidTest {
         )
     }
 
-    private suspend fun withClient(block: suspend (SupabaseOfflineClient) -> Unit) {
+    private suspend fun withClient(
+        storage: File = directory,
+        block: suspend (SupabaseOfflineClient) -> Unit,
+    ) {
         val client =
             createSupabaseOfflineClient(
                 context = context,
                 supabase = server.supabaseClient(),
-                config = SupabaseOfflineConfig(offlineStoragePath = directory.toOkioPath()),
+                config = SupabaseOfflineConfig(offlineStoragePath = storage.toOkioPath()),
             )
         try {
             block(client)
@@ -314,6 +408,7 @@ class ReadPathCostAndroidTest {
                             put("list_id", list)
                             put("position", position)
                             put("title", "Item $position of $list")
+                            put("owner", "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f")
                             put("done", position % 3 == 0)
                         }
                     }

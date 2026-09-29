@@ -227,24 +227,60 @@ private fun equalAsFloatingPoint(value: String, literal: String): Boolean {
  * exclude; anything else is unknown.
  */
 private fun textEquality(value: String, literal: String): RowMatch =
+    // Cheapest checks first, and none that allocates unless its shape can apply: this runs for
+    // every
+    // cached row against every pending UPDATE or DELETE
     when {
         value == literal -> RowMatch.MATCHES
-        value.trimEnd().equals(literal.trimEnd(), ignoreCase = true) -> RowMatch.UNKNOWN
-        literal.length >= 2 &&
-            literal.first() == '"' &&
-            literal.last() == '"' &&
-            literal.substring(1, literal.length - 1) == value -> RowMatch.UNKNOWN
-        isUuid(value) && isUuid(literal) ->
+        equalButForCaseOrTrailingSpaces(value, literal) -> RowMatch.UNKNOWN
+        isQuotedForm(literal, value) -> RowMatch.UNKNOWN
+        value.length in UUID_LENGTHS &&
+            literal.length in UUID_LENGTHS &&
+            isUuid(value) &&
+            isUuid(literal) ->
             if (uuidDigits(value) == uuidDigits(literal)) RowMatch.UNKNOWN else RowMatch.EXCLUDED
         value.isAllDigits() && literal.isAllDigits() ->
             if (value.trimStart('0') == literal.trimStart('0')) RowMatch.UNKNOWN
             else RowMatch.EXCLUDED
-        sameBooleanWord(value, literal) -> RowMatch.UNKNOWN
-        sameMacAddress(value, literal) -> RowMatch.UNKNOWN
+        value.length <= LONGEST_BOOLEAN_WORD &&
+            literal.length <= LONGEST_BOOLEAN_WORD &&
+            sameBooleanWord(value, literal) -> RowMatch.UNKNOWN
+        value.length in MAC_LENGTHS &&
+            literal.length in MAC_LENGTHS &&
+            sameMacAddress(value, literal) -> RowMatch.UNKNOWN
         isTextShaped(value) && literal.all { it in ' '..'~' } -> RowMatch.EXCLUDED
-        ISO_DATE.matches(value) && ISO_DATE.matches(literal) -> RowMatch.EXCLUDED
+        value.length == ISO_DATE_LENGTH &&
+            literal.length == ISO_DATE_LENGTH &&
+            ISO_DATE.matches(value) &&
+            ISO_DATE.matches(literal) -> RowMatch.EXCLUDED
         else -> RowMatch.UNKNOWN
     }
+
+/**
+ * Whether [value] and [literal] are equal but for letter case or trailing spaces; allocates
+ * nothing.
+ */
+private fun equalButForCaseOrTrailingSpaces(value: String, literal: String): Boolean {
+    val valueEnd = value.trimmedLength()
+    val literalEnd = literal.trimmedLength()
+    return valueEnd == literalEnd && value.regionMatches(0, literal, 0, valueEnd, ignoreCase = true)
+}
+
+/** The length of this string without its trailing whitespace. */
+private fun String.trimmedLength(): Int {
+    var end = length
+    while (end > 0 && this[end - 1].isWhitespace()) end--
+    return end
+}
+
+/**
+ * Whether [literal] is [value] in double quotes, as a `jsonb` string is written; allocates nothing.
+ */
+private fun isQuotedForm(literal: String, value: String): Boolean =
+    literal.length == value.length + 2 &&
+        literal.first() == '"' &&
+        literal.last() == '"' &&
+        literal.regionMatches(1, value, 0, value.length)
 
 /**
  * Whether [value] and [literal] are both boolean input with one meaning, as a boolean reads them.
@@ -280,7 +316,9 @@ private fun isTextShaped(value: String): Boolean {
             value.any { it !in ' '..'~' }
     )
         return false
-    return value.lowercase() !in SPECIAL_INPUTS && !ISO_INTERVAL.containsMatchIn(value)
+    val special = value.length <= LONGEST_SPECIAL_INPUT && value.lowercase() in SPECIAL_INPUTS
+    val interval = (value[0] == 'P' || value[0] == 'p') && ISO_INTERVAL.containsMatchIn(value)
+    return !special && !interval
 }
 
 private fun String.isAllDigits(): Boolean = isNotEmpty() && all { it in '0'..'9' }
@@ -321,6 +359,18 @@ private const val NULL_LITERAL = "null"
 private const val UUID_HEX_DIGITS = 32
 private const val MAC_HEX_DIGITS = 12
 private const val MAC8_HEX_DIGITS = 16
+private const val ISO_DATE_LENGTH = 10
+private const val LONGEST_BOOLEAN_WORD = 5
+private const val LONGEST_SPECIAL_INPUT = 9
+
+/**
+ * The lengths a UUID can be written in: its 32 digits, with hyphens (one per four at most) and
+ * braces.
+ */
+private val UUID_LENGTHS: IntRange = 32..48
+
+/** The lengths a MAC address can be written in: 12 or 16 digits, with or without separators. */
+private val MAC_LENGTHS: IntRange = 12..23
 
 private val DECIMAL = Regex("""([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?""")
 private val ISO_DATE = Regex("""\d{4}-\d{2}-\d{2}""")
