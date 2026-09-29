@@ -30,6 +30,8 @@ EXCLUDED=(
     '.claude*'          # the coding assistant's session state, written by every session
     '.dropbox'          # the file-sync client's state
     '.cache/gh'         # the GitHub CLI's cache, used by every session
+    '.supabase/telemetry.json'  # the Supabase CLI rewrites it on every command, in any session
+    '.npm/_logs'        # npm writes a debug log here for every command, in any session
     '.zsh_history'      # interactive shells write these when they exit
     '.zsh_sessions'
     '.DS_Store'         # Finder's view settings for the home folder
