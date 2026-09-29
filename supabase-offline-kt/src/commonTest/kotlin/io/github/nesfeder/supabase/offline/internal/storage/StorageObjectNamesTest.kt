@@ -1,15 +1,11 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.IOException
-import okio.Path
-import okio.Path.Companion.toPath
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -17,12 +13,18 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.IOException
+import okio.Path
+import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /**
- * Two objects with different names are two cache entries, however the file system would spell
- * their names: Unicode normalization forms, lone surrogates and names longer than a file name may
- * be. Such names are stored under a hash of the object's key; plain ASCII names keep their
- * verbatim file, where installs of earlier versions already have them.
+ * Two objects with different names are two cache entries, however the file system would spell their
+ * names: Unicode normalization forms, lone surrogates and names longer than a file name may be.
+ * Such names are stored under a hash of the object's key; plain ASCII names keep their verbatim
+ * file, where installs of earlier versions already have them.
  */
 class StorageObjectNamesTest {
 
@@ -32,7 +34,9 @@ class StorageObjectNamesTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-names-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-names-${Random.nextLong().toULong()}"
         store = newTestOfflineStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
@@ -42,20 +46,23 @@ class StorageObjectNamesTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun bucket() = newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
+    private fun bucket() =
+        newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
 
     /** Caches [first] and [second], then checks each is served its own bytes. */
     private suspend fun assertTwoObjects(first: String, second: String) {
-        delegate.onDownload = { path -> (if (path == first) "FIRST" else "SECOND").encodeToByteArray() }
+        delegate.onDownload = { path ->
+            (if (path == first) "FIRST" else "SECOND").encodeToByteArray()
+        }
         val bucket = bucket()
-        bucket.downloadAuthenticated(first) { }
-        bucket.downloadAuthenticated(second) { }
+        bucket.downloadAuthenticated(first) {}
+        bucket.downloadAuthenticated(second) {}
         val cachedFirst = assertNotNull(bucket.cachedFile(first))
         val cachedSecond = assertNotNull(bucket.cachedFile(second))
         assertNotEquals(cachedFirst.path, cachedSecond.path, "two objects share one cache file")
         delegate.onDownload = { throw IOException("offline") }
-        assertEquals("FIRST", bucket.downloadAuthenticated(first) { }.decodeToString())
-        assertEquals("SECOND", bucket.downloadAuthenticated(second) { }.decodeToString())
+        assertEquals("FIRST", bucket.downloadAuthenticated(first) {}.decodeToString())
+        assertEquals("SECOND", bucket.downloadAuthenticated(second) {}.decodeToString())
     }
 
     @Test
@@ -78,7 +85,7 @@ class StorageObjectNamesTest {
         delegate.onDownload = { "LONG".encodeToByteArray() }
 
         // When
-        val downloaded = bucket().downloadAuthenticated(long) { }.decodeToString()
+        val downloaded = bucket().downloadAuthenticated(long) {}.decodeToString()
         val ensured = bucket().ensureCachedFile(long)
 
         // Then
@@ -92,7 +99,7 @@ class StorageObjectNamesTest {
         delegate.onDownload = { "PLAIN".encodeToByteArray() }
 
         // When
-        bucket().downloadAuthenticated("u-1/Avatar_2.PNG") { }
+        bucket().downloadAuthenticated("u-1/Avatar_2.PNG") {}
 
         // Then — where earlier versions put it, so existing caches stay warm
         assertEquals(

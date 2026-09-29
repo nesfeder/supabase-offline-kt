@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseInternal::class, ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -12,6 +14,11 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.request.post
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -21,11 +28,6 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Pins the upstream behaviour the dry-run probe depends on, so a supabase-kt change breaks this
@@ -37,7 +39,8 @@ import kotlin.time.Duration.Companion.milliseconds
 class PreferHeaderProbeContractTest {
 
     private val server = RecordingPostgrestServer()
-    private val handle = PostgrestQueryBuilderWrapperImpl(server.supabaseClient().postgrest.from("todos"))
+    private val handle =
+        PostgrestQueryBuilderWrapperImpl(server.supabaseClient().postgrest.from("todos"))
 
     @Test
     fun a_dry_run_is_told_apart_from_a_write_without_sending_either() = runTest {
@@ -45,7 +48,12 @@ class PreferHeaderProbeContractTest {
         val body = Json.parseToJsonElement("""{"title":"x"}""")
 
         // When
-        val dryRun = handle.classify { handle.update(body) { filter { eq("id", 1) }; dryRun() } }
+        val dryRun = handle.classify {
+            handle.update(body) {
+                filter { eq("id", 1) }
+                dryRun()
+            }
+        }
         val write = handle.classify { handle.update(body) { filter { eq("id", 1) } } }
 
         // Then — both classified, and nothing reached the server
@@ -62,7 +70,9 @@ class PreferHeaderProbeContractTest {
         val probe = PreferHeaderProbe()
 
         // When
-        withContext(probe) { supabase.httpClient.httpClient.post("$TEST_SUPABASE_URL/auth/v1/token") }
+        withContext(probe) {
+            supabase.httpClient.httpClient.post("$TEST_SUPABASE_URL/auth/v1/token")
+        }
 
         // Then — it reached the server, and the probe did not record it as a write
         assertEquals(listOf("token"), server.requests.map { it.table })
@@ -76,12 +86,13 @@ class PreferHeaderProbeContractTest {
 
         // When — many first uses at once, released together
         val start = CompletableDeferred<Unit>()
-        val racers = (1..64).map {
-            async(Dispatchers.Default) {
-                start.await()
-                supabase.installDryRunCheck()
+        val racers =
+            (1..64).map {
+                async(Dispatchers.Default) {
+                    start.await()
+                    supabase.installDryRunCheck()
+                }
             }
-        }
         start.complete(Unit)
         val installs = racers.awaitAll()
 
@@ -107,20 +118,28 @@ class PreferHeaderProbeContractTest {
     @Test
     fun an_apps_retry_plugin_does_not_retry_the_dry_run_check() = runTest {
         // Given — an app that retries every failed request three times, 400 ms apart; the server
-        // answers on the test scheduler, so only a wait the write itself makes moves the test's clock
-        val onTheTestClock = RecordingPostgrestServer(engineDispatcher = StandardTestDispatcher(testScheduler))
-        val supabase = newTestSupabaseClient(engine = onTheTestClock.engine) {
-            install(Postgrest) { maxRetries = 0 }
-            httpConfig {
-                install(HttpRequestRetry) {
-                    retryOnException(maxRetries = 3, retryOnTimeout = true)
-                    constantDelay(millis = 400)
+        // answers on the test scheduler, so only a wait the write itself makes moves the test's
+        // clock
+        val onTheTestClock =
+            RecordingPostgrestServer(engineDispatcher = StandardTestDispatcher(testScheduler))
+        val supabase =
+            newTestSupabaseClient(engine = onTheTestClock.engine) {
+                install(Postgrest) { maxRetries = 0 }
+                httpConfig {
+                    install(HttpRequestRetry) {
+                        retryOnException(maxRetries = 3, retryOnTimeout = true)
+                        constantDelay(millis = 400)
+                    }
                 }
             }
-        }
-        val builder = OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from("todos"), store = newTestOfflineStore())
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = supabase.postgrest.from("todos"),
+                store = newTestOfflineStore(),
+            )
 
-        // When — one QueueIfOffline write, timed on the test's clock, which a retry's wait would move
+        // When — one QueueIfOffline write, timed on the test's clock, which a retry's wait would
+        // move
         val startedAt = testScheduler.currentTime
         builder.updateJson(Json.parseToJsonElement("""{"title":"x"}""")) { filter { eq("id", 1) } }
         val waited = (testScheduler.currentTime - startedAt).milliseconds

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import android.content.Context
@@ -7,12 +9,12 @@ import androidx.room.RoomDatabase
 /**
  * KMP Room builder for Android (requires Context).
  *
- * Uses [AndroidDbPathProvider] so the Room database path is consistent with
- * the platform-specific path provider used elsewhere.
+ * Uses [AndroidDbPathProvider] so the Room database path is consistent with the platform-specific
+ * path provider used elsewhere.
  */
 internal fun getDatabaseBuilder(
     context: Context,
-    dbPath: String
+    dbPath: String,
 ): RoomDatabase.Builder<OfflineDatabase> {
     val appContext = context.applicationContext
     return Room.databaseBuilder(

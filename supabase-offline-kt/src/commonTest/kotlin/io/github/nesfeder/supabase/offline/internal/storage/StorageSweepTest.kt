@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
@@ -6,6 +8,15 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.toByteArray
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -16,15 +27,6 @@ import kotlinx.coroutines.withTimeout
 import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
-import kotlin.random.Random
-import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.time.Clock
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * The sweep for temporary files a crash left behind removes only files a day old, and never a file
@@ -38,7 +40,9 @@ class StorageSweepTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-sweep-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-sweep-${Random.nextLong().toULong()}"
         FileSystem.SYSTEM.createDirectories(dataDirectory)
         store = newTestOfflineStore()
     }
@@ -54,12 +58,17 @@ class StorageSweepTest {
         val name = ".supabase-offline-download-1234.tmp"
         val delegate = FakeBucketApi(bucketId = BUCKET)
         delegate.onDownload = { "REAL".encodeToByteArray() }
-        newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store).downloadAuthenticated(name) { }
-        markFileUsed(dataDirectory / "storage" / BUCKET / name, Clock.System.now().toEpochMilliseconds() - 2L * DAY_MILLIS)
+        newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
+            .downloadAuthenticated(name) {}
+        markFileUsed(
+            dataDirectory / "storage" / BUCKET / name,
+            Clock.System.now().toEpochMilliseconds() - 2L * DAY_MILLIS,
+        )
 
         // When — the next process's first write sweeps crash leftovers
-        val next = newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
-        next.downloadAuthenticated("other.txt") { }
+        val next =
+            newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
+        next.downloadAuthenticated("other.txt") {}
 
         // Then
         assertNotNull(next.cachedFile(name), "a real object was swept as a crash leftover")
@@ -80,33 +89,42 @@ class StorageSweepTest {
             }
         }
         val first = newTestBucketApi(delegate = slow, baseDirectory = dataDirectory, store = store)
-        val (temporariesBefore, temporariesAfter, delivered) = withContext(Dispatchers.Default) {
-            val channel = ByteChannel()
-            val reader = async { channel.toByteArray() }
-            val download = async { first.downloadAuthenticated("a.txt", channel) { } }
-            withTimeout(5.seconds) { parked.await() }
-            withTimeout(5.seconds) { while (temporaryFiles().isEmpty()) delay(5) }
-            val before = temporaryFiles()
+        val (temporariesBefore, temporariesAfter, delivered) =
+            withContext(Dispatchers.Default) {
+                val channel = ByteChannel()
+                val reader = async { channel.toByteArray() }
+                val download = async { first.downloadAuthenticated("a.txt", channel) {} }
+                withTimeout(5.seconds) { parked.await() }
+                withTimeout(5.seconds) { while (temporaryFiles().isEmpty()) delay(5) }
+                val before = temporaryFiles()
 
-            // When — cache B, on the same directory (a client re-created after close()), makes its
-            // first write, which sweeps crash leftovers
-            val fast = FakeBucketApi(bucketId = BUCKET)
-            fast.onDownload = { "B".encodeToByteArray() }
-            newTestBucketApi(delegate = fast, baseDirectory = dataDirectory, store = store).downloadAuthenticated("b.txt") { }
-            val after = before.filter { FileSystem.SYSTEM.exists(it) }
-            release.complete(Unit)
-            withTimeout(5.seconds) { download.await() }
-            Triple(before, after, withTimeout(5.seconds) { reader.await() }.decodeToString())
-        }
+                // When — cache B, on the same directory (a client re-created after close()), makes
+                // its
+                // first write, which sweeps crash leftovers
+                val fast = FakeBucketApi(bucketId = BUCKET)
+                fast.onDownload = { "B".encodeToByteArray() }
+                newTestBucketApi(delegate = fast, baseDirectory = dataDirectory, store = store)
+                    .downloadAuthenticated("b.txt") {}
+                val after = before.filter { FileSystem.SYSTEM.exists(it) }
+                release.complete(Unit)
+                withTimeout(5.seconds) { download.await() }
+                Triple(before, after, withTimeout(5.seconds) { reader.await() }.decodeToString())
+            }
 
         // Then — A's temporary file survived B's sweep, and A's download completed
         assertFalse(temporariesBefore.isEmpty())
-        assertEquals(temporariesBefore, temporariesAfter, "B's sweep deleted A's download in flight")
+        assertEquals(
+            temporariesBefore,
+            temporariesAfter,
+            "B's sweep deleted A's download in flight",
+        )
         assertEquals("ABCDEFGHIJKL", delivered)
     }
 
     private fun temporaryFiles(): List<Path> =
-        FileSystem.SYSTEM.listRecursively(dataDirectory).filter { it.name.endsWith(".tmp") }.toList()
+        FileSystem.SYSTEM.listRecursively(dataDirectory)
+            .filter { it.name.endsWith(".tmp") }
+            .toList()
 
     private companion object {
         const val BUCKET = "media"

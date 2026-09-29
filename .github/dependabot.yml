@@ -83,6 +83,12 @@ updates:
           - "org.robolectric:*"
           - "androidx.test*"
         update-types: ["minor", "patch"]
+      # ktfmt, through the never-used catalog entry that .kempt.toml reads. It arrives alone
+      # because the update also needs CI's jar checksum and a `kempt format` run; see
+      # CONTRIBUTING.md, "Formatting".
+      formatter:
+        patterns:
+          - "com.facebook:ktfmt"
       # Everything else. A major version matches no group and arrives as its own pull request.
       other-gradle:
         patterns:

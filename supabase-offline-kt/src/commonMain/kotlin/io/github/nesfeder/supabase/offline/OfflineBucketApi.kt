@@ -1,10 +1,12 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.storage.BucketApi
 
 /**
- * One Storage bucket seen through the offline client: every [BucketApi] operation, plus a file cache
- * that keeps downloaded objects on the device.
+ * One Storage bucket seen through the offline client: every [BucketApi] operation, plus a file
+ * cache that keeps downloaded objects on the device.
  *
  * Get one with [SupabaseOfflineClient.storage].
  *
@@ -44,8 +46,7 @@ public interface OfflineBucketApi : BucketApi {
      * @param path the object path within this bucket.
      * @return the cached file, or `null`.
      */
-    @Throws(Exception::class)
-    public suspend fun cachedFile(path: String): CachedFile?
+    @Throws(Exception::class) public suspend fun cachedFile(path: String): CachedFile?
 
     /**
      * The cached copy of the object at [path], downloading it into the cache first when none is

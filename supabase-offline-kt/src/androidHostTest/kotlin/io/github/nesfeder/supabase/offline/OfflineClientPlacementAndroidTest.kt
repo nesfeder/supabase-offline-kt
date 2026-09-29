@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import android.content.Context
@@ -11,6 +13,15 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import java.io.File
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -21,15 +32,6 @@ import okio.Path
 import okio.Path.Companion.toOkioPath
 import okio.SYSTEM
 import org.junit.runner.RunWith
-import java.io.File
-import kotlin.random.Random
-import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
 /**
  * Where the Android client keeps its data, and which clients may share it: one client per database
@@ -41,13 +43,16 @@ import kotlin.test.assertTrue
 class OfflineClientPlacementAndroidTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
-    private val root: Path = File(context.cacheDir, "offline-placement-${Random.nextLong().toULong()}").toOkioPath()
+    private val root: Path =
+        File(context.cacheDir, "offline-placement-${Random.nextLong().toULong()}").toOkioPath()
     private val defaultDatabase: File = context.getDatabasePath("supabase_offline.db")
 
     @BeforeTest
     fun setUp() {
         // Every case decides for itself whether a database waits at the default path.
-        listOf("", "-wal", "-shm", "-journal").forEach { suffix -> File("${defaultDatabase.path}$suffix").delete() }
+        listOf("", "-wal", "-shm", "-journal").forEach { suffix ->
+            File("${defaultDatabase.path}$suffix").delete()
+        }
     }
 
     @AfterTest
@@ -59,11 +64,15 @@ class OfflineClientPlacementAndroidTest {
         SupabaseOfflineConfig(offlineStoragePath = directory, logger = logger)
 
     /** Opens a client with [config] and queues one write in it while offline, then closes it. */
-    private suspend fun queueOneWriteOffline(config: SupabaseOfflineConfig = SupabaseOfflineConfig()) {
+    private suspend fun queueOneWriteOffline(
+        config: SupabaseOfflineConfig = SupabaseOfflineConfig()
+    ) {
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val client = createSupabaseOfflineClient(context, server.supabaseClient(), config)
         try {
-            client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("title", "unsent") }) })
+            client
+                .from("todos")
+                .insertJson(buildJsonArray { add(buildJsonObject { put("title", "unsent") }) })
             assertEquals(1, client.pendingMutationCount())
         } finally {
             client.close()
@@ -77,7 +86,8 @@ class OfflineClientPlacementAndroidTest {
         val configured = root / "configured"
 
         // When — the app starts setting offlineStoragePath
-        val client = createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(configured))
+        val client =
+            createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(configured))
 
         // Then — the queue came along, and nothing is left behind at the default path
         try {
@@ -91,29 +101,40 @@ class OfflineClientPlacementAndroidTest {
     }
 
     @Test
-    fun a_configured_directory_with_its_own_database_keeps_it_and_leaves_the_default_alone() = runTest {
-        // Given — both locations hold a database; only the default one has an unsent write
-        val configured = root / "configured"
-        createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(configured)).closingAfter { client ->
-            // Room creates the file on the first query.
-            client.pendingMutationCount()
-        }
-        assertTrue(FileSystem.SYSTEM.exists(configured / "supabase_offline.db"))
-        queueOneWriteOffline()
-        val logger = RecordingOfflineLogger()
+    fun a_configured_directory_with_its_own_database_keeps_it_and_leaves_the_default_alone() =
+        runTest {
+            // Given — both locations hold a database; only the default one has an unsent write
+            val configured = root / "configured"
+            createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(configured))
+                .closingAfter { client ->
+                    // Room creates the file on the first query.
+                    client.pendingMutationCount()
+                }
+            assertTrue(FileSystem.SYSTEM.exists(configured / "supabase_offline.db"))
+            queueOneWriteOffline()
+            val logger = RecordingOfflineLogger()
 
-        // When
-        val client = createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(configured, logger))
+            // When
+            val client =
+                createSupabaseOfflineClient(
+                    context,
+                    newTestSupabaseClient(),
+                    configIn(configured, logger),
+                )
 
-        // Then — the configured database is used, the default one is untouched, and the app is told
-        try {
-            assertEquals(0, client.pendingMutationCount())
-            assertTrue(defaultDatabase.exists())
-            assertTrue(logger.entriesAt(OfflineLogLevel.WARNING).isNotEmpty(), "the left-behind database was not reported")
-        } finally {
-            client.close()
+            // Then — the configured database is used, the default one is untouched, and the app is
+            // told
+            try {
+                assertEquals(0, client.pendingMutationCount())
+                assertTrue(defaultDatabase.exists())
+                assertTrue(
+                    logger.entriesAt(OfflineLogLevel.WARNING).isNotEmpty(),
+                    "the left-behind database was not reported",
+                )
+            } finally {
+                client.close()
+            }
         }
-    }
 
     @Test
     fun one_directory_reached_through_a_symlink_is_still_one_database() = runTest {
@@ -125,29 +146,52 @@ class OfflineClientPlacementAndroidTest {
         val first = createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(link))
 
         // When
-        val second = runCatching { createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(real)) }
+        val second = runCatching {
+            createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(real))
+        }
 
         // Then
         second.getOrNull()?.close()
         first.close()
-        assertIs<IllegalStateException>(second.exceptionOrNull(), "two clients opened one database through a symlink")
+        assertIs<IllegalStateException>(
+            second.exceptionOrNull(),
+            "two clients opened one database through a symlink",
+        )
     }
 
     @Test
     fun two_clients_never_share_a_data_directory() = runTest {
         // Given — a client whose files live in a directory
         val data = root / "data"
-        val open = { databasePath: Path -> getRoomDatabase(getDatabaseBuilder(context, databasePath.toString())) }
-        val first = openOfflineClient(newTestSupabaseClient(), SupabaseOfflineConfig(), root / "a" / "supabase_offline.db", data, open)
+        val open = { databasePath: Path ->
+            getRoomDatabase(getDatabaseBuilder(context, databasePath.toString()))
+        }
+        val first =
+            openOfflineClient(
+                newTestSupabaseClient(),
+                SupabaseOfflineConfig(),
+                root / "a" / "supabase_offline.db",
+                data,
+                open,
+            )
 
         // When — another client, on another database, asks for the same data directory
         val second = runCatching {
-            openOfflineClient(newTestSupabaseClient(), SupabaseOfflineConfig(), root / "b" / "supabase_offline.db", data, open)
+            openOfflineClient(
+                newTestSupabaseClient(),
+                SupabaseOfflineConfig(),
+                root / "b" / "supabase_offline.db",
+                data,
+                open,
+            )
         }
 
         // Then — its sweep and its clear would reach the first client's files
         second.getOrNull()?.close()
         first.close()
-        assertIs<IllegalStateException>(second.exceptionOrNull(), "two clients were given one data directory")
+        assertIs<IllegalStateException>(
+            second.exceptionOrNull(),
+            "two clients were given one data directory",
+        )
     }
 }

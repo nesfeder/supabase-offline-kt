@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
@@ -6,11 +8,11 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * What each mutation verb logs, ported from the previous standalone engine's builder tests. A
@@ -21,13 +23,15 @@ class OfflineMutationLoggingTest {
 
     private val server = RecordingPostgrestServer(answer = { okJson(RESPONSE) })
     private val logger = RecordingOfflineLogger()
-    private val builder = OfflinePostgrestQueryBuilderImpl(
-        delegate = server.supabaseClient().postgrest.from(TABLE),
-        store = newTestOfflineStore(),
-        sdkLogger = logger.asSdkLogger(),
-    )
+    private val builder =
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = newTestOfflineStore(),
+            sdkLogger = logger.asSdkLogger(),
+        )
 
-    private fun messagesAt(level: OfflineLogLevel): List<String> = logger.entriesAt(level).map { it.message }
+    private fun messagesAt(level: OfflineLogLevel): List<String> =
+        logger.entriesAt(level).map { it.message }
 
     // ─────────────────────────── Success ───────────────────────────
 
@@ -102,7 +106,10 @@ class OfflineMutationLoggingTest {
         builder.insertJson(ROWS, MutationStrategy.QueueIfOffline)
 
         // Then
-        assertEquals(listOf("INSERT $TABLE queued offline (network unavailable)"), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(
+            listOf("INSERT $TABLE queued offline (network unavailable)"),
+            messagesAt(OfflineLogLevel.INFO),
+        )
     }
 
     @Test
@@ -114,7 +121,10 @@ class OfflineMutationLoggingTest {
         builder.upsertJson(ROWS, MutationStrategy.QueueIfOffline) { onConflict = "id" }
 
         // Then
-        assertEquals(listOf("UPSERT $TABLE queued offline (network unavailable)"), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(
+            listOf("UPSERT $TABLE queued offline (network unavailable)"),
+            messagesAt(OfflineLogLevel.INFO),
+        )
     }
 
     @Test
@@ -126,7 +136,10 @@ class OfflineMutationLoggingTest {
         builder.updateJson(PATCH, MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
         // Then
-        assertEquals(listOf("UPDATE $TABLE queued offline (network unavailable)"), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(
+            listOf("UPDATE $TABLE queued offline (network unavailable)"),
+            messagesAt(OfflineLogLevel.INFO),
+        )
     }
 
     @Test
@@ -138,13 +151,17 @@ class OfflineMutationLoggingTest {
         builder.delete(MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
         // Then
-        assertEquals(listOf("DELETE $TABLE queued offline (network unavailable)"), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(
+            listOf("DELETE $TABLE queued offline (network unavailable)"),
+            messagesAt(OfflineLogLevel.INFO),
+        )
     }
 
     private companion object {
         const val TABLE = "todos"
         const val RESPONSE = """[{"id":1,"created":true}]"""
-        val ROWS: JsonArray = Json.parseToJsonElement("""[{"id":1,"title":"Buy milk"}]""") as JsonArray
+        val ROWS: JsonArray =
+            Json.parseToJsonElement("""[{"id":1,"title":"Buy milk"}]""") as JsonArray
         val PATCH = Json.parseToJsonElement("""{"title":"Buy oat milk"}""")
     }
 }

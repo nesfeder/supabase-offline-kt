@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testing
 
 import io.github.jan.supabase.SupabaseClient
@@ -10,13 +12,13 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * Smoke coverage for the public test seam: the in-memory client must behave like the real offline
@@ -49,9 +51,10 @@ class InMemorySupabaseOfflineClientTest {
         val client = buildInMemorySupabaseOfflineClient(scriptedSupabase(), backgroundScope)
 
         // When
-        val outcome = client.from(TABLE).insertJson(
-            JsonArray(listOf(buildJsonObject { put("title", "Buy milk") })),
-        )
+        val outcome =
+            client
+                .from(TABLE)
+                .insertJson(JsonArray(listOf(buildJsonObject { put("title", "Buy milk") })))
 
         // Then — the write is queued rather than lost
         assertEquals(MutationOutcome.Queued, outcome)
@@ -63,20 +66,22 @@ class InMemorySupabaseOfflineClientTest {
      * [online], and fails at the transport level otherwise. Retries are off so a failure surfaces
      * on the first attempt.
      */
-    private fun scriptedSupabase(): SupabaseClient = createSupabaseClient(
-        supabaseUrl = "https://unit-test.supabase.co",
-        supabaseKey = "unit-test-anon-key",
-    ) {
-        install(Postgrest) { maxRetries = 0 }
-        httpEngine = MockEngine {
-            if (!online) throw IOException("network down")
-            respond(
-                content = SERVER_ROWS,
-                status = HttpStatusCode.OK,
-                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-            )
+    private fun scriptedSupabase(): SupabaseClient =
+        createSupabaseClient(
+            supabaseUrl = "https://unit-test.supabase.co",
+            supabaseKey = "unit-test-anon-key",
+        ) {
+            install(Postgrest) { maxRetries = 0 }
+            httpEngine = MockEngine {
+                if (!online) throw IOException("network down")
+                respond(
+                    content = SERVER_ROWS,
+                    status = HttpStatusCode.OK,
+                    headers =
+                        headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                )
+            }
         }
-    }
 
     private companion object {
         const val TABLE = "todos"

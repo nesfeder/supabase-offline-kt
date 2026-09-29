@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.postgrest.query.Columns
@@ -70,7 +72,8 @@ internal class RecordingOfflinePostgrestQueryBuilder : OfflinePostgrestQueryBuil
         value: T,
         mutationStrategy: MutationStrategy,
         request: InsertRequestBuilder.() -> Unit,
-    ): MutationOutcome = record(Call("insertWith(value)", serializer, listOf(value), mutationStrategy))
+    ): MutationOutcome =
+        record(Call("insertWith(value)", serializer, listOf(value), mutationStrategy))
 
     override suspend fun upsertJson(
         body: JsonArray,
@@ -90,7 +93,8 @@ internal class RecordingOfflinePostgrestQueryBuilder : OfflinePostgrestQueryBuil
         value: T,
         mutationStrategy: MutationStrategy,
         request: UpsertRequestBuilder.() -> Unit,
-    ): MutationOutcome = record(Call("upsertWith(value)", serializer, listOf(value), mutationStrategy))
+    ): MutationOutcome =
+        record(Call("upsertWith(value)", serializer, listOf(value), mutationStrategy))
 
     override suspend fun updateJson(
         body: JsonElement,
@@ -105,7 +109,8 @@ internal class RecordingOfflinePostgrestQueryBuilder : OfflinePostgrestQueryBuil
         mutationStrategy: MutationStrategy,
         deltaColumns: List<NumericDeltaColumn>,
         request: PostgrestRequestBuilder.() -> Unit,
-    ): MutationOutcome = record(Call("updateWith(value)", serializer, listOf(value), mutationStrategy, deltaColumns))
+    ): MutationOutcome =
+        record(Call("updateWith(value)", serializer, listOf(value), mutationStrategy, deltaColumns))
 
     override suspend fun delete(
         mutationStrategy: MutationStrategy,

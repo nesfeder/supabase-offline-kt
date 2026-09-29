@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
@@ -20,7 +22,11 @@ import io.ktor.http.HttpStatusCode
  * `statusCode` reads 400 and only the exception type marks the object as missing.
  */
 internal suspend fun notFoundRestException(): NotFoundRestException =
-    NotFoundRestException("Object not found", httpResponse(HttpStatusCode.BadRequest), "Object not found")
+    NotFoundRestException(
+        "Object not found",
+        httpResponse(HttpStatusCode.BadRequest),
+        "Object not found",
+    )
 
 /** A 403, as an expired token or an RLS rule produces; it says nothing about the object. */
 internal suspend fun forbiddenRestException(): UnauthorizedRestException =
@@ -28,10 +34,11 @@ internal suspend fun forbiddenRestException(): UnauthorizedRestException =
 
 /** A real Ktor [HttpResponse] with [status]. */
 internal suspend fun httpResponse(status: HttpStatusCode): HttpResponse {
-    val client = HttpClient(MockEngine) {
-        engine { addHandler { respondError(status) } }
-        expectSuccess = true
-    }
+    val client =
+        HttpClient(MockEngine) {
+            engine { addHandler { respondError(status) } }
+            expectSuccess = true
+        }
     return try {
         client.get("$TEST_SUPABASE_URL/storage/v1/object/authenticated/bucket/object")
         error("the mock engine answered $status with a success")

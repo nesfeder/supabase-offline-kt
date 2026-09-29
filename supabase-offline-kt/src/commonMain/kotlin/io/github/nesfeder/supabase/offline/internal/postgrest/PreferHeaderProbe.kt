@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -12,13 +14,13 @@ import io.ktor.client.request.HttpRequestPipeline
 import io.ktor.http.HttpMethod
 import io.ktor.util.AttributeKey
 import io.ktor.util.pipeline.PipelinePhase
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 
 /** What the dry-run check learned about a write without sending it. */
 internal sealed interface DryRunVerdict {
@@ -40,8 +42,9 @@ internal sealed interface DryRunVerdict {
 }
 
 /**
- * Tells a dry run (`dryRun()`) from an ordinary write before the write is queued, because the mutation
- * queue does not carry the `Prefer` header, and a queued dry run would replay as a real write.
+ * Tells a dry run (`dryRun()`) from an ordinary write before the write is queued, because the
+ * mutation queue does not carry the `Prefer` header, and a queued dry run would replay as a real
+ * write.
  */
 internal fun interface DryRunProbe {
 
@@ -50,13 +53,13 @@ internal fun interface DryRunProbe {
 }
 
 /**
- * The [DryRunProbe] over supabase-kt's HTTP pipeline. supabase-kt keeps `dryRun()` private and writes
- * it only into the `Prefer` header, as `tx=rollback`, so the check reads that header: it runs the
- * write under a [PreferHeaderProbe], and the phase [installDryRunCheck] put ahead of every
+ * The [DryRunProbe] over supabase-kt's HTTP pipeline. supabase-kt keeps `dryRun()` private and
+ * writes it only into the `Prefer` header, as `tx=rollback`, so the check reads that header: it
+ * runs the write under a [PreferHeaderProbe], and the phase [installDryRunCheck] put ahead of every
  * other on the request pipeline records the header of the PostgREST write request and stops it. No
- * plugin the app installed runs for it, so no retry or logging plugin sees the stop. A subscriber to
- * the client's `HttpRequestCreated` monitor event does see the request: that event fires before the
- * pipeline runs.
+ * plugin the app installed runs for it, so no retry or logging plugin sees the stop. A subscriber
+ * to the client's `HttpRequestCreated` monitor event does see the request: that event fires before
+ * the pipeline runs.
  *
  * A dry run is never queued; whether the server rolled it back is read from its response
  * ([wasRolledBack]).
@@ -66,14 +69,15 @@ internal class PreferHeaderDryRunProbe(private val supabase: SupabaseClient) : D
     override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict {
         if (!supabase.hasPreferHeaderProbe()) return DryRunVerdict.Unavailable
         val probe = PreferHeaderProbe()
-        val result = try {
-            withContext(probe) { write() }
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
-            if (!probe.observed) return DryRunVerdict.NotBuilt(failure)
-            null
-        }
+        val result =
+            try {
+                withContext(probe) { write() }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                if (!probe.observed) return DryRunVerdict.NotBuilt(failure)
+                null
+            }
         return when {
             result != null -> DryRunVerdict.Sent(result)
             probe.requestedRollback -> DryRunVerdict.DryRun
@@ -119,8 +123,8 @@ internal fun requestsRollback(header: String?): Boolean =
     header.orEmpty().split(',').any { preference -> preference.trim() == TX_ROLLBACK_PREFERENCE }
 
 /**
- * Whether PostgREST rolled the write that produced this result back: its `Preference-Applied` header
- * says `tx=rollback`, which PostgREST sends only when it honoured the preference.
+ * Whether PostgREST rolled the write that produced this result back: its `Preference-Applied`
+ * header says `tx=rollback`, which PostgREST sends only when it honoured the preference.
  */
 internal val PostgrestResult.wasRolledBack: Boolean
     get() = requestsRollback(headers[PREFERENCE_APPLIED_HEADER])
@@ -138,12 +142,14 @@ private class DryRunCheckStop : Exception("Request stopped by the offline engine
 private val DryRunCheckPhase = PipelinePhase("SupabaseOfflineDryRunCheck")
 
 /** Set on a client's HTTP client once the dry-run check is installed. */
-private val PreferProbeInstallation = AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.PreferHeaderProbe")
+private val PreferProbeInstallation =
+    AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.PreferHeaderProbe")
 
 /**
  * Installs the dry-run check on this client's request pipeline, in a phase ahead of every other,
  * exactly once however many threads call it: the flag is shared through the client's attributes and
- * claimed with a compare-and-set. It acts only on a PostgREST write sent under a [PreferHeaderProbe].
+ * claimed with a compare-and-set. It acts only on a PostgREST write sent under a
+ * [PreferHeaderProbe].
  *
  * @return `true` when this call installed it.
  */
@@ -152,7 +158,8 @@ internal fun SupabaseClient.installDryRunCheck(): Boolean {
     val client = httpClient.httpClient
     // computeIfAbsent may run its block more than once under a race, but every caller gets the one
     // instance that was stored; the compare-and-set on it is what admits a single installer.
-    val installation = client.attributes.computeIfAbsent(PreferProbeInstallation) { AtomicBoolean(false) }
+    val installation =
+        client.attributes.computeIfAbsent(PreferProbeInstallation) { AtomicBoolean(false) }
     if (!installation.compareAndSet(expectedValue = false, newValue = true)) return false
     client.requestPipeline.insertPhaseBefore(HttpRequestPipeline.Before, DryRunCheckPhase)
     client.requestPipeline.intercept(DryRunCheckPhase) {

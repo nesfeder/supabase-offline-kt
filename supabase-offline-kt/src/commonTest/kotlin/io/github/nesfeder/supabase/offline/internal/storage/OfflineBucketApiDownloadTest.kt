@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
@@ -8,12 +10,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
-import kotlinx.coroutines.test.runTest
-import kotlinx.io.IOException
-import kotlinx.io.readByteArray
-import okio.FileSystem
-import okio.Path
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -23,11 +19,17 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import kotlinx.io.IOException
+import kotlinx.io.readByteArray
+import okio.FileSystem
+import okio.Path
+import okio.SYSTEM
 
 /**
  * The download-through-cache matrix, ported from the previous standalone engine for the variants
- * the rest of the suite does not cover: the authenticated downloads, the byte-channel downloads,
- * a failed download with nothing cached, and what each outcome logs.
+ * the rest of the suite does not cover: the authenticated downloads, the byte-channel downloads, a
+ * failed download with nothing cached, and what each outcome logs.
  */
 class OfflineBucketApiDownloadTest {
 
@@ -38,14 +40,17 @@ class OfflineBucketApiDownloadTest {
 
     @BeforeTest
     fun setUp() {
-        baseDir = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-bucket-download-${Random.nextLong()}"
+        baseDir =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-bucket-download-${Random.nextLong()}"
         delegate = FakeBucketApi(bucketId = BUCKET)
-        api = newTestBucketApi(
-            delegate = delegate,
-            baseDirectory = baseDir,
-            store = newTestOfflineStore(),
-            sdkLogger = logger.asSdkLogger(),
-        )
+        api =
+            newTestBucketApi(
+                delegate = delegate,
+                baseDirectory = baseDir,
+                store = newTestOfflineStore(),
+                sdkLogger = logger.asSdkLogger(),
+            )
     }
 
     @AfterTest
@@ -59,7 +64,7 @@ class OfflineBucketApiDownloadTest {
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When / Then
-        assertFailsWith<IOException> { api.downloadPublic(PATH) { } }
+        assertFailsWith<IOException> { api.downloadPublic(PATH) {} }
     }
 
     @Test
@@ -68,11 +73,16 @@ class OfflineBucketApiDownloadTest {
         delegate.onDownload = { BYTES }
 
         // When
-        val downloaded = api.downloadAuthenticated(PATH) { }
+        val downloaded = api.downloadAuthenticated(PATH) {}
 
         // Then — returned, and on disk
         assertContentEquals(BYTES, downloaded)
-        assertContentEquals(BYTES, FileSystem.SYSTEM.read(assertNotNull(objectFilePathOrNull(baseDir, BUCKET, PATH))) { readByteArray() })
+        assertContentEquals(
+            BYTES,
+            FileSystem.SYSTEM.read(assertNotNull(objectFilePathOrNull(baseDir, BUCKET, PATH))) {
+                readByteArray()
+            },
+        )
         assertEquals(listOf(PATH), delegate.authenticatedDownloadPaths)
     }
 
@@ -80,11 +90,11 @@ class OfflineBucketApiDownloadTest {
     fun downloadAuthenticated_fallsBackToCacheOnFailure() = runTest {
         // Given — cached by a first download, then the network fails
         delegate.onDownload = { BYTES }
-        api.downloadAuthenticated(PATH) { }
+        api.downloadAuthenticated(PATH) {}
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When
-        val downloaded = api.downloadAuthenticated(PATH) { }
+        val downloaded = api.downloadAuthenticated(PATH) {}
 
         // Then
         assertContentEquals(BYTES, downloaded)
@@ -96,7 +106,7 @@ class OfflineBucketApiDownloadTest {
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When / Then
-        assertFailsWith<IOException> { api.downloadAuthenticated(PATH) { } }
+        assertFailsWith<IOException> { api.downloadAuthenticated(PATH) {} }
     }
 
     @Test
@@ -106,7 +116,7 @@ class OfflineBucketApiDownloadTest {
         val channel = ByteChannel()
 
         // When
-        api.downloadPublic(PATH, channel) { }
+        api.downloadPublic(PATH, channel) {}
         channel.flushAndClose()
 
         // Then
@@ -117,12 +127,12 @@ class OfflineBucketApiDownloadTest {
     fun downloadPublicToChannel_fallsBackToCacheOnFailure() = runTest {
         // Given — cached by a first download, then the network fails
         delegate.onDownload = { BYTES }
-        api.downloadPublic(PATH) { }
+        api.downloadPublic(PATH) {}
         delegate.onDownload = { throw IOException("network unreachable") }
         val channel = ByteChannel()
 
         // When
-        api.downloadPublic(PATH, channel) { }
+        api.downloadPublic(PATH, channel) {}
         channel.flushAndClose()
 
         // Then
@@ -136,7 +146,7 @@ class OfflineBucketApiDownloadTest {
         val channel = ByteChannel()
 
         // When
-        api.downloadAuthenticated(PATH, channel) { }
+        api.downloadAuthenticated(PATH, channel) {}
         channel.flushAndClose()
 
         // Then
@@ -148,12 +158,12 @@ class OfflineBucketApiDownloadTest {
     fun downloadAuthenticatedToChannel_fallsBackToCacheOnFailure() = runTest {
         // Given — cached by a first download, then the network fails
         delegate.onDownload = { BYTES }
-        api.downloadAuthenticated(PATH) { }
+        api.downloadAuthenticated(PATH) {}
         delegate.onDownload = { throw IOException("network unreachable") }
         val channel = ByteChannel()
 
         // When
-        api.downloadAuthenticated(PATH, channel) { }
+        api.downloadAuthenticated(PATH, channel) {}
         channel.flushAndClose()
 
         // Then
@@ -168,22 +178,28 @@ class OfflineBucketApiDownloadTest {
         delegate.onDownload = { BYTES }
 
         // When
-        api.downloadPublic(PATH) { }
+        api.downloadPublic(PATH) {}
 
         // Then
-        assertEquals(listOf("Storage download $BUCKET/$PATH attempting network"), messagesAt(OfflineLogLevel.DEBUG))
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.WARNING) + messagesAt(OfflineLogLevel.ERROR))
+        assertEquals(
+            listOf("Storage download $BUCKET/$PATH attempting network"),
+            messagesAt(OfflineLogLevel.DEBUG),
+        )
+        assertEquals(
+            emptyList(),
+            messagesAt(OfflineLogLevel.WARNING) + messagesAt(OfflineLogLevel.ERROR),
+        )
     }
 
     @Test
     fun downloadPublic_fallback_logsWarning() = runTest {
         // Given — cached by a first download, then the network fails
         delegate.onDownload = { BYTES }
-        api.downloadPublic(PATH) { }
+        api.downloadPublic(PATH) {}
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When
-        api.downloadPublic(PATH) { }
+        api.downloadPublic(PATH) {}
 
         // Then
         assertEquals(
@@ -198,7 +214,7 @@ class OfflineBucketApiDownloadTest {
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When
-        assertFailsWith<IOException> { api.downloadPublic(PATH) { } }
+        assertFailsWith<IOException> { api.downloadPublic(PATH) {} }
 
         // Then
         assertEquals(
@@ -213,22 +229,28 @@ class OfflineBucketApiDownloadTest {
         delegate.onDownload = { BYTES }
 
         // When
-        api.downloadAuthenticated(PATH) { }
+        api.downloadAuthenticated(PATH) {}
 
         // Then
-        assertEquals(listOf("Storage download $BUCKET/$PATH attempting network"), messagesAt(OfflineLogLevel.DEBUG))
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.WARNING) + messagesAt(OfflineLogLevel.ERROR))
+        assertEquals(
+            listOf("Storage download $BUCKET/$PATH attempting network"),
+            messagesAt(OfflineLogLevel.DEBUG),
+        )
+        assertEquals(
+            emptyList(),
+            messagesAt(OfflineLogLevel.WARNING) + messagesAt(OfflineLogLevel.ERROR),
+        )
     }
 
     @Test
     fun downloadAuthenticated_fallback_logsWarning() = runTest {
         // Given — cached by a first download, then the network fails
         delegate.onDownload = { BYTES }
-        api.downloadAuthenticated(PATH) { }
+        api.downloadAuthenticated(PATH) {}
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When
-        api.downloadAuthenticated(PATH) { }
+        api.downloadAuthenticated(PATH) {}
 
         // Then
         assertEquals(
@@ -243,7 +265,7 @@ class OfflineBucketApiDownloadTest {
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When
-        assertFailsWith<IOException> { api.downloadAuthenticated(PATH) { } }
+        assertFailsWith<IOException> { api.downloadAuthenticated(PATH) {} }
 
         // Then
         assertEquals(
@@ -256,12 +278,12 @@ class OfflineBucketApiDownloadTest {
     fun no_message_at_info_or_above_names_the_object_path() = runTest {
         // Given — every outcome a download can log: success, fallback, nothing cached, not found
         delegate.onDownload = { BYTES }
-        api.downloadPublic(PATH) { }
+        api.downloadPublic(PATH) {}
         delegate.onDownload = { throw IOException("network unreachable") }
-        api.downloadPublic(PATH) { }
-        assertFailsWith<IOException> { api.downloadPublic("folder/never-cached.bin") { } }
+        api.downloadPublic(PATH) {}
+        assertFailsWith<IOException> { api.downloadPublic("folder/never-cached.bin") {} }
         delegate.onDownload = { throw notFoundRestException() }
-        assertFailsWith<Exception> { api.downloadPublic(PATH) { } }
+        assertFailsWith<Exception> { api.downloadPublic(PATH) {} }
 
         // When
         val visible = logger.entries.filter { it.level != OfflineLogLevel.DEBUG }.map { it.message }
@@ -269,10 +291,14 @@ class OfflineBucketApiDownloadTest {
         // Then — object paths can name people ("jane-doe/passport.jpg"); they stay out of every log
         // an app is likely to forward to a crash reporter
         assertTrue(visible.isNotEmpty(), "expected the fallback and failures to be logged")
-        assertTrue(visible.none { "folder" in it || "file.bin" in it || "never-cached" in it }, "paths leaked: $visible")
+        assertTrue(
+            visible.none { "folder" in it || "file.bin" in it || "never-cached" in it },
+            "paths leaked: $visible",
+        )
     }
 
-    private fun messagesAt(level: OfflineLogLevel): List<String> = logger.entriesAt(level).map { it.message }
+    private fun messagesAt(level: OfflineLogLevel): List<String> =
+        logger.entriesAt(level).map { it.message }
 
     private companion object {
         const val BUCKET = "test-bucket"

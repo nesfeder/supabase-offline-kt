@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.postgrest
@@ -15,19 +17,19 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.client.network.sockets.ConnectTimeoutException
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
 /**
- * A write whose response was lost stays queued and replays, so replaying it must not apply it
- * twice — while a genuine duplicate must still be refused. Which replays are idempotent:
+ * A write whose response was lost stays queued and replays, so replaying it must not apply it twice
+ * — while a genuine duplicate must still be refused. Which replays are idempotent:
  *
  * - an INSERT whose rows carry the table's primary key and whose send may have reached the server
  *   replays as an upsert that ignores duplicates and counts the rows it wrote; one that was never
@@ -46,15 +48,21 @@ class MutationQueueIdempotentReplayTest {
         // Given — the server commits the insert, then the connection drops before the response
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
-        val builder = OfflinePostgrestQueryBuilderImpl(
-            delegate = server.supabaseClient().postgrest.from(TABLE),
-            store = store,
-        )
-        val outcome = builder.insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""), MutationStrategy.QueueIfOffline)
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from(TABLE),
+                store = store,
+            )
+        val outcome =
+            builder.insertJson(
+                rows("""[{"id":"t1","title":"Buy milk"}]"""),
+                MutationStrategy.QueueIfOffline,
+            )
         assertIs<MutationOutcome.Queued>(outcome)
 
         // When — the queue replays
-        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced =
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — the replay lands as a no-op on the row the lost request already wrote
         assertEquals(1, synced)
@@ -94,27 +102,31 @@ class MutationQueueIdempotentReplayTest {
     }
 
     @Test
-    fun an_insert_whose_send_may_have_reached_the_server_replays_as_an_upsert_that_counts_its_rows() = runTest {
-        // Given — the send failed without saying whether the server got it
-        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
-        server.answer = { okJson("[]") }
+    fun an_insert_whose_send_may_have_reached_the_server_replays_as_an_upsert_that_counts_its_rows() =
+        runTest {
+            // Given — the send failed without saying whether the server got it
+            val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+            builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+            server.answer = { okJson("[]") }
 
-        // When
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            // When
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
-        // Then
-        val replay = server.requests.last()
-        assertEquals("id", replay.query["on_conflict"])
-        val preferences = replay.prefer.orEmpty().split(',')
-        assertTrue("resolution=ignore-duplicates" in preferences, "got $preferences")
-        assertTrue("count=exact" in preferences, "got $preferences")
-    }
+            // Then
+            val replay = server.requests.last()
+            assertEquals("id", replay.query["on_conflict"])
+            val preferences = replay.prefer.orEmpty().split(',')
+            assertTrue("resolution=ignore-duplicates" in preferences, "got $preferences")
+            assertTrue("count=exact" in preferences, "got $preferences")
+        }
 
     @Test
     fun an_insert_whose_send_never_connected_replays_as_a_plain_insert() = runTest {
         // Given — the connection was never made, so the server cannot have it
-        val server = RecordingPostgrestServer(answer = { throw ConnectTimeoutException("connect timed out", null) })
+        val server =
+            RecordingPostgrestServer(
+                answer = { throw ConnectTimeoutException("connect timed out", null) }
+            )
         builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
         server.answer = { okJson("[]") }
 
@@ -176,16 +188,23 @@ class MutationQueueIdempotentReplayTest {
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         val beforeTheCrash = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
-        val id = beforeTheCrash.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        val id =
+            beforeTheCrash.enqueueInsert(
+                table = TABLE,
+                body = rows("""[{"id":"t1","title":"Buy milk"}]"""),
+            )
         beforeTheCrash.markSendUnconfirmed(id)
 
         // When — the next launch replays it
         val server = RecordingPostgrestServer()
         val afterTheCrash = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
-        MutationQueueReplayer(store = afterTheCrash, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = afterTheCrash, supabase = server.supabaseClient())
+            .syncAllTables()
 
         // Then — the server may already hold it, so the replay tolerates that
-        assertTrue("resolution=ignore-duplicates" in server.requests.single().prefer.orEmpty().split(','))
+        assertTrue(
+            "resolution=ignore-duplicates" in server.requests.single().prefer.orEmpty().split(',')
+        )
     }
 
     @Test
@@ -195,7 +214,12 @@ class MutationQueueIdempotentReplayTest {
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), sdkLogger = logger.asSdkLogger())
+        val syncer =
+            MutationQueueReplayer(
+                store = store,
+                supabase = server.supabaseClient(),
+                sdkLogger = logger.asSdkLogger(),
+            )
 
         // When
         val report = syncer.sync()
@@ -231,7 +255,8 @@ class MutationQueueIdempotentReplayTest {
 
         // When — the upsert commits, its response is lost, and the queue replays it
         val outcome = builderOn(server).upsertJson(rows("""[{"id":"t1","title":"new"}]"""))
-        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced =
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -247,8 +272,12 @@ class MutationQueueIdempotentReplayTest {
         server.loseResponseAfterCommit = { request -> request.method == "PATCH" }
 
         // When
-        val outcome = builderOn(server).updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", "t1") } }
-        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val outcome =
+            builderOn(server).updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+                filter { eq("id", "t1") }
+            }
+        val synced =
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -260,12 +289,17 @@ class MutationQueueIdempotentReplayTest {
     fun a_delete_whose_response_was_lost_replays_as_a_no_op() = runTest {
         // Given
         val server = FakeRelationalPostgrestServer()
-        server.seed(TABLE, row("""{"id":"t1","title":"gone"}"""), row("""{"id":"t2","title":"kept"}"""))
+        server.seed(
+            TABLE,
+            row("""{"id":"t1","title":"gone"}"""),
+            row("""{"id":"t2","title":"kept"}"""),
+        )
         server.loseResponseAfterCommit = { request -> request.method == "DELETE" }
 
         // When
         val outcome = builderOn(server).delete { filter { eq("id", "t1") } }
-        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced =
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -274,18 +308,19 @@ class MutationQueueIdempotentReplayTest {
     }
 
     @Test
-    fun an_insert_whose_key_the_server_generates_is_inserted_twice_when_its_response_was_lost() = runTest {
-        // Given — not idempotent: nothing in the write identifies the row it created
-        val server = FakeRelationalPostgrestServer()
-        server.loseResponseAfterCommit = { request -> request.method == "POST" }
+    fun an_insert_whose_key_the_server_generates_is_inserted_twice_when_its_response_was_lost() =
+        runTest {
+            // Given — not idempotent: nothing in the write identifies the row it created
+            val server = FakeRelationalPostgrestServer()
+            server.loseResponseAfterCommit = { request -> request.method == "POST" }
 
-        // When
-        builderOn(server).insertJson(rows("""[{"title":"Buy milk"}]"""))
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            // When
+            builderOn(server).insertJson(rows("""[{"title":"Buy milk"}]"""))
+            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
-        // Then — pinned as it is: two rows
-        assertEquals(2, server.rows(TABLE).size)
-    }
+            // Then — pinned as it is: two rows
+            assertEquals(2, server.rows(TABLE).size)
+        }
 
     @Test
     fun a_delta_update_whose_response_was_lost_applies_its_delta_twice() = runTest {
@@ -298,19 +333,28 @@ class MutationQueueIdempotentReplayTest {
         builderOn(server).updateJson(
             body = Json.parseToJsonElement("""{"done_count":15}"""),
             deltaColumns = listOf(NumericDeltaColumn(column = "done_count", snapshotValue = 10.0)),
-        ) { filter { eq("id", "t1") } }
+        ) {
+            filter { eq("id", "t1") }
+        }
         MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — pinned as it is: 20, not 15
-        val doneCount = (server.rows(TABLE).single()["done_count"] as JsonPrimitive).content.toDouble()
+        val doneCount =
+            (server.rows(TABLE).single()["done_count"] as JsonPrimitive).content.toDouble()
         assertEquals(20.0, doneCount)
     }
 
     private fun builderOn(server: FakeRelationalPostgrestServer): OfflinePostgrestQueryBuilderImpl =
-        OfflinePostgrestQueryBuilderImpl(delegate = server.supabaseClient().postgrest.from(TABLE), store = store)
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = store,
+        )
 
     private fun builderOn(server: RecordingPostgrestServer): OfflinePostgrestQueryBuilderImpl =
-        OfflinePostgrestQueryBuilderImpl(delegate = server.supabaseClient().postgrest.from(TABLE), store = store)
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = store,
+        )
 
     private fun row(json: String): JsonObject = Json.parseToJsonElement(json) as JsonObject
 

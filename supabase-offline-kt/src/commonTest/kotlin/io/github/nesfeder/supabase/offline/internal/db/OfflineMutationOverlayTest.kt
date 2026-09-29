@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationOverlay.applyPendingMutations
@@ -5,6 +7,8 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -14,8 +18,6 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * Direct unit coverage of the pure overlay function that patches queued mutations onto a cached
@@ -78,16 +80,18 @@ class OfflineMutationOverlayTest {
             )
         }
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                FilterDescriptor.Condition(
-                    column = "id",
-                    operatorId = "eq",
-                    value = "1"
-                )
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(
+                            column = "id",
+                            operatorId = "eq",
+                            value = "1",
+                        )
+                    ),
             )
-        )
 
         store.enqueueUpsert(
             table = "assets",
@@ -95,7 +99,7 @@ class OfflineMutationOverlayTest {
             filter = descriptor,
             onConflict = "id",
             ignoreDuplicates = false,
-            defaultToNull = true
+            defaultToNull = true,
         )
 
         val pending = mutationDao.pendingForTable("assets")
@@ -121,21 +125,23 @@ class OfflineMutationOverlayTest {
             put("status", "active")
         }
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                FilterDescriptor.Condition(
-                    column = "id",
-                    operatorId = "eq",
-                    value = "1"
-                )
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(
+                            column = "id",
+                            operatorId = "eq",
+                            value = "1",
+                        )
+                    ),
             )
-        )
 
         store.enqueueUpdate(
             table = "assets",
             body = patchBody,
-            filter = descriptor
+            filter = descriptor,
         )
 
         val pending = mutationDao.pendingForTable("assets")
@@ -156,16 +162,18 @@ class OfflineMutationOverlayTest {
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                FilterDescriptor.Condition(
-                    column = "id",
-                    operatorId = "eq",
-                    value = "1"
-                )
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(
+                            column = "id",
+                            operatorId = "eq",
+                            value = "1",
+                        )
+                    ),
             )
-        )
 
         store.enqueueDelete(table = "assets", filter = descriptor)
         val pending = mutationDao.pendingForTable("assets")
@@ -201,31 +209,43 @@ class OfflineMutationOverlayTest {
     fun applyDeleteMutation_noMatches_rowsRemainUnchanged() {
         // Given
         val server = buildJsonArray {
-            add(buildJsonObject { put("id", 1); put("name", "A") })
-            add(buildJsonObject { put("id", 2); put("name", "B") })
-        }.toString()
-
-        val filter = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                FilterDescriptor.Condition("id", operatorId = "eq", value = "999")
+            add(
+                buildJsonObject {
+                    put("id", 1)
+                    put("name", "A")
+                }
             )
-        )
-
-        val pending = listOf(
-            MutationRow(
-                id = 1L,
-                table = "assets",
-                operation = MutationOperation.DELETE,
-                bodyJson = "{}",
-                filterJson = FilterEngine.encode(filter, json),
-                createdAtMs = 0L,
-                syncedAtMs = null,
-                defaultToNull = null,
-                onConflict = null,
-                ignoreDuplicates = null,
+            add(
+                buildJsonObject {
+                    put("id", 2)
+                    put("name", "B")
+                }
             )
-        )
+        }
+            .toString()
+
+        val filter =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(FilterDescriptor.Condition("id", operatorId = "eq", value = "999")),
+            )
+
+        val pending =
+            listOf(
+                MutationRow(
+                    id = 1L,
+                    table = "assets",
+                    operation = MutationOperation.DELETE,
+                    bodyJson = "{}",
+                    filterJson = FilterEngine.encode(filter, json),
+                    createdAtMs = 0L,
+                    syncedAtMs = null,
+                    defaultToNull = null,
+                    onConflict = null,
+                    ignoreDuplicates = null,
+                )
+            )
 
         // When
         val result = applyPendingMutations(json, server, pending)

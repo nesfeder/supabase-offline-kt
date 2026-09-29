@@ -1,33 +1,35 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.postgrest
 import io.ktor.client.engine.mock.MockEngine
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonArray
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlin.time.ExperimentalTime
 
 /**
  * Locks the offline mutation encode path onto the SDK's shared [OfflineJson] configuration.
  *
- * `insertWith` must serialize caller values with `ignoreUnknownKeys = true` /
- * `encodeDefaults = false` — the shared [OfflineJson] config — so offline-encoded rows match
- * every other cache / overlay / filter round-trip in the SDK. The produced body is pinned to a
- * hardcoded JSON literal, so the test fails both if the builder regresses to a
- * privately-configured `Json` (e.g. one that flips `encodeDefaults`) and if [OfflineJson]'s own
- * config ever drifts. Comparing against `OfflineJson.encodeToJsonElement(...)` alone would move
- * both sides of the assertion together and mask the latter.
+ * `insertWith` must serialize caller values with `ignoreUnknownKeys = true` / `encodeDefaults =
+ * false` — the shared [OfflineJson] config — so offline-encoded rows match every other cache /
+ * overlay / filter round-trip in the SDK. The produced body is pinned to a hardcoded JSON literal,
+ * so the test fails both if the builder regresses to a privately-configured `Json` (e.g. one that
+ * flips `encodeDefaults`) and if [OfflineJson]'s own config ever drifts. Comparing against
+ * `OfflineJson.encodeToJsonElement(...)` alone would move both sides of the assertion together and
+ * mask the latter.
  */
 class OfflineJsonParityTest {
 
@@ -46,15 +48,17 @@ class OfflineJsonParityTest {
         // Given: an offline builder over a recording delegate, and a DTO whose default-valued
         // field only survives encoding under a non-default serializer configuration
         val postgrest = testPostgrest()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = "parity_table",
-            postgrest = postgrest,
-            onInsert = { postgrestResultOf("[]", postgrest) },
-        )
-        val builder = OfflinePostgrestQueryBuilderImpl(
-            delegate = wrapper,
-            store = buildStore(),
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = "parity_table",
+                postgrest = postgrest,
+                onInsert = { postgrestResultOf("[]", postgrest) },
+            )
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = wrapper,
+                store = buildStore(),
+            )
         val dto = ParityDto(id = "row-1")
 
         // When: the value is inserted online-only, so the encoded body is handed straight to the

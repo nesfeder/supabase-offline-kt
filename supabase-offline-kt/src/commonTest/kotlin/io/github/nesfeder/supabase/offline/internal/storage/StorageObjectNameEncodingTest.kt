@@ -1,16 +1,13 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
+import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.jan.supabase.exceptions.NotFoundRestException
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.Path
-import okio.Path.Companion.toPath
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -20,6 +17,11 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.Path
+import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /**
  * Object names with spaces, `%`, `?` and `#` round-trip through the download, the cache and the
@@ -38,7 +40,9 @@ class StorageObjectNameEncodingTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-encoding-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-encoding-${Random.nextLong().toULong()}"
         store = newTestOfflineStore()
         server = RecordingStorageServer()
         server.objects["$BUCKET/$NAME"] = CONTENT.encodeToByteArray()
@@ -49,11 +53,12 @@ class StorageObjectNameEncodingTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun bucket() = newTestBucketApi(
-        delegate = server.supabaseClient().storage.from(BUCKET),
-        baseDirectory = dataDirectory,
-        store = store,
-    )
+    private fun bucket() =
+        newTestBucketApi(
+            delegate = server.supabaseClient().storage.from(BUCKET),
+            baseDirectory = dataDirectory,
+            store = store,
+        )
 
     @Test
     fun each_path_segment_is_percent_encoded_on_the_wire() = runTest {
@@ -61,7 +66,7 @@ class StorageObjectNameEncodingTest {
         val bucket = bucket()
 
         // When
-        bucket.downloadAuthenticated(NAME) { }
+        bucket.downloadAuthenticated(NAME) {}
 
         // Then
         assertEquals(
@@ -76,7 +81,7 @@ class StorageObjectNameEncodingTest {
         val bucket = bucket()
 
         // When
-        bucket.downloadAuthenticated(NAME) { }
+        bucket.downloadAuthenticated(NAME) {}
 
         // Then
         val row = assertNotNull(store.getStorageByKey(BUCKET, NAME))
@@ -90,11 +95,11 @@ class StorageObjectNameEncodingTest {
     fun the_cached_copy_is_served_offline_under_the_same_name() = runTest {
         // Given
         val bucket = bucket()
-        bucket.downloadAuthenticated(NAME) { }
+        bucket.downloadAuthenticated(NAME) {}
 
         // When
         server.online = false
-        val offline = bucket.downloadAuthenticated(NAME) { }.decodeToString()
+        val offline = bucket.downloadAuthenticated(NAME) {}.decodeToString()
 
         // Then
         assertEquals(CONTENT, offline)
@@ -104,12 +109,12 @@ class StorageObjectNameEncodingTest {
     fun a_not_found_evicts_the_entry_under_the_same_name() = runTest {
         // Given
         val bucket = bucket()
-        bucket.downloadAuthenticated(NAME) { }
+        bucket.downloadAuthenticated(NAME) {}
         val file = assertNotNull(store.getStorageByKey(BUCKET, NAME)).localPath.toPath()
 
         // When — the object is deleted on the server
         server.objects.remove("$BUCKET/$NAME")
-        assertFailsWith<NotFoundRestException> { bucket.downloadAuthenticated(NAME) { } }
+        assertFailsWith<NotFoundRestException> { bucket.downloadAuthenticated(NAME) {} }
 
         // Then
         assertNull(store.getStorageByKey(BUCKET, NAME))

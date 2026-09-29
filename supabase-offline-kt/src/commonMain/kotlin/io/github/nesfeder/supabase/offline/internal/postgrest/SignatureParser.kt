@@ -1,25 +1,26 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import kotlinx.serialization.json.JsonObject
 
 /**
- * Parsed view of a cached SELECT signature's WHERE clause, used to decide whether a
- * newly-inserted row actually belongs in that cached query's result set.
+ * Parsed view of a cached SELECT signature's WHERE clause, used to decide whether a newly-inserted
+ * row actually belongs in that cached query's result set.
  *
  * Produced by [parseSignatureFilters] from a canonical PostgREST signature (as built by
  * [SignatureBuilder]). The whole point is to let the offline mutation overlay stop patching
  * INSERT/UPSERT rows into cached payloads whose filter excludes them.
  *
- * @property descriptor The AND-combined conditions recovered from the signature's filter params,
- *   or `null` when the signature carries no filter params (an unfiltered query returning every
- *   row).
+ * @property descriptor The AND-combined conditions recovered from the signature's filter params, or
+ *   `null` when the signature carries no filter params (an unfiltered query returning every row).
  * @property exhaustive `true` only when [descriptor] provably captures the *entire* row-membership
  *   predicate — every query param was either a filter condition the admit gate can evaluate without
  *   a false negative (an [ADMIT_EVALUABLE_OPERATOR_IDS] operator) or a pure column projection, and
  *   the query has no ordering/limit/offset/range window that could place a matching row outside the
- *   cached slice. When `false`, callers must fall back to the legacy always-apply behavior; we never
- *   under-apply on a signature we cannot fully model.
+ *   cached slice. When `false`, callers must fall back to the legacy always-apply behavior; we
+ *   never under-apply on a signature we cannot fully model.
  */
 internal data class SignatureFilters(
     val descriptor: FilterDescriptor?,
@@ -57,9 +58,9 @@ private const val RANGE_MARKER = "|range="
  * over-approximates the server predicate and never yields a false negative). Only a signature whose
  * every captured condition uses one of these keeps [SignatureFilters.exhaustive].
  *
- * Deliberately narrow — the equality operators, which is what cached per-owner and per-key
- * queries typically filter on. Every other recognized [FilterOperator] is excluded because
- * `matchesRow` can drop a row the server would return:
+ * Deliberately narrow — the equality operators, which is what cached per-owner and per-key queries
+ * typically filter on. Every other recognized [FilterOperator] is excluded because `matchesRow` can
+ * drop a row the server would return:
  * - comparison operators (`gt`/`gte`/`lt`/`lte`) evaluate to `false` on non-numeric values such as
  *   ISO timestamps,
  * - pattern operators (`like`/`ilike`/`match`/`imatch`) approximate the pattern with a substring
@@ -71,10 +72,11 @@ private const val RANGE_MARKER = "|range="
  * Marking any of those non-exhaustive falls back to the legacy always-append behavior, which
  * over-applies rather than hiding a row the server would have returned.
  */
-private val ADMIT_EVALUABLE_OPERATOR_IDS: Set<String> = setOf(
-    FilterOperator.EQ.identifier,
-    FilterOperator.NEQ.identifier,
-)
+private val ADMIT_EVALUABLE_OPERATOR_IDS: Set<String> =
+    setOf(
+        FilterOperator.EQ.identifier,
+        FilterOperator.NEQ.identifier,
+    )
 
 /**
  * Parse a canonical PostgREST SELECT [signature] (as produced by [SignatureBuilder]) into a
@@ -90,7 +92,8 @@ private val ADMIT_EVALUABLE_OPERATOR_IDS: Set<String> = setOf(
  * - no `not.`-negated, unrecognized, or non-[ADMIT_EVALUABLE_OPERATOR_IDS] operator (a comparison,
  *   pattern, containment, range, overlap, or full-text predicate [FilterEngine.matchesRow] cannot
  *   faithfully reproduce offline),
- * - no ordering (`order`), truncation (`limit`), pagination (`offset`), or positional `range` window.
+ * - no ordering (`order`), truncation (`limit`), pagination (`offset`), or positional `range`
+ *   window.
  *
  * Anything less yields a non-exhaustive result (or `null` for blank input), which callers treat as
  * "apply as before" so a row the server would have returned is never hidden offline.
@@ -140,8 +143,10 @@ internal fun parseSignatureFilters(signature: String): SignatureFilters? {
                 key == PARAM_ORDER || key == PARAM_LIMIT || key == PARAM_OFFSET -> windowed = true
 
                 // Logical groups like or=(...)/and=(...) are not modeled offline.
-                key.contains('(') || key.contains(')') ||
-                    rawParamValue.contains('(') || rawParamValue.contains(')') -> exhaustive = false
+                key.contains('(') ||
+                    key.contains(')') ||
+                    rawParamValue.contains('(') ||
+                    rawParamValue.contains(')') -> exhaustive = false
 
                 // Dotted / foreign-table keys are not modeled offline.
                 key.contains('.') -> exhaustive = false
@@ -166,17 +171,19 @@ internal fun parseSignatureFilters(signature: String): SignatureFilters? {
             }
         }
 
-        val descriptor = if (conditions.isEmpty()) {
-            null
-        } else {
-            FilterDescriptor(mode = FilterDescriptor.Mode.AND, conditions = conditions)
-        }
+        val descriptor =
+            if (conditions.isEmpty()) {
+                null
+            } else {
+                FilterDescriptor(mode = FilterDescriptor.Mode.AND, conditions = conditions)
+            }
 
         SignatureFilters(
             descriptor = descriptor,
             exhaustive = exhaustive && !windowed && !hasRange,
         )
-    }.getOrNull()
+    }
+        .getOrNull()
 }
 
 /**

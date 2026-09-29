@@ -1,7 +1,15 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
@@ -10,12 +18,6 @@ import okio.SYSTEM
 import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLIsExcludedFromBackupKey
-import kotlin.random.Random
-import kotlin.test.AfterTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
 
 /**
  * The iOS client's lifecycle and on-disk placement: one client per database, a configured data
@@ -25,7 +27,9 @@ import kotlin.test.assertTrue
  */
 class IosClientLifecycleTest {
 
-    private val directory: Path = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-ios-client-${Random.nextLong().toULong()}"
+    private val directory: Path =
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "supabase-offline-ios-client-${Random.nextLong().toULong()}"
 
     @AfterTest
     fun tearDown() {
@@ -36,7 +40,9 @@ class IosClientLifecycleTest {
 
     @OptIn(ExperimentalForeignApi::class)
     private fun isExcludedFromBackup(path: Path): Boolean {
-        val values = NSURL.fileURLWithPath(path.toString()).resourceValuesForKeys(listOf(NSURLIsExcludedFromBackupKey), null)
+        val values =
+            NSURL.fileURLWithPath(path.toString())
+                .resourceValuesForKeys(listOf(NSURLIsExcludedFromBackupKey), null)
         return (values?.get(NSURLIsExcludedFromBackupKey) as? NSNumber)?.boolValue ?: false
     }
 
@@ -45,8 +51,14 @@ class IosClientLifecycleTest {
         // Given
         createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter {
             // When / Then
-            val failure = assertFailsWith<IllegalStateException> { createSupabaseOfflineClient(newTestSupabaseClient(), config()) }
-            assertTrue("already open" in failure.message.orEmpty(), "unclear message: ${failure.message}")
+            val failure =
+                assertFailsWith<IllegalStateException> {
+                    createSupabaseOfflineClient(newTestSupabaseClient(), config())
+                }
+            assertTrue(
+                "already open" in failure.message.orEmpty(),
+                "unclear message: ${failure.message}",
+            )
         }
     }
 
@@ -74,7 +86,10 @@ class IosClientLifecycleTest {
         }
 
         // Then
-        assertTrue(FileSystem.SYSTEM.exists(directory / "supabase_offline.db"), "the database is not in offlineStoragePath")
+        assertTrue(
+            FileSystem.SYSTEM.exists(directory / "supabase_offline.db"),
+            "the database is not in offlineStoragePath",
+        )
     }
 
     @Test
@@ -85,10 +100,19 @@ class IosClientLifecycleTest {
             client.pendingMutationCount()
 
             // Then — a restored backup must not bring one user's cache and queue to another device
-            assertTrue(isExcludedFromBackup(directory / "supabase_offline.db"), "the database is backed up")
-            assertTrue(isExcludedFromBackup(directory / "supabase_offline.db-wal"), "the database's WAL is backed up")
+            assertTrue(
+                isExcludedFromBackup(directory / "supabase_offline.db"),
+                "the database is backed up",
+            )
+            assertTrue(
+                isExcludedFromBackup(directory / "supabase_offline.db-wal"),
+                "the database's WAL is backed up",
+            )
             assertTrue(isExcludedFromBackup(directory / "storage"), "the file cache is backed up")
-            assertTrue(isExcludedFromBackup(directory / "storage-hashed"), "the hashed-name cache is backed up")
+            assertTrue(
+                isExcludedFromBackup(directory / "storage-hashed"),
+                "the hashed-name cache is backed up",
+            )
         }
     }
 
@@ -100,7 +124,10 @@ class IosClientLifecycleTest {
             client.clearAllCache()
 
             // Then
-            assertTrue(isExcludedFromBackup(directory / "storage"), "the re-created file cache is backed up")
+            assertTrue(
+                isExcludedFromBackup(directory / "storage"),
+                "the re-created file cache is backed up",
+            )
         }
     }
 }

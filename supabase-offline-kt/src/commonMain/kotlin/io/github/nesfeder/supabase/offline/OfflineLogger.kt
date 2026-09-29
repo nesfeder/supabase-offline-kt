@@ -1,24 +1,26 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 /**
  * Log levels for the Supabase Offline SDK.
  *
- * Ordered by severity: [DEBUG] < [INFO] < [WARNING] < [ERROR].
- * The SDK's [SupabaseOfflineConfig.minLogLevel] controls which levels
- * are emitted to the consumer's [OfflineLogger].
+ * Ordered by severity: [DEBUG] < [INFO] < [WARNING] < [ERROR]. The SDK's
+ * [SupabaseOfflineConfig.minLogLevel] controls which levels are emitted to the consumer's
+ * [OfflineLogger].
  */
 public enum class OfflineLogLevel {
     DEBUG,
     INFO,
     WARNING,
-    ERROR
+    ERROR,
 }
 
 /**
  * Callback interface for receiving log messages from the SDK.
  *
- * Implement this to bridge SDK logs into your preferred logging
- * framework (e.g. Timber on Android, os.Logger on iOS).
+ * Implement this to bridge SDK logs into your preferred logging framework (e.g. Timber on Android,
+ * os.Logger on iOS).
  *
  * This is a **fun interface**, so Android consumers can use SAM conversion:
  * ```kotlin
@@ -29,8 +31,8 @@ public enum class OfflineLogLevel {
  */
 public fun interface OfflineLogger {
     /**
-     * Receives one SDK log message. Only levels at or above
-     * [SupabaseOfflineConfig.minLogLevel] reach this method.
+     * Receives one SDK log message. Only levels at or above [SupabaseOfflineConfig.minLogLevel]
+     * reach this method.
      *
      * @param level the message's severity.
      * @param message the message text; it carries row data only at [OfflineLogLevel.DEBUG].
@@ -39,12 +41,12 @@ public fun interface OfflineLogger {
 }
 
 /**
- * Internal logger wrapper that gates on [minLevel] and uses lazy message
- * construction so filtered-out levels incur zero string-building overhead.
+ * Internal logger wrapper that gates on [minLevel] and uses lazy message construction so
+ * filtered-out levels incur zero string-building overhead.
  */
 internal class SdkLogger(
     private val logger: OfflineLogger?,
-    private val minLevel: OfflineLogLevel
+    private val minLevel: OfflineLogLevel,
 ) {
     inline fun log(level: OfflineLogLevel, message: () -> String) {
         if (logger != null && level.ordinal >= minLevel.ordinal) {
@@ -53,7 +55,10 @@ internal class SdkLogger(
     }
 
     inline fun debug(message: () -> String) = log(OfflineLogLevel.DEBUG, message)
+
     inline fun info(message: () -> String) = log(OfflineLogLevel.INFO, message)
+
     inline fun warning(message: () -> String) = log(OfflineLogLevel.WARNING, message)
+
     inline fun error(message: () -> String) = log(OfflineLogLevel.ERROR, message)
 }

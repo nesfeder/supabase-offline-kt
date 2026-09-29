@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.result.PostgrestResult
@@ -9,8 +11,8 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
  * A mutation either reaches the server or is queued locally when the network is unavailable.
  * Collapsing both into a bare [PostgrestResult] would report a queued write as a synthetic empty
  * result, indistinguishable from "the server executed the mutation and returned no rows" — a caller
- * that reads the written row back would decode the empty placeholder, which either throws or maps to
- * a null domain object. [MutationOutcome] makes the distinction explicit so those callers can
+ * that reads the written row back would decode the empty placeholder, which either throws or maps
+ * to a null domain object. [MutationOutcome] makes the distinction explicit so those callers can
  * construct the domain object from the DTO they just sent instead of decoding a placeholder.
  */
 public sealed interface MutationOutcome {

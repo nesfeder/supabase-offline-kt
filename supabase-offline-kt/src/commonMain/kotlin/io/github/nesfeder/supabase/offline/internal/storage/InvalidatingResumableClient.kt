@@ -1,9 +1,11 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.storage.UploadOptionBuilder
-import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.jan.supabase.storage.resumable.ResumableUpload
+import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -33,24 +35,31 @@ internal class InvalidatingResumableClient(
         path: String,
         options: UploadOptionBuilder.() -> Unit,
     ): ResumableUpload = operationGate.call {
-        delegate.createOrContinueUpload(channel, source, size, path, options).also(::invalidateWhenFinished)
+        delegate
+            .createOrContinueUpload(channel, source, size, path, options)
+            .also(::invalidateWhenFinished)
     }
 
     override suspend fun continuePreviousUploads(
-        channelProducer: suspend (source: String, offset: Long) -> ByteReadChannel,
-    ): List<Deferred<ResumableUpload>> = operationGate.call { delegate.continuePreviousUploads(channelProducer) }.onEach { pending ->
-        backgroundScope.launch {
-            val upload = try {
-                pending.await()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (_: Exception) {
-                // The upload could not be resumed; the caller sees why through its own Deferred.
-                return@launch
+        channelProducer: suspend (source: String, offset: Long) -> ByteReadChannel
+    ): List<Deferred<ResumableUpload>> =
+        operationGate
+            .call { delegate.continuePreviousUploads(channelProducer) }
+            .onEach { pending ->
+                backgroundScope.launch {
+                    val upload =
+                        try {
+                            pending.await()
+                        } catch (cancellation: CancellationException) {
+                            throw cancellation
+                        } catch (_: Exception) {
+                            // The upload could not be resumed; the caller sees why through its own
+                            // Deferred.
+                            return@launch
+                        }
+                    invalidateWhenFinished(upload)
+                }
             }
-            invalidateWhenFinished(upload)
-        }
-    }
 
     private fun invalidateWhenFinished(upload: ResumableUpload) {
         backgroundScope.launch {

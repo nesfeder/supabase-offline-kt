@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationOwners
@@ -8,11 +10,11 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 
 /**
  * Mutations an earlier build queued carry no owner. That build, with the Auth plugin installed,
@@ -28,12 +30,17 @@ class OwnerlessMutationAdoptionTest {
     @Test
     fun a_signed_out_pass_neither_adopts_nor_sends_an_earlier_builds_mutations() = runTest {
         // Given — a mutation with no owner, and the Auth plugin installed with nobody signed in
-        store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"from the old build"}"""), byId("1"))
-        val client = newTestOfflineClient(
-            supabase = newTestSupabaseClientWithAuth(server.engine),
-            store = store,
-            coordinatorScope = idleCoroutineScope(),
+        store.enqueueUpdate(
+            TABLE,
+            Json.parseToJsonElement("""{"title":"from the old build"}"""),
+            byId("1"),
         )
+        val client =
+            newTestOfflineClient(
+                supabase = newTestSupabaseClientWithAuth(server.engine),
+                store = store,
+                coordinatorScope = idleCoroutineScope(),
+            )
 
         // When
         val signedOut = client.syncPendingMutationsReport()
@@ -41,15 +48,27 @@ class OwnerlessMutationAdoptionTest {
         // Then — untouched and unsent
         assertEquals(0, signedOut.syncedCount)
         assertEquals(emptyList(), server.requests.map { it.body })
-        assertEquals(emptyMap(), assertIs<MutationOwners.Known>(store.mutationQueueState.owners()).byId)
+        assertEquals(
+            emptyMap(),
+            assertIs<MutationOwners.Known>(store.mutationQueueState.owners()).byId,
+        )
     }
 
     @Test
     fun the_first_signed_in_pass_adopts_and_sends_an_earlier_builds_mutations() = runTest {
         // Given — as above, then a user signs in
-        store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"from the old build"}"""), byId("1"))
+        store.enqueueUpdate(
+            TABLE,
+            Json.parseToJsonElement("""{"title":"from the old build"}"""),
+            byId("1"),
+        )
         val supabase = newTestSupabaseClientWithAuth(server.engine)
-        val client = newTestOfflineClient(supabase = supabase, store = store, coordinatorScope = idleCoroutineScope())
+        val client =
+            newTestOfflineClient(
+                supabase = supabase,
+                store = store,
+                coordinatorScope = idleCoroutineScope(),
+            )
         client.syncPendingMutationsReport()
         supabase.signInForTest("user-a")
 
@@ -64,8 +83,17 @@ class OwnerlessMutationAdoptionTest {
     @Test
     fun without_the_auth_plugin_the_anonymous_identity_adopts_them() = runTest {
         // Given — no Auth plugin: every write is anonymous
-        store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"from the old build"}"""), byId("1"))
-        val client = newTestOfflineClient(supabase = server.supabaseClient(), store = store, coordinatorScope = idleCoroutineScope())
+        store.enqueueUpdate(
+            TABLE,
+            Json.parseToJsonElement("""{"title":"from the old build"}"""),
+            byId("1"),
+        )
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                store = store,
+                coordinatorScope = idleCoroutineScope(),
+            )
 
         // When
         val report = client.syncPendingMutationsReport()
@@ -75,7 +103,10 @@ class OwnerlessMutationAdoptionTest {
     }
 
     private fun byId(id: String): FilterDescriptor =
-        FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))
+        FilterDescriptor(
+            conditions =
+                listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id))
+        )
 
     private companion object {
         const val TABLE = "tasks"

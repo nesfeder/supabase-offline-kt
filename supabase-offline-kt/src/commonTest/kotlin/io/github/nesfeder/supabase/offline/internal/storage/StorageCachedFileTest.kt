@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
@@ -7,6 +9,19 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -22,20 +37,6 @@ import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.SYSTEM
-import kotlin.random.Random
-import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
-import kotlin.test.Test
-import kotlin.test.assertContentEquals
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertIs
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.seconds
-import kotlin.time.Instant
 
 /**
  * The cached-file API: [OfflineBucketApi.cachedFile] reads the cache and never the network;
@@ -50,7 +51,9 @@ class StorageCachedFileTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-cached-file-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-cached-file-${Random.nextLong().toULong()}"
         store = newTestOfflineStore(nowMillis = { FETCHED_AT_MILLIS })
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
@@ -60,7 +63,8 @@ class StorageCachedFileTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun bucket() = newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
+    private fun bucket() =
+        newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
 
     @Test
     fun cachedFile_is_null_before_anything_is_cached_and_never_downloads() = runTest {
@@ -78,13 +82,16 @@ class StorageCachedFileTest {
     fun cachedFile_describes_a_downloaded_object() = runTest {
         // Given
         delegate.onDownload = { BYTES }
-        bucket().downloadAuthenticated(PATH) { }
+        bucket().downloadAuthenticated(PATH) {}
 
         // When
         val cached = assertNotNull(bucket().cachedFile(PATH))
 
         // Then — the path, when it was fetched, and its size
-        assertEquals((dataDirectory / "storage" / BUCKET / "u-1" / "me.png").toString(), cached.path)
+        assertEquals(
+            (dataDirectory / "storage" / BUCKET / "u-1" / "me.png").toString(),
+            cached.path,
+        )
         assertEquals(Instant.fromEpochMilliseconds(FETCHED_AT_MILLIS), cached.fetchedAt)
         assertEquals(BYTES.size.toLong(), cached.sizeBytes)
         assertContentEquals(BYTES, FileSystem.SYSTEM.read(cached.path.toPath()) { readByteArray() })
@@ -147,7 +154,8 @@ class StorageCachedFileTest {
 
     @Test
     fun ensureCachedFile_propagates_cancellation_and_leaves_no_file() = runTest {
-        // Given — a download that has written part of the object to disk when its caller is cancelled
+        // Given — a download that has written part of the object to disk when its caller is
+        // cancelled
         delegate.onDownload = { BYTES }
         delegate.channelChunkSize = 3
         val midway = CompletableDeferred<Unit>()
@@ -204,7 +212,7 @@ class StorageCachedFileTest {
         // When — setHeader, called through the public interface, returns the offline bucket
         val offline: OfflineBucketApi = bucket()
         val withHeader: OfflineBucketApi = offline.setHeader("x-trace", "1")
-        withHeader.downloadAuthenticated(PATH) { }
+        withHeader.downloadAuthenticated(PATH) {}
 
         // Then — its cache API is reachable without a cast
         assertEquals("1", delegate.headers["x-trace"])
@@ -224,7 +232,9 @@ class StorageCachedFileTest {
         if (!FileSystem.SYSTEM.exists(directory)) {
             emptyList()
         } else {
-            FileSystem.SYSTEM.listRecursively(directory).filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.toList()
+            FileSystem.SYSTEM.listRecursively(directory)
+                .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
+                .toList()
         }
 
     @Test

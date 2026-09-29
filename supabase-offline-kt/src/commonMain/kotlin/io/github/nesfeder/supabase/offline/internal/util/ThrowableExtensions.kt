@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.util
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
@@ -9,12 +11,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.io.IOException
 
 /**
- * Returns the associated HTTP status code for this [Throwable] if it represents
- * an HTTP failure, or `null` if no status can be determined.
+ * Returns the associated HTTP status code for this [Throwable] if it represents an HTTP failure, or
+ * `null` if no status can be determined.
  *
  * We inspect this throwable and its cause-chain for:
- *  - [PostgrestRestException]
- *  - [ResponseException]
+ * - [PostgrestRestException]
+ * - [ResponseException]
  */
 internal fun Throwable.httpStatusOrNull(): Int? {
     var current: Throwable? = this
@@ -29,8 +31,8 @@ internal fun Throwable.httpStatusOrNull(): Int? {
 }
 
 /**
- * Returns `true` if this throwable clearly represents a **permanent** mutation
- * failure – i.e. one that will not succeed when retried.
+ * Returns `true` if this throwable clearly represents a **permanent** mutation failure – i.e. one
+ * that will not succeed when retried.
  */
 internal fun Throwable.isPermanentMutationFailure(): Boolean {
     val status = httpStatusOrNull() ?: return false
@@ -38,9 +40,9 @@ internal fun Throwable.isPermanentMutationFailure(): Boolean {
 }
 
 /**
- * Status-code based predicate used by [isPermanentMutationFailure]. Split out
- * so we can unit test the classification logic without having to construct
- * concrete HTTP exception types (which are platform-specific in Ktor/Supabase).
+ * Status-code based predicate used by [isPermanentMutationFailure]. Split out so we can unit test
+ * the classification logic without having to construct concrete HTTP exception types (which are
+ * platform-specific in Ktor/Supabase).
  */
 internal fun Int.isPermanentMutationFailureStatus(): Boolean {
     val status = this
@@ -66,34 +68,34 @@ internal fun Int.isPermanentMutationFailureStatus(): Boolean {
 }
 
 /**
- * Returns `true` if this throwable is an HTTP **401 Unauthorized** — the token-refresh race that
- * is transient on the offline-replay path.
+ * Returns `true` if this throwable is an HTTP **401 Unauthorized** — the token-refresh race that is
+ * transient on the offline-replay path.
  *
  * Right after reconnect the access token can still be expired while supabase-kt's auto-refresh is
- * in flight, so a queued mutation replays into a 401. The syncer keeps the mutation and retries on a
- * later sync; crucially it must **not** count a 401 toward any dead-letter budget, otherwise a bad
- * token window (several rapid reconnect triggers) would silently drop the user's queued write — the
- * exact data loss the transient-401 classification exists to prevent.
+ * in flight, so a queued mutation replays into a 401. The syncer keeps the mutation and retries on
+ * a later sync; crucially it must **not** count a 401 toward any dead-letter budget, otherwise a
+ * bad token window (several rapid reconnect triggers) would silently drop the user's queued write —
+ * the exact data loss the transient-401 classification exists to prevent.
  */
 internal fun Throwable.isTransientAuthFailure(): Boolean = httpStatusOrNull() == 401
 
 /**
- * Returns `true` if this error is very likely a **network / connectivity**
- * failure rather than an application or server-side error.
+ * Returns `true` if this error is very likely a **network / connectivity** failure rather than an
+ * application or server-side error.
  *
  * This is used for both SELECT cache fallback and mutation retry behavior.
  *
  * Rules:
- *  - True for:
- *      - [HttpRequestTimeoutException]
- *      - [ConnectTimeoutException]
- *      - [SocketTimeoutException]
- *      - [IOException] that indicates transport failure
- *      - Wrapped causes of the above
- *  - False for:
- *      - [CancellationException]
- *      - Any throwable with an associated HTTP status (4xx/5xx)
- *      - PostgREST / server logic errors
+ * - True for:
+ *     - [HttpRequestTimeoutException]
+ *     - [ConnectTimeoutException]
+ *     - [SocketTimeoutException]
+ *     - [IOException] that indicates transport failure
+ *     - Wrapped causes of the above
+ * - False for:
+ *     - [CancellationException]
+ *     - Any throwable with an associated HTTP status (4xx/5xx)
+ *     - PostgREST / server logic errors
  */
 internal fun Throwable.isNetworkOrConnectivityFailure(): Boolean {
     // Cancellation is never treated as a network error.

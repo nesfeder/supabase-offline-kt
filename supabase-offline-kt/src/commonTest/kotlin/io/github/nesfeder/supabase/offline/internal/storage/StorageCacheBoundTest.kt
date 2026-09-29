@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.MUTATION_OWNERS_SIGNATURE
@@ -12,11 +14,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.Path
-import okio.Path.Companion.toPath
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -25,13 +22,17 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.Path
+import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /**
- * The file cache stays within its size bound by evicting the least recently used files — never
- * one a read is using, and never one used in the last minute: the one just downloaded, or a
- * `CachedFile` handed to a caller who has yet to open it. Once over
- * the bound it evicts down to a low-water mark below it, so a full cache does not rescan itself on
- * every download.
+ * The file cache stays within its size bound by evicting the least recently used files — never one
+ * a read is using, and never one used in the last minute: the one just downloaded, or a
+ * `CachedFile` handed to a caller who has yet to open it. Once over the bound it evicts down to a
+ * low-water mark below it, so a full cache does not rescan itself on every download.
  *
  * Uses are spaced minutes apart on the test clock, past that grace window.
  */
@@ -44,7 +45,9 @@ class StorageCacheBoundTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-bound-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-bound-${Random.nextLong().toULong()}"
         store = newTestOfflineStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
@@ -54,25 +57,34 @@ class StorageCacheBoundTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun cache(maxSizeBytes: Long?) = newTestFileCache(
-        baseDirectory = dataDirectory,
-        store = store,
-        maxSizeBytes = maxSizeBytes,
-        nowMillis = { now },
-    )
+    private fun cache(maxSizeBytes: Long?) =
+        newTestFileCache(
+            baseDirectory = dataDirectory,
+            store = store,
+            maxSizeBytes = maxSizeBytes,
+            nowMillis = { now },
+        )
 
     /** Downloads [path] (of [size] bytes) through [bucket] at time [at]. */
     private suspend fun download(bucket: StorageTestBucket, path: String, size: Int, at: Long) {
         now = at
         delegate.onDownload = { ByteArray(size) { 7 } }
-        bucket.api.downloadAuthenticated(path) { }
+        bucket.api.downloadAuthenticated(path) {}
     }
 
     private class StorageTestBucket(val api: CachingBucketApi, val cache: StorageFileCache)
 
     private fun bucket(maxSizeBytes: Long?): StorageTestBucket {
         val cache = cache(maxSizeBytes)
-        return StorageTestBucket(newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store, cache = cache), cache)
+        return StorageTestBucket(
+            newTestBucketApi(
+                delegate = delegate,
+                baseDirectory = dataDirectory,
+                store = store,
+                cache = cache,
+            ),
+            cache,
+        )
     }
 
     @Test
@@ -171,7 +183,10 @@ class StorageCacheBoundTest {
         download(bucket, "b.bin", size = 6, at = 5 * MINUTE + 1_000)
 
         // Then — the caller can still open it
-        assertTrue(FileSystem.SYSTEM.exists(handedOut.path.toPath()), "a CachedFile handed out moments ago was evicted")
+        assertTrue(
+            FileSystem.SYSTEM.exists(handedOut.path.toPath()),
+            "a CachedFile handed out moments ago was evicted",
+        )
     }
 
     @Test
@@ -200,46 +215,63 @@ class StorageCacheBoundTest {
         dao.resetCounts()
 
         // When — 50 more downloads, each taking the cache past the bound by one file
-        repeat(50) { index -> download(bucket, "new-$index.bin", size = 10, at = (100 + index) * MINUTE) }
+        repeat(50) { index ->
+            download(bucket, "new-$index.bin", size = 10, at = (100 + index) * MINUTE)
+        }
 
         // Then — it evicted down to a low-water mark, so only about one download in ten rescans,
         // and the running total was never summed again
-        assertTrue(dao.scans <= 6, "the cache rescanned its rows ${dao.scans} times over 50 downloads")
+        assertTrue(
+            dao.scans <= 6,
+            "the cache rescanned its rows ${dao.scans} times over 50 downloads",
+        )
         assertEquals(0, dao.totalSizeQueries)
         assertTrue(store.totalStorageSizeBytes() <= 1_000)
     }
 
     @Test
-    fun a_cache_whose_files_were_all_used_moments_ago_is_not_rescanned_on_every_download() = runTest {
-        // Given — a full cache whose every file was used within the last minute
-        val dao = RecordingStorageDao()
-        store = newTestOfflineStore(storageDao = dao)
-        val bucket = bucket(maxSizeBytes = 100)
-        repeat(10) { index -> download(bucket, "fill-$index.bin", size = 10, at = 10 * MINUTE + index) }
-        dao.resetCounts()
+    fun a_cache_whose_files_were_all_used_moments_ago_is_not_rescanned_on_every_download() =
+        runTest {
+            // Given — a full cache whose every file was used within the last minute
+            val dao = RecordingStorageDao()
+            store = newTestOfflineStore(storageDao = dao)
+            val bucket = bucket(maxSizeBytes = 100)
+            repeat(10) { index ->
+                download(bucket, "fill-$index.bin", size = 10, at = 10 * MINUTE + index)
+            }
+            dao.resetCounts()
 
-        // When — ten more downloads within the same few seconds, each over the bound
-        repeat(10) { index -> download(bucket, "new-$index.bin", size = 10, at = 10 * MINUTE + 100 + index) }
+            // When — ten more downloads within the same few seconds, each over the bound
+            repeat(10) { index ->
+                download(bucket, "new-$index.bin", size = 10, at = 10 * MINUTE + 100 + index)
+            }
 
-        // Then — nothing was old enough to evict, and the cache looked once, not ten times
-        assertTrue(dao.scans <= 1, "the cache rescanned ${dao.scans} times while nothing could be evicted")
+            // Then — nothing was old enough to evict, and the cache looked once, not ten times
+            assertTrue(
+                dao.scans <= 1,
+                "the cache rescanned ${dao.scans} times while nothing could be evicted",
+            )
 
-        // And once those uses are old enough, the next download brings the cache back under its bound
-        download(bucket, "later.bin", size = 10, at = 12 * MINUTE)
-        assertTrue(store.totalStorageSizeBytes() <= 100)
-    }
+            // And once those uses are old enough, the next download brings the cache back under its
+            // bound
+            download(bucket, "later.bin", size = 10, at = 12 * MINUTE)
+            assertTrue(store.totalStorageSizeBytes() <= 100)
+        }
 
     @Test
     fun eviction_leaves_the_mutation_queues_reserved_rows_alone() = runTest {
         // Given — the mutation queue's four reserved rows, and a file cache at its bound
         val objectDao = FakeObjectDao()
-        val reservedSignatures = listOf(
-            REJECTED_MUTATIONS_SIGNATURE,
-            MUTATION_OWNERS_SIGNATURE,
-            SYNCED_MUTATION_COVERAGE_SIGNATURE,
-            UNCONFIRMED_SENDS_SIGNATURE,
-        )
-        reservedSignatures.forEach { signature -> objectDao.seedPayload(RESERVED_TABLE_NAME, signature, "{}") }
+        val reservedSignatures =
+            listOf(
+                REJECTED_MUTATIONS_SIGNATURE,
+                MUTATION_OWNERS_SIGNATURE,
+                SYNCED_MUTATION_COVERAGE_SIGNATURE,
+                UNCONFIRMED_SENDS_SIGNATURE,
+            )
+        reservedSignatures.forEach { signature ->
+            objectDao.seedPayload(RESERVED_TABLE_NAME, signature, "{}")
+        }
         store = newTestOfflineStore(objectDao = objectDao)
         val bucket = bucket(maxSizeBytes = 10)
 
@@ -248,7 +280,9 @@ class StorageCacheBoundTest {
 
         // Then — the size accounting and eviction worked on files only
         assertTrue(store.totalStorageSizeBytes() <= 10)
-        reservedSignatures.forEach { signature -> assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, signature), signature) }
+        reservedSignatures.forEach { signature ->
+            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, signature), signature)
+        }
         assertEquals(0, objectDao.evictedRows)
     }
 

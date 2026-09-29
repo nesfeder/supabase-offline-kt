@@ -1,0 +1,10 @@
+# Commits that only change formatting. GitHub's blame view skips the commits listed here; to do
+# the same locally, run once:
+#
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# One full SHA per line, under a comment naming the commit. A SHA stays valid because pull
+# requests land as merge commits: never squash or rebase a pull request that adds one.
+
+# chore(format): format the tree with kempt (#23)
+3014fe8195c55cfd7e0024570fe758753014719b
