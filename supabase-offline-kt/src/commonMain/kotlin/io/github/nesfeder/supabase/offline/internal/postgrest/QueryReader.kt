@@ -390,14 +390,16 @@ internal class QueryReader(
     /**
      * The refresh of a reactive read: a network SELECT written through to the cache. A response the
      * trust policy does not take as settled, or one the cache refused while it passed to another
-     * identity, throws [UntrustedResponseException], so the loop retries.
+     * identity, throws [UntrustedResponseException], so the loop retries. A transport failure fails
+     * at once: the loop is what retries it.
      */
     private suspend fun refreshFromNetwork(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ) {
-        val fetched = fetchAndCache(slot, columns, request, requestSession(), Retries.UPSTREAM)
+        val fetched =
+            fetchAndCache(slot, columns, request, requestSession(), Retries.TRANSPORT_FAILS_FAST)
         if (fetched.wasRefusedAfterClear) return
         if (
             fetched.outcome == AddPayloadOutcome.DROPPED_OTHER_OWNER ||
