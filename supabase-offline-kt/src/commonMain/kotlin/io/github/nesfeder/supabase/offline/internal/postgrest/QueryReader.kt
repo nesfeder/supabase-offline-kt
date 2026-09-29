@@ -721,7 +721,8 @@ internal class QueryReader(
     private companion object {
         /**
          * The statuses supabase-kt retries a `GET` on: service unavailable, and Cloudflare's
-         * unknown error.
+         * unknown error. This and the two below copy supabase-kt's schedule;
+         * RetryScheduleContractTest fails when upstream's changes.
          */
         val UPSTREAM_RETRIED_STATUSES = setOf(503, 520)
 
