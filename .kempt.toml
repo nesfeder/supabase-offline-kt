@@ -1,0 +1,32 @@
+# kempt configuration: https://github.com/ZacSweers/kempt
+#
+# kempt formats Kotlin with ktfmt, inserts the licence header and normalises whitespace. It does
+# not format Swift; see .swift-format and .swiftlint.yml for the Swift package.
+#
+#   kempt check     read-only; what CI runs (the Formatting job in .github/workflows/ci.yml)
+#   kempt format    fix everything tracked by git
+#
+# Modelled on slackhq/circuit's .kempt.toml. Differences, and why, are in CONTRIBUTING.md.
+
+[ktfmt]
+# Kept in gradle/libs.versions.toml ([versions] ktfmt) so Dependabot proposes updates to it.
+# A ktfmt update can reformat code: run `kempt format` on that branch before merging.
+version = { file = "gradle/libs.versions.toml", key = "ktfmt" }
+# The Kotlin coding conventions: 4-space indent, 100 columns. Circuit uses kempt's default,
+# "google" (2-space); this repository keeps the indentation its code, IDE defaults
+# (kotlin.code.style=official) and upstream supabase-kt already use.
+style = "kotlinlang"
+
+[license-header]
+file = "config/license-header.txt"
+
+[paths]
+# The old demo module is not part of the build and leaves with the new samples; formatting it
+# would only add churn. Remove this line if it is still here when that happens.
+exclude = { extend = ["composeApp/**"] }
+
+[whitespace.paths]
+# Kotlin and Kotlin script are covered by default. Markdown carries the documentation site.
+include = { extend = ["**/*.md", ".gitignore"] }
+
+# Not enabled, as in Circuit: [gradle-dependencies-sorter]. It can be switched on at any time.

@@ -1,0 +1,2 @@
+// Copyright (C) ${YEAR} nesfeder
+// SPDX-License-Identifier: MIT
