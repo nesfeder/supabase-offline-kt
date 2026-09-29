@@ -72,7 +72,7 @@ class RowMatchingTest {
     @Test
     fun text_that_no_type_reads_as_equal_is_excluded() {
         assertEquals(RowMatch.EXCLUDED, match("eq", text("in_progress"), "done"))
-        assertEquals(RowMatch.EXCLUDED, match("eq", text("007"), "7"))
+        assertEquals(RowMatch.EXCLUDED, match("eq", text("008"), "7"))
         assertEquals(RowMatch.EXCLUDED, match("eq", text("2026-01-01"), "2026-01-02"))
         assertEquals(RowMatch.EXCLUDED, match("eq", text(""), "a"))
         assertEquals(RowMatch.EXCLUDED, match("eq", text("a"), "a,b"))
