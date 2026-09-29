@@ -34,7 +34,7 @@ import kotlin.time.ExperimentalTime
  * everything that landed in between, and no later read heals it because the number is, as far as
  * the server can tell, simply the newest write.
  *
- * Every case drives the real [OfflineMutationSyncer] over a real [OfflineStore] with the in-memory
+ * Every case drives the real [MutationQueueReplayer] over a real [OfflineStore] with the in-memory
  * DAO fakes; only the remote verbs are scripted.
  */
 class OfflineMutationDeltaReplayTest {
@@ -349,7 +349,7 @@ class OfflineMutationDeltaReplayTest {
         store: OfflineStore,
         client: SupabaseClient,
         wrapper: FakePostgrestQueryBuilderWrapper,
-    ): OfflineMutationSyncer = OfflineMutationSyncer(
+    ): MutationQueueReplayer = MutationQueueReplayer(
         store = store,
         supabase = client,
         postgrestFactory = { _, _ -> wrapper },

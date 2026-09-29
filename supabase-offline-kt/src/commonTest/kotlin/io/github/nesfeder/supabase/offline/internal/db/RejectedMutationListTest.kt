@@ -38,7 +38,7 @@ class RejectedMutationListTest {
     private var clock = 1_000L
     private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, nowMillis = { clock })
     private val server = RecordingPostgrestServer()
-    private val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     @Test
     fun a_permanent_rejection_keeps_the_write_and_the_servers_reason() = runTest {

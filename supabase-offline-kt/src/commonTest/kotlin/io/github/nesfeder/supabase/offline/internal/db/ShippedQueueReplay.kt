@@ -25,7 +25,7 @@ internal fun shippedQueueServer(): RecordingPostgrestServer = RecordingPostgrest
  */
 internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgrestServer): Int {
     val store = newTestOfflineStore(objectDao = objectDao(), storageDao = storageDao(), mutationDao = mutationDao())
-    return OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+    return MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 }
 
 /**

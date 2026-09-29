@@ -1,7 +1,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -45,7 +45,7 @@ class OnlineWriteJoinsQueueTest {
         // When — back online, the user renames it to B, then the queue replays
         server.answer = { okJson("[]") }
         rename("B")
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — the server receives A, then B, and ends on B
         val patches = server.requests.filter { it.method == "PATCH" }.map { it.body }
@@ -80,7 +80,7 @@ class OnlineWriteJoinsQueueTest {
         // When — online, the user deletes it again, then the queue replays
         server.answer = { okJson("[]") }
         builder.delete { filter { eq("id", 7) } }
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — the insert reaches the server before the delete
         val writes = server.requests.filter { it.method != "GET" }.drop(1).map { it.method }

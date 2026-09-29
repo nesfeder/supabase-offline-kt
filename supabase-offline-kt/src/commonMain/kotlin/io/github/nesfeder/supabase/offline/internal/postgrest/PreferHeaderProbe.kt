@@ -52,7 +52,7 @@ internal fun interface DryRunProbe {
 /**
  * The [DryRunProbe] over supabase-kt's HTTP pipeline. supabase-kt keeps `dryRun()` private and writes
  * it only into the `Prefer` header, as `tx=rollback`, so the check reads that header: it runs the
- * write under a [PreferHeaderProbe], and the phase [installPreferHeaderProbe] put ahead of every
+ * write under a [PreferHeaderProbe], and the phase [installDryRunCheck] put ahead of every
  * other on the request pipeline records the header of the PostgREST write request and stops it. No
  * plugin the app installed runs for it, so no retry or logging plugin sees the stop.
  *
@@ -83,7 +83,7 @@ internal class PreferHeaderDryRunProbe(private val supabase: SupabaseClient) : D
 }
 
 /**
- * Carried in a coroutine context, it makes the phase [installPreferHeaderProbe] installs record the
+ * Carried in a coroutine context, it makes the phase [installDryRunCheck] installs record the
  * `Prefer` header of the PostgREST write request sent from that coroutine, and stop it.
  */
 internal class PreferHeaderProbe : AbstractCoroutineContextElement(Key) {
@@ -148,7 +148,7 @@ private val PreferProbeInstallation = AttributeKey<AtomicBoolean>("io.github.nes
  * @return `true` when this call installed it.
  */
 @OptIn(SupabaseInternal::class)
-internal fun SupabaseClient.installPreferHeaderProbe(): Boolean {
+internal fun SupabaseClient.installDryRunCheck(): Boolean {
     val client = httpClient.httpClient
     // computeIfAbsent may run its block more than once under a race, but every caller gets the one
     // instance that was stored; the compare-and-set on it is what admits a single installer.

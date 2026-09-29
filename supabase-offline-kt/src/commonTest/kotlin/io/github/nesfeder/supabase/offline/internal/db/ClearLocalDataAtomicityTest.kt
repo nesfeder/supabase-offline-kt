@@ -39,7 +39,7 @@ class ClearLocalDataAtomicityTest {
         objectDao.seedPayload(TABLE, TABLE, """[{"id":"1","title":"B's row"}]""")
         val shownToB = next.cachePayloadWithOverlayFlow(TABLE, TABLE).first()
         val server = RecordingPostgrestServer()
-        OfflineMutationSyncer(store = next, supabase = server.supabaseClient(), currentIdentity = { USER_B }).sync()
+        MutationQueueReplayer(store = next, supabase = server.supabaseClient(), currentIdentity = { USER_B }).sync()
 
         // Then — A's edit is neither shown to B, counted for B, nor sent as B
         assertTrue(cleared.isFailure)

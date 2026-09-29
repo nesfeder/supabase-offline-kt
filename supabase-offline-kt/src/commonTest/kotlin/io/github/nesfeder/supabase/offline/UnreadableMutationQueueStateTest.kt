@@ -3,7 +3,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.db.MUTATION_OWNERS_SIGNATURE
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -75,7 +75,7 @@ class UnreadableMutationQueueStateTest {
         store.sdkLogger = logger.asSdkLogger()
         objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"whose?"}]"""))
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient(), currentIdentity = { QueueIdentity.User("user-a") })
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { QueueIdentity.User("user-a") })
 
         // When — two passes
         val first = syncer.sync()
@@ -117,7 +117,7 @@ class UnreadableMutationQueueStateTest {
         }
 
         // When
-        val report = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).sync()
+        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then — the refusal is recorded on a fresh list, the next write went out, and the old
         // payload was kept aside rather than discarded

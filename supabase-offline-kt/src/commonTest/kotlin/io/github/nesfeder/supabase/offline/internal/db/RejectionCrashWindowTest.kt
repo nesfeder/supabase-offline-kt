@@ -40,7 +40,7 @@ class RejectionCrashWindowTest {
         )
 
         // When — the write replays and this time the server accepts it
-        OfflineMutationSyncer(store = store, supabase = RecordingPostgrestServer().supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = RecordingPostgrestServer().supabaseClient()).syncAllTables()
 
         // Then — it is not still reported as rejected
         assertEquals(0, store.pendingMutationCount())
@@ -55,7 +55,7 @@ class RejectionCrashWindowTest {
         store.mutationQueueState.addRejection(
             StoredRejection(id = id, table = NOTES, operation = MutationOperation.INSERT, bodyJson = "[]", createdAtMs = 0, rejectedAtMs = 0, message = "stale"),
         )
-        val syncer = OfflineMutationSyncer(
+        val syncer = MutationQueueReplayer(
             store = store,
             supabase = RecordingPostgrestServer().supabaseClient(),
             currentIdentity = { QueueIdentity.User("user-a") },
@@ -65,7 +65,7 @@ class RejectionCrashWindowTest {
         val outcome = syncer.sendAtHead(id, QueueIdentity.User("user-a"), send = { acceptedResult() }, onAccepted = {})
 
         // Then
-        assertIs<OfflineMutationSyncer.HeadSendOutcome.Sent>(outcome)
+        assertIs<MutationQueueReplayer.HeadSendOutcome.Sent>(outcome)
         assertEquals(emptyList(), store.mutationQueueState.rejections().map { it.id })
     }
 

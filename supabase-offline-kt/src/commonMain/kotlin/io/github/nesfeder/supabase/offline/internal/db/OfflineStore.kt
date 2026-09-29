@@ -146,7 +146,7 @@ internal class OfflineStore(
     internal var sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO)
 
     /** The mutation queue's persisted state: the owner of each queued write and the rejected list. */
-    internal val mutationQueueState: MutationQueueStateStore = MutationQueueStateStore(objectDao, OfflineJson, nowMillis) { sdkLogger }
+    internal val mutationQueueState: MutationQueueState = MutationQueueState(objectDao, OfflineJson, nowMillis) { sdkLogger }
 
     /**
      * Serializes every change to the mutation queue's bookkeeping together with the mutation rows
@@ -195,7 +195,7 @@ internal class OfflineStore(
     /**
      * Whether the synced [mutation] still belongs on the payload cached for [signature]: a synced
      * mutation stands in for its write only on payloads that do not already contain it — those no
-     * network response wrote after it replayed (see [MutationQueueStateStore.syncedMutationCoverage]).
+     * network response wrote after it replayed (see [MutationQueueState.syncedMutationCoverage]).
      * A pending mutation always belongs; so does any mutation when [signature] is not known.
      */
     private fun belongsOnPayload(mutation: MutationRow, signature: String?, coverage: Map<Long, Set<String>>): Boolean =
@@ -691,7 +691,7 @@ internal class OfflineStore(
      *
      * @param deltaColumns Columns of [body] whose written value is a change *relative* to the
      *   snapshot each declaration carries, rather than an absolute to restate on replay. Stored
-     *   alongside the body so [OfflineMutationSyncer] can rebase them onto the row's current
+     *   alongside the body so [MutationQueueReplayer] can rebase them onto the row's current
      *   server value; empty (the default) queues an ordinary absolute UPDATE.
      * @return The mutation's id.
      */
@@ -794,7 +794,7 @@ internal class OfflineStore(
      *
      * @return `false` when the owner records cannot be read.
      */
-    suspend fun adoptUnownedMutations(identity: String): Boolean = mutationQueueMutex.withLock {
+    suspend fun adoptOwnerlessMutations(identity: String): Boolean = mutationQueueMutex.withLock {
         val owners = mutationQueueState.owners() as? MutationOwners.Known ?: return@withLock false
         val unowned = if (mayAdoptOwnerlessMutations(identity)) {
             mutationDao.pendingAll().map { row -> row.id }.toSet() - owners.byId.keys

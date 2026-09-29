@@ -125,7 +125,7 @@ internal class ReservedRowsDatabaseScenarios(
             val store = newTestOfflineStore(objectDao = database.objectDao(), mutationDao = database.mutationDao())
 
             // When
-            assertTrue(store.adoptUnownedMutations("user:user-a"))
+            assertTrue(store.adoptOwnerlessMutations("user:user-a"))
         } finally {
             database.close()
         }

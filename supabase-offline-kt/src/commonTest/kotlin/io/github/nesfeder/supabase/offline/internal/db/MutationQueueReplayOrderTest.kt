@@ -43,7 +43,7 @@ class MutationQueueReplayOrderTest {
         store.enqueueUpdate(table = PHOTOS, body = row("caption" to "new"), filter = idFilter("p0"))
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         val synced = syncer.syncAllTables()
@@ -64,7 +64,7 @@ class MutationQueueReplayOrderTest {
         clock = 1_000L
         store.enqueueUpdate(table = TASKS, body = row("title" to "final"), filter = idFilter("t1"))
         val server = RecordingPostgrestServer()
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         syncer.syncAllTables()
@@ -81,7 +81,7 @@ class MutationQueueReplayOrderTest {
         val server = RecordingPostgrestServer(
             answer = { request -> if (request.table == TASKS) connectivityFailure() else okJson("[]") },
         )
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         val synced = syncer.syncAllTables()
@@ -102,7 +102,7 @@ class MutationQueueReplayOrderTest {
                 if (request.table == TASKS) postgrestError(HttpStatusCode.InternalServerError) else okJson("[]")
             },
         )
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         val synced = syncer.syncAllTables()
@@ -119,7 +119,7 @@ class MutationQueueReplayOrderTest {
         val server = FakeRelationalPostgrestServer(foreignKeys = mapOf(PHOTOS to ForeignKey("task_id", TASKS)))
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — the photo replays first and its foreign key fails with 409
         syncer.syncTable(table = PHOTOS)
@@ -139,7 +139,7 @@ class MutationQueueReplayOrderTest {
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
         val server = RecordingPostgrestServer(answer = { postgrestError(HttpStatusCode.Forbidden) })
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         syncer.syncTable(table = PHOTOS)

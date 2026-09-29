@@ -5,18 +5,18 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
+import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
+import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResolver
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapperImpl
-import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
-import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
 import io.github.nesfeder.supabase.offline.internal.postgrest.UnsupportedOfflineFilterException
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromBuilder
@@ -297,7 +297,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * Sends a queued write at the head of its identity's queue. The real client passes its one
      * syncer, which every builder and replay pass share; built directly, the builder has its own.
      */
-    private val headSender: OfflineMutationSyncer = OfflineMutationSyncer(
+    private val headSender: MutationQueueReplayer = MutationQueueReplayer(
         store = store,
         supabase = delegate.postgrest.supabaseClient,
         sdkLogger = sdkLogger,
@@ -314,7 +314,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         accelerator: Flow<Unit> = emptyFlow(),
         queueIdentity: suspend () -> QueueIdentity? = { delegate.postgrest.supabaseClient.currentQueueIdentity() },
         requestSync: () -> Unit = {},
-        headSender: OfflineMutationSyncer = OfflineMutationSyncer(
+        headSender: MutationQueueReplayer = MutationQueueReplayer(
             store = store,
             supabase = delegate.postgrest.supabaseClient,
             sdkLogger = sdkLogger,
@@ -745,19 +745,19 @@ internal class OfflinePostgrestQueryBuilderImpl(
             throw cancellation
         }
         return when (sent) {
-            OfflineMutationSyncer.HeadSendOutcome.NotAtHead -> {
+            MutationQueueReplayer.HeadSendOutcome.NotAtHead -> {
                 sdkLogger.info { "$verbLabel $table queued behind pending mutations" }
                 requestSync()
                 MutationOutcome.Queued
             }
 
-            is OfflineMutationSyncer.HeadSendOutcome.Sent -> {
+            is MutationQueueReplayer.HeadSendOutcome.Sent -> {
                 sdkLogger.debug { "$verbLabel $table response: ${sent.result.data}" }
                 requestPassIfPending(identity)
                 MutationOutcome.Applied(sent.result)
             }
 
-            is OfflineMutationSyncer.HeadSendOutcome.Offline -> {
+            is MutationQueueReplayer.HeadSendOutcome.StaysQueued -> {
                 sdkLogger.info {
                     if (sent.cause.isNetworkOrConnectivityFailure()) {
                         "$verbLabel $table queued offline (network unavailable)"
@@ -768,12 +768,12 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 MutationOutcome.Queued
             }
 
-            is OfflineMutationSyncer.HeadSendOutcome.Refused -> {
+            is MutationQueueReplayer.HeadSendOutcome.Refused -> {
                 requestPassIfPending(identity)
                 throw sent.cause
             }
 
-            is OfflineMutationSyncer.HeadSendOutcome.Cleared -> {
+            is MutationQueueReplayer.HeadSendOutcome.Cleared -> {
                 sdkLogger.info { "$verbLabel $table returned after local data was cleared; the cache is left as it was" }
                 requestPassIfPending(identity)
                 sent.result?.let { result -> MutationOutcome.Applied(result) } ?: throw checkNotNull(sent.cause)

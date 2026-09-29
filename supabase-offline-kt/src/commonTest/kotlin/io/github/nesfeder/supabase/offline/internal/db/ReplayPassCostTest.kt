@@ -31,7 +31,7 @@ class ReplayPassCostTest {
         val readsBefore = mutationDao.pendingListReads
 
         // When
-        val report = OfflineMutationSyncer(store = store, supabase = RecordingPostgrestServer().supabaseClient(), currentIdentity = { USER })
+        val report = MutationQueueReplayer(store = store, supabase = RecordingPostgrestServer().supabaseClient(), currentIdentity = { USER })
             .sync()
 
         // Then — every mutation went out, and the pending list was read a handful of times

@@ -31,7 +31,7 @@ class OfflineMutationReplayWireTest {
     private val mutationDao = FakeMutationDao()
     private var clock = 0L
     private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock++ })
-    private val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     /**
      * Changed with idempotent replay: the rows carry their primary key, so the stored body is posted

@@ -39,7 +39,7 @@ class MutationIdAndSyncReportTest {
     private var clock = 7_000L
     private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock })
     private val server = RecordingPostgrestServer()
-    private val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient())
+    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     @Test
     fun ids_are_assigned_in_order_and_survive_a_restart() = runTest {

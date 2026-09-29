@@ -54,7 +54,7 @@ class MutationQueueIdempotentReplayTest {
         assertIs<MutationOutcome.Queued>(outcome)
 
         // When — the queue replays
-        val synced = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — the replay lands as a no-op on the row the lost request already wrote
         assertEquals(1, synced)
@@ -69,7 +69,7 @@ class MutationQueueIdempotentReplayTest {
         val server = RecordingPostgrestServer()
 
         // When
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — nothing on the server can be its own, so a duplicate must be refused
         val request = server.requests.single()
@@ -86,7 +86,7 @@ class MutationQueueIdempotentReplayTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
 
         // When
-        val report = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).sync()
+        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then — the server's own refusal reaches the rejected list; the other row is untouched
         assertEquals("23505", report.rejected.single().serverError?.code)
@@ -101,7 +101,7 @@ class MutationQueueIdempotentReplayTest {
         server.answer = { okJson("[]") }
 
         // When
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         val replay = server.requests.last()
@@ -119,7 +119,7 @@ class MutationQueueIdempotentReplayTest {
         server.answer = { okJson("[]") }
 
         // When
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         assertEquals("return=minimal", server.requests.last().prefer)
@@ -134,7 +134,7 @@ class MutationQueueIdempotentReplayTest {
         builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
 
         // When — the replay's upsert has no constraint to match (42P10)
-        val report = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).sync()
+        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then — sent again as the plain INSERT it is, rather than rejected
         assertEquals(1, report.syncedCount)
@@ -149,7 +149,7 @@ class MutationQueueIdempotentReplayTest {
         val server = RecordingPostgrestServer()
 
         // When
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         val request = server.requests.single()
@@ -164,7 +164,7 @@ class MutationQueueIdempotentReplayTest {
         val server = RecordingPostgrestServer()
 
         // When
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         assertEquals("return=minimal", server.requests.single().prefer)
@@ -182,7 +182,7 @@ class MutationQueueIdempotentReplayTest {
         // When — the next launch replays it
         val server = RecordingPostgrestServer()
         val afterTheCrash = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
-        OfflineMutationSyncer(store = afterTheCrash, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = afterTheCrash, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — the server may already hold it, so the replay tolerates that
         assertTrue("resolution=ignore-duplicates" in server.requests.single().prefer.orEmpty().split(','))
@@ -195,7 +195,7 @@ class MutationQueueIdempotentReplayTest {
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient(), sdkLogger = logger.asSdkLogger())
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), sdkLogger = logger.asSdkLogger())
 
         // When
         val report = syncer.sync()
@@ -216,7 +216,7 @@ class MutationQueueIdempotentReplayTest {
         server.answer = { okJson("[]") }
 
         // When
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — missing columns still take their database default
         assertTrue("missing=default" in server.requests.last().prefer.orEmpty().split(','))
@@ -231,7 +231,7 @@ class MutationQueueIdempotentReplayTest {
 
         // When — the upsert commits, its response is lost, and the queue replays it
         val outcome = builderOn(server).upsertJson(rows("""[{"id":"t1","title":"new"}]"""))
-        val synced = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -248,7 +248,7 @@ class MutationQueueIdempotentReplayTest {
 
         // When
         val outcome = builderOn(server).updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", "t1") } }
-        val synced = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -265,7 +265,7 @@ class MutationQueueIdempotentReplayTest {
 
         // When
         val outcome = builderOn(server).delete { filter { eq("id", "t1") } }
-        val synced = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -281,7 +281,7 @@ class MutationQueueIdempotentReplayTest {
 
         // When
         builderOn(server).insertJson(rows("""[{"title":"Buy milk"}]"""))
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — pinned as it is: two rows
         assertEquals(2, server.rows(TABLE).size)
@@ -299,7 +299,7 @@ class MutationQueueIdempotentReplayTest {
             body = Json.parseToJsonElement("""{"done_count":15}"""),
             deltaColumns = listOf(NumericDeltaColumn(column = "done_count", snapshotValue = 10.0)),
         ) { filter { eq("id", "t1") } }
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — pinned as it is: 20, not 15
         val doneCount = (server.rows(TABLE).single()["done_count"] as JsonPrimitive).content.toDouble()

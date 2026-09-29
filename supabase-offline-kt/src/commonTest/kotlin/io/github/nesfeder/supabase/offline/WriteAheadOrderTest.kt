@@ -1,7 +1,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer.ForeignKey
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -53,7 +53,7 @@ class WriteAheadOrderTest {
         val second = builder.updateJson(element("""{"title":"B"}""")) { filter { eq("id", 1) } }
         release.complete(Unit)
         val firstOutcome = first.await()
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — the server ends on the user's latest edit, B
         val patches = server.requests.filter { it.method == "PATCH" }.map { it.body }
@@ -70,7 +70,7 @@ class WriteAheadOrderTest {
 
         // When — back online, the user attaches a photo to it before any pass has run
         val outcome = runCatching { photos.insertJson(rows("""[{"id":"P","task_id":"T"}]""")) }
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — no error reached the caller, and both rows arrived, parent first
         assertTrue(outcome.isSuccess, "child write failed with ${outcome.exceptionOrNull()}")

@@ -182,7 +182,7 @@ internal sealed interface MutationOwners {
  * @param nowMillis The store's clock, stamped on each row.
  * @param logger The store's logger, read at each use.
  */
-internal class MutationQueueStateStore(
+internal class MutationQueueState(
     private val objectDao: ObjectDao,
     private val json: Json,
     private val nowMillis: () -> Long,

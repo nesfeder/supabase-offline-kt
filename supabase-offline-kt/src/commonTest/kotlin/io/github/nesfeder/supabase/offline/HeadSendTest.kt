@@ -3,7 +3,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -38,7 +38,7 @@ class HeadSendTest {
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
     private var syncRequests = 0
-    private val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
+    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
     private val builder = OfflinePostgrestQueryBuilderImpl(
         delegate = server.supabaseClient().postgrest.from(TABLE),
         store = store,
@@ -303,7 +303,7 @@ class HeadSendTest {
         pass.await()
 
         // Then — it went out once
-        assertEquals(OfflineMutationSyncer.HeadSendOutcome.NotAtHead, outcome)
+        assertEquals(MutationQueueReplayer.HeadSendOutcome.NotAtHead, outcome)
         assertEquals(1, server.requests.size)
     }
 

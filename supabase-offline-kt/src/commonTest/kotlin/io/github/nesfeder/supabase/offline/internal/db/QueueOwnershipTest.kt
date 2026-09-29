@@ -32,7 +32,7 @@ class QueueOwnershipTest {
     private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity? = USER_A
-    private val syncer = OfflineMutationSyncer(
+    private val syncer = MutationQueueReplayer(
         store = store,
         supabase = server.supabaseClient(),
         currentIdentity = { session },

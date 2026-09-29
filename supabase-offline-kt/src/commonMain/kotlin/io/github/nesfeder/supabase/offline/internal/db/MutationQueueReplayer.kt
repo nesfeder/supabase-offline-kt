@@ -52,7 +52,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * Sends the mutation queue to Supabase: replay passes, and the immediate send of a mutation that is
  * at the head of its identity's queue when it is made. Exactly one sender at a time per mutation.
  */
-internal class OfflineMutationSyncer(
+internal class MutationQueueReplayer(
     private val store: OfflineStore,
     private val supabase: SupabaseClient,
     private val sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
@@ -153,7 +153,7 @@ internal class OfflineMutationSyncer(
          * It did not run on the server — no connection, or PostgREST answered `503`/`520` — and stays
          * queued.
          */
-        data class Offline(val cause: Exception) : HeadSendOutcome
+        data class StaysQueued(val cause: Exception) : HeadSendOutcome
 
         /** The server refused it, or answered with another failure; it left the queue. */
         data class Refused(val cause: Exception) : HeadSendOutcome
@@ -224,7 +224,7 @@ internal class OfflineMutationSyncer(
                 if (newlyUnconfirmed && (failure.neverReachedServer || cause.httpStatusOrNull() == HTTP_SERVICE_UNAVAILABLE)) {
                     store.recordSendNeverDelivered(mutationId)
                 }
-                HeadSendOutcome.Offline(cause)
+                HeadSendOutcome.StaysQueued(cause)
             }
             else -> {
                 store.abandonSentMutation(mutationId)
@@ -289,7 +289,7 @@ internal class OfflineMutationSyncer(
         val ready = sendLock.withLock {
             if (clearGeneration.value != generation) return SyncReport(0, emptyList(), 0, SyncStop.LocalDataCleared)
             store.retireAgedSyncedMutations()
-            store.adoptUnownedMutations(identity.storedValue)
+            store.adoptOwnerlessMutations(identity.storedValue)
         }
         val queue = if (ready) store.pendingMutationsOf(identity.storedValue, table) else null
         if (queue == null) return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.OwnershipUnreadable)

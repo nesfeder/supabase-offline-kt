@@ -9,7 +9,7 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -43,7 +43,7 @@ class AuthPluginQueueIdentityTest {
     }
     private val store = newTestOfflineStore()
     private val builder = OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from(TABLE), store = store)
-    private val syncer = OfflineMutationSyncer(store = store, supabase = supabase)
+    private val syncer = MutationQueueReplayer(store = store, supabase = supabase)
 
     private fun sentBodies(): List<String> = server.requests.filter { it.method == "POST" }.map { it.body }
 

@@ -6,7 +6,7 @@ import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -81,7 +81,7 @@ class FilterCaptureFidelityTest {
 
         // When — the connection returns and the queue replays
         server.answer = { okJson("[]") }
-        OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — the replay carries the very filter the original request did
         val replay = server.requests.last()

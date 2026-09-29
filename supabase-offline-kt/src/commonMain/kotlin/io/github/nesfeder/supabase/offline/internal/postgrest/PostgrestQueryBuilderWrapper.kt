@@ -106,7 +106,7 @@ internal class PostgrestQueryBuilderWrapperImpl(
     init {
         // The offline client installs these when it is built; a handle made directly installs them
         // here. Either way each is installed once per client.
-        builder.postgrest.supabaseClient.installPreferHeaderProbe()
+        builder.postgrest.supabaseClient.installDryRunCheck()
         builder.postgrest.supabaseClient.installTransportFailureCapture()
     }
 

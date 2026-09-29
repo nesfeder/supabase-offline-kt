@@ -57,7 +57,7 @@ class PreferHeaderProbeContractTest {
     fun a_request_that_is_not_a_postgrest_write_passes_a_short_circuiting_probe() = runTest {
         // Given — a probe that stops PostgREST writes, and a session refresh in the same coroutine
         val supabase = server.supabaseClient()
-        supabase.installPreferHeaderProbe()
+        supabase.installDryRunCheck()
         val probe = PreferHeaderProbe()
 
         // When
@@ -78,7 +78,7 @@ class PreferHeaderProbeContractTest {
         val racers = (1..64).map {
             async(Dispatchers.Default) {
                 start.await()
-                supabase.installPreferHeaderProbe()
+                supabase.installDryRunCheck()
             }
         }
         start.complete(Unit)
@@ -92,7 +92,7 @@ class PreferHeaderProbeContractTest {
     fun a_postgrest_read_passes_a_short_circuiting_probe() = runTest {
         // Given
         val supabase = server.supabaseClient()
-        supabase.installPreferHeaderProbe()
+        supabase.installDryRunCheck()
         val probe = PreferHeaderProbe()
 
         // When

@@ -439,7 +439,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             },
             onUpdate = { postgrestResultOf("[]", client.postgrest) },
         )
-        val synced = OfflineMutationSyncer(
+        val synced = MutationQueueReplayer(
             store = store,
             supabase = client,
             postgrestFactory = { _, _ -> wrapper },

@@ -1,7 +1,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
@@ -34,7 +34,7 @@ class DiscardPendingMutationTest {
     private val store = newTestOfflineStore(objectDao = objectDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = USER_A
-    private val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
+    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
     private val builder = OfflinePostgrestQueryBuilderImpl(
         delegate = server.supabaseClient().postgrest.from(TABLE),
         store = store,

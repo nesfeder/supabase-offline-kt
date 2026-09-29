@@ -3,9 +3,9 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.BackgroundSyncTrigger
@@ -21,7 +21,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
-import io.github.nesfeder.supabase.offline.internal.postgrest.installPreferHeaderProbe
+import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
 import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.deleteRecursivelyIfExists
@@ -302,14 +302,14 @@ internal class SupabaseOfflineClientImpl(
         coordinatorScope = coordinatorScope,
     )
 
-    private val mutationSyncer = OfflineMutationSyncer(store, supabase, sdkLogger = sdkLogger)
+    private val mutationQueueReplayer = MutationQueueReplayer(store, supabase, sdkLogger = sdkLogger)
 
     /** Hosts the collectors the client runs for its lifetime. */
     private val syncScope = coordinatorScope
 
     /** Runs the replay passes the engine starts on its own, coalesced and backed off. */
     private val backgroundSync = BackgroundSyncTrigger(scope = coordinatorScope, sdkLogger = sdkLogger) {
-        mutationSyncer.sync()
+        mutationQueueReplayer.sync()
     }
 
     /** Encodes the primary-key [FilterDescriptor] built for realtime records. */
@@ -342,7 +342,7 @@ internal class SupabaseOfflineClientImpl(
         store.ownerlessMutationsAreAnonymous = authPluginOrNull() == null
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
         // and not added while requests may be walking it.
-        supabase.installPreferHeaderProbe()
+        supabase.installDryRunCheck()
         supabase.installTransportFailureCapture()
         replayWhenTheSessionSettles()
     }
@@ -399,7 +399,7 @@ internal class SupabaseOfflineClientImpl(
             accelerator = refreshAccelerator,
             queueIdentity = { supabase.currentQueueIdentity() },
             requestSync = backgroundSync::request,
-            headSender = mutationSyncer,
+            headSender = mutationQueueReplayer,
         )
     }
 
@@ -448,10 +448,10 @@ internal class SupabaseOfflineClientImpl(
     /* ───────────────────────────── Sync APIs ───────────────────────────── */
 
     override suspend fun syncAllPendingMutations(): Int =
-        mutationSyncer.syncAllTables()
+        mutationQueueReplayer.syncAllTables()
 
     override suspend fun syncPendingMutations(table: String): Int =
-        mutationSyncer.syncTable(table = table)
+        mutationQueueReplayer.syncTable(table = table)
 
     override suspend fun pendingMutationCount(): Int =
         store.pendingMutationCount()
@@ -536,7 +536,7 @@ internal class SupabaseOfflineClientImpl(
     override suspend fun clearAllCache() {
         // Cancels a replay pass in flight and runs the wipe under the sync lock, so no queued write
         // of the outgoing identity reaches the server afterwards.
-        mutationSyncer.clearLocalData { store.clearAll() }
+        mutationQueueReplayer.clearLocalData { store.clearAll() }
         // Room only holds storage-object metadata; the downloaded bytes live on disk under
         // <base>/storage/. Wipe that tree too so cached objects (e.g. avatars) don't survive
         // logout / account switch / account deletion.
@@ -557,7 +557,7 @@ internal class SupabaseOfflineClientImpl(
      * @return What the pass synced, rejected and left pending.
      */
     internal suspend fun syncPendingMutationsReport(table: String? = null): SyncReport =
-        mutationSyncer.sync(table = table)
+        mutationQueueReplayer.sync(table = table)
 
     /**
      * The current session's pending mutations — of [table], or of every table — in replay order,
@@ -621,7 +621,7 @@ internal class SupabaseOfflineClientImpl(
      */
     internal suspend fun discardPendingMutation(id: Long): Boolean {
         val identity = supabase.currentQueueIdentity() ?: return false
-        return mutationSyncer.discardPendingMutation(id, identity)
+        return mutationQueueReplayer.discardPendingMutation(id, identity)
     }
 
     /* ───────────────────────────── Guards ───────────────────────────── */

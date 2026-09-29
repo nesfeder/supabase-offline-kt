@@ -161,7 +161,7 @@ class SyncedOverlayScopeTest {
         clock += ONE_DAY_MS + 1
 
         // When — a pass runs, with nothing left to send
-        OfflineMutationSyncer(store = store, supabase = RecordingPostgrestServer().supabaseClient()).sync()
+        MutationQueueReplayer(store = store, supabase = RecordingPostgrestServer().supabaseClient()).sync()
 
         // Then
         assertEquals(0, mutationDao.inserted.size)

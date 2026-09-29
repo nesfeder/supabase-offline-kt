@@ -31,7 +31,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.time.ExperimentalTime
 
 /**
- * Behavioural pins for [OfflineMutationSyncer] — the replay path that pushes queued offline
+ * Behavioural pins for [MutationQueueReplayer] — the replay path that pushes queued offline
  * mutations to Supabase. The syncer previously had no test coverage; these cases lock in FIFO
  * replay, per-failure-class handling (network pause vs. permanent drop vs. transient 401 vs.
  * bounded unknown-error dead-letter), the single-sweep-per-table `distinct()` fix, the concurrency
@@ -41,7 +41,7 @@ import kotlin.time.ExperimentalTime
  * [FakePostgrestQueryBuilderWrapper]; only the remote verbs are faked.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class OfflineMutationSyncerTest {
+class MutationQueueReplayerTest {
 
     private val table = "projects"
     private var createdAtCounter = 0L
@@ -264,7 +264,7 @@ class OfflineMutationSyncerTest {
             postgrest = client.postgrest,
             onInsert = { postgrestResultOf("[]", client.postgrest) },
         )
-        val syncer = OfflineMutationSyncer(
+        val syncer = MutationQueueReplayer(
             store = store,
             supabase = client,
             postgrestFactory = { _, _ ->
@@ -601,7 +601,7 @@ class OfflineMutationSyncerTest {
         client: SupabaseClient,
         wrapper: FakePostgrestQueryBuilderWrapper,
         awaitSessionSettled: (suspend () -> Boolean)? = null,
-    ): OfflineMutationSyncer = OfflineMutationSyncer(
+    ): MutationQueueReplayer = MutationQueueReplayer(
         store = store,
         supabase = client,
         postgrestFactory = { _, _ -> wrapper },

@@ -298,7 +298,7 @@ internal object FilterEngine {
     /**
      * Replays filters onto a live [PostgrestRequestBuilder].
      *
-     * Used by OfflineMutationSyncer when syncing UPDATE / DELETE operations.
+     * Used by MutationQueueReplayer when syncing UPDATE / DELETE operations.
      *
      * - For [FilterDescriptor.Mode.AND], we just call each condition on the filter DSL:
      *   `filter { eq(...); lt(...); ilike(...) }`

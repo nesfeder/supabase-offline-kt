@@ -33,7 +33,7 @@ class SessionChangeDuringPassTest {
                 okJson("[]")
             },
         )
-        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
+        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
 
         // When
         syncer.sync()

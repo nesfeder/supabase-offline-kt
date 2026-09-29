@@ -20,12 +20,12 @@ import kotlin.test.assertTrue
  * table starts and finishes, DEBUG per replayed write, and a WARNING when a write is dropped as
  * permanently rejected or the table pauses for connectivity. No message carries row data.
  */
-class OfflineMutationSyncerLoggingTest {
+class MutationQueueReplayerLoggingTest {
 
     private val server = RecordingPostgrestServer()
     private val logger = RecordingOfflineLogger()
     private val store = newTestOfflineStore()
-    private val syncer = OfflineMutationSyncer(
+    private val syncer = MutationQueueReplayer(
         store = store,
         supabase = server.supabaseClient(),
         sdkLogger = logger.asSdkLogger(),
@@ -104,7 +104,7 @@ class OfflineMutationSyncerLoggingTest {
                 createdAtMs = 0L,
             ),
         )
-        val corruptSyncer = OfflineMutationSyncer(
+        val corruptSyncer = MutationQueueReplayer(
             store = storeWithCorruptRow,
             supabase = server.supabaseClient(),
             sdkLogger = logger.asSdkLogger(),

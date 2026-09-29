@@ -1,7 +1,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -32,7 +32,7 @@ class PerIdentityQueueTest {
         store = store,
         queueIdentity = { session },
     )
-    private val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
+    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
 
     private suspend fun writeOffline(title: String): MutationOutcome {
         server.answer = { connectivityFailure() }

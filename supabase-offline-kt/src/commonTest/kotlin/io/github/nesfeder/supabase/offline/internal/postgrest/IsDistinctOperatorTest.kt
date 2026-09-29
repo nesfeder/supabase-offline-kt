@@ -11,7 +11,7 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationSyncer
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -115,7 +115,7 @@ class IsDistinctOperatorTest {
             filter { filter("status", FilterOperator.ISDISTINCT, "done") }
         }
         server.answer = { okJson("[]") }
-        val synced = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — it was queued, and the replay carries the caller's own filter
         assertEquals(MutationOutcome.Queued, outcome)

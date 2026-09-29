@@ -88,7 +88,7 @@ class SyncedRetirementScopeTest {
         val server = RecordingPostgrestServer()
 
         // When
-        val synced = OfflineMutationSyncer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        val synced = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — no cached query needs them, so they do not accumulate
         assertEquals(2, synced)
