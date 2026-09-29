@@ -169,5 +169,6 @@ internal class PostgrestQueryBuilderWrapperImpl(
     override suspend fun shapeOf(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
-    ): ReadShape = readShapeProbe.shapeOf(columns, request)
+        onBuilt: (SelectRequestBuilder) -> Unit,
+    ): ReadShape = readShapeProbe.shapeOf(columns, request, onBuilt)
 }

@@ -122,8 +122,11 @@ internal class QueryReader(
         readStrategy: ReadStrategy,
         request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult {
-        val shape = delegate.shapeOf(columns, request)
-        val slot = cacheSlotOf(columns, request)
+        // The probe's build of the request gives the cache slot too: the app's lambda runs once
+        var built: CacheSlot? = null
+        val shape =
+            delegate.shapeOf(columns, request) { builder -> built = cacheSlotOf(columns, builder) }
+        val slot = built ?: cacheSlotOf(columns, request)
         val table = slot.table
         if (shape is ReadShape.Uncacheable) {
             if (readStrategy is ReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
@@ -295,7 +298,9 @@ internal class QueryReader(
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> = flow {
-        val shape = delegate.shapeOf(columns, request)
+        var built: CacheSlot? = null
+        val shape =
+            delegate.shapeOf(columns, request) { builder -> built = cacheSlotOf(columns, builder) }
         if (shape is ReadShape.Uncacheable) {
             if (readStrategy == FlowReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
             sdkLogger.debug {
@@ -308,7 +313,14 @@ internal class QueryReader(
                 )
             )
         } else {
-            emitAll(cachedReadFlow(columns, readStrategy, request))
+            emitAll(
+                cachedReadFlow(
+                    columns,
+                    readStrategy,
+                    request,
+                    built ?: cacheSlotOf(columns, request),
+                )
+            )
         }
     }
 
@@ -317,8 +329,8 @@ internal class QueryReader(
         columns: Columns,
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit,
+        slot: CacheSlot,
     ): Flow<OfflineReadResult> {
-        val slot = cacheSlotOf(columns, request)
         val base =
             when (readStrategy) {
                 FlowReadStrategy.CacheFirstThenNetwork ->
@@ -518,7 +530,7 @@ internal class QueryReader(
         var refetchBudget = STALE_RESPONSE_REFETCH_BUDGET
         while (true) {
             val requestStartedAtTick = store.monotonicTickNow()
-            val response = send(columns, request, retries)
+            val response = send(slot, columns, request, retries)
             sdkLogger.debug { "SELECT $table network response: ${response.data}" }
             val sessionAfter = requestSession()
             val isEmpty = isEmptyJsonArrayPayload(response.data)
@@ -596,14 +608,13 @@ internal class QueryReader(
      * read turned retries off.
      */
     private suspend fun send(
+        slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
         retries: Retries,
     ): PostgrestResult {
         if (retries == Retries.UPSTREAM) return delegate.select(columns, request)
-        val maxRetries =
-            if (newRequestBuilder().apply(request).retry) delegate.postgrest.config.maxRetries
-            else 0
+        val maxRetries = if (slot.allowsRetries) delegate.postgrest.config.maxRetries else 0
         var attempt = 0
         while (true) {
             try {
@@ -669,6 +680,15 @@ internal class QueryReader(
             defaultSchema = delegate.postgrest.config.defaultSchema,
             builderFactory = ::newRequestBuilder,
             request = request,
+        )
+
+    /** Where the query [builder] describes is cached, its request already run on it. */
+    private fun cacheSlotOf(columns: Columns, builder: SelectRequestBuilder): CacheSlot =
+        cacheSlotOf(
+            table = delegate.table,
+            columns = columns,
+            defaultSchema = delegate.postgrest.config.defaultSchema,
+            builder = builder,
         )
 
     /** A fresh SELECT builder for this table, as supabase-kt makes one. */

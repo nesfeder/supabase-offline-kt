@@ -39,15 +39,21 @@ internal sealed interface ReadShape {
 }
 
 /** Learns a SELECT's [ReadShape] before anything is sent or read from the cache. */
-internal fun interface ReadShapeProbe {
+internal interface ReadShapeProbe {
 
     /**
-     * The shape the SELECT [request] would ask the server for.
+     * The shape the SELECT [request] would ask the server for. [onBuilt] is handed the builder
+     * right after [request] has configured it, so the caller need not run [request] again; a probe
+     * that builds no request never calls it.
      *
      * @throws Exception the builder's own error when the request cannot be built, as sending it
      *   would.
      */
-    suspend fun shapeOf(columns: Columns, request: SelectRequestBuilder.() -> Unit): ReadShape
+    suspend fun shapeOf(
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+        onBuilt: (SelectRequestBuilder) -> Unit = {},
+    ): ReadShape
 }
 
 /**
@@ -117,6 +123,7 @@ internal class PipelineReadShapeProbe(
     override suspend fun shapeOf(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
+        onBuilt: (SelectRequestBuilder) -> Unit,
     ): ReadShape {
         check(postgrest.supabaseClient.hasReadShapeCheck()) {
             "The read-shape check is not installed on this client"
@@ -127,6 +134,7 @@ internal class PipelineReadShapeProbe(
                 withContext(capture) {
                     postgrest.from(schema, table).select(columns) {
                         request()
+                        onBuilt(this)
                         // The stop comes back as a failed request, which supabase-kt would retry
                         noRetry()
                     }

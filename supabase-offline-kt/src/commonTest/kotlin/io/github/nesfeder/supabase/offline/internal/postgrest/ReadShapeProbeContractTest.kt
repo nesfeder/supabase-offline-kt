@@ -260,7 +260,7 @@ class ReadShapeProbeContractTest {
             PipelineReadShapeProbe(readShapePostgrestOf(supabase.postgrest), "todos", "public")
 
         // When
-        repeat(50) { probe.shapeOf(Columns.ALL) { filter { eq("id", it) } } }
+        repeat(50) { index -> probe.shapeOf(Columns.ALL, request = { filter { eq("id", index) } }) }
 
         // Then — nothing sent, and the token in no line supabase-kt logged
         assertEquals(emptyList(), server.requests)
@@ -280,7 +280,7 @@ class ReadShapeProbeContractTest {
 
         // When
         val failure = runCatching {
-            probe.shapeOf(Columns.ALL) { filter { eq("id", 1) } }
+            probe.shapeOf(Columns.ALL, request = { filter { eq("id", 1) } })
         }
             .exceptionOrNull()
 

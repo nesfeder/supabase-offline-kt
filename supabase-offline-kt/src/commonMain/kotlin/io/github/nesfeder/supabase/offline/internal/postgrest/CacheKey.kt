@@ -16,8 +16,15 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
  *   `schema.table` in any other, so the two never share cached rows or queued mutations.
  * @property cacheKey the cache key, which starts with [table].
  * @property shape the query's columns and filters, captured from its request.
+ * @property allowsRetries whether the request lets supabase-kt retry it: it did not call
+ *   `noRetry()`.
  */
-internal data class CacheSlot(val table: String, val cacheKey: String, val shape: QueryShape)
+internal data class CacheSlot(
+    val table: String,
+    val cacheKey: String,
+    val shape: QueryShape,
+    val allowsRetries: Boolean = true,
+)
 
 /**
  * The [CacheSlot] of a SELECT on [table]. The schema is the builder's once [request] has run, which
@@ -31,14 +38,25 @@ internal fun cacheSlotOf(
     defaultSchema: String,
     builderFactory: () -> SelectRequestBuilder,
     request: SelectRequestBuilder.() -> Unit,
+): CacheSlot = cacheSlotOf(table, columns, defaultSchema, builderFactory().apply(request))
+
+/**
+ * The [CacheSlot] of a SELECT on [table] whose [builder] its request has configured, and nothing
+ * else yet: read before supabase-kt adds its own parameters.
+ */
+internal fun cacheSlotOf(
+    table: String,
+    columns: Columns,
+    defaultSchema: String,
+    builder: SelectRequestBuilder,
 ): CacheSlot {
-    val builder = builderFactory().apply(request)
     val schema = builder.schema
     val cachedTable = if (schema.isBlank() || schema == defaultSchema) table else "$schema.$table"
     return CacheSlot(
         table = cachedTable,
         cacheKey = keyOf(cachedTable, columns, builder),
         shape = queryShapeOf(columns, builder),
+        allowsRetries = builder.retry,
     )
 }
 

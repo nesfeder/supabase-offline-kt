@@ -114,6 +114,7 @@ internal class FakePostgrestQueryBuilderWrapper(
     override suspend fun shapeOf(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
+        onBuilt: (SelectRequestBuilder) -> Unit,
     ): ReadShape = ReadShape.RowList
 }
 
