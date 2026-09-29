@@ -23,7 +23,7 @@ internal const val OFFLINE_DATABASE_FILE_NAME: String = "supabase_offline.db"
  */
 internal object OpenDatabaseRegistry {
 
-    private val openPaths = AtomicReference<Set<String>>(emptySet())
+    private val openPaths = AtomicReference<Map<String, Registration>>(emptyMap())
 
     /**
      * Claims [databasePath], and [dataDirectory] when given, for one client.
@@ -31,21 +31,19 @@ internal object OpenDatabaseRegistry {
      * @param databasePath the database file.
      * @param dataDirectory the directory the client's file cache lives under.
      * @return the claim; release it when the client closes.
-     * @throws IllegalStateException when another open client already holds either.
+     * @throws IllegalStateException when another client already holds either, open or still closing.
      */
     fun register(databasePath: Path, dataDirectory: Path? = null): Registration {
         val keys = buildSet {
             add("database:${databasePath.resolvedOrNormalized()}")
             if (dataDirectory != null) add("data:${dataDirectory.resolvedOrNormalized()}")
         }
+        val registration = Registration(keys)
         while (true) {
             val current = openPaths.load()
-            check(keys.none { it in current }) {
-                "A SupabaseOfflineClient is already open on $databasePath or its data directory. Reuse that " +
-                    "client, or close() it before creating another: two clients on one database would each " +
-                    "replay the same queued writes."
-            }
-            if (openPaths.compareAndSet(current, current + keys)) return Registration(keys)
+            val holder = keys.firstNotNullOfOrNull { key -> current[key] }
+            check(holder == null) { holder?.conflictMessage(databasePath).orEmpty() }
+            if (openPaths.compareAndSet(current, current + keys.associateWith { registration })) return registration
         }
     }
 
@@ -53,6 +51,26 @@ internal object OpenDatabaseRegistry {
     internal class Registration(private val keys: Set<String>) {
 
         private val released = AtomicBoolean(false)
+        private val stillClosing = AtomicReference<(() -> Int)?>(null)
+
+        /**
+         * Records that the client's close() returned before the release, with [callsInFlight] still
+         * holding the database, so a client opened meanwhile is told so.
+         */
+        fun markStillClosing(callsInFlight: () -> Int) {
+            stillClosing.store(callsInFlight)
+        }
+
+        /** Why another client cannot have [databasePath] while this claim holds it. */
+        fun conflictMessage(databasePath: Path): String {
+            val callsInFlight = stillClosing.load()
+                ?: return "A SupabaseOfflineClient is already open on $databasePath or its data directory. Reuse that " +
+                    "client, or close() it before creating another: two clients on one database would each " +
+                    "replay the same queued writes."
+            return "The SupabaseOfflineClient on $databasePath or its data directory is still closing: " +
+                "${callsInFlight()} call(s) it had in flight have not finished. It releases the database as soon as " +
+                "they do; create the new client after that."
+        }
 
         /** Frees them for another client. Safe to call more than once. */
         fun release() {

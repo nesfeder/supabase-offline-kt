@@ -12,10 +12,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * supabase-kt's resumable client, whose finished uploads drop the cached copies they replaced. Its
- * uploads are sealed upstream, so each is watched in [backgroundScope] until it finishes or the scope
- * ends; a closed client's [operationGate] refuses new and continued uploads.
+ * supabase-kt's resumable client, whose finished uploads drop the cached copies they replaced. Each
+ * upload is supabase-kt's own object, watched in [backgroundScope]: one still running at close()
+ * keeps uploading, and if it finishes after, the copy it replaced stays cached for the next client.
  *
+ * @param operationGate refuses new and continued uploads once the client is closed.
  * @param onUploadFinished drops the cached copies of an object, by bucket and path.
  */
 internal class InvalidatingResumableClient(

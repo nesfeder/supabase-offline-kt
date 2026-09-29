@@ -77,15 +77,18 @@ public interface OfflinePostgrestQueryBuilder {
     ): PostgrestResult
 
     /**
-     * Reactive read that surfaces per-query read+refresh state in-band as [OfflineReadResult]: the
-     * background [RefreshState] (so a consumer can tell "refresh failed, showing stale/empty cache"
-     * from "genuinely empty") and the typed "no data yet" state (a `null` result) that replaces the
-     * old fabricated empty-array cache seed.
+     * Reactive read that surfaces per-query read and refresh state in-band as [OfflineReadResult].
+     * That is the background [RefreshState] (so a consumer can tell "refresh failed, showing
+     * stale/empty cache" from "genuinely empty") and the typed "no data yet" state (a `null` result)
+     * that replaces the old fabricated empty-array cache seed.
      *
      * Consumers that want today's instant-empty-state rendering map the no-data case to
      * `emptyList()` in their repository; consumers that want a Loading state until data is known
      * leave the no-data emissions unmapped. [RefreshState] is available for a future refresh
      * affordance and may be ignored today.
+     *
+     * Every strategy ends the same way when the client closes: a collection live at
+     * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one made after it.
      *
      * @param columns Columns to select.
      * @param readStrategy Flow read strategy.
@@ -357,7 +360,9 @@ internal class OfflinePostgrestQueryBuilderImpl(
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit
     ): Flow<OfflineReadResult> {
-        return selectResolver.selectAsFlow(columns, readStrategy, request)
+        // Every strategy one way: refused once closed, counted while collected, ended by close()
+        operationGate.ensureOpen()
+        return operationGate.callCollecting(selectResolver.selectAsFlow(columns, readStrategy, request))
     }
 
     // INSERT -------------------------------------------------------------------

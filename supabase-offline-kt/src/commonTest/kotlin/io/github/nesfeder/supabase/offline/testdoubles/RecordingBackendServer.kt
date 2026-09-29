@@ -40,6 +40,9 @@ internal class RecordingBackendServer(val marker: String) {
     /** Storage downloads received. */
     val storageArrived: MutableStateFlow<Int> = MutableStateFlow(0)
 
+    /** Every request received, PostgREST and Storage together. */
+    fun requestsArrived(): Int = restArrived.value + storageArrived.value
+
     /** When set, every PostgREST request waits for it before it is answered. */
     val restHold: MutableStateFlow<CompletableDeferred<Unit>?> = MutableStateFlow(null)
 

@@ -34,6 +34,7 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -270,19 +272,31 @@ public interface SupabaseOfflineClient {
     /**
      * Releases the client and frees its database for another client. Nothing is deleted.
      *
-     * - From the moment it is called, every new call fails with [IllegalStateException]: on the
-     *   client, and on a builder, bucket or flow obtained from it. A flow still being collected ends
-     *   with it.
-     * - The client's own work stops: refreshes, replay passes, and the downloads and replays callers
-     *   started, which then fail with [IllegalStateException] — never with a cancellation.
-     * - Every other call already running — a clear, a write, a read — is left to finish, and the
-     *   database is closed only once none is using it. A clear that has begun always completes.
-     * - It waits for them at most 10 seconds of real time, even under a test's virtual clock. Past that
-     *   it returns, and the database closes as soon as the last of them finishes; until then, a new
-     *   client on the same database fails to open.
+     * What ends, and when:
+     * - At once, every new call fails with [IllegalStateException] ("This SupabaseOfflineClient is
+     *   closed"): on the client, and on a builder, bucket or flow obtained from it.
+     * - At once, every flow being collected stops, whatever its read strategy: its collector reads
+     *   that error next, even one stuck in its own body or one that has stopped reading.
+     * - At once, the client's own work stops (refreshes, replay passes), and so do the calls that
+     *   only wait on the network: syncs, downloads, uploads, signed URLs, list, info and exists. Their
+     *   callers get the same error, never a cancellation. A stopped upload may still have been
+     *   stored, so the cached copy it would have replaced is dropped.
+     * - Every other call already running is left to finish: a clear, a PostgREST write, a read of the
+     *   cache, a Storage delete, move or copy. A clear that has begun always completes, and a write
+     *   whose answer arrives is applied and never sent again. The database is closed only once none
+     *   of them is using it.
      *
-     * Safe to call more than once. A wrapper must forward it (delegation with `by` does), or the
-     * database stays claimed and the wrapped client's work keeps running.
+     * Every call to `close()` returns once the database is released, or after 10 seconds of real
+     * time at most, even under a test's virtual clock. Past that, the database is released as soon
+     * as the last of those calls finishes; until then, creating a client on it fails with an error
+     * saying it is still closing.
+     *
+     * A resumable upload obtained before `close()` is supabase-kt's own object and keeps uploading.
+     * If it finishes after `close()`, the cached copy it replaced stays for the next client.
+     *
+     * Safe to call more than once, and from inside a collector of one of the client's flows. A
+     * wrapper must forward it (delegation with `by` does), or the database stays claimed and the
+     * wrapped client's work keeps running.
      */
     @Throws(Exception::class)
     public suspend fun close()
@@ -328,6 +342,8 @@ internal class SupabaseOfflineClientImpl(
     private val onClose: () -> Unit = {},
     /** How long [close] waits for calls in flight; tests whose client work never runs shorten it. */
     private val closeWait: Duration = CLOSE_WAIT,
+    /** Told, with the count of calls still in flight, when [close] returns before the release. */
+    private val onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
 ) : SupabaseOfflineClient {
 
     /**
@@ -341,6 +357,15 @@ internal class SupabaseOfflineClientImpl(
 
     /** Every call's pass through the client, so [close] never closes the database under one. */
     private val operationGate = ClientOperationGate()
+
+    /** Completed once the database is released: what every [close] waits for. */
+    private val released = CompletableDeferred<Unit>()
+
+    /** Taken by the one [releaseOnceIdle] that runs [onClose]. */
+    private val releasing = MutableStateFlow(false)
+
+    /** Taken by the one [close] that reports the release is late. */
+    private val reportedStillClosing = MutableStateFlow(false)
 
     /** Where [storage]'s buckets see an image transform's requests go; resolved on first use. */
     private val renderImagePath: String by lazy { renderImagePathOf(supabase) }
@@ -602,33 +627,34 @@ internal class SupabaseOfflineClientImpl(
     }
 
     /**
-     * Refuses new calls and cancels the client's own work and the calls it may stop: replays and
-     * downloads. It waits for every other call (a clear, a write, a read) before closing the database;
-     * after [closeWait] it returns, and the database closes when the last call finishes.
+     * The first call shuts the gate, which ends every collection, and cancels the client's work and
+     * the calls it may stop. Every call then waits, up to [closeWait], for the release.
      */
     override suspend fun close() {
-        if (!operationGate.close()) return
-        val work = clientScope.coroutineContext.job
-        work.cancel()
+        if (operationGate.close()) clientScope.coroutineContext.job.cancel()
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
-        val idle = withContext(NonCancellable + Dispatchers.Default) {
-            withTimeoutOrNull(closeWait) {
-                work.join()
-                operationGate.awaitNoCallsInFlight()
-            } != null
+        val releasedInTime = withContext(NonCancellable + Dispatchers.Default) {
+            withTimeoutOrNull(closeWait) { releaseOnceIdle() } != null
         }
-        if (idle) {
-            onClose()
-            return
-        }
+        if (releasedInTime || released.isCompleted || !reportedStillClosing.compareAndSet(false, true)) return
         sdkLogger.warning {
             "close() waited $closeWait for ${operationGate.inFlight} call(s) still using the database; " +
-                "it closes when they finish"
+                "it is released when they finish"
         }
-        parentScope.launch(NonCancellable) {
-            work.join()
-            operationGate.awaitNoCallsInFlight()
+        onStillClosing { operationGate.inFlight }
+        // A child of the scope the client was given, which close() never cancels
+        if (parentScope.isActive) parentScope.launch { withContext(NonCancellable) { releaseOnceIdle() } }
+    }
+
+    /** Waits until the client's work and every call have ended, then releases the database, once. */
+    private suspend fun releaseOnceIdle() {
+        clientScope.coroutineContext.job.join()
+        operationGate.awaitNoCallsInFlight()
+        if (!releasing.compareAndSet(expect = false, update = true)) return released.await()
+        try {
             onClose()
+        } finally {
+            released.complete(Unit)
         }
     }
 
