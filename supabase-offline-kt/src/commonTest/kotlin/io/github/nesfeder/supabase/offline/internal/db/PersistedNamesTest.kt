@@ -4,6 +4,8 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -29,6 +31,8 @@ class PersistedNamesTest {
         assertTrue(RESERVED_TABLE_NAME.encodeToByteArray().size > 63)
         assertEquals("rejected_mutations", REJECTED_MUTATIONS_SIGNATURE)
         assertEquals("mutation_owners", MUTATION_OWNERS_SIGNATURE)
+        assertEquals("synced_mutation_coverage", SYNCED_MUTATION_COVERAGE_SIGNATURE)
+        assertEquals("unconfirmed_sends", UNCONFIRMED_SENDS_SIGNATURE)
     }
 
     @Test
@@ -97,6 +101,37 @@ class PersistedNamesTest {
         assertEquals(
             """{"version":1,"owners":{"1":"user:user-a","2":"anonymous"}}""",
             assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE)).payload,
+        )
+    }
+
+    @Test
+    fun synced_mutation_coverage_is_written_with_these_keys() = runTest {
+        // Given — a replayed mutation, then a network response for a cached query of its table
+        store.enqueueUpdate(table = "todos", body = Json.parseToJsonElement("""{"title":"x"}"""), filter = null)
+        store.markMutationSynced(id = 1, table = "todos")
+
+        // When
+        store.addPayload("todos", "todos?id=eq.1", """[{"id":1}]""", requestStartedAtTick = store.monotonicTickNow())
+
+        // Then
+        assertEquals(
+            """{"version":1,"coveredSignatures":{"1":["todos?id=eq.1"]}}""",
+            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE)).payload,
+        )
+    }
+
+    @Test
+    fun unconfirmed_sends_are_written_with_these_keys() = runTest {
+        // Given — a keyed INSERT whose send is starting
+        store.enqueueInsert(table = "todos", body = Json.parseToJsonElement("""[{"id":"t1"}]""") as JsonArray)
+
+        // When
+        store.recordSendStarted(1)
+
+        // Then
+        assertEquals(
+            """{"version":1,"mutationIds":[1]}""",
+            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)).payload,
         )
     }
 

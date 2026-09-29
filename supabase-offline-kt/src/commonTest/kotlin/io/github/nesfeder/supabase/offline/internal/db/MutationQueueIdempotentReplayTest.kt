@@ -4,8 +4,12 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.NumericDeltaColumn
+import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -164,6 +168,44 @@ class MutationQueueIdempotentReplayTest {
 
         // Then
         assertEquals("return=minimal", server.requests.single().prefer)
+    }
+
+    @Test
+    fun an_insert_whose_send_was_under_way_when_the_app_died_replays_as_an_upsert() = runTest {
+        // Given — the send started and the process died before any answer
+        val objectDao = FakeObjectDao()
+        val mutationDao = FakeMutationDao()
+        val beforeTheCrash = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+        val id = beforeTheCrash.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        beforeTheCrash.recordSendStarted(id)
+
+        // When — the next launch replays it
+        val server = RecordingPostgrestServer()
+        val afterTheCrash = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+        OfflineMutationSyncer(store = afterTheCrash, supabase = server.supabaseClient()).syncAllTables()
+
+        // Then — the server may already hold it, so the replay tolerates that
+        assertTrue("resolution=ignore-duplicates" in server.requests.single().prefer.orEmpty().split(','))
+    }
+
+    @Test
+    fun a_replay_whose_rows_were_already_on_the_server_is_synced_and_says_so() = runTest {
+        // Given — the insert committed and its response was lost
+        val logger = RecordingOfflineLogger()
+        val server = FakeRelationalPostgrestServer()
+        server.loseResponseAfterCommit = { request -> request.method == "POST" }
+        builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        val syncer = OfflineMutationSyncer(store = store, supabase = server.supabaseClient(), sdkLogger = logger.asSdkLogger())
+
+        // When
+        val report = syncer.sync()
+
+        // Then — synced once, and the count the server returned is logged without the row's values
+        assertEquals(1, report.syncedCount)
+        assertEquals(1, server.rows(TABLE).size)
+        val info = logger.entriesAt(OfflineLogLevel.INFO).map { it.message }
+        assertTrue(info.any { "1 of 1 rows were already on the server" in it }, "got $info")
+        assertTrue(info.none { "Buy milk" in it })
     }
 
     @Test
