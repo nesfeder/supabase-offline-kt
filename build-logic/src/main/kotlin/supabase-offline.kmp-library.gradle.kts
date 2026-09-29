@@ -20,7 +20,7 @@ pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
         // See: https://youtrack.jetbrains.com/issue/KT-61573
         compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes") }
 
-        // The Android target is created by the module's `android { namespace = … }`.
+        // The Android target of a module that applies the Android KMP library plugin.
         targets.withType<KotlinMultiplatformAndroidLibraryTarget>().configureEach {
             compileSdk = catalogVersion("android-compileSdk").toInt()
             minSdk = catalogVersion("android-minSdk").toInt()
