@@ -9,14 +9,13 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
@@ -97,9 +96,9 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
 
     /**
      * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A
-     * joining collector gets the latest value; the upstream's failure reaches every collector in
-     * band; the last to leave ends the entry; once [scope] ends every collection fails with the
-     * client's closed error.
+     * joining collector gets the latest value, and a slow one only the latest, so it never holds
+     * back the others; the upstream's failure reaches every collector in band; the last to leave
+     * ends the entry; once [scope] ends every collection fails with the client's closed error.
      */
     fun sharedReadFlow(
         table: String,
@@ -127,7 +126,7 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
             withContext(NonCancellable) { release(key, entry) }
         }
     }
-        .buffer(Channel.RENDEZVOUS)
+        .conflate()
 
     private suspend fun acquire(key: Key, upstream: () -> Flow<OfflineReadResult>): SharedEntry =
         sharedFlowsMutex.withLock {
