@@ -19,6 +19,19 @@ size_of() {
     du -sh "$1" 2> /dev/null | cut -f1
 }
 
+# The build must have used the job's own directories, not the owner's ~/.gradle and ~/.konan.
+if [[ -n "${CI_SIMULATOR_UDID:-}" ]]; then
+    used_own=1
+    compgen -G "$root/konan/kotlin-native-prebuilt-*" > /dev/null || used_own=0
+    [[ -d "$root/gradle-home/caches" ]] || used_own=0
+    if [[ "$used_own" -eq 1 ]]; then
+        echo "The build used the job's own Gradle User Home and Kotlin/Native directory."
+    else
+        echo "::error::The build did not use the job's own Gradle User Home and Kotlin/Native directory"
+        left_behind=1
+    fi
+fi
+
 echo "Removed:"
 
 udid="${CI_SIMULATOR_UDID:-}"
