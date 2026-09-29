@@ -1227,6 +1227,7 @@ internal class OfflineStore(
      * creates a payload for each live query of the table that has none and admits one of its rows.
      * Each query shows only the rows it admits. Rows cached for the table's other queries stand in for
      * rows the write changes but the query does not hold yet, so a row an UPDATE makes match joins.
+     * A patched payload keeps its fetch time and a created one is stale: local rows are not fresh data.
      *
      * Serialized with every other writer of [table]'s cached payloads, and it moves the table's
      * stale-refresh watermark first, so a response already in flight cannot roll the patch back.
@@ -1308,17 +1309,17 @@ internal class OfflineStore(
             val parsed = cached.map { row -> row to payloadRowsOf(json, row.payload) }
             val keyColumns = primaryKeys.of(table)
             val known = rowsByKey(parsed, keyColumns)
-            val now = nowMillis()
             for ((row, rows) in parsed) {
                 if (rows == null) continue
                 val overlay = overlayFor(admissionOf(row.signature), unconfirmedSends = emptySet())
                 val elsewhere = known.filter { knownRow -> indexOfKey(rows, knownRow, keyColumns) == null }
                 val patched = overlay.overlayRows(rows, writes, knownRows = elsewhere)
                 if (patched.visible == rows) continue
-                if (!writeUnlessTornDown(guardTick, row.copy(payload = overlay.encode(patched.visible), updatedAt = now))) return@withLock
+                // The payload stays as old as what the server last said: a local write is not fresh data
+                if (!writeUnlessTornDown(guardTick, row.copy(payload = overlay.encode(patched.visible)))) return@withLock
             }
             val uncachedLive = (liveSignatures ?: liveSignatureProvider(table)) - cached.mapTo(mutableSetOf()) { row -> row.signature }
-            createLivePayloads(table, uncachedLive, writes, known, now, guardTick)
+            createLivePayloads(table, uncachedLive, writes, known, guardTick)
         }
     }
 
@@ -1349,7 +1350,6 @@ internal class OfflineStore(
         signatures: Set<String>,
         writes: List<MutationRow>,
         known: List<JsonObject>,
-        now: Long,
         guardTick: Long,
     ) {
         for (signature in signatures) {
@@ -1357,7 +1357,8 @@ internal class OfflineStore(
             val admission = admissionOf(signature)
             val created = overlay.overlayRows(emptyList(), writes, knownRows = known).written.filter(admission::admits)
             if (created.isEmpty()) continue
-            val row = ObjectRow(table = table, signature = signature, payload = overlay.encode(created), updatedAt = now)
+            // Local rows alone are not the query's answer: stale, so a read with a cache duration asks the server
+            val row = ObjectRow(table = table, signature = signature, payload = overlay.encode(created), updatedAt = STALE_UPDATED_AT)
             // A created payload is not a network response: it contains no synced mutation
             val written = mutationQueueMutex.withLock {
                 teardownMutex.withLock {
