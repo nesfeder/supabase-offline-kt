@@ -16,6 +16,9 @@ import okio.Timeout
  * @property failWritesAfterBytes when set, every file sink opened from now on throws once that
  *   many bytes have been written to it.
  * @property failMoves when `true`, [atomicMove] throws.
+ * @property onSinkOpened runs once a file sink is open, with the file already on disk, on the
+ *   thread that opened it.
+ * @property onMove runs as [atomicMove] starts, before it moves or refuses.
  */
 internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
 
@@ -23,12 +26,17 @@ internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
 
     var failMoves: Boolean = false
 
+    var onSinkOpened: ((Path) -> Unit)? = null
+
+    var onMove: ((source: Path, target: Path) -> Unit)? = null
+
     /** Every file a sink was opened on, in order. */
     val sinksOpened: MutableList<Path> = mutableListOf()
 
     override fun sink(file: Path, mustCreate: Boolean): Sink {
         sinksOpened += file
         val real = super.sink(file, mustCreate)
+        onSinkOpened?.invoke(file)
         val limit = failWritesAfterBytes ?: return real
         return object : Sink by real {
             private var written = 0L
@@ -50,6 +58,7 @@ internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
     }
 
     override fun atomicMove(source: Path, target: Path) {
+        onMove?.invoke(source, target)
         if (failMoves) throw IOException("Operation not permitted")
         super.atomicMove(source, target)
     }

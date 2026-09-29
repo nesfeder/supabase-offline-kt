@@ -94,30 +94,29 @@ internal class CachingBucketApi(
             )
         cache.lookup(entry)?.let { return it }
         val generation = cache.currentGeneration()
-        val download = try {
-            downloadToTemporaryFile(entryProvider = { entry }) { target ->
-                if (isPublic) delegate.downloadPublic(path, target) { } else delegate.downloadAuthenticated(path, target) { }
+        val file = OwnedTemporaryFile()
+        try {
+            val download = try {
+                downloadToTemporaryFile(file, entryProvider = { entry }) { target ->
+                    if (isPublic) delegate.downloadPublic(path, target) { } else delegate.downloadAuthenticated(path, target) { }
+                }
+            } catch (failure: Exception) {
+                currentCoroutineContext().ensureActive()
+                if (failure.indicatesServerObjectMissing()) cache.invalidateObject(bucketId, path)
+                throw failure
             }
-        } catch (failure: Exception) {
-            currentCoroutineContext().ensureActive()
-            if (failure.indicatesServerObjectMissing()) cache.invalidateObject(bucketId, path)
-            throw failure
-        }
-        val temporary = when (download) {
-            is StreamedDownload.Written -> download.temporary
-            is StreamedDownload.CacheRefused -> throw IOException("The file cache could not store the download", download.cause)
-            StreamedDownload.Uncacheable -> error("A known cache entry was reported uncacheable")
-        }
-        when (cache.commit(temporary, generation)) {
-            CommitOutcome.COMMITTED -> Unit
-            CommitOutcome.CLEARED -> {
-                cache.discard(temporary)
-                throw IllegalStateException("Local data was cleared while this file was downloading")
+            val temporary = when (download) {
+                is StreamedDownload.Written -> download.temporary
+                is StreamedDownload.CacheRefused -> throw IOException("The file cache could not store the download", download.cause)
+                StreamedDownload.Uncacheable -> error("A known cache entry was reported uncacheable")
             }
-            CommitOutcome.FAILED -> {
-                cache.discard(temporary)
-                throw IOException("The file cache could not store the download")
+            when (cache.commit(temporary, generation)) {
+                CommitOutcome.COMMITTED -> file.temporary = null
+                CommitOutcome.CLEARED -> throw IllegalStateException("Local data was cleared while this file was downloading")
+                CommitOutcome.FAILED -> throw IOException("The file cache could not store the download")
             }
+        } finally {
+            file.discard()
         }
         return cache.lookup(entry) ?: throw IOException("The downloaded file left the cache before it could be returned")
     }
@@ -193,41 +192,44 @@ internal class CachingBucketApi(
         }
         val probe = DownloadRequestProbe(renderImagePath)
         val generation = cache.currentGeneration()
-        val download = try {
-            downloadToTemporaryFile(entryProvider = { probe.entryToStore(cache, bucketId, path) }) { target ->
-                fetch(target, probe.wrap(options))
-            }
-        } catch (failure: Exception) {
-            currentCoroutineContext().ensureActive()
-            recover(path, probe, failure) { entry -> if (cache.copyTo(entry, channel)) Unit else null }
-            channel.flushAndClose()
-            return
-        }
-        when (download) {
-            is StreamedDownload.Written -> deliver(download.temporary, generation, channel)
-            is StreamedDownload.CacheRefused, StreamedDownload.Uncacheable -> {
-                // The disk refused the copy (logged when it did), or the variant could not be told:
-                // fetch again straight into the caller's channel rather than fail a good download.
-                fetch(channel, options)
+        val file = OwnedTemporaryFile()
+        try {
+            val download = try {
+                downloadToTemporaryFile(file, entryProvider = { probe.entryToStore(cache, bucketId, path) }) { target ->
+                    fetch(target, probe.wrap(options))
+                }
+            } catch (failure: Exception) {
+                currentCoroutineContext().ensureActive()
+                recover(path, probe, failure) { entry -> if (cache.copyTo(entry, channel)) Unit else null }
+                channel.flushAndClose()
                 return
             }
+            when (download) {
+                is StreamedDownload.Written -> deliver(file, download.temporary, generation, channel)
+                is StreamedDownload.CacheRefused, StreamedDownload.Uncacheable -> {
+                    // The disk refused the copy (logged when it did), or the variant could not be told:
+                    // fetch again straight into the caller's channel rather than fail a good download.
+                    fetch(channel, options)
+                    return
+                }
+            }
+            channel.flushAndClose()
+        } finally {
+            file.discard()
         }
-        channel.flushAndClose()
     }
 
     /** Commits a finished download, then streams the cache's copy (or the uncommitted file) out. */
-    private suspend fun deliver(temporary: TemporaryDownload, generation: Long, channel: ByteWriteChannel) {
+    private suspend fun deliver(file: OwnedTemporaryFile, temporary: TemporaryDownload, generation: Long, channel: ByteWriteChannel) {
         when (cache.commit(temporary, generation)) {
             CommitOutcome.COMMITTED -> {
+                file.temporary = null
                 if (!cache.copyTo(temporary.entry, channel)) {
                     throw IOException("The downloaded file left the cache before it could be read")
                 }
             }
-            CommitOutcome.CLEARED, CommitOutcome.FAILED -> try {
-                cache.copyFile(temporary.path, channel)
-            } finally {
-                cache.discard(temporary)
-            }
+            // The call's own clean-up discards the file once it has been read
+            CommitOutcome.CLEARED, CommitOutcome.FAILED -> cache.copyFile(temporary.path, channel)
         }
     }
 
@@ -274,6 +276,7 @@ internal class CachingBucketApi(
      * cancels the download and reports [StreamedDownload.CacheRefused].
      */
     private suspend fun downloadToTemporaryFile(
+        file: OwnedTemporaryFile,
         entryProvider: () -> StorageCacheEntry?,
         fetch: suspend (ByteWriteChannel) -> Unit,
     ): StreamedDownload = coroutineScope {
@@ -287,7 +290,6 @@ internal class CachingBucketApi(
                 throw failure
             }
         }
-        var temporary: TemporaryDownload? = null
         var completed = false
         try {
             val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
@@ -295,9 +297,8 @@ internal class CachingBucketApi(
                 val read = readOrRethrow(pipe, buffer) { producer.await() }
                 if (read < 0) break
                 if (read == 0) continue
-                val target = temporary ?: openFor(entryProvider())
+                val target = file.temporary ?: file.open(entryProvider())
                     ?: return@coroutineScope abandon(producer, pipe, cause = null, uncacheable = entryProvider() == null)
-                temporary = target
                 try {
                     withContext(Dispatchers.IO) { target.sink.write(buffer, 0, read) }
                 } catch (failure: IOException) {
@@ -306,9 +307,8 @@ internal class CachingBucketApi(
                 }
             }
             producer.await()
-            val target = temporary ?: openFor(entryProvider())
+            val target = file.temporary ?: file.open(entryProvider())
                 ?: return@coroutineScope if (entryProvider() == null) StreamedDownload.Uncacheable else StreamedDownload.CacheRefused(null)
-            temporary = target
             // The sink buffers; a full disk can surface only here. Past this point the temporary
             // file holds every byte, so it can be served even if the rename that follows fails.
             try {
@@ -320,12 +320,28 @@ internal class CachingBucketApi(
             completed = true
             StreamedDownload.Written(target)
         } finally {
-            if (!completed) temporary?.let { cache.discard(it) }
+            if (!completed) file.discard()
         }
     }
 
-    private suspend fun openFor(entry: StorageCacheEntry?): TemporaryDownload? =
-        entry?.let { cache.openTemporaryDownload(it) }
+    /**
+     * The temporary file one download writes. The call that opened it discards it on its way out,
+     * however it ends, unless the cache has committed it; a cancellation can land anywhere in between.
+     */
+    private inner class OwnedTemporaryFile {
+        var temporary: TemporaryDownload? = null
+
+        /** Opens the file for [entry] and holds it; the cache hands it back even to a cancelled caller. */
+        suspend fun open(entry: StorageCacheEntry?): TemporaryDownload? =
+            entry?.let { cache.openTemporaryDownload(it) }?.also { opened -> temporary = opened }
+
+        /** Deletes the file if it is still held. */
+        suspend fun discard() {
+            val held = temporary ?: return
+            temporary = null
+            cache.discard(held)
+        }
+    }
 
     private fun abandon(
         producer: Deferred<Unit>,
