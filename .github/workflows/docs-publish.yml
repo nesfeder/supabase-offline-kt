@@ -1,0 +1,85 @@
+name: Docs publish
+
+# Builds the site and publishes it to GitHub Pages. It runs only when started by hand
+# (workflow_dispatch) or called by the release workflow (workflow_call); nothing on a pull request
+# or a push reaches it, and CI calls docs-check.yml instead, which cannot publish.
+#
+# Before the first publish:
+# - Settings > Pages > Source: GitHub Actions. That creates the `github-pages` environment.
+# - Restrict that environment's deployment branches to `main`, plus the release tag pattern if the
+#   release workflow runs on tags. The environment's branch policy is what stops anyone with write
+#   access from publishing from an unmerged branch.
+# - A workflow that calls this one must grant `pages: write` and `id-token: write` to the calling
+#   job, and must not use the concurrency group `docs-publish` or `pages`, which this one uses.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build (defaults to the caller's ref)
+        type: string
+        default: ''
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: docs-publish
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.14'
+  # Silences the MkDocs 2.0 banner Material for MkDocs prints on every run.
+  NO_MKDOCS_2_WARNING: 'true'
+
+jobs:
+  build:
+    name: Build the site for GitHub Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # No pip cache: a publishing workflow restores nothing another run could have written.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Verify the vendored Mermaid
+        working-directory: docs/assets/javascripts/mermaid
+        run: sha256sum --check --strict mermaid.min.js.sha256
+
+      - name: Install the pinned toolchain
+        run: pip install -r .github/workflows/docs-requirements.txt
+
+      - name: Build the site in strict mode
+        run: mkdocs build --strict
+
+      # No configure-pages step: nothing here reads its outputs (site_url is fixed in mkdocs.yml),
+      # and its Pages API call would need `pages: read` on this job.
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write # publish the site artifact to GitHub Pages
+      id-token: write # the OIDC token deploy-pages exchanges with the Pages service
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

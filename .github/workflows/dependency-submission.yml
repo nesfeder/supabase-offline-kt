@@ -21,7 +21,8 @@ on:
 
 permissions: {}
 
-# A later push to main waits for this run rather than cancelling it.
+# A later push waits for this run instead of cancelling it. Of several pushes queued behind it,
+# only the newest runs: GitHub keeps one pending run per group, and only the latest graph matters.
 concurrency:
   group: dependency-submission
   cancel-in-progress: false

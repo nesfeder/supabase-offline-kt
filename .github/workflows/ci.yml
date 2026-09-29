@@ -1,41 +1,55 @@
 name: CI
 
-# One workflow, one required check. `Final status` is the only check branch protection needs.
+# One workflow, one required check: `Final status`.
 #
 #   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
 #            │                                        SQLite; iOS device framework link
-#            └─ docs                           Linux  docs.yml, called with deploy: false
+#            └─ docs                           Linux  docs-check.yml
 #   final-status ── fans in every job above
 #
 #   formatting     kempt check; skipped until .kempt.toml exists
-#   static-checks  API visibility (its self-test first); zizmor when the workflows changed
+#   static-checks  API visibility (its self-test first); when the workflows changed, zizmor, the
+#                  CI scripts' self-tests and the workflow structure check
 #
 # Why a fan-in: branch protection names one check instead of a list that must change with the
-# jobs, and no workflow is path-filtered, so no required check can wait forever for a run that
-# never starts. final-status passes when every job succeeded or was skipped and fails when any
-# failed or was cancelled. Its job summary lists every job, and why each skipped one was skipped.
+# jobs, and no workflow is path-filtered, so no required check waits for a run that never starts.
+# final-status compares every job's result with what `changes` planned: a job that was due must
+# have succeeded, a job that was not due must have been skipped. Anything else fails it.
 #
 # Minutes: macOS costs ten times Linux while the repository is private. The test jobs wait for
 # formatting and static-checks, so a pull request that fails a cheap check never starts the macOS
 # job, and a pull request that changes nothing the build reads starts neither test job.
 #
-# macOS while the repository is private: the iOS tests run only on a pull request that is ready
-# for review (not a draft, not opened by Dependabot) and on a manual run (workflow_dispatch). They
-# do not run on drafts, on Dependabot's pull requests or on pushes to main. So a green Final
-# status on a draft means the Linux jobs passed and the iOS tests have NOT run yet. Before a
-# Dependabot pull request merges, start a manual run on its branch. Once the repository is public
-# this rule lifts by itself, and the iOS tests run on every pull request and every push to main.
+# Where the iOS tests run (the rule is in .github/scripts/decide-ios-tests.py):
+# - On the maintainer's Mac (self-hosted, label offline-kt) while the repository is private and
+#   the repository variable IOS_LOCAL_RUNNER is exactly `on`: every pull request event, drafts
+#   included, pushes to main and manual runs. Never for Dependabot (by author, actor, triggering
+#   actor or `dependabot/` branch) unless a maintainer has added the `full-ci` label, and never
+#   for the weekly run.
+# - Otherwise on GitHub's macos-26. While private they run there only on a pull request that is
+#   ready for review (a Dependabot one only with `full-ci`), a manual run, the merge queue and the
+#   weekly run; not on drafts or pushes to main. Once public, on every run.
+#
+# When the iOS tests were due and held by that rule, the fan-in is named
+# `Final status (iOS tests held)`, so it can never satisfy the required `Final status`: that name
+# exists only on a run where every due job ran. A green held check means the Linux jobs passed.
 #
 # Forks: every job runs with a read-only token and no secrets; nothing here writes anything.
 
 on:
   # Every pull request, whatever its base, so a stacked pull request is checked the same way.
-  # ready_for_review starts the run that includes the iOS tests when a draft is marked ready.
+  # ready_for_review starts the full run when a draft is marked ready. labeled starts one only
+  # for the `full-ci` label; any other label runs nothing.
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   push:
     branches: [main]
+  merge_group:
+  # Weekly, on main: the full graph on GitHub's macOS runner, whatever IOS_LOCAL_RUNNER says, so
+  # the hosted image stays proven while the Mac does the day-to-day runs.
+  schedule:
+    - cron: '23 5 * * 1'
   workflow_dispatch:
     inputs:
       full-graph:
@@ -46,8 +60,14 @@ on:
 permissions:
   contents: read
 
+# One group per pull request, where a newer run cancels an older one. Every other run has a group
+# of its own, so a push to main is never cancelled or replaced by a later one, and a label event
+# that runs nothing cancels nothing.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: >-
+    ci-${{ (github.event.action == 'labeled' && github.event.label.name != 'full-ci')
+    && format('ignored-label-{0}', github.run_id)
+    || github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -57,6 +77,7 @@ defaults:
 jobs:
   changes:
     name: Detect changes
+    if: github.event.action != 'labeled' || github.event.label.name == 'full-ci'
     runs-on: ubuntu-slim
     timeout-minutes: 5
     outputs:
@@ -64,17 +85,20 @@ jobs:
       docs: ${{ steps.classify.outputs.docs }}
       workflows: ${{ steps.classify.outputs.workflows }}
       formatting: ${{ steps.formatter.outputs.configured }}
-      macos: ${{ steps.macos.outputs.allowed }}
-      macos-hold: ${{ steps.macos.outputs.hold }}
+      ios-runner: ${{ steps.ios.outputs.ios-runner }}
+      ios-allowed: ${{ steps.ios.outputs.ios-allowed }}
+      ios-hold: ${{ steps.ios.outputs.ios-hold }}
+      ios-held: ${{ steps.ios.outputs.ios-held }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      # Anything not named below counts as a build input, so an unfamiliar path runs the tests.
-      # A change to CI itself runs everything. When the changed files cannot be listed, everything
-      # runs.
+      # Anything not named below counts as a build input, so an unfamiliar path runs the tests,
+      # and a change to CI itself runs everything. A push or manual run whose changed files cannot
+      # be listed runs everything; on a pull request a failed diff fails this job, and with it
+      # Final status.
       - name: Classify the changed files
         id: classify
         env:
@@ -104,6 +128,7 @@ jobs:
                 everything=true
               fi ;;
             *)
+              # merge_group and schedule: the full graph.
               everything=true ;;
           esac
 
@@ -112,9 +137,9 @@ jobs:
           workflows=false
           while IFS= read -r file; do
             case "$file" in
-              .github/workflows/ci.yml | .github/actions/* | .github/scripts/*)
+              .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/*)
                 kotlin=true; docs=true; workflows=true ;;
-              .github/workflows/docs.yml | .github/workflows/docs-requirements.txt)
+              .github/workflows/docs-check.yml | .github/workflows/docs-requirements.txt)
                 docs=true; workflows=true ;;
               .github/workflows/* | .github/dependabot.yml)
                 workflows=true ;;
@@ -131,10 +156,10 @@ jobs:
             kotlin=true; docs=true; workflows=true
           fi
 
-          echo "::group::Changed files ($(wc -l < "$changed_files"))"
-          cat "$changed_files"
-          echo "::endgroup::"
-          echo "kotlin=$kotlin docs=$docs workflows=$workflows everything=$everything"
+          # Indented, so a file name can never start a line the runner reads as a command.
+          echo "Changed files ($(wc -l < "$changed_files" | tr -d ' ')):"
+          sed 's/^/  /' "$changed_files"
+          echo "  kotlin=$kotlin docs=$docs workflows=$workflows everything=$everything"
           {
             echo "kotlin=$kotlin"
             echo "docs=$docs"
@@ -148,40 +173,24 @@ jobs:
           KEMPT_CONFIG_HASH: ${{ hashFiles('.kempt.toml') }}
         run: |
           if [[ -n "$KEMPT_CONFIG_HASH" ]]; then configured=true; else configured=false; fi
-          echo "formatting configured=$configured"
+          echo "  formatting configured=$configured"
           echo "configured=$configured" >> "$GITHUB_OUTPUT"
 
-      # The rule at the top of this file. Anything but a clearly public repository counts as
-      # private, so a missing field holds macOS rather than spending it.
-      - name: Decide whether the macOS jobs may run
-        id: macos
+      # Where the iOS tests run and whether they may, as described at the top of this file.
+      - name: Decide where the iOS tests run
+        id: ios
         env:
           EVENT_NAME: ${{ github.event_name }}
           REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          IOS_LOCAL_RUNNER: ${{ vars.IOS_LOCAL_RUNNER }}
           PULL_REQUEST_DRAFT: ${{ github.event.pull_request.draft }}
           PULL_REQUEST_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: |
-          set -euo pipefail
-          hold=""
-          if [[ "$REPOSITORY_PRIVATE" != false ]]; then
-            case "$EVENT_NAME" in
-              workflow_dispatch) ;;
-              pull_request)
-                if [[ "$PULL_REQUEST_DRAFT" != false ]]; then
-                  hold="draft pull request"
-                elif [[ "$PULL_REQUEST_AUTHOR" == "dependabot[bot]" ]]; then
-                  hold="Dependabot pull request; start a manual run before merging"
-                fi ;;
-              push) hold="push to main" ;;
-              *) hold="$EVENT_NAME event" ;;
-            esac
-          fi
-          if [[ -z "$hold" ]]; then allowed=true; else allowed=false; fi
-          echo "macOS allowed=$allowed ${hold:+(held: $hold)}"
-          {
-            echo "allowed=$allowed"
-            echo "hold=$hold"
-          } >> "$GITHUB_OUTPUT"
+          PULL_REQUEST_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          KOTLIN: ${{ steps.classify.outputs.kotlin }}
+        run: python3 .github/scripts/decide-ios-tests.py
 
   formatting:
     name: Formatting
@@ -194,6 +203,12 @@ jobs:
       # SHA-256 of kempt-fmt-x86_64-unknown-linux-gnu.tar.xz for KEMPT_VERSION, from the release's
       # .sha256 asset. Change both together.
       KEMPT_LINUX_X64_SHA256: 339c06f574c03db8c45de5c1f3e15aefbafd48c886b78803f94f9b8adb7d6a01
+      # The ktfmt jar kempt runs, from Maven Central, and its SHA-256 (the same as Maven Central's
+      # published .sha256). It must be the version .kempt.toml asks for: kempt finds it in a
+      # read-only cache and cannot download any other, so a ktfmt update fails this job until both
+      # values here change with it.
+      KTFMT_VERSION: '0.64'
+      KTFMT_SHA256: 5b3d5286fd2defcc7dc8e28c21ddf156cc6b2d8682bdcd929ce4333e7a6201f2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -217,8 +232,23 @@ jobs:
           tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/kempt" --strip-components=1
           echo "$RUNNER_TEMP/kempt" >> "$GITHUB_PATH"
 
+      - name: Install ktfmt where kempt looks for it
+        run: |
+          set -euo pipefail
+          cache="$RUNNER_TEMP/kempt-cache"
+          mkdir -p "$cache"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$cache/ktfmt-$KTFMT_VERSION.jar" \
+            "https://repo1.maven.org/maven2/com/facebook/ktfmt/$KTFMT_VERSION/ktfmt-$KTFMT_VERSION-with-dependencies.jar"
+          echo "$KTFMT_SHA256  $cache/ktfmt-$KTFMT_VERSION.jar" | sha256sum --check --strict
+          chmod a-w "$cache"
+          echo "KEMPT_CACHE_DIR=$cache" >> "$GITHUB_ENV"
+
       - name: Download the formatters
-        run: kempt update
+        run: |
+          if ! kempt update; then
+            echo "::error::.kempt.toml asks for a formatter other than ktfmt $KTFMT_VERSION; update KTFMT_VERSION and KTFMT_SHA256 in ci.yml with it"
+            exit 1
+          fi
 
       - name: Check formatting
         run: kempt check
@@ -241,6 +271,18 @@ jobs:
         run: |
           bash scripts/check-api-visibility.sh --self-test
           bash scripts/check-api-visibility.sh
+
+      # The scripts CI itself depends on, each proved by its own self-test, then the structure
+      # of the workflows: the fan-in needs every job, `$/` references exist, only ios-tests may
+      # use the maintainer's Mac, and nothing Dependabot can trigger reaches it.
+      - name: Check the CI scripts and the workflow structure
+        if: needs.changes.outputs.workflows == 'true'
+        run: |
+          python3 .github/scripts/decide-ios-tests.py --self-test
+          python3 .github/scripts/check-job-results.py --self-test
+          python3 .github/scripts/check-workflows.py --self-test
+          python3 .github/scripts/check-workflows.py
+          shellcheck --shell=bash .github/scripts/*.sh
 
       # Template injection, unpinned actions, broad permissions, persisted credentials. Findings
       # fail the job and appear as annotations; nothing is uploaded to code scanning.
@@ -295,27 +337,63 @@ jobs:
     needs: [changes, formatting, static-checks]
     if: >-
       ${{ !cancelled() && !failure()
-      && needs.changes.outputs.kotlin == 'true' && needs.changes.outputs.macos == 'true' }}
-    # The image and Xcode the tests have always run on (macos-latest resolves to them today),
-    # named so an image migration cannot change the toolchain without a commit.
-    runs-on: macos-26
+      && needs.changes.outputs.kotlin == 'true' && needs.changes.outputs.ios-allowed == 'true' }}
+    # The maintainer's Mac only when changes decided `local`; anything else is GitHub's macos-26,
+    # the image macos-latest resolved to when this workflow was written.
+    runs-on: >-
+      ${{ needs.changes.outputs.ios-runner == 'local'
+      && fromJSON('["self-hosted", "macOS", "ARM64", "offline-kt"]') || 'macos-26' }}
     timeout-minutes: 45
     env:
+      IOS_RUNNER: ${{ needs.changes.outputs.ios-runner }}
       XCODE_VERSION: '26.6'
+      # Xcode for this job's processes only: no sudo, and nothing changes for anyone else on a
+      # shared machine. The Mac has 26.6 as Xcode.app; the hosted image names it by version.
+      DEVELOPER_DIR: >-
+        ${{ needs.changes.outputs.ios-runner == 'local'
+        && '/Applications/Xcode.app/Contents/Developer'
+        || '/Applications/Xcode_26.6.app/Contents/Developer' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Select Xcode
+      # On the maintainer's Mac the build gets directories of its own under RUNNER_TEMP, never the
+      # owner's ~/.gradle or ~/.konan, and clean-up-local-runner.sh removes them at the end.
+      - name: Give the build directories of its own
+        if: env.IOS_RUNNER == 'local'
         run: |
-          sudo xcode-select --switch "/Applications/Xcode_${XCODE_VERSION}.app"
-          xcodebuild -version
+          set -euo pipefail
+          root="$RUNNER_TEMP/offline-kt-ci"
+          mkdir -p "$root/gradle-home" "$root/konan" "$root/tmp"
+          {
+            echo "GRADLE_USER_HOME=$root/gradle-home"
+            echo "KONAN_DATA_DIR=$root/konan"
+            echo "TMPDIR=$root/tmp"
+          } >> "$GITHUB_ENV"
+
+      - name: Check the Xcode version
+        run: |
+          version=$(xcodebuild -version | head -1)
+          if [[ "$IOS_RUNNER" == local ]]; then
+            where="the maintainer's Mac (self-hosted, offline-kt)"
+          else
+            where="GitHub's macos-26 runner"
+          fi
+          echo "  $version from $DEVELOPER_DIR on $where"
+          echo "iOS tests ran on $where, $version." >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$version" != "Xcode $XCODE_VERSION" ]]; then
+            echo "::error::Expected Xcode $XCODE_VERSION, found $version"
+            exit 1
+          fi
 
       - uses: $/.github/actions/setup-project
+        with:
+          gradle-cache: ${{ env.IOS_RUNNER != 'local' }}
 
       - name: Read the Kotlin version
         id: kotlin
+        if: env.IOS_RUNNER != 'local'
         run: |
           version=$(sed -n 's/^kotlin = "\(.*\)"$/\1/p' gradle/libs.versions.toml)
           if [[ -z "$version" ]]; then
@@ -324,23 +402,28 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # The Kotlin/Native toolchain, its dependencies and its compiler caches, which setup-gradle
-      # does not cache. Keyed on the Kotlin and Xcode versions. Written only from runs on main, as
-      # setup-gradle's cache is, so every branch can read it; while the repository is private that
-      # takes a manual run on main.
+      # Hosted only. The Kotlin/Native toolchain, its dependencies and its compiler caches, which
+      # setup-gradle does not cache. Keyed on the Kotlin and Xcode versions. Written only from runs
+      # on main, as setup-gradle's cache is, so every branch can read it.
       - name: Restore Kotlin/Native
         id: konan
+        if: env.IOS_RUNNER != 'local'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ runner.arch }}-xcode${{ env.XCODE_VERSION }}-kotlin${{ steps.kotlin.outputs.version }}
 
+      # On the maintainer's Mac, a simulator of the job's own, never one another session uses.
+      - name: Create a simulator for this job
+        if: env.IOS_RUNNER == 'local'
+        run: bash .github/scripts/create-simulator.sh
+
       - name: Run the iOS simulator tests
         run: >-
-          ./gradlew
+          bash .github/scripts/run-gradle.sh
           :supabase-offline-kt:iosSimulatorArm64Test
           :supabase-offline-kt-testing:iosSimulatorArm64Test
-          --continue --stacktrace
+          --continue
 
       - name: Count the tests that ran
         if: ${{ !cancelled() }}
@@ -352,7 +435,9 @@ jobs:
       # build: see supabase-offline-kt/build.gradle.kts.
       - name: Run the iOS suite on the system SQLite
         id: system-sqlite
-        run: ./gradlew :supabase-offline-kt:iosSimulatorArm64Test -Psupabase.offline.iosSqlite=system --stacktrace
+        run: >-
+          bash .github/scripts/run-gradle.sh
+          :supabase-offline-kt:iosSimulatorArm64Test -Psupabase.offline.iosSqlite=system
 
       - name: Count the tests that ran on the system SQLite
         if: ${{ !cancelled() && steps.system-sqlite.outcome != 'skipped' }}
@@ -362,10 +447,12 @@ jobs:
 
       # Tests never compile the device target or link a framework; this does.
       - name: Link the iOS device framework
-        run: ./gradlew :supabase-offline-kt:linkReleaseFrameworkIosArm64 --stacktrace
+        run: bash .github/scripts/run-gradle.sh :supabase-offline-kt:linkReleaseFrameworkIosArm64
 
       - name: Save Kotlin/Native
-        if: github.ref == 'refs/heads/main' && steps.konan.outputs.cache-hit != 'true'
+        if: >-
+          env.IOS_RUNNER != 'local' && github.ref == 'refs/heads/main'
+          && steps.konan.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.konan
@@ -381,89 +468,42 @@ jobs:
             */build/test-results/
           retention-days: 7
 
+      # Whatever happened above: delete the simulator, stop anything still running from the job's
+      # directories, remove those directories and the JDK setup-java installed, list what went,
+      # and fail if anything outside the workspace is left.
+      - name: Leave nothing behind on the maintainer's Mac
+        if: always() && env.IOS_RUNNER == 'local'
+        run: bash .github/scripts/clean-up-local-runner.sh
+
   docs:
     name: Docs
     needs: changes
     if: needs.changes.outputs.docs == 'true'
-    # GitHub checks every job of a called workflow against this grant before the run starts, even
-    # a job that will be skipped. Only docs.yml's deploy job asks for pages and id-token, and it
-    # runs only with deploy: true, which this workflow never passes; every job that runs here gets
-    # docs.yml's own contents: read.
     permissions:
       contents: read
-      pages: write # docs.yml's deploy job only; skipped with deploy: false
-      id-token: write # docs.yml's deploy job only; skipped with deploy: false
-    uses: $/.github/workflows/docs.yml
-    with:
-      deploy: false
+    uses: $/.github/workflows/docs-check.yml
 
   final-status:
-    name: Final status
-    if: always()
+    # The required check is exactly `Final status`. A run that held iOS tests which were due, and a
+    # label event that ran nothing, report under other names, so neither can satisfy it.
+    name: >-
+      ${{ (github.event.action == 'labeled' && github.event.label.name != 'full-ci')
+      && 'Final status (label ignored)'
+      || needs.changes.outputs.ios-held == 'true' && 'Final status (iOS tests held)'
+      || 'Final status' }}
+    if: always() && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     needs: [changes, formatting, static-checks, jvm-tests, ios-tests, docs]
     runs-on: ubuntu-slim
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
     steps:
-      - name: Report every job and fail if any failed or was cancelled
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Check every job's result against the plan
         env:
           NEEDS: ${{ toJSON(needs) }}
-        run: |
-          set -euo pipefail
-          output_of() { jq -r --arg key "$1" '.changes.outputs[$key] // ""' <<< "$NEEDS"; }
-          kotlin=$(output_of kotlin)
-          docs=$(output_of docs)
-          workflows=$(output_of workflows)
-          formatting=$(output_of formatting)
-          macos=$(output_of macos)
-          macos_hold=$(output_of macos-hold)
-
-          # Why a job was skipped, from what the changes job decided.
-          skip_reason() {
-            case "$1" in
-              formatting)
-                if [[ "$formatting" != true ]]; then echo "no .kempt.toml yet"; return; fi ;;
-              static-checks)
-                if [[ "$kotlin" != true && "$workflows" != true ]]; then
-                  echo "no build input or workflow changed"; return
-                fi ;;
-              jvm-tests)
-                if [[ "$kotlin" != true ]]; then echo "no build input changed"; return; fi ;;
-              ios-tests)
-                if [[ "$kotlin" != true ]]; then echo "no build input changed"; return; fi
-                if [[ "$macos" != true ]]; then
-                  echo "macOS held while the repository is private: $macos_hold"; return
-                fi ;;
-              docs)
-                if [[ "$docs" != true ]]; then echo "no documentation changed"; return; fi ;;
-            esac
-            echo "a job it waits for did not succeed"
-          }
-
-          failed=false
-          if jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' <<< "$NEEDS" > /dev/null; then
-            failed=true
-          fi
-
-          {
-            echo "### Jobs"
-            echo
-            echo "| Job | Result | Why it was skipped |"
-            echo "|---|---|---|"
-            for job in $(jq -r 'keys_unsorted[]' <<< "$NEEDS"); do
-              result=$(jq -r --arg job "$job" '.[$job].result' <<< "$NEEDS")
-              reason=""
-              if [[ "$result" == skipped ]]; then reason=$(skip_reason "$job"); fi
-              echo "| $job | $result | $reason |"
-            done
-            if [[ "$failed" == false && "$kotlin" == true \
-              && "$(jq -r '."ios-tests".result' <<< "$NEEDS")" != success ]]; then
-              echo
-              echo "**The iOS tests did not run.** This green Final status covers the Linux jobs only."
-            fi
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-
-          if [[ "$failed" == true ]]; then
-            echo "::error::A job failed or was cancelled."
-            exit 1
-          fi
+        run: python3 .github/scripts/check-job-results.py
