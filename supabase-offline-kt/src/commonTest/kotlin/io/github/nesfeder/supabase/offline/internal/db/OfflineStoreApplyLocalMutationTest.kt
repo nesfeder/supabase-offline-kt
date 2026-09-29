@@ -345,9 +345,8 @@ class OfflineStoreApplyLocalMutationTest {
     }
 
     @Test
-    fun insert_still_lands_in_non_exhaustive_ordered_signature() = runTest {
-        // Given — an ordered (hence non-exhaustive) `type=eq.OPEN` query. We deliberately keep the
-        // legacy always-apply behavior here so windowed/ordered flows never under-apply.
+    fun insert_does_not_land_in_an_ordered_signature_whose_filter_excludes_it() = runTest {
+        // Given — an ordered `type=eq.OPEN` query
         val objectDao = FakeObjectDao()
         val mutationDao = FakeMutationDao()
         objectDao.seedPayload(
@@ -357,7 +356,7 @@ class OfflineStoreApplyLocalMutationTest {
         )
         val store = buildStore(objectDao, mutationDao)
 
-        // When — even a non-matching DONE row is inserted
+        // When — a DONE row is inserted
         store.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.INSERT,
@@ -366,9 +365,9 @@ class OfflineStoreApplyLocalMutationTest {
             defaultToNull = true,
         )
 
-        // Then — it is still appended, because a non-exhaustive signature keeps legacy behavior
+        // Then — the order does not stop the filter from excluding it
         assertEquals(
-            """[{"id":"r1","type":"OPEN"},{"id":"w1","type":"DONE"}]""",
+            """[{"id":"r1","type":"OPEN"}]""",
             objectDao.getRow("notes", "notes?type=eq.OPEN&order=created_at.desc")?.payload,
         )
     }
