@@ -9,7 +9,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -17,9 +16,8 @@ import kotlinx.serialization.json.JsonArray
 
 /**
  * A table in a schema other than the client's default is its own cached query: it never shares a
- * cache slot with the same-named table in the default schema. The mutation queue replays to the
- * default schema only, so a queued write to another schema is refused with an error that names it;
- * an `OnlineOnly` write to it is sent there.
+ * cache slot with the same-named table in the default schema. An `OnlineOnly` write to it is sent
+ * there; a write under the default strategy is too, as `WritesToAnotherSchemaTest` pins.
  */
 class NonDefaultSchemaTest {
 
@@ -76,40 +74,6 @@ class NonDefaultSchemaTest {
 
         // Then
         assertEquals("""[{"id":1,"schema":"$OTHER_SCHEMA"}]""", other)
-    }
-
-    @Test
-    fun a_queued_write_to_another_schema_is_refused_naming_it() = runTest {
-        // Given — offline, so the write could only be queued
-        online = false
-
-        // When
-        val refusal =
-            assertFailsWith<UnsupportedOperationException> {
-                client.from(OTHER_SCHEMA, TABLE).insertJson(rows("""[{"id":2}]"""))
-            }
-
-        // Then — nothing was queued to replay into the default schema
-        assertTrue(
-            OTHER_SCHEMA in refusal.message.orEmpty(),
-            "the error does not name the schema: ${refusal.message}",
-        )
-        assertEquals(0, client.pendingMutationCount())
-    }
-
-    @Test
-    fun a_queued_write_to_another_schema_is_refused_while_online_too() = runTest {
-        // When
-        assertFailsWith<UnsupportedOperationException> {
-            client.from(OTHER_SCHEMA, TABLE).updateJson(
-                Json.parseToJsonElement("""{"done":true}""")
-            ) {
-                filter { eq("id", 1) }
-            }
-        }
-
-        // Then — not sent either
-        assertEquals(0, server.requests.count { request -> request.method != "GET" })
     }
 
     @Test
