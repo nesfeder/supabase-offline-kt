@@ -10,18 +10,22 @@ import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
+import io.github.jan.supabase.postgrest.query.Returning
 import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.cache.indexOfKey
+import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
 import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
@@ -429,7 +433,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 store.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.INSERT,
-                    bodyJson = preferResponseForCache(body, result.data),
+                    bodyJson =
+                        preferResponseForCache(body, result.data, store.primaryKeys.of(table)),
                     filterJson = descriptor?.let { FilterEngine.encode(it, json) },
                     defaultToNull = insertBuilder.defaultToNull,
                     startedAtTick = startedAtTick,
@@ -495,10 +500,16 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 val upsertBuilder =
                     UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(upsertBuilder)
+                val conflictColumns =
+                    upsertBuilder.onConflict
+                        ?.split(',')
+                        ?.map { column -> column.trim() }
+                        ?.filter { column -> column.isNotEmpty() }
+                        ?.takeIf { it.isNotEmpty() } ?: store.primaryKeys.of(table)
                 store.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.UPSERT,
-                    bodyJson = preferResponseForCache(body, result.data),
+                    bodyJson = preferResponseForCache(body, result.data, conflictColumns),
                     filterJson = descriptor?.let { FilterEngine.encode(it, json) },
                     defaultToNull = upsertBuilder.defaultToNull,
                     onConflict = upsertBuilder.onConflict,
@@ -569,14 +580,24 @@ internal class OfflinePostgrestQueryBuilderImpl(
             // — and PostgREST cannot express `col = col + x` in a PATCH anyway.
             performOnline = { delegate.update(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
-                patchFilteredWrite(
-                    MutationOperation.UPDATE,
-                    table,
-                    body.toString(),
-                    conversionMethod,
-                    request,
-                    startedAtTick,
-                )
+                // Asked for rows back, the response names every row the update changed, none when
+                // it is empty; each carrying its key is patched by it alone, in one pass
+                val returnsRows =
+                    SelectRequestBuilder(delegate.schema, conversionMethod)
+                        .apply(request)
+                        .returning is Returning.Representation
+                val keyColumns = store.primaryKeys.of(table)
+                val returned = returnedRowsOf(json, result.data)
+                if (!returnsRows || returned.any { row -> primaryKeyOf(row, keyColumns) == null }) {
+                    patchFilteredWrite(
+                        MutationOperation.UPDATE,
+                        table,
+                        body.toString(),
+                        conversionMethod,
+                        request,
+                        startedAtTick,
+                    )
+                }
                 // Rows it returned carry what the server set itself, such as a trigger's
                 // `updated_at`
                 store.patchReturnedRows(table, body, result.data, startedAtTick)
@@ -1000,8 +1021,11 @@ internal class OfflinePostgrestQueryBuilderImpl(
         }
     }
 
-    private fun preferResponseForCache(requestBody: JsonArray, responseData: String): String =
-        preferResponseForCacheOverlay(requestBody, responseData, json)
+    private fun preferResponseForCache(
+        requestBody: JsonArray,
+        responseData: String,
+        keyColumns: List<String>,
+    ): String = preferResponseForCacheOverlay(requestBody, responseData, json, keyColumns)
 
     companion object {
 
@@ -1015,39 +1039,31 @@ internal class OfflinePostgrestQueryBuilderImpl(
 }
 
 /**
- * Prefer the server response payload as the mutation body for cache overlay when it carries usable
- * row data; otherwise fall back to the original request body.
+ * The rows to patch into the cache for an INSERT or UPSERT: those the server returned, each with
+ * the columns the caller wrote in its place that the response leaves out; the request body when the
+ * response holds no row (`return=minimal`, or not JSON).
  *
- * For INSERT/UPSERT the request body typically omits server-assigned columns (`id`, `created_at`,
- * `updated_at`). If a live `selectAsFlow` collector was subscribed with `CacheFirstThenNetwork` and
- * the parallel network SELECT hasn't yet written the full server row,
- * [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.patchCachedQueries] will overlay
- * the request body onto the cache — producing a row where the assigned id is missing (decodes as an
- * empty string via @Serializable defaults). Any downstream join keyed on that id (e.g.,
- * `attachmentsByNoteId[note.id]`) then silently misses, so the UI renders the row as "saved but
- * empty" until a tab-switch forces a fresh subscription.
- *
- * When the caller asked for the row back (`select()` on the request), the server response is the
- * authoritative post-write shape, so overlaying that into the cache keeps live collectors
- * consistent with what the server now has. When the response is empty (e.g. a `minimal` INSERT that
- * didn't request returning rows), we fall back to the request body — which is the legacy behavior
- * and matches the existing INSERT/UPSERT overlay semantics.
- *
- * Top-level so unit tests can exercise the branches without faking a full PostgREST delegate.
+ * A returned row stands for the written row at its position when as many came back as were written,
+ * and for the one with its [keyColumns] otherwise (an upsert that ignored duplicates). The server's
+ * values win: they include what it assigned, such as an `id` or `created_at`.
  */
 internal fun preferResponseForCacheOverlay(
     requestBody: JsonArray,
     responseData: String,
     json: Json,
+    keyColumns: List<String> = listOf("id"),
 ): String {
-    return try {
-        when (val element = json.parseToJsonElement(responseData)) {
-            is JsonArray -> if (element.isNotEmpty()) responseData else requestBody.toString()
-            // `single()` returns the one row as an object
-            is JsonObject -> JsonArray(listOf(element)).toString()
-            else -> requestBody.toString()
-        }
-    } catch (_: Exception) {
-        requestBody.toString()
+    val returned = returnedRowsOf(json, responseData)
+    if (returned.isEmpty()) return requestBody.toString()
+    val written = requestBody.filterIsInstance<JsonObject>()
+    val merged = returned.mapIndexed { index, row ->
+        val source =
+            if (returned.size == written.size) written[index]
+            else
+                written.firstOrNull { candidate ->
+                    indexOfKey(listOf(row), candidate, keyColumns) != null
+                }
+        if (source == null) row else JsonObject(row + (source - row.keys))
     }
+    return JsonArray(merged).toString()
 }
