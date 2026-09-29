@@ -10,7 +10,12 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.process.CommandLineArgumentProvider
 
-/** Points the Android driver's native loader at the extracted host binary. */
+/**
+ * Points the Android driver's native loader at the extracted host binary.
+ *
+ * @param directory where [ExtractHostSqliteNative] put the binary.
+ * @param libraryName the binary's file name.
+ */
 internal class HostSqliteNativeArguments(
     @get:InputDirectory @get:PathSensitive(PathSensitivity.NONE) val directory: Provider<Directory>,
     @get:Input val libraryName: String,

@@ -35,6 +35,8 @@ rootProject.name = "supabase-offline-kt-root"
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
+// Each module applies the convention plugins that fit its role (build-logic/src/main/kotlin); a
+// published module also names its artifact in its own gradle.properties.
 include(":supabase-offline-kt")
 
 include(":supabase-offline-kt-testing")

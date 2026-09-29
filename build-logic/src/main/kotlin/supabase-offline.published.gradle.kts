@@ -7,20 +7,23 @@ import org.gradle.api.GradleException
 
 /** A property of the root gradle.properties that every published module needs. */
 private fun requiredGradleProperty(key: String): String =
-    providers.gradleProperty(key).orNull
+    providers.gradleProperty(key).orNull?.takeIf { it.isNotBlank() }
         ?: throw GradleException("$path: gradle.properties has no $key")
 
 group = requiredGradleProperty("GROUP")
 
 version = requiredGradleProperty("VERSION_NAME")
 
-// The Kotlin plugin names the klib and every publication after the project, so the artifact
-// name declared in the module's gradle.properties must be the project's name.
-private val artifactName = findProperty("POM_ARTIFACT_ID")?.toString()
+// The artifact name, POM_ARTIFACT_ID in the module's own gradle.properties, must be the project
+// name: the Kotlin plugin names the klib and every publication after the project.
+private val artifactName: String =
+    findProperty("POM_ARTIFACT_ID")?.toString()?.takeIf { it.isNotBlank() }
+        ?: throw GradleException(
+            "$path: its gradle.properties must name the artifact (POM_ARTIFACT_ID)"
+        )
 
 if (artifactName != name) {
     throw GradleException(
-        "$path: POM_ARTIFACT_ID in its gradle.properties is \"$artifactName\"; a published " +
-            "module declares its artifact name there, and it must be the project name \"$name\""
+        "$path: POM_ARTIFACT_ID is \"$artifactName\", not the project name \"$name\""
     )
 }

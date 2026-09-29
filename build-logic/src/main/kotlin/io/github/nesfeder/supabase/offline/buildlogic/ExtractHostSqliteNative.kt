@@ -34,18 +34,22 @@ internal fun hostSqliteNativeEntry(): String {
 
 /** Copies the host SQLite binary out of the JVM driver artifact. */
 internal abstract class ExtractHostSqliteNative : DefaultTask() {
+    /** The JVM artifact of the bundled driver, `androidx.sqlite:sqlite-bundled-jvm`. */
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val driverJar: ConfigurableFileCollection
 
+    /** The binary's path inside [driverJar], from [hostSqliteNativeEntry]. */
     @get:Input abstract val nativeEntry: Property<String>
 
+    /** Holds the binary alone, at its top level. */
     @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
 
     @get:Inject abstract val archives: ArchiveOperations
 
     @get:Inject abstract val fileSystem: FileSystemOperations
 
+    /** Replaces [outputDirectory]'s contents with the one binary. */
     @TaskAction
     fun extract() {
         val entry = nativeEntry.get()

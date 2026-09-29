@@ -28,13 +28,10 @@ kotlin {
         }
     }
 
-    // Which SQLite the iOS targets link: "bundled" (the default, and what every published artifact
-    // uses) or "system" (Room's NativeSQLiteDriver over the OS libsqlite3). The choice has to be
-    // made at build time. The bundled driver's static library exports the same unprefixed sqlite3_*
-    // symbols as the system library, so in any binary that links it, a NativeSQLiteDriver silently
-    // runs on the bundled SQLite as well; only a build without the bundled library reaches the
-    // system one. The system variant exists to run the iOS engine suite on the system SQLite for
-    // the Swift package, which is to link it:
+    // The SQLite the iOS targets link: "bundled" (the default; every published artifact) or
+    // "system", the OS libsqlite3 the Swift package links. The bundled library exports the same
+    // sqlite3_* symbols, so only a build without it reaches the system one: the choice is per
+    // build. The iOS suite on the system SQLite:
     //
     // ./gradlew :supabase-offline-kt:iosSimulatorArm64Test -Psupabase.offline.iosSqlite=system
     val iosSqlite = providers.gradleProperty("supabase.offline.iosSqlite").getOrElse("bundled")

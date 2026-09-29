@@ -11,6 +11,8 @@ import org.gradle.process.CommandLineArgumentProvider
 /**
  * Passes the checked-in Room schemas to the schema continuity test as [SCHEMA_DIRECTORY_PROPERTY],
  * so the test never depends on its working directory.
+ *
+ * @param directory the module's `schemas/` directory.
  */
 internal class SchemaDirectoryArgument(
     @get:InputDirectory @get:PathSensitive(PathSensitivity.RELATIVE) val directory: File
