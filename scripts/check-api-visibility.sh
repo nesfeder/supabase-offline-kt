@@ -269,7 +269,7 @@ $1 == "DECL" && $4 == "internal" && $5 == "public" {
         printf "public-in-internal-package\t%s\t%s\t%s\tpublic %s in an internal package without %s\n", $2, $3, $7, $6, missing
     }
 }
-$1 == "PUBLISHEDAPI" {
+$1 == "PUBLISHED_API" {
     printf "published-api\t%s\t%s\t%s\t@PublishedApi\n", $2, $3, $4
 }
 AWK
