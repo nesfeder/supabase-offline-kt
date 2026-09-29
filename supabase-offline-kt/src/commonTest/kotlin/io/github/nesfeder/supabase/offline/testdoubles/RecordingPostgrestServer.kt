@@ -46,6 +46,7 @@ internal class RecordingPostgrestServer(
      * @property contentProfile the `Content-Profile` header (the schema of a write), or `null`.
      * @property acceptProfile the `Accept-Profile` header (the schema of a read), or `null`.
      * @property body the request body as text; empty when there is none.
+     * @property accept the `Accept` header, which says the shape of a read's response, or `null`.
      */
     data class RecordedRequest(
         val method: String,
@@ -55,6 +56,7 @@ internal class RecordingPostgrestServer(
         val contentProfile: String?,
         val acceptProfile: String?,
         val body: String,
+        val accept: String? = null,
     )
 
     /** Every request received, in order. */
@@ -73,6 +75,7 @@ internal class RecordingPostgrestServer(
                     contentProfile = request.headers["Content-Profile"],
                     acceptProfile = request.headers["Accept-Profile"],
                     body = request.body.toByteArray().decodeToString(),
+                    accept = request.headers.getAll("Accept")?.joinToString(","),
                 )
                 requests += recorded
                 answer(recorded)
