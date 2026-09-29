@@ -16,7 +16,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResolver
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapperImpl
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
@@ -255,7 +255,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
     private val store: OfflineStore,
     private val sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
     /**
-     * Snapshot of the auth session, forwarded to [OfflineSelectResolver], which reads it once
+     * Snapshot of the auth session, forwarded to [QueryReader], which reads it once
      * before each network SELECT to decide how an empty response is treated: retried while the
      * session restores, authoritative (cache-replacing) when authenticated, dropped when
      * unauthenticated. Defaults to always-[AuthSessionState.AUTHENTICATED] to preserve prior
@@ -263,7 +263,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      */
     private val authSessionState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
     /**
-     * Coordinator forwarded to [OfflineSelectResolver] for single-flight refresh sharing per
+     * Coordinator forwarded to [QueryReader] for single-flight refresh sharing per
      * `(table, signature)` and the live-signature registry backing materialize-on-write.
      *
      * The real client passes its **client-scoped** instance so it is shared across every builder it
@@ -277,7 +277,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
     private val refreshCoordinator: RefreshCoordinator = defaultRefreshCoordinator(),
     /**
      * Internal edge-triggered recovery accelerator (auth restored / connectivity regained)
-     * forwarded to [OfflineSelectResolver] to short-circuit a stalled refresh's backoff. Defaults
+     * forwarded to [QueryReader] to short-circuit a stalled refresh's backoff. Defaults
      * to an empty flow (recovery still happens on the capped schedule) for direct construction.
      */
     private val accelerator: Flow<Unit> = emptyFlow(),
@@ -340,7 +340,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
     )
 
     private val json: Json = OfflineJson
-    private val selectResolver = OfflineSelectResolver(
+    private val queryReader = QueryReader(
         delegate = delegate,
         store = store,
         sdkLogger = sdkLogger,
@@ -353,7 +353,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         columns: Columns,
         readStrategy: ReadStrategy,
         request: SelectRequestBuilder.() -> Unit
-    ): PostgrestResult = operationGate.call { selectResolver.select(columns, readStrategy, request) }
+    ): PostgrestResult = operationGate.call { queryReader.select(columns, readStrategy, request) }
 
     override fun selectAsFlow(
         columns: Columns,
@@ -362,7 +362,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
     ): Flow<OfflineReadResult> {
         // Every strategy one way: refused once closed, counted while collected, ended by close()
         operationGate.ensureOpen()
-        return operationGate.callCollecting(selectResolver.selectAsFlow(columns, readStrategy, request))
+        return operationGate.callCollecting(queryReader.selectAsFlow(columns, readStrategy, request))
     }
 
     // INSERT -------------------------------------------------------------------

@@ -46,7 +46,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.time.ExperimentalTime
 
 /**
- * Integration tests across the real resolver stack: [OfflineSelectResolver] +
+ * Integration tests across the real resolver stack: [QueryReader] +
  * [cacheFirstWithParallelRefresh] + a real [OfflineStore] (in-memory DAO fakes) + a real
  * [RefreshCoordinator]. Only the network SELECT is scripted.
  *
@@ -55,7 +55,7 @@ import kotlin.time.ExperimentalTime
  * sharing, and the Part B removal of the empty-array cache seed.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class OfflineSelectResolverRecoveryTest {
+class QueryReaderRecoveryTest {
 
     private val freshPayload = """[{"id":"project-1"}]"""
 
@@ -1083,7 +1083,7 @@ class OfflineSelectResolverRecoveryTest {
         authState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
         objectDao: FakeObjectDao = FakeObjectDao(),
         store: OfflineStore = buildStore(objectDao),
-    ): OfflineSelectResolver = OfflineSelectResolver(
+    ): QueryReader = QueryReader(
         delegate = wrapper,
         store = store,
         authSessionState = authState,

@@ -39,7 +39,7 @@ import kotlin.time.Duration
 import kotlin.time.ExperimentalTime
 
 /**
- * Thrown by the parallel-refresh side of [OfflineSelectResolver.selectAsFlow] when a network SELECT
+ * Thrown by the parallel-refresh side of [QueryReader.selectAsFlow] when a network SELECT
  * comes back empty from a request that did **not** carry the user's JWT (see
  * [AuthSessionState.RESTORING] and [AuthSessionState.UNAUTHENTICATED] for why such a response says
  * nothing about the user's data). Private to the SDK and treated as a retryable signal by
@@ -107,11 +107,11 @@ internal enum class AuthSessionState {
 }
 
 /**
- * What one [OfflineSelectResolver.performNetworkSelect] call did, beyond the [PostgrestResult] the
+ * What one [QueryReader.fetchAndCache] call did, beyond the [PostgrestResult] the
  * caller ultimately serves.
  *
  * A single `PostgrestResult` cannot answer the questions the restore-window ladder and the flow
- * path's retry both have to ask, because `performNetworkSelect` may legitimately hand back
+ * path's retry both have to ask, because `fetchAndCache` may legitimately hand back
  * something other than the server's own body: a stale-refused response is answered from the cache,
  * a teardown-refused one with a synthesized [EMPTY_JSON_ARRAY], and every accepted response can
  * have pending mutations overlaid on top. Classifying "was this an auth-shaped empty" on that
@@ -150,7 +150,7 @@ private data class NetworkSelectResponse(
  *
  * Supports both suspend (one-shot) and Flow (reactive) APIs.
  */
-internal class OfflineSelectResolver(
+internal class QueryReader(
     private val delegate: PostgrestQueryBuilderWrapper,
     private val store: OfflineStore,
     private val sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
@@ -194,10 +194,10 @@ internal class OfflineSelectResolver(
         return when (readStrategy) {
             is ReadStrategy.NetworkFirst -> {
                 try {
-                    performNetworkSelectWithRestoreRetry(table, columns, request)
+                    fetchWaitingOutRestore(table, columns, request)
                 } catch (exception: Exception) {
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
-                    val cached = performCacheSelect(table, columns, request, readStrategy.cacheDuration)
+                    val cached = readCached(table, columns, request, readStrategy.cacheDuration)
                     if (cached != null) {
                         sdkLogger.warning { "SELECT $table network failed, falling back to cache" }
                         cached
@@ -208,19 +208,19 @@ internal class OfflineSelectResolver(
                 }
             }
             ReadStrategy.NetworkOnly -> {
-                performNetworkSelectWithRestoreRetry(table, columns, request)
+                fetchWaitingOutRestore(table, columns, request)
             }
             is ReadStrategy.CacheFirst -> {
-                val cached = performCacheSelect(table, columns, request, readStrategy.cacheDuration)
+                val cached = readCached(table, columns, request, readStrategy.cacheDuration)
                 if (cached != null) {
                     sdkLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
-                    performNetworkSelectWithRestoreRetry(table, columns, request)
+                    fetchWaitingOutRestore(table, columns, request)
                 }
             }
             is ReadStrategy.CacheOnly -> {
-                val cached = performCacheSelect(table, columns, request, readStrategy.cacheDuration)
+                val cached = readCached(table, columns, request, readStrategy.cacheDuration)
                 if (cached != null) {
                     sdkLogger.info { "SELECT $table served from cache" }
                     cached
@@ -255,7 +255,7 @@ internal class OfflineSelectResolver(
      * between two collections of it is simply not delivered; the next step boundary observes the
      * new state anyway and fires immediately.
      *
-     * Each attempt hands its snapshot to [performNetworkSelect] rather than letting that function
+     * Each attempt hands its snapshot to [fetchAndCache] rather than letting that function
      * take its own, so the authoritative-empty decision and the retry decision can never disagree
      * about the session a request was made under. Emptiness is classified on
      * [NetworkSelectResponse.rawServerPayload] — the body the server actually sent — so a pending
@@ -297,7 +297,7 @@ internal class OfflineSelectResolver(
      * @param request PostgREST request builder for the query.
      * @return The first response that is not a restore-window empty, or the last attempt's response.
      */
-    private suspend fun performNetworkSelectWithRestoreRetry(
+    private suspend fun fetchWaitingOutRestore(
         table: String,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
@@ -308,7 +308,7 @@ internal class OfflineSelectResolver(
         var stepsTaken = 0
 
         while (true) {
-            val response = performNetworkSelect(
+            val response = fetchAndCache(
                 table = table,
                 columns = columns,
                 request = request,
@@ -484,7 +484,7 @@ internal class OfflineSelectResolver(
     ) {
         // Snapshot the session state *before* the request so a session that finishes restoring
         // mid-flight doesn't spuriously suppress a legit-empty response.
-        val response = performNetworkSelect(
+        val response = fetchAndCache(
             table = table,
             columns = columns,
             request = request,
@@ -507,7 +507,7 @@ internal class OfflineSelectResolver(
      * network before the first emission. Reports [RefreshState.Idle] since the network already
      * completed by the time any value is emitted.
      *
-     * The bootstrap goes through [performNetworkSelectWithRestoreRetry] like the one-shot reads do.
+     * The bootstrap goes through [fetchWaitingOutRestore] like the one-shot reads do.
      * This strategy has no self-healing loop behind it — the single bootstrap request *is* the
      * refresh — so without the ladder a cold-start subscription would bootstrap from an RLS-shaped
      * empty, write nothing to the cache, and then sit on the typed no-data state forever while
@@ -524,7 +524,7 @@ internal class OfflineSelectResolver(
                 // Perform network request first to bootstrap the cache. Any network errors will be
                 // thrown and terminate the flow. The result is discarded — the cache write is the
                 // point, and the flow below reads it back.
-                performNetworkSelectWithRestoreRetry(
+                fetchWaitingOutRestore(
                     table = table,
                     columns = columns,
                     request = request,
@@ -560,7 +560,7 @@ internal class OfflineSelectResolver(
      * arrive, **one invocation of this function** issues at most two requests.
      *
      * That is a per-invocation bound, not a per-operation one. A caller that retries this function
-     * — the restore-window ladder in [performNetworkSelectWithRestoreRetry], or the flow path's
+     * — the restore-window ladder in [fetchWaitingOutRestore], or the flow path's
      * self-healing loop — multiplies it by its own attempt budget. The one-shot worst case is
      * therefore four requests (two ladder attempts, each allowed one stale re-fetch), reached only
      * when a mutation burst races an auth restore; the flow path's loop is unbounded in attempts by
@@ -590,7 +590,7 @@ internal class OfflineSelectResolver(
      * @return The served result plus the raw round-trip facts a retrying caller needs to classify
      *   it — see [NetworkSelectResponse].
      */
-    private suspend fun performNetworkSelect(
+    private suspend fun fetchAndCache(
         table: String,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
@@ -688,7 +688,7 @@ internal class OfflineSelectResolver(
         }
     }
 
-    private suspend fun performCacheSelect(
+    private suspend fun readCached(
         table: String,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
@@ -741,7 +741,7 @@ internal class OfflineSelectResolver(
 
     private companion object {
         /**
-         * Follow-up network requests a single [performNetworkSelect] call may issue after the
+         * Follow-up network requests a single [fetchAndCache] call may issue after the
          * store refuses a response as predating a local write. One is enough to converge — the
          * follow-up starts after that write — and a fixed budget makes a mutation burst cost a
          * bounded number of requests instead of a retry storm.

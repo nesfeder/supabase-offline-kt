@@ -23,7 +23,7 @@ import kotlin.test.assertTrue
 
 /**
  * Tests for [cacheFirstWithParallelRefresh] — the self-healing combinator that backs
- * [OfflineSelectResolver]. These lock in the contract the design depends on: cache forwards
+ * [QueryReader]. These lock in the contract the design depends on: cache forwards
  * without waiting on the network, the refresh survives exhaustion and keeps retrying on a capped
  * schedule, an accelerator edge short-circuits the current backoff, the first success ends the
  * loop, and cancellation propagates.

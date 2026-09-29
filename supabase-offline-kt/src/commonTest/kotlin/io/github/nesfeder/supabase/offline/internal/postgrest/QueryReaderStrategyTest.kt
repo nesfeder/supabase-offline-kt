@@ -34,14 +34,14 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 
 /**
- * Read-strategy semantics of [OfflineSelectResolver], one strategy and one failure class at a time:
+ * Read-strategy semantics of [QueryReader], one strategy and one failure class at a time:
  * which strategies fall back to cache on a connectivity failure, which honour a cache duration,
  * which never touch the network, and what each one logs.
  *
  * Only the network SELECT is scripted (a [FakePostgrestQueryBuilderWrapper]); the cache is a real
  * `OfflineStore` over the in-memory DAO fakes.
  */
-class OfflineSelectResolverStrategyTest {
+class QueryReaderStrategyTest {
 
     private val postgrest: Postgrest = newTestSupabaseClient().postgrest
 
@@ -68,8 +68,8 @@ class OfflineSelectResolverStrategyTest {
         },
     )
 
-    private fun resolver(scope: CoroutineScope, logger: RecordingOfflineLogger? = null): OfflineSelectResolver =
-        OfflineSelectResolver(
+    private fun resolver(scope: CoroutineScope, logger: RecordingOfflineLogger? = null): QueryReader =
+        QueryReader(
             delegate = wrapper,
             store = store,
             sdkLogger = logger?.asSdkLogger() ?: SdkLogger(null, OfflineLogLevel.INFO),

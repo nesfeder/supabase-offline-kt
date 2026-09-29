@@ -16,7 +16,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * [RefreshState.Stalled].
  *
  * Internal rather than private because the one-shot restore-window ladder in
- * [OfflineSelectResolver] derives its wait budget from this: the two ladders are deliberately the
+ * [QueryReader] derives its wait budget from this: the two ladders are deliberately the
  * same shape, and deriving one from the other keeps them from drifting apart if this is retuned.
  */
 internal const val FAST_LADDER_ATTEMPTS: Int = 4
@@ -45,7 +45,7 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long = when (failures) 
 /**
  * Combinator that forwards emissions from [cache] to the downstream collector while running a
  * self-healing network [refresh] in parallel. Used by
- * [OfflineSelectResolver][io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResolver] to refresh
+ * [QueryReader][io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader] to refresh
  * the cache from the network without blocking cached emissions.
  *
  * Why this exists as a separate helper: the original implementation wrapped the network refresh in
