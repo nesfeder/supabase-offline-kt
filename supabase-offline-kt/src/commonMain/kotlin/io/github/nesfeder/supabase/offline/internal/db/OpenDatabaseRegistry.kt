@@ -67,9 +67,15 @@ internal object OpenDatabaseRegistry {
                 ?: return "A SupabaseOfflineClient is already open on $databasePath or its data directory. Reuse that " +
                     "client, or close() it before creating another: two clients on one database would each " +
                     "replay the same queued writes."
+            val stillRunning = callsInFlight()
+            if (stillRunning == 0) {
+                return "The SupabaseOfflineClient on $databasePath or its data directory is still closing: its last " +
+                    "call has finished and it is releasing the database now. Call close() again on it to wait for " +
+                    "the release, then create the new client."
+            }
             return "The SupabaseOfflineClient on $databasePath or its data directory is still closing: " +
-                "${callsInFlight()} call(s) it had in flight have not finished. It releases the database as soon as " +
-                "they do; create the new client after that."
+                "$stillRunning call(s) it had in flight have not finished. It releases the database as soon as " +
+                "they do; call close() again on it to wait for that, then create the new client."
         }
 
         /** Frees them for another client. Safe to call more than once. */

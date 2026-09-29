@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.flow.toList
@@ -429,6 +430,70 @@ class SupabaseOfflineClientCloseTest {
     }
 
     @Test
+    fun every_close_that_returns_before_the_release_leaves_the_database_marked_still_closing() = runTest {
+        // Which close() reports first is a race, so run it enough times to see both orders
+        repeat(MARKING_ORDERINGS) { attempt ->
+            // Given — a write on the wire, held past close()'s wait
+            val held = CompletableDeferred<Unit>()
+            val arrived = CompletableDeferred<Unit>()
+            val server = RecordingPostgrestServer(
+                answer = {
+                    arrived.complete(Unit)
+                    held.await()
+                    okJson("[]")
+                },
+            )
+            val marked = AtomicInt(0)
+            val client = newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                coordinatorScope = callerScope,
+                closeWait = IDLE_CLOSE_WAIT,
+                onStillClosing = { marked.addAndFetch(1) },
+            )
+            val write = callerScope.async { runCatching { client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) }) } }
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
+
+            // When — two close() calls at once, both past their wait
+            val markedWhenEachReturned = withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) {
+                    List(2) { callerScope.async { client.close(); marked.load() } }.map { close -> close.await() }
+                }
+            }
+            held.complete(Unit)
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { write.await() } }
+
+            // Then — neither returned before the database was marked as still closing
+            assertTrue(markedWhenEachReturned.all { count -> count > 0 }, "attempt $attempt: a close() returned before the mark ($markedWhenEachReturned)")
+        }
+    }
+
+    @Test
+    fun a_flow_made_after_close_reports_the_closed_error_through_its_own_error_channel() = runTest {
+        // Given — a closed client, and a builder obtained before it closed
+        val client = newTestOfflineClient(supabase = RecordingPostgrestServer().supabaseClient(), coordinatorScope = callerScope)
+        val builder = client.from("todos")
+        client.close()
+        val flows: List<Pair<String, () -> Flow<*>>> =
+            listOf<Pair<String, () -> Flow<*>>>(
+                "pendingMutationCountFlow()" to { client.pendingMutationCountFlow() },
+                "pendingMutationCountFlow(table)" to { client.pendingMutationCountFlow("todos") },
+            ) + FlowReadStrategy.entries.map { strategy -> "selectAsFlow($strategy)" to { builder.selectAsFlow(readStrategy = strategy) } }
+
+        for ((name, flowOf) in flows) {
+            // When — the flow is made and collected with an operator that catches its failure
+            val caught = mutableListOf<Throwable>()
+            val escaped = withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) { runCatching { flowOf().catch { failure -> caught += failure }.collect { } }.exceptionOrNull() }
+            }
+
+            // Then — catch saw the closed error, and nothing was thrown past it
+            assertEquals(null, escaped, "$name threw past catch: $escaped")
+            assertEquals(1, caught.size, "$name: catch saw $caught")
+            assertClientClosedError(caught.single(), "$name made after close()")
+        }
+    }
+
+    @Test
     fun a_closed_client_refuses_every_call() = runTest {
         // Given
         val client = newTestOfflineClient(coordinatorScope = callerScope)
@@ -459,6 +524,7 @@ class SupabaseOfflineClientCloseTest {
 
         const val STUCK_IN_ITS_BODY = "a collector stuck in its body"
         const val NEVER_READ_AGAIN = "a produceIn channel never read again"
+        const val MARKING_ORDERINGS = 20
 
         /** An idle client's work can never finish, so its `close()` always waits this long. */
         val IDLE_CLOSE_WAIT: Duration = 100.milliseconds

@@ -30,6 +30,21 @@ class OpenDatabaseRegistryTest {
     }
 
     @Test
+    fun a_database_whose_last_call_has_just_finished_says_it_is_about_to_be_released() {
+        // Given — a claim still closing, with every call finished but the release not yet run
+        val registration = OpenDatabaseRegistry.register(databasePath)
+        registration.markStillClosing { 0 }
+
+        // When
+        val failure = assertFailsWith<IllegalStateException> { OpenDatabaseRegistry.register(databasePath) }
+        registration.release()
+
+        // Then — it does not claim calls it no longer has, and says how to wait for the release
+        val message = failure.message.orEmpty()
+        assertTrue("still closing" in message && "0 call" !in message && "close() again" in message, "the message was: $message")
+    }
+
+    @Test
     fun a_database_held_by_an_open_client_asks_for_it_to_be_closed() {
         // Given
         val registration = OpenDatabaseRegistry.register(databasePath)
