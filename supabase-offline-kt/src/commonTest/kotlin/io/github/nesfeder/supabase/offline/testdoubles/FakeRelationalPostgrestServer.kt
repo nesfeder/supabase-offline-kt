@@ -172,7 +172,7 @@ internal class FakeRelationalPostgrestServer(
         if (row.containsKey(primaryKey)) row else JsonObject(row + (primaryKey to JsonPrimitive(key) as JsonElement))
 
     private companion object {
-        val NON_FILTER_PARAMS = setOf("select", "columns", "on_conflict")
+        val NON_FILTER_PARAMS = setOf("select", "columns", "on_conflict", "order", "limit", "offset")
         const val CONTENT_RANGE = "Content-Range"
     }
 }
