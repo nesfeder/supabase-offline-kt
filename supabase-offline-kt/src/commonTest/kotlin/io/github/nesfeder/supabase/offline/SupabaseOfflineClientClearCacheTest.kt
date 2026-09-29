@@ -2,18 +2,21 @@
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.storage.writeBytes
 import io.ktor.client.engine.mock.MockEngine
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
 import okio.Path
+import okio.Path.Companion.toPath
 import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.time.ExperimentalTime
 
@@ -44,7 +47,8 @@ class SupabaseOfflineClientClearCacheTest {
             baseDirectoryProvider = { baseDir },
         )
         val storageFile = baseDir / "storage" / "avatars" / "me.png"
-        writeBytes(storageFile, "cached-bytes".encodeToByteArray(), overwrite = true)
+        FileSystem.SYSTEM.createDirectories(storageFile.parent!!)
+        FileSystem.SYSTEM.write(storageFile) { write("cached-bytes".encodeToByteArray()) }
         assertTrue(FileSystem.SYSTEM.exists(storageFile), "precondition: storage file on disk")
 
         // When the entire local cache is cleared (logout / account switch / account deletion)
@@ -52,5 +56,26 @@ class SupabaseOfflineClientClearCacheTest {
 
         // Then the on-disk storage tree is gone
         assertFalse(FileSystem.SYSTEM.exists(baseDir / "storage"), "storage directory wiped from disk")
+    }
+
+    @Test
+    fun clearing_deletes_every_row_once_and_scrubs_the_database_after() = runTest {
+        // Given — a client with a cached storage row, whose database scrub records what it found
+        val storageDao = RecordingStorageDao()
+        val store = newTestOfflineStore(storageDao = storageDao)
+        store.addStorage("avatars", "me.png", "/tmp/me.png".toPath(), 3, null)
+        var rowsLeftAtScrub: Int? = null
+        val client = newTestOfflineClient(
+            supabase = newTestSupabaseClient(plugins = {}),
+            store = store,
+            scrubDatabase = { rowsLeftAtScrub = storageDao.all().size },
+        )
+
+        // When
+        client.clearAllCache()
+
+        // Then — one clear, not one per lock holder, and the scrub ran after its deletes
+        assertEquals(1, storageDao.clears)
+        assertEquals(0, rowsLeftAtScrub, "the scrub ran before the rows were deleted")
     }
 }

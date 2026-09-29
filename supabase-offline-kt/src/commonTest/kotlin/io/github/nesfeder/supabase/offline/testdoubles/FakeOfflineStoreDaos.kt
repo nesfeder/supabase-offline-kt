@@ -65,6 +65,13 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     var onAllForTableSnapshot: (suspend (table: String) -> Unit)? = null
 
     /**
+     * Optional suspension point inside [get], invoked after the row the call will return has been
+     * read and before it is returned: the seam where a first load of a record can be parked while a
+     * clear runs. `null` (the default) returns immediately.
+     */
+    var onGetSnapshot: (suspend (table: String, signature: String) -> Unit)? = null
+
+    /**
      * When it returns `true` for a row, [upsert] of that row fails with an [IllegalStateException]
      * instead of writing it, as a full disk or a corrupt page would. `null` (the default) never fails.
      */
@@ -99,6 +106,12 @@ internal class FakeObjectDao : InMemoryObjectDao() {
 
     /** Every row of [table], without going through the suspend contract. */
     fun rowsOf(table: String): List<ObjectRow> = rows.values.filter { row -> row.table == table }
+
+    override suspend fun get(table: String, signature: String): ObjectRow? {
+        val row = super.get(table, signature)
+        onGetSnapshot?.invoke(table, signature)
+        return row
+    }
 
     override suspend fun allForTable(table: String): List<ObjectRow> {
         val snapshot = super.allForTable(table)

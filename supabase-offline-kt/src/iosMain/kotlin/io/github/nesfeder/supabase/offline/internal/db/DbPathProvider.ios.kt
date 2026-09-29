@@ -23,6 +23,6 @@ internal class IosDbPathProvider : DbPathProvider {
             error = null,
         )
         val basePath = requireNotNull(url?.path) { "Could not resolve Documents directory path" }
-        return ("$basePath/supabase_offline.db").toPath()
+        return ("$basePath/$OFFLINE_DATABASE_FILE_NAME").toPath()
     }
 }

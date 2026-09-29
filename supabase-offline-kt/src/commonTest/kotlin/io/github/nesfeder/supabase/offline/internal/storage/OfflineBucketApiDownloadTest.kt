@@ -3,7 +3,9 @@ package io.github.nesfeder.supabase.offline.internal.storage
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.test.runTest
@@ -19,6 +21,8 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /**
  * The download-through-cache matrix, ported from the previous standalone engine for the variants
@@ -29,18 +33,18 @@ class OfflineBucketApiDownloadTest {
 
     private lateinit var baseDir: Path
     private lateinit var delegate: FakeBucketApi
-    private lateinit var api: OfflineBucketApi
+    private lateinit var api: CachingBucketApi
     private val logger = RecordingOfflineLogger()
 
     @BeforeTest
     fun setUp() {
         baseDir = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-bucket-download-${Random.nextLong()}"
         delegate = FakeBucketApi(bucketId = BUCKET)
-        api = OfflineBucketApi(
+        api = newTestBucketApi(
             delegate = delegate,
-            offlineStore = newTestOfflineStore(),
+            baseDirectory = baseDir,
+            store = newTestOfflineStore(),
             sdkLogger = logger.asSdkLogger(),
-            baseDirectoryProvider = { baseDir },
         )
     }
 
@@ -68,7 +72,7 @@ class OfflineBucketApiDownloadTest {
 
         // Then — returned, and on disk
         assertContentEquals(BYTES, downloaded)
-        assertContentEquals(BYTES, readBytesOrNull(resolveLocalPath(baseDir, BUCKET, PATH)))
+        assertContentEquals(BYTES, FileSystem.SYSTEM.read(assertNotNull(objectFilePathOrNull(baseDir, BUCKET, PATH))) { readByteArray() })
         assertEquals(listOf(PATH), delegate.authenticatedDownloadPaths)
     }
 
@@ -183,7 +187,7 @@ class OfflineBucketApiDownloadTest {
 
         // Then
         assertEquals(
-            listOf("Storage download $BUCKET/$PATH failed, serving from disk cache"),
+            listOf("Storage download from $BUCKET failed; serving the cached copy"),
             messagesAt(OfflineLogLevel.WARNING),
         )
     }
@@ -198,7 +202,7 @@ class OfflineBucketApiDownloadTest {
 
         // Then
         assertEquals(
-            listOf("Storage download $BUCKET/$PATH failed and no cache available"),
+            listOf("Storage download from $BUCKET failed and nothing is cached"),
             messagesAt(OfflineLogLevel.ERROR),
         )
     }
@@ -228,7 +232,7 @@ class OfflineBucketApiDownloadTest {
 
         // Then
         assertEquals(
-            listOf("Storage download $BUCKET/$PATH failed, serving from disk cache"),
+            listOf("Storage download from $BUCKET failed; serving the cached copy"),
             messagesAt(OfflineLogLevel.WARNING),
         )
     }
@@ -243,9 +247,29 @@ class OfflineBucketApiDownloadTest {
 
         // Then
         assertEquals(
-            listOf("Storage download $BUCKET/$PATH failed and no cache available"),
+            listOf("Storage download from $BUCKET failed and nothing is cached"),
             messagesAt(OfflineLogLevel.ERROR),
         )
+    }
+
+    @Test
+    fun no_message_at_info_or_above_names_the_object_path() = runTest {
+        // Given — every outcome a download can log: success, fallback, nothing cached, not found
+        delegate.onDownload = { BYTES }
+        api.downloadPublic(PATH) { }
+        delegate.onDownload = { throw IOException("network unreachable") }
+        api.downloadPublic(PATH) { }
+        assertFailsWith<IOException> { api.downloadPublic("folder/never-cached.bin") { } }
+        delegate.onDownload = { throw notFoundRestException() }
+        assertFailsWith<Exception> { api.downloadPublic(PATH) { } }
+
+        // When
+        val visible = logger.entries.filter { it.level != OfflineLogLevel.DEBUG }.map { it.message }
+
+        // Then — object paths can name people ("jane-doe/passport.jpg"); they stay out of every log
+        // an app is likely to forward to a crash reporter
+        assertTrue(visible.isNotEmpty(), "expected the fallback and failures to be logged")
+        assertTrue(visible.none { "folder" in it || "file.bin" in it || "never-cached" in it }, "paths leaked: $visible")
     }
 
     private fun messagesAt(level: OfflineLogLevel): List<String> = logger.entriesAt(level).map { it.message }

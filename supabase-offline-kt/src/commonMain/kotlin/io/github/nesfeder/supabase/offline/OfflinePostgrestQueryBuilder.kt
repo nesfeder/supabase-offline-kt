@@ -2,6 +2,7 @@
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
@@ -9,6 +10,7 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
@@ -35,9 +37,6 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.KSerializer
@@ -78,15 +77,18 @@ public interface OfflinePostgrestQueryBuilder {
     ): PostgrestResult
 
     /**
-     * Reactive read that surfaces per-query read+refresh state in-band as [OfflineReadResult]: the
-     * background [RefreshState] (so a consumer can tell "refresh failed, showing stale/empty cache"
-     * from "genuinely empty") and the typed "no data yet" state (a `null` result) that replaces the
-     * old fabricated empty-array cache seed.
+     * Reactive read that surfaces per-query read and refresh state in-band as [OfflineReadResult].
+     * That is the background [RefreshState] (so a consumer can tell "refresh failed, showing
+     * stale/empty cache" from "genuinely empty") and the typed "no data yet" state (a `null` result)
+     * that replaces the old fabricated empty-array cache seed.
      *
      * Consumers that want today's instant-empty-state rendering map the no-data case to
      * `emptyList()` in their repository; consumers that want a Loading state until data is known
      * leave the no-data emissions unmapped. [RefreshState] is available for a future refresh
      * affordance and may be ignored today.
+     *
+     * Every strategy ends the same way when the client closes: a collection live at
+     * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one made after it.
      *
      * @param columns Columns to select.
      * @param readStrategy Flow read strategy.
@@ -304,6 +306,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
         sdkLogger = sdkLogger,
         currentIdentity = queueIdentity,
     ),
+    /** The client's gate: every read and write passes it, so the client's close waits for them. */
+    private val operationGate: ClientOperationGate = ClientOperationGate(),
 ) : OfflinePostgrestQueryBuilder {
 
     constructor(
@@ -321,6 +325,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             sdkLogger = sdkLogger,
             currentIdentity = queueIdentity,
         ),
+        operationGate: ClientOperationGate = ClientOperationGate(),
     ) : this(
         delegate = PostgrestQueryBuilderWrapperImpl(delegate),
         store = store,
@@ -331,6 +336,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         queueIdentity = queueIdentity,
         requestSync = requestSync,
         headSender = headSender,
+        operationGate = operationGate,
     )
 
     private val json: Json = OfflineJson
@@ -347,16 +353,16 @@ internal class OfflinePostgrestQueryBuilderImpl(
         columns: Columns,
         readStrategy: ReadStrategy,
         request: SelectRequestBuilder.() -> Unit
-    ): PostgrestResult {
-        return selectResolver.select(columns, readStrategy, request)
-    }
+    ): PostgrestResult = operationGate.call { selectResolver.select(columns, readStrategy, request) }
 
     override fun selectAsFlow(
         columns: Columns,
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit
     ): Flow<OfflineReadResult> {
-        return selectResolver.selectAsFlow(columns, readStrategy, request)
+        // Every strategy one way: refused once closed, counted while collected, ended by close()
+        operationGate.ensureOpen()
+        return operationGate.callCollecting(selectResolver.selectAsFlow(columns, readStrategy, request))
     }
 
     // INSERT -------------------------------------------------------------------
@@ -656,6 +662,18 @@ internal class OfflinePostgrestQueryBuilderImpl(
         performOnline: suspend () -> PostgrestResult,
         applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
+    ): MutationOutcome = operationGate.call {
+        executeMutationNow(verbLabel, table, mutationStrategy, performOnline, applyOnlineSuccessOverlay, captureForQueue)
+    }
+
+    /** [executeMutation]'s body, run while the call holds the client's gate. */
+    private suspend fun executeMutationNow(
+        verbLabel: String,
+        table: String,
+        mutationStrategy: MutationStrategy,
+        performOnline: suspend () -> PostgrestResult,
+        applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
+        captureForQueue: () -> QueueCapture,
     ): MutationOutcome {
         if (mutationStrategy == MutationStrategy.OnlineOnly) {
             val result = performOnline()
@@ -824,14 +842,10 @@ internal class OfflinePostgrestQueryBuilderImpl(
     companion object {
 
         /**
-         * A fresh, standalone [RefreshCoordinator] for direct/test construction only — the real
-         * client always injects its client-scoped instance so single-flight refresh spans every
-         * builder. The scope is a plain [SupervisorJob] on [Dispatchers.Default]; because the
-         * coordinator's shares use `WhileSubscribed(0, 0)`, no coroutine outlives an active
-         * collection, so a short-lived subscription leaves nothing running behind it.
+         * A standalone coordinator for a builder constructed directly, as tests do; the client
+         * injects its own. Its engine scope contains any failure a share leaks.
          */
-        private fun defaultRefreshCoordinator(): RefreshCoordinator =
-            RefreshCoordinator(CoroutineScope(SupervisorJob() + Dispatchers.Default))
+        private fun defaultRefreshCoordinator(): RefreshCoordinator = RefreshCoordinator(newEngineScope(sdkLogger = null))
     }
 }
 

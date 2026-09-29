@@ -588,6 +588,41 @@ internal class OfflineStore(
 
     private fun storageKey(bucketId: String, path: String) = "$bucketId::$path"
 
+    /**
+     * The storage rows of one object: its own and those of its image-transform variants.
+     *
+     * @param bucketId the bucket.
+     * @param path the object path.
+     * @param variantPrefix [path] followed by the variant separator.
+     * @return the rows.
+     */
+    suspend fun storageRowsForObject(bucketId: String, path: String, variantPrefix: String): List<StorageRow> =
+        storageDao.forObject(bucketId, path, variantPrefix)
+
+    /** Every storage row. */
+    suspend fun allStorageRows(): List<StorageRow> = storageDao.all()
+
+    /** The summed recorded size of every cached file, in bytes. */
+    suspend fun totalStorageSizeBytes(): Long = storageDao.totalSizeBytes()
+
+    /**
+     * Writes [row] back as it was, replacing whatever row has its key.
+     *
+     * @param row the row to restore.
+     */
+    suspend fun restoreStorageRow(row: StorageRow) {
+        storageDao.upsert(row)
+    }
+
+    /**
+     * Deletes the storage row with [key].
+     *
+     * @param key the row's key, `"$bucket::$path"`.
+     */
+    suspend fun deleteStorageRow(key: String) {
+        storageDao.delete(key)
+    }
+
     /* ────────────────────────────── Mutation queue ────────────────────────────── */
 
     /**

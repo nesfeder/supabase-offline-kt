@@ -2,15 +2,15 @@
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.DEFAULT_CACHE_SIZE_BYTES
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.MIN_CACHE_SIZE_BYTES
+import io.github.nesfeder.supabase.offline.internal.db.BackupExclusionCallback
 import io.github.nesfeder.supabase.offline.internal.db.IosDbPathProvider
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAME
 import io.github.nesfeder.supabase.offline.internal.db.getDatabaseBuilder
 import io.github.nesfeder.supabase.offline.internal.db.getRoomDatabase
+import io.github.nesfeder.supabase.offline.internal.openOfflineClient
 import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
+import io.github.nesfeder.supabase.offline.internal.storage.excludeFromBackup
 import io.github.jan.supabase.AccessTokenProvider
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
@@ -33,7 +33,10 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.serializer
+import okio.FileSystem
+import okio.IOException
 import okio.Path
+import okio.SYSTEM
 
 /**
  * Factory for creating a Supabase client preconfigured with PostgREST
@@ -59,7 +62,11 @@ public object SupabaseFactory {
      * @param supabaseUrl  Your Supabase URL (e.g. "https://abc.supabase.co")
      * @param supabaseAnonKey  Anon/API key
      * @param accessTokenProvider Optional provider for access tokens
+     * @throws IllegalStateException when another open client already uses the same database or
+     *   data directory; other failures to open it (a full disk, an unreadable file) are thrown too.
+     *   Swift receives each as a thrown error.
      */
+    @Throws(Exception::class)
     public fun offlineClientKt(
         supabaseUrl: String,
         supabaseAnonKey: String,
@@ -92,6 +99,16 @@ public object SupabaseFactory {
 /**
  * Construct an offline-aware Supabase client reusing an **existing** [SupabaseClient].
  *
+ * The database is `Documents/supabase_offline.db` and downloaded files live under
+ * `Documents/supabase_offline`, or both in [SupabaseOfflineConfig.offlineStoragePath] when that is
+ * set. Earlier versions kept the database in `Documents` whatever the configuration said; the first
+ * client created with a configured directory moves it there, unsent writes and all. The database
+ * and the file cache are excluded from iCloud and device backups: they are re-creatable, and one
+ * user's.
+ *
+ * Create one client per database and keep it: while it is open, creating another on the same
+ * database throws. [SupabaseOfflineClient.close] releases it.
+ *
  * This wraps your client with:
  * - PostgREST passthrough for writes (insert/upsert/update/delete)
  * - SELECT that caches server payloads under stable signatures & falls back when offline
@@ -121,55 +138,37 @@ public object SupabaseFactory {
  * let data = Data(res.data.utf8)
  * let items = try JSONDecoder().decode([Asset].self, from: data)
  * ```
+ *
+ * @throws IllegalStateException when another open client already uses the same database or data
+ *   directory; other failures to open it (a full disk, an unreadable file) are thrown too. Swift
+ *   receives each as a thrown error.
  */
+@Throws(Exception::class)
 public fun createSupabaseOfflineClient(
     supabase: SupabaseClient,
     config: SupabaseOfflineConfig,
 ): SupabaseOfflineClient {
-    val dbPathProvider = IosDbPathProvider()
-    val dbPath = dbPathProvider.dbPath().toString()
-    val builder = getDatabaseBuilder(dbPath)
-    val db = getRoomDatabase(builder)       // shared KMP Room db
-
-    // Resolve base directory for cached Storage files, preferring
-    // configuration over the explicit parameter, then falling back
-    // to the original platform default.
-    val baseDirPath = config.offlineStoragePath ?: PlatformBaseDirectory().path
-    val baseDirProvider = { baseDirPath }
-
-    val maxDbSizeBytes = if (config.cacheSizeBytes == CACHE_SIZE_UNLIMITED) {
-        // Unlimited cache: disable size-based eviction.
-        null
-    } else {
-        // Enforce a minimum on-disk DB size so callers cannot configure a
-        // limit below the typical minimum Room database file size.
-        maxOf(config.cacheSizeBytes, MIN_CACHE_SIZE_BYTES)
+    val configuredDirectory = config.offlineStoragePath
+    val dataDirectory = configuredDirectory ?: PlatformBaseDirectory().path
+    if (configuredDirectory == null) {
+        // The default data directory is the SDK's own; exclude all of it, whatever it later holds.
+        try {
+            FileSystem.SYSTEM.createDirectories(dataDirectory)
+            excludeFromBackup(dataDirectory)
+        } catch (_: IOException) {
+            // Best effort: the cache directories inside it are excluded on their own as well.
+        }
     }
-
-    val cacheSettings = OfflineCacheSettings(
-        maxDbSizeBytes = maxDbSizeBytes,
-        // Evict a small batch of rows per pass; the exact size reduction per
-        // batch depends on payload sizes and SQLite page layout.
-        evictionBatchSize = 10,
-        // Try to keep at least ~50 MB of cached data even during aggressive
-        // cleanup so we don't wipe everything under normal circumstances.
-        minRetainedBytes = 50L * 1024L * 1024L,   // ~50 MB
-    )
-
-    val store = OfflineStore(
-        objectDao = db.objectDao(),
-        storageDao = db.storageDao(),
-        mutationDao = db.mutationDao(),
-        dbPathProvider = dbPathProvider,
-        settings = cacheSettings,
-    )
-
-    return SupabaseOfflineClientImpl(
+    val defaultDatabasePath = IosDbPathProvider().dbPath()
+    return openOfflineClient(
         supabase = supabase,
-        store = store,
-        baseDirectoryProvider = baseDirProvider,
-        sdkLogger = SdkLogger(config.logger, config.minLogLevel),
-        networkAvailability = config.networkAvailability,
+        config = config,
+        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
+        dataDirectory = dataDirectory,
+        openDatabase = { databasePath ->
+            getRoomDatabase(getDatabaseBuilder(databasePath.toString()).addCallback(BackupExclusionCallback(databasePath)))
+        },
+        defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
     )
 }
 

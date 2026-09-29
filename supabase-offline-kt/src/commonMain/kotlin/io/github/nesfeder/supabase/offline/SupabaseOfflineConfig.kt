@@ -31,12 +31,19 @@ public data class SupabaseOfflineConfig(
     val cacheSizeBytes: Long = DEFAULT_CACHE_SIZE_BYTES,
 
     /**
-     * Optional explicit path for where offline data (database and cached
-     * files) should be stored.
+     * Optional directory for all offline data: the database (`supabase_offline.db`) and the Storage
+     * file cache (`storage/` and `storage-hashed/`).
      *
-     * If left as `null`, a platform-specific sensible default is used by
-     * the corresponding `createSupabaseOfflineClient` factory. If both the
-     * factory parameter and this property are provided, this property wins.
+     * When `null` (the default), each platform keeps its original locations: the database in the
+     * app's database directory on Android and in Documents on iOS, and the files under
+     * `<filesDir>/supabase_offline` on Android and `Documents/supabase_offline` on iOS.
+     *
+     * Setting it moves the database as well as the files. Earlier versions kept the database at the
+     * default location whatever this said, so when the directory has no database yet and the
+     * default location has one, the first client created moves it here, unsent writes and all.
+     * When it cannot be moved, or another open client holds it, the default database stays in use
+     * and a warning is logged. When both locations hold a database, this one is used and a warning
+     * says the other was left where it is.
      */
     val offlineStoragePath: Path? = null,
 
@@ -75,6 +82,17 @@ public data class SupabaseOfflineConfig(
      * so the SDK takes no dependency on a connectivity library.
      */
     val networkAvailability: Flow<Boolean>? = null,
+
+    /**
+     * Maximum size, in bytes, of the Storage file cache (downloaded objects and their image-transform
+     * variants).
+     *
+     * When a download takes the cache past this bound, the least recently used files are deleted
+     * until it fits again; a file being read at that moment, and the one just downloaded, are never
+     * deleted, so one object larger than the bound stays until something newer replaces it. Set
+     * [CACHE_SIZE_UNLIMITED] for no bound. Values below zero, other than that one, count as zero.
+     */
+    val fileCacheSizeBytes: Long = DEFAULT_FILE_CACHE_SIZE_BYTES,
 ) {
 
     public companion object {
@@ -96,5 +114,8 @@ public data class SupabaseOfflineConfig(
          * coerced to this minimum.
          */
         public const val MIN_CACHE_SIZE_BYTES: Long = 4_096L
+
+        /** Default bound of the Storage file cache ([fileCacheSizeBytes]): 256 MiB. */
+        public const val DEFAULT_FILE_CACHE_SIZE_BYTES: Long = 256L * 1024L * 1024L
     }
 }

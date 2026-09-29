@@ -7,24 +7,37 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
+import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
+import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
+import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
+import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
+import io.github.jan.supabase.storage.BucketApi
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
+import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
+import okio.SYSTEM
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration
 
 /*
  * The one place the engine's tests build the offline stack. Start here when writing a test:
@@ -121,8 +134,16 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  * @param store the offline store.
  * @param baseDirectoryProvider base directory for downloaded storage files.
  * @param sdkLogger the SDK logger.
- * @param coordinatorScope scope for the client's background work (refresh loops, replay passes it
- *   starts itself); pass `runTest`'s `backgroundScope` to drive it from the test scheduler.
+ * @param onClose what the client's `close()` releases, as the factories wire the database.
+ * @param coordinatorScope the parent of the client's own scope, whose dispatcher runs its background
+ *   work (refresh loops, replay passes it starts itself); pass `runTest`'s `backgroundScope` to drive
+ *   it from the test scheduler.
+ * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
+ *   database's scrub.
+ * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose
+ *   background work can never run (see [idleCoroutineScope]): its `close()` always waits it out.
+ * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
+ *   factories tell the registry; it is handed the count of calls still in flight.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -130,14 +151,95 @@ internal fun newTestOfflineClient(
     store: OfflineStore = newTestOfflineStore(),
     baseDirectoryProvider: () -> Path = { "/tmp".toPath() },
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-    coordinatorScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    onClose: () -> Unit = {},
+    coordinatorScope: CoroutineScope = newEngineScope(sdkLogger),
+    scrubDatabase: suspend () -> Unit = {},
+    closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
+    onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
 ): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
     supabase = supabase,
     store = store,
     baseDirectoryProvider = baseDirectoryProvider,
     sdkLogger = sdkLogger,
     coordinatorScope = coordinatorScope,
+    scrubDatabase = scrubDatabase,
+    onClose = onClose,
+    closeWait = closeWait,
+    onStillClosing = onStillClosing,
 )
+
+/**
+ * Builds the Storage file cache over [store], under [baseDirectory] (a real directory: the storage
+ * tests run against the real file system).
+ *
+ * @param baseDirectory the offline data directory; files land under `<baseDirectory>/storage`.
+ * @param store the offline store holding the cache rows.
+ * @param sdkLogger the SDK logger.
+ * @param fileSystem the file system; pass a [FakeFailingFileSystem] to make it fail.
+ * @param maxSizeBytes the size bound, or `null` for none.
+ * @param nowMillis the clock use times are stamped from.
+ * @return the cache.
+ */
+internal fun newTestFileCache(
+    baseDirectory: Path,
+    store: OfflineStore = newTestOfflineStore(),
+    sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    fileSystem: FileSystem = FileSystem.SYSTEM,
+    maxSizeBytes: Long? = null,
+    nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+): StorageFileCache = StorageFileCache(
+    store = store,
+    dataDirectoryProvider = { baseDirectory },
+    maxSizeBytes = maxSizeBytes,
+    sdkLogger = sdkLogger,
+    fileSystem = fileSystem,
+    nowMillis = nowMillis,
+)
+
+/**
+ * Builds the offline bucket over [delegate], caching under [baseDirectory] (a real directory: the
+ * storage tests run against the real file system).
+ *
+ * @param delegate the bucket the offline one forwards to: a [FakeBucketApi], or a real one from a
+ *   [RecordingStorageServer] client.
+ * @param baseDirectory the offline data directory; files land under `<baseDirectory>/storage`.
+ * @param store the offline store holding the cache rows.
+ * @param sdkLogger the SDK logger.
+ * @param cache the file cache; by default one over [baseDirectory], [store] and [sdkLogger].
+ * @param backgroundScope where the bucket waits for resumable uploads to finish; by default an
+ *   engine scope of its own, as the client's is.
+ * @param operationGate the gate every member passes; pass one to close it as the client's close does.
+ * @return the offline bucket.
+ */
+internal fun newTestBucketApi(
+    delegate: BucketApi,
+    baseDirectory: Path,
+    store: OfflineStore = newTestOfflineStore(),
+    sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    cache: StorageFileCache = newTestFileCache(baseDirectory = baseDirectory, store = store, sdkLogger = sdkLogger),
+    backgroundScope: CoroutineScope = newEngineScope(sdkLogger),
+    operationGate: ClientOperationGate = ClientOperationGate(),
+): CachingBucketApi = CachingBucketApi(
+    delegate = delegate,
+    cache = cache,
+    sdkLogger = sdkLogger,
+    backgroundScope = backgroundScope,
+    operationGate = operationGate,
+)
+
+/**
+ * Runs [block] with this client, then closes it, whatever [block] does — the suspending `close()`'s
+ * counterpart of `use`.
+ *
+ * @param block what to do with the client.
+ * @return what [block] returns.
+ */
+internal suspend fun <T> SupabaseOfflineClient.closingAfter(block: suspend (SupabaseOfflineClient) -> T): T =
+    try {
+        block(this)
+    } finally {
+        close()
+    }
 
 /**
  * A scope whose coroutines never run: nothing ever advances its scheduler. Pass it as a client's
@@ -147,3 +249,16 @@ internal fun newTestOfflineClient(
  * @return the scope.
  */
 internal fun idleCoroutineScope(): CoroutineScope = CoroutineScope(StandardTestDispatcher(TestCoroutineScheduler()))
+
+/**
+ * Asserts [failure] is the client's closed error: an [IllegalStateException] saying so, and never a
+ * cancellation, which is an [IllegalStateException] too on every platform.
+ *
+ * @param failure what a call on a closed client threw.
+ * @param context what the call was, for the failure message.
+ */
+internal fun assertClientClosedError(failure: Throwable?, context: String = "the call") {
+    assertTrue(failure !is CancellationException, "$context gave a cancellation: $failure")
+    assertIs<IllegalStateException>(failure, "$context gave $failure")
+    assertEquals(CLIENT_CLOSED_MESSAGE, failure.message, "$context gave $failure")
+}

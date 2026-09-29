@@ -3,16 +3,25 @@ package io.github.nesfeder.supabase.offline
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
+import io.github.jan.supabase.exceptions.UnauthorizedRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.IOException
 import okio.Path.Companion.toPath
 import org.junit.runner.RunWith
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -28,11 +37,7 @@ class BucketApiAndroidExtensionsTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val baseDir: File = context.cacheDir.resolve("offline_storage")
     private val fakeBucket = FakeBucketApi(bucketId = "test-bucket")
-    private val offlineApi = OfflineBucketApi(
-        delegate = fakeBucket,
-        offlineStore = newTestOfflineStore(),
-        baseDirectoryProvider = { baseDir.absolutePath.toPath() },
-    )
+    private val offlineApi = newTestBucketApi(delegate = fakeBucket, baseDirectory = baseDir.absolutePath.toPath())
 
     @AfterTest
     fun tearDown() {
@@ -59,7 +64,7 @@ class BucketApiAndroidExtensionsTest {
         // Given — a first download populates the cache, then the network fails
         fakeBucket.onDownload = { "cached content".toByteArray() }
         offlineApi.downloadPublic("test.txt") { }
-        fakeBucket.onDownload = { throw RuntimeException("Network error") }
+        fakeBucket.onDownload = { throw IOException("Network error") }
 
         // When
         val file = offlineApi.ensureLocalFile("test.txt", isPublic = true)
@@ -127,26 +132,47 @@ class BucketApiAndroidExtensionsTest {
     }
 
     @Test
-    fun `ensureLocalFile returns null when download fails and not cached`() = runTest {
-        // Given
-        fakeBucket.onDownload = { throw RuntimeException("Network error") }
+    fun `ensureLocalFile throws the download failure when nothing is cached`() = runTest {
+        // Given — an offline failure is not "no such file", and an auth failure even less so
+        val failure = IOException("Network error")
+        fakeBucket.onDownload = { throw failure }
 
         // When
-        val file = offlineApi.ensureLocalFile("missing.txt", isPublic = true)
+        val thrown = assertFailsWith<IOException> { offlineApi.ensureLocalFile("missing.txt", isPublic = true) }
 
-        // Then
-        assertNull(file)
+        // Then — the download's own failure (the coroutine machinery may hand over a copy of it)
+        assertEquals(failure.message, thrown.message)
     }
 
     @Test
-    fun `ensureLocalUri returns null when download fails and not cached`() = runTest {
+    fun `ensureLocalUri throws the download failure when nothing is cached`() = runTest {
         // Given
-        fakeBucket.onDownload = { throw RuntimeException("Network error") }
+        fakeBucket.onDownload = { throw forbiddenRestException() }
+
+        // When / Then
+        assertFailsWith<UnauthorizedRestException> { offlineApi.ensureLocalUri("missing_uri.txt", isPublic = true) }
+    }
+
+    @Test
+    fun `ensureLocalFile propagates cancellation`() = runTest {
+        // Given — a download that is in flight when its caller is cancelled
+        fakeBucket.onDownload = { awaitCancellation() }
+        var returned = false
+        var caught: Throwable? = null
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                offlineApi.ensureLocalFile("slow.txt", isPublic = true)
+                returned = true
+            } catch (failure: Throwable) {
+                caught = failure
+            }
+        }
 
         // When
-        val uri = offlineApi.ensureLocalUri("missing_uri.txt", isPublic = true)
+        job.cancelAndJoin()
 
-        // Then
-        assertNull(uri)
+        // Then — cancelled, not "not available"
+        assertFalse(returned, "ensureLocalFile returned after its caller was cancelled")
+        assertTrue(caught is CancellationException, "expected CancellationException, got $caught")
     }
 }

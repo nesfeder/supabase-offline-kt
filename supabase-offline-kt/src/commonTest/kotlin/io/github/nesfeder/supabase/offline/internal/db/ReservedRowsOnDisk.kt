@@ -1,7 +1,6 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.execSQL
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
@@ -124,7 +123,7 @@ internal object PreviousEngineQueries {
     }
 
     private fun <T> withConnection(path: String, block: (SQLiteConnection) -> T): T {
-        val connection = BundledSQLiteDriver().open(path)
+        val connection = defaultSQLiteDriver().open(path)
         try {
             return block(connection)
         } finally {

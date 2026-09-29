@@ -33,7 +33,7 @@ class OfflineDatabaseOpenInPlaceIosTest {
         // Given — the shipped database file, written with the raw driver, never through Room
         FileSystem.SYSTEM.createDirectories(directory)
         val dbPath = (directory / "supabase_offline.db").toString()
-        ShippedDatabaseFixture.writeTo(dbPath)
+        ShippedDatabaseFixture.writeTo(dbPath, defaultSQLiteDriver())
         val callback = RecordingRoomCallback()
 
         // When — opened the way createSupabaseOfflineClient opens it
@@ -49,8 +49,8 @@ class OfflineDatabaseOpenInPlaceIosTest {
         assertEquals(0, callback.creates, "the existing database must not be created again")
         assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
         assertEquals(1, callback.opens)
-        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath))
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath))
+        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath, defaultSQLiteDriver()))
+        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath, defaultSQLiteDriver()))
     }
 
     @Test
@@ -58,7 +58,7 @@ class OfflineDatabaseOpenInPlaceIosTest {
         // Given — an install that never ran a schema version 2 build, written without Room
         FileSystem.SYSTEM.createDirectories(directory)
         val dbPath = (directory / "supabase_offline.db").toString()
-        ShippedDatabaseFixture.writeVersion1To(dbPath)
+        ShippedDatabaseFixture.writeVersion1To(dbPath, defaultSQLiteDriver())
         val callback = RecordingRoomCallback()
 
         // When — opened the way createSupabaseOfflineClient opens it
@@ -74,8 +74,8 @@ class OfflineDatabaseOpenInPlaceIosTest {
         assertEquals(0, callback.creates, "the existing database must not be created again")
         assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
         assertEquals(1, callback.opens)
-        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath))
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath))
+        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath, defaultSQLiteDriver()))
+        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath, defaultSQLiteDriver()))
     }
 
     @Test
@@ -83,7 +83,7 @@ class OfflineDatabaseOpenInPlaceIosTest {
         // Given — the shipped database, opened in place through the library's own builder
         FileSystem.SYSTEM.createDirectories(directory)
         val dbPath = (directory / "supabase_offline.db").toString()
-        ShippedDatabaseFixture.writeTo(dbPath)
+        ShippedDatabaseFixture.writeTo(dbPath, defaultSQLiteDriver())
         val database = getRoomDatabase(getDatabaseBuilder(dbPath))
         val server = shippedQueueServer()
 

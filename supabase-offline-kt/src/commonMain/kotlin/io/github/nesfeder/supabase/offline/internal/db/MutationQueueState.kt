@@ -259,7 +259,11 @@ internal class MutationQueueState(
     suspend fun syncedMutationCoverage(): Map<Long, Set<String>> {
         coverageCache.value?.let { return it }
         return loadLock.withLock {
-            coverageCache.value ?: loadSyncedMutationCoverage().also { loaded -> coverageCache.value = loaded }
+            // From empty only: a clear that ran while this read has already set it
+            coverageCache.value ?: loadSyncedMutationCoverage().let { loaded ->
+                coverageCache.compareAndSet(null, loaded)
+                coverageCache.value ?: loaded
+            }
         }
     }
 
@@ -315,7 +319,11 @@ internal class MutationQueueState(
     suspend fun unconfirmedSends(): Set<Long> {
         unconfirmedCache.value?.let { return it }
         return loadLock.withLock {
-            unconfirmedCache.value ?: loadUnconfirmedSends().also { loaded -> unconfirmedCache.value = loaded }
+            // From empty only: a clear that ran while this read has already set it
+            unconfirmedCache.value ?: loadUnconfirmedSends().let { loaded ->
+                unconfirmedCache.compareAndSet(null, loaded)
+                unconfirmedCache.value ?: loaded
+            }
         }
     }
 
@@ -463,12 +471,15 @@ internal class MutationQueueState(
         rejectedCache.value = list
     }
 
-    /** Forgets every cached row; called once [OfflineStore.clearAll] has deleted the rows. */
+    /**
+     * Records that every row is gone and the queue empty; called once [OfflineStore.clearAll] has
+     * deleted them. The records then read empty without a row, so no reader writes one back.
+     */
     fun resetCaches() {
-        ownersCache.value = null
-        rejectedCache.value = null
-        coverageCache.value = null
-        unconfirmedCache.value = null
+        ownersCache.value = MutationOwners.Known(emptyMap())
+        rejectedCache.value = StoredRejectionList()
+        coverageCache.value = emptyMap()
+        unconfirmedCache.value = emptySet()
     }
 
     private suspend fun rejectedList(): StoredRejectionList {
