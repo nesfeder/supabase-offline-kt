@@ -72,7 +72,25 @@ private data class FetchedResponse(
     /** Whether the response was refused because local data was cleared while it was in flight. */
     val wasRefusedAfterClear: Boolean
         get() = outcome == AddPayloadOutcome.DROPPED_CACHE_CLEARED
+
+    /**
+     * Whether the cache holds this answer, or a newer local write it was refused for: not when it
+     * was refused as not the user's, as another identity's, or as an empty it may not take.
+     */
+    val isHeldByTheCache: Boolean
+        get() =
+            outcome == AddPayloadOutcome.WRITTEN ||
+                outcome == AddPayloadOutcome.DROPPED_STALE ||
+                outcome == AddPayloadOutcome.DROPPED_CACHE_CLEARED
 }
+
+/**
+ * A network read's answer, as a caller gets it.
+ *
+ * @property result what the caller is answered with.
+ * @property cached whether the cache holds it, so a reactive read showing the cache shows it.
+ */
+private class NetworkAnswer(val result: PostgrestResult, val cached: Boolean)
 
 /**
  * Answers one-shot and reactive SELECTs from the network, the query cache, or both, as the read
@@ -197,7 +215,18 @@ internal class QueryReader(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
         retries: Retries,
-    ): PostgrestResult {
+    ): PostgrestResult = fetchWaitingOutRestoreAnswer(slot, columns, request, retries).result
+
+    /**
+     * [fetchWaitingOutRestore]'s answer, and whether the cache holds it: `false` when the cache
+     * refused it as not the user's, or as an empty answer it may not take.
+     */
+    private suspend fun fetchWaitingOutRestoreAnswer(
+        slot: CacheSlot,
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+        retries: Retries,
+    ): NetworkAnswer {
         val table = slot.table
         var sessionBefore = requestSession()
         var stepsTaken = 0
@@ -206,7 +235,10 @@ internal class QueryReader(
             // A response refused after a clear is answered with the emptied cache, and never asked
             // again
             if (fetched.wasRefusedAfterClear)
-                return buildResult(EMPTY_JSON_ARRAY, delegate.postgrest)
+                return NetworkAnswer(
+                    buildResult(EMPTY_JSON_ARRAY, delegate.postgrest),
+                    cached = true,
+                )
             if (
                 !trustPolicy.oneShotAsksAgain(
                     fetched.sessionBefore,
@@ -214,13 +246,13 @@ internal class QueryReader(
                     fetched.isEmpty,
                 ) || fetched.outcome == AddPayloadOutcome.WRITTEN
             ) {
-                return overlaidResponse(slot, fetched)
+                return NetworkAnswer(overlaidResponse(slot, fetched), fetched.isHeldByTheCache)
             }
             if (stepsTaken == RESTORE_WINDOW_RETRY_WAITS) {
                 sdkLogger.warning {
                     "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the response uncached"
                 }
-                return overlaidResponse(slot, fetched)
+                return NetworkAnswer(overlaidResponse(slot, fetched), cached = false)
             }
             sdkLogger.warning {
                 "SELECT $table answered while the session was not settled; waiting for the session"
@@ -383,32 +415,80 @@ internal class QueryReader(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
-    ): Flow<OfflineReadResult> =
-        store
-            .overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape)
-            .onStart { bootstrapFromNetwork(slot, columns, request) }
-            .map { payload ->
-                OfflineReadResult(
-                    result = payload?.let { json -> buildResult(json, delegate.postgrest) },
-                    refresh = RefreshState.Idle,
-                )
-            }
+    ): Flow<OfflineReadResult> = flow {
+        val unconfirmedBy = bootstrapFromNetwork(slot, columns, request)
+        val cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape)
+        if (unconfirmedBy == null) {
+            emitAll(
+                cache.map { payload -> OfflineReadResult(resultOf(payload), RefreshState.Idle) }
+            )
+        } else {
+            emitAll(unconfirmedCache(slot, columns, request, cache, unconfirmedBy))
+        }
+    }
+
+    /**
+     * The cache a network-first read shows when its bootstrap could not confirm it,
+     * [RefreshState.Stalled] by [cause], while a refresh retried as a cache-first read's runs until
+     * it succeeds; then [RefreshState.Idle]. The bootstrap counts as the first attempt, so the next
+     * waits.
+     */
+    private fun unconfirmedCache(
+        slot: CacheSlot,
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+        cache: Flow<String?>,
+        cause: Exception,
+    ): Flow<OfflineReadResult> {
+        val refreshState = MutableStateFlow<RefreshState>(RefreshState.Stalled(cause))
+        var bootstrapCounted = false
+        val payloads =
+            cacheFirstWithParallelRefresh(
+                cache = cache,
+                refresh = {
+                    if (!bootstrapCounted) {
+                        bootstrapCounted = true
+                        throw cause
+                    }
+                    refreshFromNetwork(slot, columns, request)
+                },
+                accelerator = accelerator,
+                // Not confirmed until a refresh succeeds: an attempt in flight changes nothing
+                onRefreshState = { state ->
+                    if (state !is RefreshState.InFlight) refreshState.value = state
+                },
+            )
+        return combine(payloads.distinctUntilChanged().map(::resultOf), refreshState) {
+            result,
+            state ->
+            OfflineReadResult(result = result, refresh = state)
+        }
+    }
+
+    /** The result a reactive read shows for [payload]; `null` while nothing is known. */
+    private fun resultOf(payload: String?): PostgrestResult? = payload?.let { json ->
+        buildResult(json, delegate.postgrest)
+    }
 
     /**
      * The network bootstrap of a network-first reactive read. A transport failure falls back to the
      * cached payload, at once, as a one-shot `NetworkFirst` read does; with none cached, or on a
      * server's own error, it fails the flow.
+     *
+     * @return why the cache it leaves is not the server's answer — the transport failure, or an
+     *   answer the cache did not take as the user's — or `null` when it is.
      */
     private suspend fun bootstrapFromNetwork(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
-    ) {
+    ): Exception? {
         val retries =
             if (hasFreshCache(slot, cacheDuration = null)) Retries.TRANSPORT_FAILS_FAST
             else Retries.UPSTREAM
-        try {
-            fetchWaitingOutRestore(slot, columns, request, retries)
+        return try {
+            val answer = fetchWaitingOutRestoreAnswer(slot, columns, request, retries)
+            if (answer.cached) null else UntrustedResponseException(slot.table)
         } catch (exception: Exception) {
             if (
                 !exception.isNetworkOrConnectivityFailure() ||
@@ -416,6 +496,7 @@ internal class QueryReader(
             )
                 throw exception
             sdkLogger.warning { "SELECT ${slot.table} network failed, falling back to cache" }
+            exception
         }
     }
 

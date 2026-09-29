@@ -86,13 +86,13 @@ public enum class FlowReadStrategy {
      * [ReadStrategy.NetworkFirst] falls back to it, at once. With nothing cached, or when the
      * server answers with an error, the Flow fails.
      *
-     * The bootstrap request is the only refresh this strategy performs — there is no self-healing
-     * loop behind it — so it waits out the auth session-restore window before accepting an empty
-     * response, on the same bounded ladder the one-shot reads use (roughly 3.6s worst case). That
-     * keeps a cold-start subscription from bootstrapping off an RLS-filtered `[]` and then
-     * observing an empty cache indefinitely. Once the ladder is spent the empty is accepted; a
-     * genuinely-empty table therefore delays this strategy's first emission when the subscription
-     * starts mid-restore.
+     * The bootstrap waits out the auth session-restore window before accepting an answer that may
+     * not be the user's, on the same bounded ladder the one-shot reads use (roughly 3.6s worst
+     * case). When it could not get the user's answer — the network was unavailable, or the session
+     * never settled — the cache it shows is not confirmed: the refresh state is
+     * [RefreshState.Stalled], and the Flow fetches again, on the same schedule
+     * [CacheFirstThenNetwork] retries on, until it succeeds and is [RefreshState.Idle]. After that
+     * it fetches nothing more.
      */
     NetworkFirstThenCache,
 
