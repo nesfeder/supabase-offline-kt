@@ -49,10 +49,11 @@ internal data class CacheKeyFixtureCase(
  * A call is a JSON array whose first element names it. Filters: `eq`, `neq`, `gt`, `gte`, `lt`,
  * `lte`, `like`, `ilike`, `match`, `imatch`, `is`, `isdistinct`, `in`, `cs`, `cd`, `ov` (a list),
  * `cs_range`, `cd_range`, `ov_range`, `sl`, `sr`, `nxl`, `nxr`, `adj` (a two-element range), `fts`,
- * `plfts`, `phfts`, `wfts` (a query and an optional configuration), `not` (column, operator,
- * value), and `or` / `and` (a list of calls and optional `negate` / `referencedTable`). The rest:
- * `order`, `limit`, `range`, `schema` (set on the request), `param` (a raw query parameter) and
- * `header`. A JSON number is passed as its literal text, which is what supabase-kt writes for it.
+ * `plfts`, `phfts`, `wfts` (a query and an optional configuration), `likeAll`, `likeAny`,
+ * `ilikeAll`, `ilikeAny` (a list of patterns), `not` (column, operator, value), and `or` / `and` (a
+ * list of calls and optional `negate` / `referencedTable`). The rest: `order`, `limit`, `range`,
+ * `schema` (set on the request), `param` (a raw query parameter) and `header`. A JSON number is
+ * passed as its literal text, which is what supabase-kt writes for it.
  */
 internal object CacheKeyFixture {
 
@@ -175,12 +176,19 @@ internal object CacheKeyFixture {
             "nxl",
             "nxr",
             "adj" -> filter(call[1].jsonPrimitive.content, operatorOf(name), pairOf(call[2]))
+            "likeAll" -> likeAll(call[1].jsonPrimitive.content, patternsOf(call[2]))
+            "likeAny" -> likeAny(call[1].jsonPrimitive.content, patternsOf(call[2]))
+            "ilikeAll" -> ilikeAll(call[1].jsonPrimitive.content, patternsOf(call[2]))
+            "ilikeAny" -> ilikeAny(call[1].jsonPrimitive.content, patternsOf(call[2]))
             else -> filter(call[1].jsonPrimitive.content, operatorOf(name), valueOf(call[2]))
         }
     }
 
     private fun operatorOf(identifier: String): FilterOperator =
         FilterOperator.entries.first { operator -> operator.identifier == identifier }
+
+    private fun patternsOf(element: JsonElement): List<String> =
+        element.jsonArray.map { pattern -> pattern.jsonPrimitive.content }
 
     private fun pairOf(element: JsonElement): Pair<Any, Any> {
         val bounds = element.jsonArray.map { bound -> checkNotNull(valueOf(bound)) }
