@@ -319,6 +319,14 @@ jobs:
     name: Docs
     needs: changes
     if: needs.changes.outputs.docs == 'true'
+    # GitHub checks every job of a called workflow against this grant before the run starts, even
+    # a job that will be skipped. Only docs.yml's deploy job asks for pages and id-token, and it
+    # runs only with deploy: true, which this workflow never passes; every job that runs here gets
+    # docs.yml's own contents: read.
+    permissions:
+      contents: read
+      pages: write # docs.yml's deploy job only; skipped with deploy: false
+      id-token: write # docs.yml's deploy job only; skipped with deploy: false
     uses: $/.github/workflows/docs.yml
     with:
       deploy: false
