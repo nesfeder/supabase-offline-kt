@@ -54,6 +54,7 @@ class OfflineStoreEmptyCacheReactivityTest {
             table = "projects",
             body = buildJsonArray { add(buildJsonObject { put("id", "project-1"); put("user_id", "u-1") }) },
         )
+        val writesBefore = objectDao.writes
 
         // When — the overlay substrate is observed
         val emitted = store.cachePayloadWithOverlayFlow("projects", "sig-A").first()
@@ -63,7 +64,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         assertNotNull(emitted, "a queued INSERT must be visible even with no cached payload")
         assertTrue(emitted.contains("project-1"))
         assertNull(objectDao.getRow("projects", "sig-A"), "the substrate must not persist a Room row")
-        assertEquals(0, objectDao.writes, "the substrate must not write to the object cache")
+        assertEquals(writesBefore, objectDao.writes, "the substrate must not write to the object cache")
     }
 
     @Test

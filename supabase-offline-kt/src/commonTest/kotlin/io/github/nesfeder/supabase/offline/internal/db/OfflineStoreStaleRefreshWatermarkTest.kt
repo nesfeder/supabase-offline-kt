@@ -374,7 +374,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         store.clearSyncedMutationsForTable("projects", requestStartedAtTick)
 
         // Then — retirement is refused. The cached payload predates the replay, so dropping the
-        // queue row here would erase the write from the cache and the overlay at once.
+        // mutation row here would erase the write from the cache and the overlay at once.
         assertEquals(1, mutationDao.inserted.size)
         assertNotNull(mutationDao.inserted.single().syncedAtMs)
     }
@@ -439,7 +439,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             },
             onUpdate = { postgrestResultOf("[]", client.postgrest) },
         )
-        val synced = OfflineMutationSyncer(
+        val synced = MutationQueueReplayer(
             store = store,
             supabase = client,
             postgrestFactory = { _, _ -> wrapper },
@@ -466,7 +466,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // Then — a delta-rebased replay establishes new server truth exactly like an absolute one:
         // it stamps the watermark, so the stale response is refused and its retirement suppressed.
-        // The queue row survives, keeping the write visible through the overlay until a SELECT
+        // The mutation row survives, keeping the write visible through the overlay until a SELECT
         // issued after the replay brings back the rebased value.
         assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
         assertEquals(oneProject, objectDao.getRow("projects", "sig-A")?.payload)

@@ -18,7 +18,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -301,41 +300,33 @@ class OfflineMutationQueueDecisionTest {
     // ─────────────────────────── Edges ───────────────────────────
 
     /**
-     * Pins today's behaviour, which is wrong: an UPDATE with no filter is queued, and replay then
-     * refuses it and drops it (pinned by `null_descriptor_update_is_refused_and_never_executed` in
-     * `OfflineMutationSyncerTest`), so the caller is told "queued" for a write that will never be
-     * sent. A later change to the queue is expected to invert this and refuse to queue it,
-     * rethrowing instead.
+     * Inverted: an UPDATE with no filter used to be queued and then refused and dropped at replay,
+     * so the caller was told "queued" for a write that would never be sent. It is now refused at
+     * enqueue, like any other write the queue cannot replay faithfully, and the original failure
+     * is rethrown.
      */
     @Test
-    fun an_unfiltered_update_is_queued_without_a_filter() = runTest {
+    fun an_unfiltered_update_is_refused_for_queueing_and_rethrows() = runTest {
         // Given
         failWithConnectivity()
 
-        // When
-        val outcome = builder.updateJson(PATCH, MutationStrategy.QueueIfOffline)
-
-        // Then
-        assertEquals(MutationOutcome.Queued, outcome)
-        assertNull(mutationDao.inserted.single().filterJson)
+        // When / Then
+        assertFailsWith<HttpRequestException> { builder.updateJson(PATCH, MutationStrategy.QueueIfOffline) }
+        assertTrue(mutationDao.inserted.isEmpty())
     }
 
     /**
-     * Pins today's behaviour, which is wrong, for the same reason as the UPDATE case above: an
-     * unfiltered DELETE is queued, then refused and dropped at replay. A later change to the queue
-     * is expected to invert this.
+     * Inverted for the same reason as the UPDATE case above: an unfiltered DELETE is refused at
+     * enqueue instead of being queued and dropped at replay.
      */
     @Test
-    fun an_unfiltered_delete_is_queued_without_a_filter() = runTest {
+    fun an_unfiltered_delete_is_refused_for_queueing_and_rethrows() = runTest {
         // Given
         failWithConnectivity()
 
-        // When
-        val outcome = builder.delete(MutationStrategy.QueueIfOffline)
-
-        // Then
-        assertEquals(MutationOutcome.Queued, outcome)
-        assertNull(mutationDao.inserted.single().filterJson)
+        // When / Then
+        assertFailsWith<HttpRequestException> { builder.delete(MutationStrategy.QueueIfOffline) }
+        assertTrue(mutationDao.inserted.isEmpty())
     }
 
     @Test

@@ -7,6 +7,7 @@ import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlinx.coroutines.test.runTest
@@ -157,8 +158,9 @@ class SupabaseOfflineClientTest {
 
     @Test
     fun syncPendingMutations_replays_only_that_table() = runTest {
-        // Given — one write queued for each of two tables while the network is down
-        val client = newTestOfflineClient(supabase = server.supabaseClient())
+        // Given — one write queued for each of two tables while the network is down; the second,
+        // queued behind the first, would start a pass of its own, which this test keeps idle
+        val client = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = idleCoroutineScope())
         server.answer = { connectivityFailure() }
         client.from("todos").insertJson(ROWS)
         client.from("projects").insertJson(ROWS)

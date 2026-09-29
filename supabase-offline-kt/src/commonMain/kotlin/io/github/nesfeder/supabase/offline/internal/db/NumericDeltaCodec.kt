@@ -69,6 +69,12 @@ internal fun decodeNumericDeltaColumns(
  * what the column can hold; the absolute body, which states a value the caller actually computed,
  * is never clamped.
  *
+ * The rebased value keeps the form the caller wrote. When the body wrote the column as an integer
+ * and the snapshot, the server's value and the floor are whole numbers, the arithmetic is done in
+ * [Long] and the body gets an integer back: `13`, never `13.0`, which Postgres refuses for an
+ * `int` column. Doing it in [Long] also keeps a `bigint` exact beyond 2^53. Otherwise the value is
+ * computed and written as a [Double], as before.
+ *
  * @param body The stored UPDATE body.
  * @param serverRow The freshly re-read row the UPDATE targets.
  * @param deltaColumns The declarations attached to the mutation.
@@ -85,20 +91,65 @@ internal fun rebaseNumericDeltas(
     val rebased = bodyObject.toMutableMap()
     var changed = false
     for (declaration in deltaColumns) {
-        val desired = bodyObject.numberOrNull(declaration.column) ?: continue
-        val serverCurrent = serverRow.numberOrNull(declaration.column) ?: continue
-        val onServerBase = serverCurrent + (desired - declaration.snapshotValue)
-        val value = declaration.minValue
-            ?.let { floor -> onServerBase.coerceAtLeast(floor) }
-            ?: onServerBase
-        if (value != desired) {
-            rebased[declaration.column] = JsonPrimitive(value)
+        val value = rebaseIntegral(bodyObject, serverRow, declaration)
+            ?: rebaseDecimal(bodyObject, serverRow, declaration)
+            ?: continue
+        if (value != bodyObject[declaration.column]) {
+            rebased[declaration.column] = value
             changed = true
         }
     }
     return if (changed) JsonObject(rebased) else body
 }
 
+/**
+ * The rebase in [Long] arithmetic, when the caller wrote an integer and every other input is whole.
+ *
+ * @return The rebased integer, or `null` when the column does not qualify.
+ */
+private fun rebaseIntegral(body: JsonObject, serverRow: JsonObject, declaration: NumericDeltaColumn): JsonPrimitive? {
+    val desired = body.integerLiteralOrNull(declaration.column) ?: return null
+    val serverCurrent = serverRow.wholeNumberOrNull(declaration.column) ?: return null
+    val snapshot = declaration.snapshotValue.toWholeLongOrNull() ?: return null
+    val floor = declaration.minValue?.let { minValue -> minValue.toWholeLongOrNull() ?: return null }
+    val onServerBase = serverCurrent + (desired - snapshot)
+    return JsonPrimitive(if (floor == null) onServerBase else onServerBase.coerceAtLeast(floor))
+}
+
+/**
+ * The rebase in [Double] arithmetic.
+ *
+ * @return The rebased value, or `null` when the column is absent or non-numeric on either side.
+ */
+private fun rebaseDecimal(body: JsonObject, serverRow: JsonObject, declaration: NumericDeltaColumn): JsonPrimitive? {
+    val desired = body.numberOrNull(declaration.column) ?: return null
+    val serverCurrent = serverRow.numberOrNull(declaration.column) ?: return null
+    val onServerBase = serverCurrent + (desired - declaration.snapshotValue)
+    val value = declaration.minValue
+        ?.let { floor -> onServerBase.coerceAtLeast(floor) }
+        ?: onServerBase
+    return if (value == desired) body[declaration.column] as JsonPrimitive else JsonPrimitive(value)
+}
+
 /** The numeric value of [key], or `null` when it is absent, null, or not a number. */
 private fun JsonObject.numberOrNull(key: String): Double? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString.not() }?.doubleOrNull
+
+/** The value of [key] when it is written as an integer literal (no fraction, no exponent). */
+private fun JsonObject.integerLiteralOrNull(key: String): Long? {
+    val primitive = (this[key] as? JsonPrimitive)?.takeIf { it.isString.not() } ?: return null
+    return primitive.content.toLongOrNull()
+}
+
+/** The value of [key] when it is a whole number, however it is written (`12` or `12.0`). */
+private fun JsonObject.wholeNumberOrNull(key: String): Long? {
+    val primitive = (this[key] as? JsonPrimitive)?.takeIf { it.isString.not() } ?: return null
+    return primitive.content.toLongOrNull() ?: primitive.doubleOrNull?.toWholeLongOrNull()
+}
+
+/** This value as a [Long] when it is a whole number a [Long] holds exactly, else `null`. */
+private fun Double.toWholeLongOrNull(): Long? {
+    if (isNaN() || isInfinite() || this % 1.0 != 0.0) return null
+    if (this < Long.MIN_VALUE.toDouble() || this >= Long.MAX_VALUE.toDouble()) return null
+    return toLong()
+}

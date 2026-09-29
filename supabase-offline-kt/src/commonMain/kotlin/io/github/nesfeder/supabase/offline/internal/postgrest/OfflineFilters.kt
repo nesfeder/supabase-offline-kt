@@ -59,30 +59,19 @@ internal data class FilterDescriptor(
 }
 
 /**
- * Operators supabase-kt defines that the offline engine has no semantics for.
+ * Resolves a PostgREST operator [identifier] to the [FilterOperator] it names, or `null` when it
+ * names none.
  *
- * [FilterOperator.ISDISTINCT] arrived in supabase-kt 3.8.0. The engine cannot evaluate it against
- * a cached row, and it was never captured or replayed before that release, so it stays in the
- * "unrecognised operator" class it was in when its identifier was not an enum value at all.
- */
-private val OPERATORS_WITHOUT_OFFLINE_SEMANTICS: Set<FilterOperator> = setOf(FilterOperator.ISDISTINCT)
-
-/**
- * Resolves a PostgREST operator [identifier] to the [FilterOperator] the offline engine models,
- * or `null` when it models none.
- *
- * Every capture path and the stored-condition lookup resolve through here, so an operator in
- * [OPERATORS_WITHOUT_OFFLINE_SEMANTICS] is handled consistently as unrecognised: strict capture
- * refuses to queue it, lenient capture skips it, the overlay never matches it and replay never
- * applies it.
+ * Every capture path and the stored-condition lookup resolve through here. Resolving an operator
+ * does not mean the engine can evaluate it locally: [FilterEngine.matchesRow] answers "no match"
+ * for the operators it cannot evaluate — [FilterOperator.ISDISTINCT] among them — while
+ * [FilterEngine.applyTo] replays every one of them faithfully.
  *
  * @param identifier The operator prefix of a PostgREST filter value, e.g. `"eq"`.
- * @return The modelled operator, or `null` when the identifier is unknown or unmodelled.
+ * @return The operator, or `null` when the identifier is unknown (including a `not.` negation).
  */
 internal fun offlineFilterOperatorOrNull(identifier: String): FilterOperator? =
-    FilterOperator.entries.firstOrNull { operator ->
-        operator.identifier == identifier && operator !in OPERATORS_WITHOUT_OFFLINE_SEMANTICS
-    }
+    FilterOperator.entries.firstOrNull { operator -> operator.identifier == identifier }
 
 /**
  * Extract a best-effort [FilterDescriptor] from a [PostgrestRequestBuilder].
@@ -127,12 +116,12 @@ internal fun buildDescriptorFromBuilder(
         val operator = offlineFilterOperatorOrNull(opIdentifier)
             ?: return@forEach
 
-        val normalizedValue = rawValue.trim().trim('"', '\'')
-
+        // Stored exactly as encoded: trimming whitespace or quotes would replay (and overlay) a
+        // different value than the caller wrote.
         conditions += FilterDescriptor.Condition(
             column = key,
             operatorId = operator.identifier,
-            value = normalizedValue
+            value = rawValue
         )
     }
 
@@ -232,10 +221,11 @@ internal fun buildDescriptorStrict(
             )
         }
 
+        // Stored exactly as encoded, so replay sends the very value the caller's request did.
         conditions += FilterDescriptor.Condition(
             column = key,
             operatorId = operator.identifier,
-            value = parts[1].trim().trim('"', '\'')
+            value = parts[1]
         )
     }
 
@@ -308,7 +298,7 @@ internal object FilterEngine {
     /**
      * Replays filters onto a live [PostgrestRequestBuilder].
      *
-     * Used by OfflineMutationSyncer when syncing UPDATE / DELETE operations.
+     * Used by MutationQueueReplayer when syncing UPDATE / DELETE operations.
      *
      * - For [FilterDescriptor.Mode.AND], we just call each condition on the filter DSL:
      *   `filter { eq(...); lt(...); ilike(...) }`
@@ -474,9 +464,9 @@ internal object FilterEngine {
             FilterOperator.PHFTS -> textSearch(cond.column, rawValue, TextSearchType.PHRASETO)
             FilterOperator.WFTS -> textSearch(cond.column, rawValue, TextSearchType.WEBSEARCH)
 
-            // Never reached: offlineFilterOperatorOrNull does not resolve an operator without
-            // offline semantics. Listed so the `when` stays exhaustive without an `else`.
-            FilterOperator.ISDISTINCT -> return false
+            // No typed DSL entry point; the generic call encodes it exactly as the caller's
+            // `filter(column, ISDISTINCT, value)` did.
+            FilterOperator.ISDISTINCT -> filter(cond.column, FilterOperator.ISDISTINCT, rawValue)
         }
         return true
     }
@@ -848,8 +838,8 @@ internal object FilterEngine {
             }
 
             // We DO NOT try to emulate these complex / domain-specific operators offline:
-            // containment, ranges, adjacency, overlaps, FTS, etc. We return false so we
-            // don't accidentally "match" rows that the server wouldn't.
+            // containment, ranges, adjacency, overlaps, FTS, IS DISTINCT FROM, etc. We return
+            // false so we don't accidentally "match" rows that the server wouldn't.
             FilterOperator.CS,
             FilterOperator.CD,
             FilterOperator.SL,
