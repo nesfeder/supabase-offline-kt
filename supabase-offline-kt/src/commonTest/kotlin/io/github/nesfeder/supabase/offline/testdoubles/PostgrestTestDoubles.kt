@@ -1,5 +1,6 @@
 package io.github.nesfeder.supabase.offline.testdoubles
 
+import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Columns
@@ -37,6 +38,11 @@ internal class FakePostgrestQueryBuilderWrapper(
     private val onUpsert: (suspend (JsonArray) -> PostgrestResult)? = null,
     private val onUpdate: (suspend (JsonElement) -> PostgrestResult)? = null,
     private val onDelete: (suspend () -> PostgrestResult)? = null,
+    /**
+     * What [classify] answers: `true` a dry run, `false` an ordinary write (the default), `null` a
+     * check that cannot tell. A scripted handle builds no HTTP request, so it cannot see a dry run.
+     */
+    private val dryRunVerdict: Boolean? = false,
 ) : PostgrestQueryBuilderWrapper {
 
     /** Bodies passed to [insert], in call order — lets tests assert what the builder encoded. */
@@ -89,6 +95,13 @@ internal class FakePostgrestQueryBuilderWrapper(
     ): PostgrestResult {
         recordedDeleteCount++
         return onDelete?.invoke() ?: unsupported("delete")
+    }
+
+    /** Answers [dryRunVerdict] without running [write]: `null` for a check that cannot tell. */
+    override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict = when (dryRunVerdict) {
+        true -> DryRunVerdict.DryRun
+        false -> DryRunVerdict.NotDryRun
+        null -> DryRunVerdict.Unavailable
     }
 }
 

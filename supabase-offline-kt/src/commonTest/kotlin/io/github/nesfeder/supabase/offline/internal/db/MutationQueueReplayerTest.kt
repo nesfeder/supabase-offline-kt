@@ -31,7 +31,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.time.ExperimentalTime
 
 /**
- * Behavioural pins for [OfflineMutationSyncer] — the replay path that pushes queued offline
+ * Behavioural pins for [MutationQueueReplayer] — the replay path that pushes queued offline
  * mutations to Supabase. The syncer previously had no test coverage; these cases lock in FIFO
  * replay, per-failure-class handling (network pause vs. permanent drop vs. transient 401 vs.
  * bounded unknown-error dead-letter), the single-sweep-per-table `distinct()` fix, the concurrency
@@ -41,7 +41,7 @@ import kotlin.time.ExperimentalTime
  * [FakePostgrestQueryBuilderWrapper]; only the remote verbs are faked.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class OfflineMutationSyncerTest {
+class MutationQueueReplayerTest {
 
     private val table = "projects"
     private var createdAtCounter = 0L
@@ -103,7 +103,7 @@ class OfflineMutationSyncerTest {
     }
 
     @Test
-    fun permanent_failure_drops_the_mutation_and_continues() = runTest {
+    fun permanent_failure_moves_the_mutation_to_the_rejected_list_and_continues() = runTest {
         // Given two queued INSERTs; the first fails with a permanent 403, the second would succeed
         val dao = FakeMutationDao()
         dao.insert(insertRow("""[{"n":"a"}]"""))
@@ -125,10 +125,12 @@ class OfflineMutationSyncerTest {
         // When
         val synced = syncer.syncTable(table = table)
 
-        // Then: the 403 mutation is dropped, the syncer continues, and the second mutation syncs
+        // Then: the 403 mutation leaves the queue for the rejected list, the syncer continues, and
+        // the second mutation syncs
         assertEquals(1, synced)
         assertEquals(2, wrapper.recordedInsertBodies.size, "both mutations were attempted")
         assertEquals(0, store.pendingMutationCount())
+        assertEquals(listOf(403), store.mutationQueueState.rejections().map { it.serverError?.status })
     }
 
     @Test
@@ -181,9 +183,14 @@ class OfflineMutationSyncerTest {
         }
     }
 
+    /**
+     * Inverted: a write that kept failing with a 500 used to be dead-lettered (deleted) on its fifth
+     * replay in a process. A server error is transient, so it is now kept for as long as it takes —
+     * the entry point still reports each failure to its caller.
+     */
     @Test
-    fun unknown_error_rethrows_four_times_then_dead_letters_on_the_fifth() = runTest {
-        // Given a queued INSERT that always fails with a 500 (poison mutation)
+    fun unknown_error_rethrows_on_every_replay_and_never_dead_letters() = runTest {
+        // Given a queued INSERT that always fails with a 500
         val dao = FakeMutationDao()
         dao.insert(insertRow("""[{"n":"a"}]"""))
         val store = buildStore(dao)
@@ -196,17 +203,14 @@ class OfflineMutationSyncerTest {
         )
         val syncer = syncer(store, client, wrapper)
 
-        // When: the first four replays rethrow and keep the mutation pending
-        repeat(4) {
+        // When: far more replays than the old five-strike budget
+        repeat(8) {
             assertFailsWith<ResponseException> { syncer.syncTable(table = table) }
             assertEquals(1, store.pendingMutationCount(), "mutation stays pending across retries")
         }
 
-        // Then: the fifth replay dead-letters (drops) the mutation instead of throwing forever
-        val synced = syncer.syncTable(table = table)
-        assertEquals(0, synced)
-        assertEquals(0, store.pendingMutationCount(), "poison mutation is dead-lettered")
-        assertEquals(5, wrapper.recordedInsertBodies.size, "insert attempted on every replay")
+        // Then: every replay attempted it, and it is still queued
+        assertEquals(8, wrapper.recordedInsertBodies.size, "insert attempted on every replay")
     }
 
     @Test
@@ -260,7 +264,7 @@ class OfflineMutationSyncerTest {
             postgrest = client.postgrest,
             onInsert = { postgrestResultOf("[]", client.postgrest) },
         )
-        val syncer = OfflineMutationSyncer(
+        val syncer = MutationQueueReplayer(
             store = store,
             supabase = client,
             postgrestFactory = { _, _ ->
@@ -304,10 +308,11 @@ class OfflineMutationSyncerTest {
         // When
         val synced = syncer.syncTable(table = table)
 
-        // Then: the unfiltered DELETE never fires and the poison row is dropped
+        // Then: the unfiltered DELETE never fires; the row leaves the queue for the rejected list
         assertEquals(0, synced)
         assertEquals(0, wrapper.recordedDeleteCount, "unfiltered DELETE must never execute")
-        assertEquals(0, store.pendingMutationCount(), "the legacy null-filter row is dropped")
+        assertEquals(0, store.pendingMutationCount(), "the legacy null-filter row leaves the queue")
+        assertEquals(1, store.mutationQueueState.rejections().size)
     }
 
     @Test
@@ -596,7 +601,7 @@ class OfflineMutationSyncerTest {
         client: SupabaseClient,
         wrapper: FakePostgrestQueryBuilderWrapper,
         awaitSessionSettled: (suspend () -> Boolean)? = null,
-    ): OfflineMutationSyncer = OfflineMutationSyncer(
+    ): MutationQueueReplayer = MutationQueueReplayer(
         store = store,
         supabase = client,
         postgrestFactory = { _, _ -> wrapper },

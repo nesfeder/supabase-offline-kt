@@ -1,6 +1,8 @@
 package io.github.nesfeder.supabase.offline.testdoubles
 
+import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryObjectDao
@@ -63,6 +65,22 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     var onAllForTableSnapshot: (suspend (table: String) -> Unit)? = null
 
     /**
+     * When it returns `true` for a row, [upsert] of that row fails with an [IllegalStateException]
+     * instead of writing it, as a full disk or a corrupt page would. `null` (the default) never fails.
+     */
+    var failUpsertOf: ((ObjectRow) -> Boolean)? = null
+
+    /** Makes the next [upsert] of a row that [match] accepts fail, once, as a full disk would. */
+    fun failNextUpsertOf(match: (ObjectRow) -> Boolean) {
+        var failed = false
+        failUpsertOf = { row ->
+            val fails = !failed && match(row)
+            if (fails) failed = true
+            fails
+        }
+    }
+
+    /**
      * Seed a cached payload without bumping the [writes] counter or notifying observers.
      * [updatedAt] controls the row's age so eviction tests can assert oldest-first ordering; it
      * defaults to `0L` for callers that don't care about age.
@@ -79,6 +97,9 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     /** Look up a row without going through the suspend contract. */
     fun getRow(table: String, signature: String): ObjectRow? = rows[table to signature]
 
+    /** Every row of [table], without going through the suspend contract. */
+    fun rowsOf(table: String): List<ObjectRow> = rows.values.filter { row -> row.table == table }
+
     override suspend fun allForTable(table: String): List<ObjectRow> {
         val snapshot = super.allForTable(table)
         onAllForTableSnapshot?.invoke(table)
@@ -86,6 +107,7 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     }
 
     override suspend fun upsert(row: ObjectRow) {
+        check(failUpsertOf?.invoke(row) != true) { "Scripted write failure" }
         writes++
         super.upsert(row)
     }
@@ -107,7 +129,7 @@ internal class FakeObjectDao : InMemoryObjectDao() {
 /**
  * [InMemoryMutationDao] that exposes the queue for assertions. The in-memory DAO already mirrors
  * Room's mutation-queue semantics: an auto-incrementing id on insert (like `autoGenerate`), rows
- * with a null `syncedAtMs` treated as pending, ordering by `createdAtMs`, and reactive per-table
+ * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and reactive per-table
  * flows that re-emit on every queue change. Syncer tests drive a real `OfflineStore` over it and
  * observe replay, mark-synced, drop and dead-letter transitions.
  */
@@ -115,4 +137,60 @@ internal class FakeMutationDao : InMemoryMutationDao() {
 
     /** Snapshot of the queued rows (all rows, pending + synced), for queue assertions. */
     internal val inserted: List<MutationRow> get() = mutations.value
+
+    /** How many times a query read every pending row of the queue or of a table. */
+    var pendingListReads: Int = 0
+        private set
+
+    /** When set, the next [deleteAll] fails, as a process dying part-way through clearing would. */
+    var failNextDeleteAll: Boolean = false
+
+    /** When set, the next [deleteById] fails, as a process dying before the delete would. */
+    var failNextDeleteById: Boolean = false
+
+    override suspend fun pendingAll(): List<MutationRow> {
+        pendingListReads++
+        return super.pendingAll()
+    }
+
+    override suspend fun pendingForTable(table: String): List<MutationRow> {
+        pendingListReads++
+        return super.pendingForTable(table)
+    }
+
+    override suspend fun deleteAll() {
+        if (failNextDeleteAll) {
+            failNextDeleteAll = false
+            error("Scripted failure part-way through clearing")
+        }
+        super.deleteAll()
+    }
+
+    override suspend fun deleteById(id: Long) {
+        if (failNextDeleteById) {
+            failNextDeleteById = false
+            error("Scripted failure before the delete")
+        }
+        super.deleteById(id)
+    }
+}
+
+/**
+ * A real [MutationDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can check
+ * that a clear which fails part-way changes nothing on disk.
+ */
+internal class FakeDeleteAllFailingMutationDao(real: MutationDao) : MutationDao by real {
+    override suspend fun deleteAll() {
+        error("Scripted failure of the mutation delete")
+    }
+}
+
+/**
+ * A real [ObjectDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can check
+ * that a clear which fails part-way changes nothing on disk.
+ */
+internal class FakeDeleteAllFailingObjectDao(real: ObjectDao) : ObjectDao by real {
+    override suspend fun deleteAll() {
+        error("Scripted failure of the object-cache delete")
+    }
 }

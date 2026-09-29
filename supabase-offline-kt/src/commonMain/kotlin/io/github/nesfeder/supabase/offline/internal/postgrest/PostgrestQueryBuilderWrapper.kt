@@ -13,9 +13,10 @@ import kotlinx.serialization.json.JsonElement
 
 /**
  * A wrapper around [PostgrestQueryBuilder] that provides a consistent interface for
- * PostgREST operations, facilitating testing and decoupling.
+ * PostgREST operations, facilitating testing and decoupling. It is also the [DryRunProbe] for the
+ * writes it issues.
  */
-internal interface PostgrestQueryBuilderWrapper {
+internal interface PostgrestQueryBuilderWrapper : DryRunProbe {
 
     /**
      * The name of the table this builder targets.
@@ -89,6 +90,7 @@ internal interface PostgrestQueryBuilderWrapper {
     suspend fun delete(
         request: PostgrestRequestBuilder.() -> Unit
     ): PostgrestResult
+
 }
 
 /**
@@ -100,6 +102,15 @@ internal interface PostgrestQueryBuilderWrapper {
 internal class PostgrestQueryBuilderWrapperImpl(
     private val builder: PostgrestQueryBuilder
 ) : PostgrestQueryBuilderWrapper {
+
+    init {
+        // The offline client installs these when it is built; a handle made directly installs them
+        // here. Either way each is installed once per client.
+        builder.postgrest.supabaseClient.installDryRunCheck()
+        builder.postgrest.supabaseClient.installTransportFailureCapture()
+    }
+
+    private val dryRunProbe = PreferHeaderDryRunProbe(builder.postgrest.supabaseClient)
 
     /**
      * @see PostgrestQueryBuilderWrapper.table
@@ -167,4 +178,7 @@ internal class PostgrestQueryBuilderWrapperImpl(
     ): PostgrestResult {
         return builder.delete(request)
     }
+
+    /** @see PreferHeaderDryRunProbe */
+    override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict = dryRunProbe.classify(write)
 }
