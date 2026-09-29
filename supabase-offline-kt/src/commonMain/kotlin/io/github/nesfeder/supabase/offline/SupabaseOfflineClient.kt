@@ -38,7 +38,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -367,18 +366,18 @@ internal class SupabaseOfflineClientImpl(
      * or a restore or refresh finishing — so writes queued while it was unsettled are sent however
      * long settling took. A switch that turns automatic replay off must stop this trigger; see
      * [BackgroundSyncTrigger] for the ones it must not stop.
+     *
+     * Every new session status counts, including a new session of the identity seen last. The status
+     * keeps only its latest value, so a sign-out and sign-in that happen before this collector runs
+     * again reach it as exactly that; comparing identities would drop it.
      */
     private fun replayWhenTheSessionSettles() {
         val auth = authPluginOrNull() ?: return
         coordinatorScope.launch {
-            auth.sessionStatus
-                .map { status -> replayIdentityFor(status) }
-                .distinctUntilChanged()
-                .collect { identity ->
-                    if (identity != null && store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) {
-                        backgroundSync.request()
-                    }
-                }
+            auth.sessionStatus.collect { status ->
+                val identity = replayIdentityFor(status) ?: return@collect
+                if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) backgroundSync.request()
+            }
         }
     }
 

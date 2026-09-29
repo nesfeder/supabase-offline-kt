@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
@@ -35,7 +36,8 @@ class ClearLocalDataDuringWritesTest {
     private val objectDao = FakeObjectDao()
     private val mutationDao = FakeMutationDao()
     private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
-    private val client = newTestOfflineClient(supabase = server.supabaseClient(), store = store)
+    /** Passes run only when a test starts one, so none the engine starts can race the clear. */
+    private val client = newTestOfflineClient(supabase = server.supabaseClient(), store = store, coordinatorScope = idleCoroutineScope())
     private val parked = CompletableDeferred<Unit>()
     private val release = CompletableDeferred<Unit>()
 
