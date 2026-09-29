@@ -222,7 +222,10 @@ public interface SupabaseOfflineClient {
      * value — the row can't be located, so the event is logged and dropped rather than risk
      * patching the wrong rows.
      *
-     * @param table The Supabase table name (e.g. `"todos"`).
+     * It acts on the cached queries of [table] in the client's default schema. A table in another
+     * schema, whose queries are cached apart, cannot be named here yet.
+     *
+     * @param table The Supabase table name (e.g. `"todos"`), in the client's default schema.
      * @param record The full row object as delivered by the Realtime event.
      * @param primaryKeys The column name(s) forming the row's identity; defaults to `["id"]`. Pass
      *   the table's actual primary key — e.g. `["team_id", "member_id"]` for a table whose primary
@@ -240,9 +243,10 @@ public interface SupabaseOfflineClient {
      * DELETE event).
      *
      * No-ops under the same conditions as [applyServerRecord]: no cached payloads for [table], or a
-     * [primaryKeys] column absent from [oldRecord] or non-primitive.
+     * [primaryKeys] column absent from [oldRecord] or non-primitive. Like it, it acts on [table] in
+     * the client's default schema only.
      *
-     * @param table The Supabase table name.
+     * @param table The Supabase table name, in the client's default schema.
      * @param oldRecord The deleted row's prior column values, carrying at least [primaryKeys].
      * @param primaryKeys The column name(s) forming the row's identity; defaults to `["id"]`.
      */
