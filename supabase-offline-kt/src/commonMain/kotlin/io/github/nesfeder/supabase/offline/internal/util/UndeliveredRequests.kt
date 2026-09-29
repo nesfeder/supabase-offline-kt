@@ -4,15 +4,28 @@ import io.ktor.client.network.sockets.ConnectTimeoutException
 
 /**
  * Whether this failure, as the HTTP engine raised it, proves the request never reached the server:
- * the connection or the host name lookup failed. Any other failure may have been delivered.
+ * the connection or the host name lookup failed, here or in a cause. An engine that retried inside
+ * itself carries its earlier attempts as suppressed exceptions, and each of those must prove it too.
+ * Any other failure may have been delivered.
  */
-internal fun Throwable.provesRequestNeverSent(): Boolean {
+internal fun Throwable.provesRequestNeverSent(): Boolean = provesNeverSentWithin(MAX_EXCEPTIONS_WALKED)
+
+/** How many linked exceptions the proof walks; a failure with more is treated as unproven. */
+private const val MAX_EXCEPTIONS_WALKED = 32
+
+/** [provesRequestNeverSent], walking at most [budget] linked exceptions. */
+private fun Throwable.provesNeverSentWithin(budget: Int): Boolean {
+    var connectFailure = false
+    var remaining = budget
     var current: Throwable? = this
     while (current != null) {
-        if (current is ConnectTimeoutException || isConnectFailureOnThisPlatform(current)) return true
+        if (remaining-- <= 0) return false
+        val suppressed = current.suppressedExceptions
+        if (suppressed.any { attempt -> !attempt.provesNeverSentWithin(remaining / suppressed.size) }) return false
+        if (current is ConnectTimeoutException || isConnectFailureOnThisPlatform(current)) connectFailure = true
         current = current.cause
     }
-    return false
+    return connectFailure
 }
 
 /** Whether [failure] is this platform's own failure to connect or to resolve the host. */
