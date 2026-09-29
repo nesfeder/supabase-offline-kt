@@ -111,38 +111,13 @@ internal enum class CommitOutcome {
 }
 
 /**
- * The offline client's file cache for Storage objects, shared by every bucket the client hands out.
- *
- * It owns everything that touches the cache directory, and holds four rules:
- *
- * - **Derived paths.** An entry's file is derived from its bucket and object path every time, by
- *   [objectFilePathOrNull] or [hashedFilePath]; the path a row recorded is never followed. It goes
- *   stale: iOS moves an app's container across updates and reinstalls, Android moves `filesDir` to
- *   adopted storage, and rows written by earlier versions recorded files under mappings this one no
- *   longer uses. Such a legacy row is dropped on sight.
- * - **Containment.** Every file operation first resolves the deepest existing directory on the
- *   file's path, symlinks included, and refuses anything that resolves outside the data directory.
- * - **Atomicity.** A download is written to a temporary file in the directory of the file it will
- *   replace, recorded, then renamed over it. A reader sees the old bytes or the new ones, never a
- *   part, and a cancelled or failed download leaves nothing behind. Temporary files a crash left are
- *   swept on first use, once they are a day old.
- * - **Generations.** [clear] bumps a generation; a download started in an earlier one is not
- *   committed, so a response that lands after sign-out cannot repopulate the cache.
- *
- * Commits, evictions, invalidations and clears run under one lock, so none of them interleaves
- * with another. Reads run outside it, protected by a pin: a pinned entry is never evicted.
- *
- * The size bound ([maxSizeBytes]) is enforced after every commit, against a running total kept
- * under the lock. Once over the bound, the least recently used entries are deleted — ranked by file
- * modification time, which [markFileUsed] moves forward on every use — down to a low-water mark
- * below it, so a full cache does not rescan itself on every download. Pinned entries are skipped,
- * and so is anything used in the last [RECENT_USE_GRACE_MILLIS]: the bound is soft by what was used
- * that recently.
+ * The client's file cache for Storage objects, shared by every bucket it hands out. An entry's file
+ * is derived from its bucket and path, never read back from its row, and every file operation stays
+ * inside the data directory; commits, evictions, invalidations and clears run under one lock.
  *
  * @param store the offline store holding the cache rows.
  * @param dataDirectoryProvider the offline data directory; resolved on first use.
  * @param maxSizeBytes the size bound, or `null` for none.
- * @param sdkLogger the SDK logger. Nothing logged at INFO or above names an object path.
  * @param fileSystem the file system; injectable so tests can make it fail.
  * @param nowMillis clock for use times.
  * @param markUsed records a use time on a file.
@@ -352,13 +327,9 @@ internal class StorageFileCache(
     }
 
     /**
-     * Writes [bytes] to the cache as [entry]'s copy: a temporary file, then an atomic rename.
+     * Writes [bytes] as [entry]'s cached copy. A file-system or database failure is logged, never
+     * thrown: the download's bytes are already the caller's.
      *
-     * Never throws for a file-system or database failure — the download already succeeded and its
-     * bytes are the caller's — it logs instead. Cancellation propagates, leaving nothing behind.
-     *
-     * @param entry the entry.
-     * @param bytes the downloaded bytes.
      * @param startedInGeneration [currentGeneration] as read before the download started.
      */
     suspend fun write(entry: StorageCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
@@ -375,17 +346,12 @@ internal class StorageFileCache(
     }
 
     /**
-     * Closes [temporary], records the entry, and renames the file over the entry's own; then
-     * enforces the size bound.
+     * Records [temporary]'s entry, renames the file over the entry's own, then enforces the size
+     * bound. The row goes first, so a database that refuses it leaves the old copy as it was.
      *
-     * The row is written before the rename. A database that refuses it — a full disk, a closed or
-     * malformed database — leaves the old copy and its row as they were, and the download is not
-     * lost: the caller still holds the temporary file.
-     *
-     * @param temporary the finished download.
      * @param startedInGeneration [currentGeneration] as read before the download started.
-     * @return what happened. On anything but [CommitOutcome.COMMITTED] the temporary file is left
-     *   in place for the caller to read, then [discard].
+     * @return what happened; on anything but [CommitOutcome.COMMITTED] the caller reads, then
+     *   [discard]s, the temporary file.
      */
     suspend fun commit(temporary: TemporaryDownload, startedInGeneration: Long): CommitOutcome =
         withContext(Dispatchers.IO + NonCancellable) {
@@ -520,10 +486,8 @@ internal class StorageFileCache(
     }
 
     /**
-     * Whether this row recorded a file inside the data directory other than [entry]'s own: it was
-     * written under a mapping this version no longer uses (an earlier version stripped a leading
-     * `/` or the bucket's name from the path, and stored every name verbatim). A recorded file
-     * outside the data directory only means the directory moved, and the derived file is used.
+     * Whether this row recorded a file inside the data directory other than [entry]'s own, under
+     * another path mapping. A recorded file outside the data directory only means the directory moved.
      */
     private fun StorageRow.recordsOutdatedPath(entry: StorageCacheEntry): Boolean {
         val recorded = localPath.toPath().normalized()
@@ -539,7 +503,7 @@ internal class StorageFileCache(
             deleteContained(entry.file)
             if (row.recordsOutdatedPath(entry)) deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
         }
-        // The object's own file even without a row: a legacy row may have recorded another path.
+        // The object's own file even without a row: an outdated row may have recorded another path.
         entryFor(bucketId, objectPath)?.let { entry -> deleteContained(entry.file) }
     }
 
@@ -562,7 +526,7 @@ internal class StorageFileCache(
         }
     }
 
-    /** Drops [entry]'s row when it still records a legacy file, and that file when nothing owns it. */
+    /** Drops [entry]'s row when it still records an outdated path, and that file when nothing owns it. */
     private suspend fun dropOutdatedRowLocked(entry: StorageCacheEntry) {
         val row = store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return
         if (!row.recordsOutdatedPath(entry)) return
@@ -571,10 +535,8 @@ internal class StorageFileCache(
     }
 
     /**
-     * Deletes [recorded], a file a legacy row pointed at, unless it is where the current mapping
-     * keeps another object that is cached — the bucket-prefix mapping put `media/x.txt` in the
-     * file that now belongs to `x.txt`. A file nothing can own any more (a name now stored under
-     * its hash) is deleted, so it does not outlive its row untracked.
+     * Deletes [recorded], a file an outdated row pointed at, unless the current mapping gives it to
+     * another cached object (`x.txt` owns the file `media/x.txt` was once mapped to).
      */
     private suspend fun deleteOrphanedOutdatedFileLocked(recorded: Path) {
         if (!recorded.isStrictlyInside(storageDirectory)) return
@@ -663,7 +625,7 @@ internal class StorageFileCache(
         }
     }
 
-    /** Whether a cache row's entry lives in [file]. */
+    /** Whether [file] is where a cached entry lives, so the sweep must leave it. */
     private suspend fun belongsToACachedEntry(file: Path): Boolean {
         val normalized = file.normalized()
         if (!normalized.isStrictlyInside(storageDirectory)) return false

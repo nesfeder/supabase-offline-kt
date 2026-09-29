@@ -4,18 +4,14 @@ import okio.ByteString.Companion.toByteString
 import okio.Path
 
 /**
- * Directory under the data directory that holds cached objects with plain names, at
- * `<data>/storage/<bucket>/<object path>`. Unchanged since the first release: installs keep their
- * files there, and clearing local data removes it.
+ * Directory under the data directory for cached objects with plain names, at
+ * `<data>/storage/<bucket>/<object path>`. The name is persisted: installs keep their files there.
  */
 internal const val STORAGE_DIRECTORY_NAME: String = "storage"
 
 /**
- * Directory under the data directory that holds every cache entry whose name is not plain (see
- * [isPlainObjectName]) — every image-transform variant, and every object whose bucket or path
- * holds anything but printable ASCII or is too long for a file name. Such an entry's file is named
- * by a hash of its cache key, so nothing about it comes from the object path, and no two keys can
- * meet on one file however the file system folds names.
+ * Directory under the data directory for every entry whose name is not plain (see
+ * [isPlainObjectName]), image-transform variants included, each in a file named by a hash of its key.
  */
 internal const val HASHED_DIRECTORY_NAME: String = "storage-hashed"
 
@@ -45,11 +41,8 @@ internal fun isCacheableBucketId(bucketId: String): Boolean =
     isCacheableSegment(bucketId) && '/' !in bucketId
 
 /**
- * Whether [objectPath] can name a file of the cache. Object paths are untrusted input — they often
- * come from rows other users wrote — so anything that could climb out of the bucket's directory, or
- * that the file system would read differently from how the server does, is refused: a leading `/`,
- * an empty segment (`//`, or a trailing `/`), a `.` or `..` segment, a `\`, NUL or any other control
- * character. Such an object still downloads; it is just never cached.
+ * Whether [objectPath], untrusted input, can name a cache file: no leading `/`, no empty, `.` or
+ * `..` segment, no `\` and no control character. Anything else still downloads, uncached.
  *
  * @param objectPath the object path as the caller passed it.
  * @return `true` when it is safe to map onto a file.
@@ -65,14 +58,9 @@ private fun isCacheableSegment(segment: String): Boolean =
         segment.none { character -> character < ' ' || character == '\u007F' }
 
 /**
- * Whether [name] — a bucket identifier or an object path — can be stored under its own name:
- * printable ASCII only, and short enough for every file system.
- *
- * Anything else could reach the file system as a different name than the server's. APFS folds
- * Unicode normalization forms, so `café` written two ways is one file; okio writes every lone
- * surrogate as `?`; a segment over 255 bytes cannot be created at all. Such names are stored under
- * a hash of their key instead. Case is not folded: iOS and Android app storage are case-sensitive,
- * and only a Mac or a simulator, whose disks are not, would put `A.png` and `a.png` in one file.
+ * Whether [name], a bucket or an object path, is stored under its own name: printable ASCII short
+ * enough for every file system. Other names could reach the disk folded or truncated, so they are
+ * hashed; case is not folded, since device app storage is case-sensitive.
  *
  * @param name the bucket identifier or object path, already known to be cacheable.
  * @return `true` when it is stored verbatim.

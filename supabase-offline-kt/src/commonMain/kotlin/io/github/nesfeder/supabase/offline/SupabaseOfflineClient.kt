@@ -409,11 +409,9 @@ internal class SupabaseOfflineClientImpl(
     }
 
     /**
-     * Starts a pass whenever the session settles into an identity with mutations queued — a sign-in,
-     * or a restore or refresh finishing — so writes queued while it was unsettled are sent however
-     * long settling took. A switch that turns automatic replay off must stop this trigger; see
-     * [BackgroundSyncTrigger] for the ones it must not stop. Runs in the client's scope, so [close]
-     * stops it.
+     * Starts a pass whenever the session settles into an identity with mutations queued, in the
+     * client's scope so [close] stops it. An automatic-replay switch must stop this trigger; see
+     * [BackgroundSyncTrigger] for the ones it must not.
      */
     private fun replayWhenTheSessionSettles() {
         val auth = authPluginOrNull() ?: return
@@ -594,9 +592,9 @@ internal class SupabaseOfflineClientImpl(
     }
 
     /**
-     * Clears once, taking locks outermost first: the replayer's send lock, once it has cancelled passes
-     * in flight; the file cache's lock; then the store's inside [OfflineStore.clearAll], whose one
-     * transaction deletes every row. The scrub runs after that transaction, and the files go last.
+     * Clears once, locks outermost first: the replayer's send lock, after it cancels passes in flight;
+     * the file cache's lock; the store's, around [OfflineStore.clearAll]'s one transaction. The scrub
+     * runs after that transaction, and the cache files go last.
      */
     override suspend fun clearAllCache() {
         ensureOpen()
