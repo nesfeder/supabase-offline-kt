@@ -150,7 +150,7 @@ internal class MutationQueueReplayer(
         data class Sent(val result: PostgrestResult) : HeadSendOutcome
 
         /**
-         * It did not run on the server — no connection, or PostgREST answered `503`/`520` — and stays
+         * It may not have run on the server — no connection or no answer, or a `503`/`520` — and stays
          * queued.
          */
         data class StaysQueued(val cause: Exception) : HeadSendOutcome
@@ -693,7 +693,10 @@ internal class MutationQueueReplayer(
         const val HTTP_CONFLICT = 409
         const val HTTP_SERVICE_UNAVAILABLE = 503
 
-        /** Statuses PostgREST answers when the write never ran: it could not reach the database. */
+        /**
+         * Statuses after which a head send stays queued: PostgREST, or something in front of it, could
+         * not complete the request, and the write may not have run.
+         */
         val STAYS_QUEUED_STATUSES = setOf(HTTP_SERVICE_UNAVAILABLE, 520)
 
         /**

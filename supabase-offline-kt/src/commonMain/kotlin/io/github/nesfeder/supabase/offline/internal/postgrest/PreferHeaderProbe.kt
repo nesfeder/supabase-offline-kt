@@ -54,12 +54,12 @@ internal fun interface DryRunProbe {
  * it only into the `Prefer` header, as `tx=rollback`, so the check reads that header: it runs the
  * write under a [PreferHeaderProbe], and the phase [installDryRunCheck] put ahead of every
  * other on the request pipeline records the header of the PostgREST write request and stops it. No
- * plugin the app installed runs for it, so no retry or logging plugin sees the stop.
+ * plugin the app installed runs for it, so no retry or logging plugin sees the stop. A subscriber to
+ * the client's `HttpRequestCreated` monitor event does see the request: that event fires before the
+ * pipeline runs.
  *
- * Hosted Supabase appears to run PostgREST with its default `db-tx-end = commit`, under which
- * `tx=rollback` is ignored and a "dry run" commits. So a dry run is never queued, and whether it was
- * rolled back is read from the response ([wasRolledBack]). Inferred from configuration; not yet
- * confirmed against a live project.
+ * A dry run is never queued; whether the server rolled it back is read from its response
+ * ([wasRolledBack]).
  */
 internal class PreferHeaderDryRunProbe(private val supabase: SupabaseClient) : DryRunProbe {
 

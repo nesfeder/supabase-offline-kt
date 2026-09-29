@@ -12,7 +12,8 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * Runs the replay passes the engine starts on its own — after a write is queued behind pending ones,
- * or after a write sent at the head left more pending — coalesced and backed off.
+ * after a write sent at the head left more pending, and when the session settles into an identity
+ * with mutations queued — coalesced and backed off.
  *
  * - **Coalesced:** requests are conflated. At most one pass runs and at most one more is waiting,
  *   however many requests arrive meanwhile, so a burst of writes queued behind the head starts one
@@ -23,6 +24,11 @@ import kotlin.time.Duration.Companion.seconds
  *   write held behind an earlier one), the next pass waits — [initialBackoff], doubling up to
  *   [maxBackoff] — and a pass that ends any other way resets the wait. So a write the server keeps
  *   failing is not hammered by every write queued behind it.
+ *
+ * A switch that turns automatic replay off, when one is added, must stop the session-settle trigger
+ * (and any connectivity trigger added with it), and must not stop the two write-path triggers: with
+ * write-ahead an online write returns `Queued` whenever anything of its identity is pending ahead of
+ * it, and only those passes send it. So the switch goes at each trigger, not in this class.
  *
  * @property scope Hosts the worker; cancelling it stops the trigger.
  * @property sdkLogger Where a pass that throws is logged.

@@ -288,7 +288,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
     /**
      * Asks for a replay pass. Called when a write was queued behind pending writes, and when more
      * are pending after a write sent at the head, so they go out without waiting for the app. Does
-     * nothing when built directly.
+     * nothing when built directly. A switch that turns automatic replay off must not stop these
+     * passes: they are what sends an online write that returned `Queued` (see `BackgroundSyncTrigger`).
      */
     private val requestSync: () -> Unit = {},
     /** Tells a dry run from a write before the write is queued; see [DryRunProbe]. */
@@ -639,9 +640,9 @@ internal class OfflinePostgrestQueryBuilderImpl(
     /**
      * Sends or queues one write. `OnlineOnly` sends it and nothing else. `QueueIfOffline` saves it to
      * the mutation queue first and sends it at once only at the head of its identity's queue: accepted,
-     * it is `Applied`; not run on the server (no connection, `503`, `520`), it stays `Queued`; refused,
-     * it leaves the queue and the failure is thrown; behind other mutations, it waits and a pass is
-     * requested. A write the queue cannot hold faithfully — a dry run, one it cannot classify, a filter
+     * it is `Applied`; unanswered or answered `503`/`520`, so that it may not have run, it stays
+     * `Queued`; refused, it leaves the queue and the failure is thrown; behind other mutations, it
+     * waits and a pass is requested. A write the queue cannot hold faithfully — a dry run, one it cannot classify, a filter
      * it cannot record, an unknown identity — is sent directly and never queued. The request lambda
      * runs up to three times: to capture, to classify and to send.
      *
@@ -729,7 +730,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     if (sent.cause.isNetworkOrConnectivityFailure()) {
                         "$verbLabel $table queued offline (network unavailable)"
                     } else {
-                        "$verbLabel $table queued (the server could not run it: ${sent.cause.httpStatusOrNull()})"
+                        "$verbLabel $table queued (the server answered ${sent.cause.httpStatusOrNull()}; " +
+                            "it may not have run)"
                     }
                 }
                 MutationOutcome.Queued

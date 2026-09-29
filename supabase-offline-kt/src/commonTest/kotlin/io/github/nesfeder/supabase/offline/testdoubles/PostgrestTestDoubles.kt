@@ -39,8 +39,8 @@ internal class FakePostgrestQueryBuilderWrapper(
     private val onUpdate: (suspend (JsonElement) -> PostgrestResult)? = null,
     private val onDelete: (suspend () -> PostgrestResult)? = null,
     /**
-     * What [requestsRollback] answers. A scripted handle builds no HTTP request, so it cannot see a
-     * dry run; by default it reports "not a dry run", and `null` scripts a handle that cannot tell.
+     * What [classify] answers: `true` a dry run, `false` an ordinary write (the default), `null` a
+     * check that cannot tell. A scripted handle builds no HTTP request, so it cannot see a dry run.
      */
     private val dryRunVerdict: Boolean? = false,
 ) : PostgrestQueryBuilderWrapper {

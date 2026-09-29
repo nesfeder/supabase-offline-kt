@@ -119,14 +119,15 @@ public enum class MutationStrategy {
 
     /**
      * Send the mutation through the mutation queue, so it keeps its place among the current
-     * identity's writes, and keep it there while it cannot run on the server.
+     * identity's writes, and keep it there until the server has accepted or refused it.
      *
      * The write is saved first, then sent at once when nothing of the same identity is pending ahead
      * of it, in any table. [MutationOutcome.Applied] carries the server's response. [MutationOutcome.Queued]
-     * means it waits: no connection (or PostgREST could not reach its database), earlier writes still
-     * pending, or a session still restoring — then it goes out in a later pass, and a refusal lands on
-     * the rejected list instead of being thrown. A write sent at once that the server refuses or fails
-     * with another `5xx` is thrown and does not stay queued. The UI shows the write immediately.
+     * means it waits: no connection or no answer, a `503` or `520` after which it may not have run,
+     * earlier writes still pending, or a session still restoring — then it goes out in a later pass,
+     * and a refusal lands on the rejected list instead of being thrown. A write sent at once that the
+     * server refuses or fails with another `5xx` is thrown and does not stay queued. The UI shows the
+     * write immediately.
      *
      * A few writes cannot be queued faithfully and are sent directly, as with [OnlineOnly]: a
      * `dryRun()` write, an UPDATE or DELETE whose filter the queue cannot record exactly, and a write

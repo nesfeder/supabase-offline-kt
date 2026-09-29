@@ -365,7 +365,8 @@ internal class SupabaseOfflineClientImpl(
     /**
      * Starts a pass whenever the session settles into an identity with mutations queued — a sign-in,
      * or a restore or refresh finishing — so writes queued while it was unsettled are sent however
-     * long settling took.
+     * long settling took. A switch that turns automatic replay off must stop this trigger; see
+     * [BackgroundSyncTrigger] for the ones it must not stop.
      */
     private fun replayWhenTheSessionSettles() {
         val auth = authPluginOrNull() ?: return

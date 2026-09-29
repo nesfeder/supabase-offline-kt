@@ -258,7 +258,7 @@ class HeadSendTest {
 
     @Test
     fun a_503_at_the_head_leaves_the_write_queued() = runTest {
-        // Given — PostgREST could not reach the database, so the write never ran
+        // Given — PostgREST's database connection broke, so the write may not have run
         server.answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST001") }
 
         // When
