@@ -311,16 +311,30 @@ internal class MutationQueueReplayer(
                 Claim.Skip -> continue
                 is Claim.Send -> claim.mutation
             }
-            val outcome = try {
-                val tableApi = tableApis.getOrPut(mutation.table) { postgrestFactory(schema, mutation.table) }
-                replay(mutation, tableApi, identity)
-            } catch (cancellation: CancellationException) {
-                withContext(NonCancellable) { sendLock.withLock { inFlight -= mutation.id } }
-                throw cancellation
-            }
-            val recorded = sendLock.withLock {
-                inFlight -= mutation.id
-                if (clearGeneration.value != generation) SyncStop.LocalDataCleared else record(mutation, outcome, rejected, syncedTables)
+            // The in-flight mark is released with the outcome recorded, so no other sender can claim
+            // the mutation in between; on any other way out, in the finally.
+            var released = false
+            val (outcome, recorded) = try {
+                val outcome = try {
+                    val tableApi = tableApis.getOrPut(mutation.table) { postgrestFactory(schema, mutation.table) }
+                    replay(mutation, tableApi, identity)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (localFailure: Exception) {
+                    // Request failures are outcomes already; this is the store failing around one.
+                    sdkLogger.error {
+                        "Replay of ${mutation.operation} on ${mutation.table} stopped by a local failure " +
+                            "(${localFailure::class.simpleName}); keeping it for a later sync"
+                    }
+                    ReplayOutcome.Stopped(localFailure)
+                }
+                sendLock.withLock {
+                    inFlight -= mutation.id
+                    released = true
+                    outcome to if (clearGeneration.value != generation) SyncStop.LocalDataCleared else record(mutation, outcome, rejected, syncedTables)
+                }
+            } finally {
+                if (!released) withContext(NonCancellable) { sendLock.withLock { inFlight -= mutation.id } }
             }
             if (outcome == ReplayOutcome.Synced && recorded == null) syncedCount++
             if (recorded != null) {
