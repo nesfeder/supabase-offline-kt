@@ -18,7 +18,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
-import io.github.nesfeder.supabase.offline.internal.postgrest.admissionOf
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
 import kotlinx.coroutines.flow.Flow
@@ -149,6 +149,9 @@ internal class OfflineStore(
 
     internal val json: Json = OfflineJson
     private val evictionMutex = Mutex()
+
+    /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
+    internal val queryShapes: QueryShapeRecords = QueryShapeRecords(objectDao, json)
 
     /**
      * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
@@ -390,6 +393,7 @@ internal class OfflineStore(
      *   a writer with no request behind it, which is never refused as stale.
      * @param isTrusted Whether the response speaks for the current identity at all; one that does not
      *   is refused as [AddPayloadOutcome.DROPPED_UNTRUSTED], empty or not.
+     * @param shape the query's shape, recorded with a written payload; `null` when not known.
      * @return What happened, so a caller can re-fetch after a stale drop.
      */
     suspend fun addPayload(
@@ -399,6 +403,7 @@ internal class OfflineStore(
         authoritativeEmpty: Boolean = false,
         requestStartedAtTick: Long? = null,
         isTrusted: Boolean = true,
+        shape: QueryShape? = null,
     ): AddPayloadOutcome {
         requireUserTable(table)
         // The guards and the write are one critical section under the table's write lock, so a
@@ -432,6 +437,7 @@ internal class OfflineStore(
             }
         } } }
 
+        if (outcome == AddPayloadOutcome.WRITTEN && shape != null) queryShapes.remember(table, signature, shape, persist = true)
         // Outside the table lock: eviction takes its own mutex and scans every table.
         if (outcome == AddPayloadOutcome.WRITTEN && shouldEnforceSizeAfterWrite(payload)) {
             enforceDbSizeLimitIfNeeded()
@@ -519,6 +525,7 @@ internal class OfflineStore(
         requireUserTable(table)
         tableWriteLock(table).withLock {
             objectDao.delete(table, signature)
+            queryShapes.forget(table, signature)
         }
     }
 
@@ -536,6 +543,7 @@ internal class OfflineStore(
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
             objectDao.deleteTable(table)
+            queryShapes.forgetTable(table)
         }
     }
 
@@ -565,6 +573,7 @@ internal class OfflineStore(
                     objectDao.deleteAll()
                 }
                 mutationQueueState.resetCaches()
+                queryShapes.forgetAll()
                 loggedOverlaySkips.value = emptySet()
             }
         }
@@ -1124,17 +1133,20 @@ internal class OfflineStore(
     /**
      * Overlays the current identity's pending mutations of [table] onto a fresh network [serverJson]
      * for the query [signature]. Synced ones are left out: the server already reflects them.
+     *
+     * @param shape the query's shape; `null` looks up the one recorded for [signature].
      */
     suspend fun overlayPendingOnResponse(
         table: String,
         signature: String,
-        serverJson: String
+        serverJson: String,
+        shape: QueryShape? = null,
     ): String {
         if (isReservedTable(table)) return serverJson
         val pending = visibleTo(identityProvider(), mutationQueueState.owners(), mutationDao.pendingForTable(table))
         if (pending.isEmpty()) return serverJson
 
-        return overlayMutations(serverJson, pending, signature, mutationQueueState.unconfirmedSends())
+        return overlayMutations(serverJson, pending, admissionOf(table, signature, shape), mutationQueueState.unconfirmedSends())
     }
 
     /**
@@ -1142,19 +1154,22 @@ internal class OfflineStore(
      * already contain, onto a cached payload served while offline.
      *
      * @param signature The payload's query, or `null` when not known: every synced mutation applies.
+     * @param shape the query's shape, recorded with the payload; `null` looks up the one recorded.
      */
     suspend fun overlayCachedPayload(
         table: String,
         signature: String?,
-        cachedJson: String
+        cachedJson: String,
+        shape: QueryShape? = null,
     ): String {
         if (isReservedTable(table)) return cachedJson
+        if (signature != null && shape != null) queryShapes.remember(table, signature, shape, persist = true)
         val coverage = mutationQueueState.syncedMutationCoverage()
         val all = visibleTo(identityProvider(), mutationQueueState.owners(), mutationDao.allForTable(table))
             .filter { mutation -> belongsOnPayload(mutation, signature, coverage) }
         if (all.isEmpty()) return cachedJson
 
-        val admission = signature?.let(::admissionOf) ?: QueryAdmission.EVERY_ROW
+        val admission = signature?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
         return overlayFor(admission, mutationQueueState.unconfirmedSends()).overlay(cachedJson, all)
     }
 
@@ -1168,7 +1183,7 @@ internal class OfflineStore(
      * overlay onto an empty list is emitted without being stored. Inputs and output are
      * de-duplicated, so an unrelated write does not re-emit.
      */
-    fun overlaidPayloadFlow(table: String, signature: String): Flow<String?> {
+    fun overlaidPayloadFlow(table: String, signature: String, shape: QueryShape? = null): Flow<String?> {
         if (isReservedTable(table)) return flowOf(null)
         return combine(
             observePayload(table, signature).distinctUntilChanged(),
@@ -1177,15 +1192,17 @@ internal class OfflineStore(
             identityChanges,
             mutationQueueState.syncedMutationCoverageFlow(),
         ) { cachedJson, allMutations, owners, _, coverage ->
+            // A live query's shape is known for as long as it is read; it is written once a payload exists
+            if (shape != null) queryShapes.remember(table, signature, shape, persist = cachedJson != null)
             val mutations = visibleTo(identityProvider(), owners, allMutations)
                 .filter { mutation -> belongsOnPayload(mutation, signature, coverage) }
             val unconfirmed = mutationQueueState.unconfirmedSends()
             when {
                 cachedJson != null ->
-                    if (mutations.isEmpty()) cachedJson else overlayMutations(cachedJson, mutations, signature, unconfirmed)
+                    if (mutations.isEmpty()) cachedJson else overlayMutations(cachedJson, mutations, admissionOf(table, signature, shape), unconfirmed)
 
                 mutations.isNotEmpty() ->
-                    overlayMutations(EMPTY_JSON_ARRAY, mutations, signature, unconfirmed)
+                    overlayMutations(EMPTY_JSON_ARRAY, mutations, admissionOf(table, signature, shape), unconfirmed)
                         .takeUnless { overlaid -> isEmptyJsonArrayPayload(overlaid) }
 
                 else -> null
@@ -1194,17 +1211,23 @@ internal class OfflineStore(
     }
 
     /**
-     * Overlays [mutations] onto [serverJson] for the query cached under [signature], showing only the
-     * rows that query admits.
+     * Overlays [mutations] onto [serverJson] for a query with [admission], showing only the rows it admits.
      *
      * @param unconfirmedSends mutations whose send may have reached the server; see [isSyncedOrUnconfirmed].
      */
     private fun overlayMutations(
         serverJson: String,
         mutations: List<MutationRow>,
-        signature: String,
+        admission: QueryAdmission,
         unconfirmedSends: Set<Long>,
-    ): String = overlayFor(admissionOf(signature), unconfirmedSends).overlay(serverJson, mutations)
+    ): String = overlayFor(admission, unconfirmedSends).overlay(serverJson, mutations)
+
+    /**
+     * The admission of the query cached under [signature]: [shape]'s, or the recorded one's, or every
+     * row when neither is known, since unknown conditions admit.
+     */
+    private suspend fun admissionOf(table: String, signature: String, shape: QueryShape?): QueryAdmission =
+        (shape ?: queryShapes.shapeOf(table, signature))?.admission ?: QueryAdmission.EVERY_ROW
 
     /** The overlay for a query with [admission], de-duplicating by key the rows the server may already hold. */
     private fun overlayFor(admission: QueryAdmission, unconfirmedSends: Set<Long>): MutationOverlay = MutationOverlay(
@@ -1309,9 +1332,10 @@ internal class OfflineStore(
             val parsed = cached.map { row -> row to payloadRowsOf(json, row.payload) }
             val keyColumns = primaryKeys.of(table)
             val known = rowsByKey(parsed, keyColumns)
+            val shapes = queryShapes.shapesOf(table)
             for ((row, rows) in parsed) {
                 if (rows == null) continue
-                val overlay = overlayFor(admissionOf(row.signature), unconfirmedSends = emptySet())
+                val overlay = overlayFor(shapes[row.signature]?.admission ?: QueryAdmission.EVERY_ROW, unconfirmedSends = emptySet())
                 val elsewhere = known.filter { knownRow -> indexOfKey(rows, knownRow, keyColumns) == null }
                 val patched = overlay.overlayRows(rows, writes, knownRows = elsewhere)
                 if (patched.visible == rows) continue
@@ -1319,7 +1343,7 @@ internal class OfflineStore(
                 if (!writeUnlessTornDown(guardTick, row.copy(payload = overlay.encode(patched.visible)))) return@withLock
             }
             val uncachedLive = (liveSignatures ?: liveSignatureProvider(table)) - cached.mapTo(mutableSetOf()) { row -> row.signature }
-            createLivePayloads(table, uncachedLive, writes, known, guardTick)
+            createLivePayloads(table, uncachedLive, shapes, writes, known, guardTick)
         }
     }
 
@@ -1343,18 +1367,22 @@ internal class OfflineStore(
      * rows [writes] wrote that the query admits. Nothing is written for a query that would stay empty,
      * and nothing once [clearAll] has run since [guardTick].
      *
+     * @param shapes the table's known query shapes, by cache key.
      * @param known rows cached for the table's other queries, the full rows an UPDATE or UPSERT changes.
      */
     private suspend fun createLivePayloads(
         table: String,
         signatures: Set<String>,
+        shapes: Map<String, QueryShape?>,
         writes: List<MutationRow>,
         known: List<JsonObject>,
         guardTick: Long,
     ) {
         for (signature in signatures) {
-            val overlay = overlayFor(admissionOf(signature), unconfirmedSends = emptySet())
-            val admission = admissionOf(signature)
+            // A live query's shape is known while it is read; unknown conditions admit
+            val shape = shapes[signature]
+            val admission = shape?.admission ?: QueryAdmission.EVERY_ROW
+            val overlay = overlayFor(admission, unconfirmedSends = emptySet())
             val created = overlay.overlayRows(emptyList(), writes, knownRows = known).written.filter(admission::admits)
             if (created.isEmpty()) continue
             // Local rows alone are not the query's answer: stale, so a read with a cache duration asks the server
@@ -1371,6 +1399,7 @@ internal class OfflineStore(
                 }
             }
             if (!written) return
+            if (shape != null) queryShapes.remember(table, signature, shape, persist = true)
         }
     }
 
@@ -1581,6 +1610,7 @@ internal class OfflineStore(
                 iterations++
                 currentBytes = objectDao.totalPayloadBytes()
             }
+            if (iterations > 0) queryShapes.dropOrphans()
         }
     }
 

@@ -246,7 +246,7 @@ internal class QueryReader(
 
     /** The cache and the overlay as they change, never the network; the refresh is always idle. */
     private fun cacheOnlyWithState(slot: CacheSlot): Flow<OfflineReadResult> =
-        store.overlaidPayloadFlow(slot.table, slot.cacheKey).map { payload ->
+        store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape).map { payload ->
             OfflineReadResult(
                 result = payload?.let { json -> buildResult(json, delegate.postgrest) },
                 refresh = RefreshState.Idle,
@@ -264,7 +264,7 @@ internal class QueryReader(
     ): Flow<OfflineReadResult> {
         val refreshState = MutableStateFlow<RefreshState>(RefreshState.InFlight)
         val payloads = cacheFirstWithParallelRefresh(
-            cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey),
+            cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape),
             refresh = { refreshFromNetwork(slot, columns, request) },
             accelerator = accelerator,
             onRefreshState = { state -> refreshState.value = state },
@@ -305,7 +305,7 @@ internal class QueryReader(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> =
-        store.overlaidPayloadFlow(slot.table, slot.cacheKey)
+        store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape)
             .onStart { bootstrapFromNetwork(slot, columns, request) }
             .map { payload ->
                 OfflineReadResult(
@@ -359,6 +359,7 @@ internal class QueryReader(
                 authoritativeEmpty = trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = true),
                 requestStartedAtTick = requestStartedAtTick,
                 isTrusted = isEmpty || trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = false),
+                shape = slot.shape,
             )
             when (outcome) {
                 AddPayloadOutcome.DROPPED_CACHE_CLEARED ->
@@ -389,7 +390,7 @@ internal class QueryReader(
         } else {
             fetched.response.data
         }
-        val overlaid = store.overlayPendingOnResponse(table = table, signature = cacheKey, serverJson = base)
+        val overlaid = store.overlayPendingOnResponse(table = table, signature = cacheKey, serverJson = base, shape = slot.shape)
         return if (overlaid == fetched.response.data) fetched.response else buildResult(overlaid, delegate.postgrest)
     }
 
@@ -422,7 +423,7 @@ internal class QueryReader(
         val (table, cacheKey) = slot
         val (payload, updatedAt) = store.getPayloadWithTimestamp(table, cacheKey) ?: return null
         if (!isFresh(updatedAt, cacheDuration)) return null
-        val overlaid = store.overlayCachedPayload(table = table, signature = cacheKey, cachedJson = payload)
+        val overlaid = store.overlayCachedPayload(table = table, signature = cacheKey, cachedJson = payload, shape = slot.shape)
         return buildResult(overlaid, delegate.postgrest)
     }
 

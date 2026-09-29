@@ -113,6 +113,33 @@ internal class ReservedRowsDatabaseScenarios(
         }
     }
 
+    /**
+     * Room's queries over query-shape records: found and deleted by prefix, and those whose payload is
+     * gone deleted as orphans, while the rest stay.
+     */
+    suspend fun roomFindsAndDropsQueryShapeRecords(path: String) {
+        // Given — one cached payload, its shape record, and a record whose payload is gone
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val objectDao = database.objectDao()
+            val payload = ShippedDatabaseFixture.OBJECT_ROWS.first()
+            val prefix = "$QUERY_SHAPE_SIGNATURE_PREFIX${payload.table}\u001F"
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, prefix + payload.signature, "{}", 0))
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, prefix + "gone?x=eq.1", "{}", 0))
+
+            // When / Then — both found by prefix; the orphan dropped; the rest by prefix
+            assertEquals(2, objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).size)
+            assertEquals(1, objectDao.deleteOrphanedQueryShapes())
+            assertEquals(listOf(prefix + payload.signature), objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).map { row -> row.signature })
+            objectDao.deleteWithSignaturePrefix(RESERVED_TABLE_NAME, prefix)
+            assertEquals(emptyList(), objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix))
+            assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, objectDao.signaturesForTable(payload.table).size)
+        } finally {
+            database.close()
+        }
+    }
+
     /** Room's eviction query passes over the signatures it is told to keep, however old they are. */
     suspend fun roomEvictionKeepsTheListedSignatures(path: String) {
         // Given — the shipped database's cache rows

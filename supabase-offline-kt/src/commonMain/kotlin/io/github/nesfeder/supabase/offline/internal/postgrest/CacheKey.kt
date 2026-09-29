@@ -8,13 +8,14 @@ import io.github.jan.supabase.postgrest.query.Columns.Companion.ALL
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 
 /**
- * Where a SELECT's response is cached.
+ * Where a SELECT's response is cached, and what the query is.
  *
  * @property table the query-cache table: the table itself in the client's default schema, and
  *   `schema.table` in any other, so the two never share cached rows or queued mutations.
  * @property cacheKey the cache key, which starts with [table].
+ * @property shape the query's columns and filters, captured from its request.
  */
-internal data class CacheSlot(val table: String, val cacheKey: String)
+internal data class CacheSlot(val table: String, val cacheKey: String, val shape: QueryShape)
 
 /**
  * The [CacheSlot] of a SELECT on [table]. The schema is the builder's once [request] has run, which
@@ -32,7 +33,7 @@ internal fun cacheSlotOf(
     val builder = builderFactory().apply(request)
     val schema = builder.schema
     val cachedTable = if (schema.isBlank() || schema == defaultSchema) table else "$schema.$table"
-    return CacheSlot(table = cachedTable, cacheKey = keyOf(cachedTable, columns, builder))
+    return CacheSlot(table = cachedTable, cacheKey = keyOf(cachedTable, columns, builder), shape = queryShapeOf(columns, builder))
 }
 
 /**

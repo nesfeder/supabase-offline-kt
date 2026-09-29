@@ -57,6 +57,11 @@ class OfflineDatabaseReservedRowsAndroidTest {
     }
 
     @Test
+    fun room_finds_and_drops_query_shape_records() = runTest {
+        scenarios.roomFindsAndDropsQueryShapeRecords(dbPath)
+    }
+
+    @Test
     fun room_replays_pending_writes_in_insertion_order() = runTest {
         scenarios.roomReplaysPendingWritesInInsertionOrder(dbPath)
     }

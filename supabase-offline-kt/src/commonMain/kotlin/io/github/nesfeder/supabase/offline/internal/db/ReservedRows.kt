@@ -39,6 +39,18 @@ internal const val SYNCED_MUTATION_COVERAGE_SIGNATURE: String = "synced_mutation
 internal const val UNCONFIRMED_SENDS_SIGNATURE: String = "unconfirmed_sends"
 
 /**
+ * The name that begins the signature of each query-shape record within [RESERVED_TABLE_NAME]: the
+ * name, a unit separator (U+001F), the cached query's table, another separator, and its cache key.
+ */
+internal const val QUERY_SHAPE_SIGNATURE_PREFIX_NAME: String = "query_shape"
+
+/** [QUERY_SHAPE_SIGNATURE_PREFIX_NAME] and the separator after it, as a record's signature begins. */
+internal const val QUERY_SHAPE_SIGNATURE_PREFIX: String = QUERY_SHAPE_SIGNATURE_PREFIX_NAME + "\u001F"
+
+/** The length of [QUERY_SHAPE_SIGNATURE_PREFIX]. */
+internal const val QUERY_SHAPE_SIGNATURE_PREFIX_LENGTH: Int = 12
+
+/**
  * Whether [table] is the engine's reserved state table rather than a table of the app's.
  *
  * @param table A table name as a caller passed it.

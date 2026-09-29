@@ -4,7 +4,10 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.SupabaseClientBuilder
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
@@ -20,6 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
@@ -129,6 +133,24 @@ internal fun newTestSupabaseClient(
 
 /** The [Postgrest] plugin of a default [newTestSupabaseClient]. */
 internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
+
+/**
+ * Records, as reading the query through the client would, that the query cached under [signature]
+ * has the shape of a SELECT of [columns] that [request] configures.
+ *
+ * @param persist whether to write the record to the object cache as well; by default it is kept in
+ *   memory only, so a test counting cache writes is not disturbed.
+ */
+internal suspend fun OfflineStore.recordQueryShape(
+    table: String,
+    signature: String,
+    columns: Columns = Columns.ALL,
+    persist: Boolean = false,
+    request: SelectRequestBuilder.() -> Unit,
+) {
+    val shape = queryShapeOf(columns, SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply(request))
+    queryShapes.remember(table, signature, shape, persist)
+}
 
 /**
  * Builds the real [SupabaseOfflineClientImpl] over a test store and client.

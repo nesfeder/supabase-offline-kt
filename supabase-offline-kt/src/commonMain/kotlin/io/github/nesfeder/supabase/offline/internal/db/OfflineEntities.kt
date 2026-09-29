@@ -60,6 +60,32 @@ internal interface ObjectDao {
     @Query("SELECT signature FROM object_cache WHERE table_name = :table")
     suspend fun signaturesForTable(table: String): List<String>
 
+    /**
+     * The rows of [table] whose signature starts with [prefix]; for the engine's per-query records
+     * under [RESERVED_TABLE_NAME].
+     */
+    @Query("SELECT * FROM object_cache WHERE table_name = :table AND substr(signature, 1, length(:prefix)) = :prefix")
+    suspend fun rowsWithSignaturePrefix(table: String, prefix: String): List<ObjectRow>
+
+    /** Deletes the rows of [table] whose signature starts with [prefix]. */
+    @Query("DELETE FROM object_cache WHERE table_name = :table AND substr(signature, 1, length(:prefix)) = :prefix")
+    suspend fun deleteWithSignaturePrefix(table: String, prefix: String)
+
+    /**
+     * Deletes each query-shape record (see [QUERY_SHAPE_SIGNATURE_PREFIX]) whose cached payload is
+     * gone, as eviction leaves them.
+     *
+     * @return how many records were deleted.
+     */
+    @Query(
+        "DELETE FROM object_cache WHERE table_name = '$RESERVED_TABLE_NAME' " +
+            "AND substr(signature, 1, $QUERY_SHAPE_SIGNATURE_PREFIX_LENGTH) = '$QUERY_SHAPE_SIGNATURE_PREFIX_NAME' || char(31) " +
+            "AND substr(signature, ${QUERY_SHAPE_SIGNATURE_PREFIX_LENGTH + 1}) NOT IN (" +
+            "SELECT table_name || char(31) || signature FROM object_cache WHERE table_name != '$RESERVED_TABLE_NAME'" +
+            ")"
+    )
+    suspend fun deleteOrphanedQueryShapes(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(row: ObjectRow)
 

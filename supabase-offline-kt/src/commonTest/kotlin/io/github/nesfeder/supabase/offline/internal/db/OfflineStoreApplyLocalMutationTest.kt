@@ -16,6 +16,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
+import io.github.jan.supabase.postgrest.query.Order
 import kotlin.time.ExperimentalTime
 
 /**
@@ -598,9 +600,17 @@ class OfflineStoreApplyLocalMutationTest {
 
     // ── Fixtures ──────────────────────────────────────────────────────────────
 
-    private fun buildStore(objectDao: ObjectDao, mutationDao: MutationDao): OfflineStore =
+    /** A store over the DAOs, knowing the shape of each filtered query these tests cache, as reading it would. */
+    private suspend fun buildStore(objectDao: ObjectDao, mutationDao: MutationDao): OfflineStore =
         newTestOfflineStore(
             objectDao = objectDao,
             mutationDao = mutationDao,
-        )
+        ).apply {
+            recordQueryShape("notes", "notes?type=eq.OPEN") { filter { eq("type", "OPEN") } }
+            recordQueryShape("notes", "notes?type=eq.DONE") { filter { eq("type", "DONE") } }
+            recordQueryShape("notes", "notes?type=eq.OPEN&order=created_at.desc") {
+                filter { eq("type", "OPEN") }
+                order("created_at", Order.DESCENDING)
+            }
+        }
 }

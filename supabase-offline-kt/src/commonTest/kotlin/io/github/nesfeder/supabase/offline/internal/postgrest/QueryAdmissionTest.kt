@@ -1,54 +1,113 @@
+@file:OptIn(SupabaseExperimental::class)
+
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.jan.supabase.annotations.SupabaseExperimental
+import io.github.jan.supabase.postgrest.PropertyConversionMethod
+import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import kotlinx.serialization.json.buildJsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
- * How [admissionOf] reads a cache key: the conditions it keeps are exactly the `eq`, `neq`, `in` and
- * `is` filters on plain columns, each column's first value only, taken as written; everything else
- * in the key is left out, and so never excludes a row.
+ * How a query's shape is captured from its request, which decides the rows the cached query admits:
+ * each filter on a plain column, its first value only, taken whole as supabase-kt sends it; the
+ * select list as sent; and whether anything else filters the query.
  */
 class QueryAdmissionTest {
 
-    private fun conditionsOf(cacheKey: String): List<FilterDescriptor.Condition> = admissionOf(cacheKey).conditions
+    private fun shapeOf(columns: Columns = Columns.ALL, request: SelectRequestBuilder.() -> Unit): QueryShape =
+        queryShapeOf(columns, SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply(request))
 
     @Test
-    fun an_unfiltered_or_unparseable_key_has_no_conditions() {
-        assertEquals(emptyList(), conditionsOf("notes"))
-        assertEquals(emptyList(), conditionsOf(""))
-        assertEquals(emptyList(), conditionsOf("reports-period-sig"))
+    fun an_unfiltered_query_has_no_conditions() {
+        // Given / When
+        val shape = shapeOf {}
+
+        // Then
+        assertEquals(QueryShape(select = "*", conditions = emptyList(), hasOtherFilters = false), shape)
     }
 
     @Test
-    fun evaluated_filters_are_kept_in_order_with_their_values_as_written() {
+    fun filters_are_kept_in_order_with_their_values_whole() {
+        // Given / When — values holding the characters a cache key uses to separate its parts
+        val shape = shapeOf {
+            filter {
+                eq("company", "AT&T")
+                neq("owner", " Bob ")
+                isIn("team", listOf("R&D", "on,hold"))
+                eq("note", "p|range=0-5&x=eq.y")
+            }
+        }
+
+        // Then
         assertEquals(
             listOf(
-                FilterDescriptor.Condition("created_at", "eq", "2026-01-01T00:00:00.000Z"),
+                FilterDescriptor.Condition("company", "eq", "AT&T"),
                 FilterDescriptor.Condition("owner", "neq", " Bob "),
-                FilterDescriptor.Condition("status", "in", "(open,\"on,hold\")"),
-                FilterDescriptor.Condition("title", "eq", "'X'"),
+                FilterDescriptor.Condition("team", "in", "(R&D,\"on,hold\")"),
+                FilterDescriptor.Condition("note", "eq", "p|range=0-5&x=eq.y"),
             ),
-            conditionsOf("notes?created_at=eq.2026-01-01T00:00:00.000Z&owner=neq. Bob &status=in.(open,\"on,hold\")&title=eq.'X'"),
+            shape.conditions,
         )
+        assertFalse(shape.hasOtherFilters)
     }
 
     @Test
     fun only_the_first_value_of_a_column_counts_as_supabase_kt_sends_only_that_one() {
-        assertEquals(listOf(FilterDescriptor.Condition("status", "eq", "a")), conditionsOf("notes?status=eq.a&status=eq.b"))
+        // Given / When
+        val shape = shapeOf { filter { eq("status", "a"); eq("status", "b") } }
+
+        // Then
+        assertEquals(listOf(FilterDescriptor.Condition("status", "eq", "a")), shape.conditions)
     }
 
     @Test
-    fun projection_order_limit_offset_and_range_are_not_conditions() {
-        assertEquals(
-            listOf(FilterDescriptor.Condition("list_id", "eq", "A")),
-            conditionsOf("notes?limit=20&list_id=eq.A&offset=0&order=position.asc.nullslast&select=id,projects(name)|range=0-19"),
-        )
+    fun the_select_list_order_limit_offset_and_range_are_not_conditions() {
+        // Given / When
+        val shape = shapeOf(Columns.raw("id,projects(name)")) {
+            filter { eq("list_id", "A") }
+            order("position", Order.ASCENDING)
+            limit(20, referencedTable = "projects")
+            range(0, 19)
+        }
+
+        // Then
+        assertEquals(listOf(FilterDescriptor.Condition("list_id", "eq", "A")), shape.conditions)
+        assertEquals("id,projects(name)", shape.select)
+        assertFalse(shape.hasOtherFilters)
     }
 
     @Test
-    fun unevaluated_filters_are_left_out() {
-        val key = "notes?and=(a.eq.1)&comments.order=x&data->>kind=eq.idea&done=not.eq.true&lists.name=eq.Home" +
-            "&or=(a.eq.1)&priority=gt.1&title=ilike.*a*&custom=x&flag"
-        assertEquals(emptyList(), conditionsOf(key))
+    fun a_filter_the_engine_does_not_evaluate_is_kept_and_admits_every_row() {
+        // Given / When
+        val shape = shapeOf { filter { gt("priority", 1); filterNot("done", FilterOperator.EQ, true) } }
+
+        // Then — kept, so the columns a query filters on are known, and never excluding a row
+        assertEquals(listOf("priority", "done"), shape.conditions.map { condition -> condition.column })
+        assertTrue(shape.admission.admits(buildJsonObject {}))
+    }
+
+    @Test
+    fun logical_groups_referenced_tables_json_paths_and_casts_are_other_filters() {
+        // Given / When
+        val shapes = listOf<SelectRequestBuilder.() -> Unit>(
+            { filter { or { eq("a", 1); eq("b", 2) } } },
+            { filter { and(negate = true) { eq("a", 1) } } },
+            { filter { eq("lists.name", "Home") } },
+            { filter { eq("data->>kind", "idea") } },
+            { filter { eq("created_at::date", "2026-01-01") } },
+        ).map { request -> shapeOf(request = request) }
+
+        // Then
+        shapes.forEach { shape ->
+            assertTrue(shape.hasOtherFilters, "$shape")
+            assertEquals(emptyList(), shape.conditions)
+        }
     }
 }

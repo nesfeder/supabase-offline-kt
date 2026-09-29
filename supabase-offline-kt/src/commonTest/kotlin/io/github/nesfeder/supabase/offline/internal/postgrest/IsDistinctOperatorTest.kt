@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
@@ -92,10 +93,11 @@ class IsDistinctOperatorTest {
     @Test
     fun a_cached_query_filtered_on_isdistinct_admits_any_row() {
         // Given / When
-        val admission = admissionOf("todos?status=isdistinct.done")
+        val builder = SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply { filter { filter("status", FilterOperator.ISDISTINCT, "done") } }
+        val admission = queryShapeOf(Columns.ALL, builder).admission
 
         // Then — the condition is not evaluated, so it never hides a row
-        assertEquals(emptyList(), admission.conditions)
+        assertEquals(RowMatch.UNKNOWN, rowMatch(buildJsonObject { put("status", "done") }, admission.conditions.single()))
         assertTrue(admission.admits(buildJsonObject { put("status", "done") }))
     }
 
