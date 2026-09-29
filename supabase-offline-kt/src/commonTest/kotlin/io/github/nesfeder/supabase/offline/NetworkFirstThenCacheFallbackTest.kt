@@ -88,10 +88,10 @@ class NetworkFirstThenCacheFallbackTest {
             reader.cancel()
         }
 
-        // Then — the cached list first, idle, from one attempt and no wait; then the write
+        // Then — the cached list first, not confirmed, from one attempt and no wait; then the write
         assertTrue(shown.isNotEmpty(), "the read showed nothing")
         assertEquals(ROWS, shown.first().result?.data)
-        assertEquals(RefreshState.Idle, shown.first().refresh)
+        assertTrue(shown.first().refresh is RefreshState.Stalled, "${shown.first().refresh}")
         val attempts =
             onTheTestClock.requests.count { request -> request.method == "GET" } - sentBefore
         assertTrue(
