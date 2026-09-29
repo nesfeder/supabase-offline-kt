@@ -48,6 +48,7 @@ import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.io.IOException
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -799,8 +800,9 @@ internal class OfflinePostgrestQueryBuilderImpl(
     /**
      * [executeMutation]'s body, run while the call holds the client's gate.
      *
-     * @throws UnsupportedOperationException for a `QueueIfOffline` write to a schema other than the
-     *   client's default: the queue replays to the default schema only.
+     * @throws IOException for a `QueueIfOffline` write to a schema other than the client's default
+     *   that could not be sent: the queue replays to the default schema only, so it is never
+     *   queued.
      */
     private suspend fun executeMutationNow(
         verbLabel: String,
@@ -818,10 +820,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         }
         val schema = writeSchema()
         if (schema.isNotBlank() && schema != delegate.postgrest.config.defaultSchema) {
-            throw UnsupportedOperationException(
-                "Queueing a write to the \"$schema\" schema is not supported yet: the mutation queue replays to " +
-                    "the default schema only. Send this write with MutationStrategy.OnlineOnly."
-            )
+            return sendToAnotherSchema(verbLabel, schema, table, performOnline)
         }
 
         val startedAtTick = store.monotonicTickNow()
@@ -942,6 +941,38 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     ?: throw checkNotNull(sent.cause)
             }
         }
+    }
+
+    /**
+     * Sends a write to [schema], not the client's default, at once: the queue replays to the
+     * default schema only, so it is never queued, and it does not wait for writes that are. Its
+     * cache cannot be patched from a write it cannot replay, so that schema's cached queries of
+     * [table] are marked stale and fetched again.
+     *
+     * @throws IOException when it cannot be sent for want of a connection, naming [schema].
+     */
+    private suspend fun sendToAnotherSchema(
+        verbLabel: String,
+        schema: String,
+        table: String,
+        performOnline: suspend () -> PostgrestResult,
+    ): MutationOutcome {
+        val startedAtTick = store.monotonicTickNow()
+        val result =
+            try {
+                performOnline()
+            } catch (failure: Exception) {
+                if (!failure.isNetworkOrConnectivityFailure()) throw failure
+                throw IOException(
+                    "$verbLabel $table in the \"$schema\" schema could not be sent, and a write to a schema " +
+                        "other than the client's default is never queued: the queue replays to the " +
+                        "default schema only",
+                    failure,
+                )
+            }
+        sdkLogger.debug { "$verbLabel $schema.$table response: ${result.data}" }
+        if (!result.wasRolledBack) store.markEveryQueryStale("$schema.$table", startedAtTick)
+        return MutationOutcome.Applied(result)
     }
 
     /**

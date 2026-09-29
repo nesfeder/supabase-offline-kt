@@ -1914,6 +1914,23 @@ internal class OfflineStore(
     }
 
     /**
+     * Marks every cached query of [table] stale, and has every live one fetch again: a write the
+     * cache cannot follow reached the table.
+     *
+     * @param startedAtTick see [markQueriesAWriteMayReach].
+     */
+    suspend fun markEveryQueryStale(table: String, startedAtTick: Long) {
+        // An UPDATE with no readable part reaches every query, and may add rows to a live one
+        markQueriesAWriteMayReach(
+            table,
+            MutationOperation.UPDATE,
+            "{}",
+            narrowing = null,
+            startedAtTick,
+        )
+    }
+
+    /**
      * Marks stale the cached queries of [table] an UPDATE or DELETE the cache cannot patch may have
      * reached, and has their live readers fetch again: a query holding a row [narrowing] does not
      * exclude, and, for an UPDATE, one whose filter may admit a row the write changes. With no

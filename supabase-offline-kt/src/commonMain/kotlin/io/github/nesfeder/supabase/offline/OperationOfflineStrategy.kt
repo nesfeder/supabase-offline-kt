@@ -136,8 +136,11 @@ public enum class MutationStrategy {
      * `dryRun()` write, an UPDATE or DELETE whose filter the queue cannot record exactly, and a
      * write whose identity cannot be read from the stored session.
      *
-     * A write to a schema other than the client's default cannot be queued yet: it throws
-     * [UnsupportedOperationException]. Send it with [OnlineOnly].
+     * A write to a schema other than the client's default is never queued: the queue replays to the
+     * default schema only. It is sent at once, without waiting for writes that are queued, so it
+     * can reach the server before them; that schema's cached queries of the table are fetched
+     * again. When it cannot be sent for want of a connection it throws an `IOException` naming the
+     * schema.
      */
     QueueIfOffline,
 }
