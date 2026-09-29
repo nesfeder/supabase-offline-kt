@@ -256,6 +256,22 @@ class UnconfirmedSendProofTest {
     }
 
     @Test
+    fun a_missing_record_starts_from_the_queued_keyed_inserts_only() = runTest {
+        // Given — a keyed INSERT, a keyless one and an UPDATE queued, and no record
+        val keyed = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"no key"}]"""))
+        store.enqueueUpdate(table = TABLE, body = Json.parseToJsonElement("""{"title":"new"}"""))
+        objectDao.delete(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)
+
+        // When — the next launch reads it
+        val next = relaunch()
+
+        // Then — only the INSERT whose replay can take its rows as already there is recorded
+        assertEquals(setOf(keyed), next.mutationQueueState.unconfirmedSends())
+        assertEquals("""{"version":1,"mutationIds":[$keyed]}""", objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload)
+    }
+
+    @Test
     fun an_insert_this_build_queued_and_never_sent_is_still_refused_as_a_duplicate_after_a_relaunch() = runTest {
         // Given — another row already has the id of an insert that was queued and never sent
         store.enqueueOwnedBy(null) { enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]""")) }
@@ -266,6 +282,24 @@ class UnconfirmedSendProofTest {
         val report = MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
 
         // Then — nothing on the server can be its own, so the duplicate is refused
+        assertEquals("23505", report.rejected.single().serverError?.code)
+    }
+
+    @Test
+    fun a_retried_rejection_is_refused_again_as_a_duplicate_when_the_record_was_lost() = runTest {
+        // Given — an insert refused as a duplicate, then a launch that finds no record at all
+        val server = FakeRelationalPostgrestServer()
+        server.seed(TABLE, row("""{"id":"k1","title":"someone else's"}"""))
+        store.enqueueOwnedBy(null) { enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]""")) }
+        val refused = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync().rejected.single()
+        objectDao.delete(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)
+        val next = relaunch()
+
+        // When — the app retries it first thing
+        next.retryRejectedMutation(refused.id, identity = null)
+        val report = MutationQueueReplayer(store = next, supabase = server.supabaseClient()).sync()
+
+        // Then — the retry was never sent, so it is refused again rather than taken as delivered
         assertEquals("23505", report.rejected.single().serverError?.code)
     }
 
