@@ -38,7 +38,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.job
@@ -411,21 +410,17 @@ internal class SupabaseOfflineClientImpl(
     }
 
     /**
-     * Starts a pass whenever the session settles into an identity with mutations queued, in the
-     * client's scope so [close] stops it. An automatic-replay switch must stop this trigger; see
-     * [BackgroundSyncTrigger] for the ones it must not.
+     * Starts a pass when the session settles into an identity with mutations queued, in the client's
+     * scope so [close] stops it. Every new status counts, as a sign-out and sign-in it never saw arrive
+     * as a new session of the same identity. A replay switch must stop it; see [BackgroundSyncTrigger].
      */
     private fun replayWhenTheSessionSettles() {
         val auth = authPluginOrNull() ?: return
         clientScope.launch {
-            auth.sessionStatus
-                .map { status -> replayIdentityFor(status) }
-                .distinctUntilChanged()
-                .collect { identity ->
-                    if (identity != null && store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) {
-                        backgroundSync.request()
-                    }
-                }
+            auth.sessionStatus.collect { status ->
+                val identity = replayIdentityFor(status) ?: return@collect
+                if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) backgroundSync.request()
+            }
         }
     }
 
