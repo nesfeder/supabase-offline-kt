@@ -40,6 +40,32 @@ class ClearedQueueRecordsTest {
     }
 
     @Test
+    fun a_first_read_of_a_missing_record_that_races_a_clear_writes_no_row_back() = runTest {
+        for (signature in listOf(UNCONFIRMED_SENDS_SIGNATURE, SYNCED_MUTATION_COVERAGE_SIGNATURE)) {
+            // Given — no row for the record, as a database from an engine that never wrote one has,
+            // and its first read parked after it found none
+            val objectDao = FakeObjectDao()
+            val store = newTestOfflineStore(objectDao = objectDao)
+            val parked = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            objectDao.onGetSnapshot = { _, read -> if (read == signature) { parked.complete(Unit); release.await() } }
+            val firstRead = async {
+                if (signature == UNCONFIRMED_SENDS_SIGNATURE) store.mutationQueueState.unconfirmedSends() else store.mutationQueueState.syncedMutationCoverage()
+            }
+            parked.await()
+
+            // When — the clear runs while that read is parked, and then the read finishes
+            objectDao.onGetSnapshot = null
+            store.clearAll()
+            release.complete(Unit)
+            firstRead.await()
+
+            // Then — nothing was written back after the clear
+            assertEquals(emptyList(), objectDao.allForTable(RESERVED_TABLE_NAME).map { row -> row.signature }, "$signature wrote a row back after the clear")
+        }
+    }
+
+    @Test
     fun a_first_read_that_began_before_a_clear_does_not_put_its_records_back() = runTest {
         for (signature in listOf(UNCONFIRMED_SENDS_SIGNATURE, SYNCED_MUTATION_COVERAGE_SIGNATURE)) {
             // Given — both records hold a mutation, and the first read of one is parked after it read
