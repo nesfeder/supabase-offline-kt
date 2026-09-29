@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
@@ -15,9 +16,13 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
@@ -28,7 +33,8 @@ import okio.SYSTEM
  * A download whose caller is cancelled leaves no file behind, wherever the cancellation lands:
  * while the cache is still creating the download's file, or while it is committing a finished one.
  * The caller returns only once that file is gone. Each way in: bytes, a channel, and
- * `ensureCachedFile`.
+ * `ensureCachedFile`. The file system holds its operation until the caller's cancellation has
+ * reached the call's own work, so the cancellation always lands there, however the threads run.
  */
 class StorageCancelledDownloadTest {
 
@@ -36,6 +42,7 @@ class StorageCancelledDownloadTest {
     private lateinit var store: OfflineStore
     private lateinit var delegate: FakeBucketApi
     private val fileSystem = FakeFailingFileSystem()
+    private val engine = newEngineScope(sdkLogger = null)
 
     @BeforeTest
     fun setUp() {
@@ -49,6 +56,7 @@ class StorageCancelledDownloadTest {
 
     @AfterTest
     fun tearDown() {
+        engine.cancel()
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
@@ -57,6 +65,7 @@ class StorageCancelledDownloadTest {
             delegate = delegate,
             baseDirectory = dataDirectory,
             store = store,
+            backgroundScope = engine,
             cache =
                 newTestFileCache(
                     baseDirectory = dataDirectory,
@@ -69,7 +78,7 @@ class StorageCancelledDownloadTest {
     fun a_download_cancelled_while_its_file_is_being_created_leaves_no_file() = runTest {
         // Given — the caller is cancelled while the cache is still creating the download's file
         lateinit var caller: Job
-        fileSystem.onSinkOpened = { caller.cancel() }
+        fileSystem.onSinkOpened = { cancelAndHoldUntilItReachesTheWork(caller) }
 
         // When
         val outcomes = DOWNLOADS.map { (name, download) ->
@@ -86,7 +95,7 @@ class StorageCancelledDownloadTest {
         // the caller is cancelled while the cache is trying
         fileSystem.failMoves = true
         lateinit var caller: Job
-        fileSystem.onMove = { _, _ -> caller.cancel() }
+        fileSystem.onMove = { _, _ -> cancelAndHoldUntilItReachesTheWork(caller) }
 
         // When
         val outcomes = DOWNLOADS.map { (name, download) ->
@@ -121,6 +130,21 @@ class StorageCancelledDownloadTest {
         return "$ended, ${regularFilesUnder(dataDirectory).size} file(s) left"
     }
 
+    /**
+     * Cancels [caller], then holds the file operation in progress until that cancellation has
+     * reached the call's own work, which runs in [engine]. Without the hold, work that finishes
+     * before its caller next suspends completes as if never cancelled, and the test proves nothing.
+     */
+    private fun cancelAndHoldUntilItReachesTheWork(caller: Job) {
+        caller.cancel()
+        val started = TimeSource.Monotonic.markNow()
+        while (engine.coroutineContext.job.children.none { work -> work.isCancelled }) {
+            check(started.elapsedNow() < HOLD_LIMIT) {
+                "The caller's cancellation never reached its work"
+            }
+        }
+    }
+
     private fun regularFilesUnder(directory: Path): List<Path> =
         if (!FileSystem.SYSTEM.exists(directory)) {
             emptyList()
@@ -135,6 +159,7 @@ class StorageCancelledDownloadTest {
         const val PATH = "u-1/clip.mp4"
         val CONTENT = ByteArray(300) { index -> (index % 251).toByte() }
         const val CANCELLED_AND_CLEAN = "cancelled, 0 file(s) left"
+        val HOLD_LIMIT = 5.seconds
 
         val DOWNLOADS: List<Pair<String, suspend (OfflineBucketApi) -> Unit>> =
             listOf(
