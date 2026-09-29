@@ -221,9 +221,7 @@ internal class MutationQueueReplayer(
         return when {
             clearGeneration.value != generation -> HeadSendOutcome.Cleared(result = null, cause = cause)
             cause.isNetworkOrConnectivityFailure() || cause.httpStatusOrNull() in STAYS_QUEUED_STATUSES -> {
-                if (newlyUnconfirmed && (failure.neverReachedServer || cause.httpStatusOrNull() == HTTP_SERVICE_UNAVAILABLE)) {
-                    store.clearUnconfirmedSend(mutationId)
-                }
+                if (newlyUnconfirmed && failure.provesWriteNotApplied()) store.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
             }
             else -> {
@@ -231,6 +229,23 @@ internal class MutationQueueReplayer(
                 HeadSendOutcome.Refused(cause)
             }
         }
+    }
+
+    /**
+     * Whether this failed send provably did not apply its write: no attempt reached the server, or
+     * PostgREST itself answered that it could not reach the database.
+     */
+    private fun SendOutcome.Failed.provesWriteNotApplied(): Boolean =
+        neverReachedServer || postgrestCodeOf(thrown) in POSTGREST_DID_NOT_RUN_CODES
+
+    /** The PostgREST error code [failure] or a cause carries, or `null`. */
+    private fun postgrestCodeOf(failure: Throwable): String? {
+        var current: Throwable? = failure
+        while (current != null) {
+            if (current is PostgrestRestException) return current.code
+            current = current.cause
+        }
+        return null
     }
 
     /** Removes an accepted mutation, logging rather than failing a write the server applied. */
@@ -414,7 +429,7 @@ internal class MutationQueueReplayer(
                 when (val sent = sendCapturingEngineFailure { prepared.request(tableApi) }) {
                     is SendOutcome.Succeeded -> ReplayOutcome.Synced
                     is SendOutcome.Failed -> {
-                        if (newlyUnconfirmed && sent.neverReachedServer) store.clearUnconfirmedSend(mutation.id)
+                        if (newlyUnconfirmed && sent.provesWriteNotApplied()) store.clearUnconfirmedSend(mutation.id)
                         classify(mutation, sent.thrown, identity)
                     }
                 }
@@ -680,6 +695,13 @@ internal class MutationQueueReplayer(
 
         /** Statuses PostgREST answers when the write never ran: it could not reach the database. */
         val STAYS_QUEUED_STATUSES = setOf(HTTP_SERVICE_UNAVAILABLE, 520)
+
+        /**
+         * PostgREST's `503` codes for a request it answered without reaching the database (PGRST000)
+         * or before its schema cache loaded (PGRST002). Not PGRST001: the database connection broke
+         * during the request, which may have committed.
+         */
+        val POSTGREST_DID_NOT_RUN_CODES = setOf("PGRST000", "PGRST002")
 
         /** Postgres: `ON CONFLICT` names columns with no unique or exclusion constraint. */
         const val NO_MATCHING_CONFLICT_TARGET = "42P10"
