@@ -8,23 +8,38 @@ are handled.
 
 Kotlin sources and Gradle scripts are formatted by [kempt](https://github.com/ZacSweers/kempt).
 It runs [ktfmt](https://github.com/facebook/ktfmt) in its `kotlinlang` style (the Kotlin coding
-conventions: 4-space indent, 100 columns), puts the licence header from
-`config/license-header.txt` at the top of every `.kt` and `.kts` file, and strips trailing
-whitespace from Kotlin and Markdown. Its settings are in `.kempt.toml`. CI runs `kempt check` on
-every pull request.
+conventions: 4-space indent, 100 columns) and puts the licence header from
+`config/license-header.txt` at the top of every `.kt` and `.kts` file. It also strips trailing
+whitespace from Kotlin, Markdown and `.gitignore`, and ends each of those files with a single
+newline. Its settings are in `.kempt.toml`. The Formatting job in CI runs `kempt check` on every
+pull request.
 
-Install kempt 0.3.1 from its [releases](https://github.com/ZacSweers/kempt/releases), checking
-the archive against the `.sha256` file published beside it, with `cargo install kempt-fmt`, or
-with `brew install ZacSweers/tap/kempt-fmt` (a third-party tap, which Homebrew asks you to trust
-first). kempt runs ktfmt on the JVM, so it needs JDK 17 or later on your `PATH`, and it downloads
-the ktfmt jar the first time it runs. Then, from the repository root:
+Install kempt 0.3.1, the version CI runs: from its
+[v0.3.1 release](https://github.com/ZacSweers/kempt/releases/tag/v0.3.1), checking the archive
+against the `.sha256` file published beside it, or with
+`cargo install kempt-fmt --version 0.3.1 --locked`. Homebrew
+(`brew install ZacSweers/tap/kempt-fmt`, a third-party tap) installs the newest release instead.
+kempt runs ktfmt on the JVM, so it needs JDK 17 or later on your `PATH`, and it downloads the
+ktfmt jar the first time it runs. Then, from the repository root:
 
 ```bash
 kempt format    # format every file git tracks
 kempt check     # read-only; what CI runs
 ```
 
-If the check fails in CI, run `kempt format`, commit the result, and push.
+`kempt format` sees only files git tracks, so `git add` a new file before formatting it. If the
+check fails in CI, run `kempt format`, commit the result, and push.
+
+**Write nothing above a file's `package` line, or above a script's first `import` or `plugins`
+line.** kempt puts the licence header there and deletes whatever it replaces, without a warning:
+in a `.kt` file, everything above the first `package` or `@file:` line; in a `.kts` script,
+everything above the first `@file:`, `import`, `plugins`, `buildscript`, `dependencies`,
+`pluginManagement` or `dependencyResolutionManagement` line. That includes a comment, or a
+statement such as `rootProject.name`.
+
+Copy the header exactly as kempt writes it. `kempt check` looks only for its
+`SPDX-License-Identifier` line, so a wrong copyright holder or year, or no copyright line at all,
+still passes the check.
 
 The commit that first formatted the whole tree is listed in `.git-blame-ignore-revs`. To have
 `git blame` skip it locally, run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once.

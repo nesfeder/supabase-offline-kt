@@ -90,7 +90,7 @@ function takeAnnotations(text,    name, taken, depth, pos, len, ch) {
 
 # Recognises a declaration head in `text` (annotations already removed). On a match sets
 # declKeyword, declName, declModifiers and declVisibility and returns 1.
-function readDeclaration(text,    head, previous) {
+function readDeclaration(text,    head, previous, probe, depth, pos, len, ch, after) {
     declModifiers = " "
     while (match(text, /^(public|internal|private|protected|open|abstract|final|data|sealed|enum|annotation|inline|value|const|lateinit|suspend|operator|infix|tailrec|external|expect|actual|override|inner|companion)[[:space:]]+/)) {
         declModifiers = declModifiers trim(substr(text, 1, RLENGTH)) " "
@@ -109,15 +109,30 @@ function readDeclaration(text,    head, previous) {
     # Drop type parameters and receiver generics, then take the identifier that names it.
     head = text
     do { previous = head; gsub(/<[^<>]*>/, "", head) } while (head != previous)
+    # An unnamed object or function is an expression continuing the line above (`val x =` then
+    # `object : T {` or `fun(value: Int) = ...`), but only when what follows the keyword proves
+    # it: `:` or `{` after `object`, a parameter list NOT followed by `.` after `fun`. A
+    # parenthesised receiver (`fun (() -> Unit).name()`) is a declaration.
+    probe = trim(head)
+    if (declKeyword == "object" && (substr(probe, 1, 1) == ":" || substr(probe, 1, 1) == "{")) return 0
+    if (declKeyword == "fun" && substr(probe, 1, 1) == "(") {
+        depth = 0; pos = 1; len = length(probe)
+        while (pos <= len) {
+            ch = substr(probe, pos, 1)
+            if (ch == "(") depth++
+            else if (ch == ")") { depth--; if (depth == 0) break }
+            pos++
+        }
+        after = substr(probe, pos + 1)
+        if (substr(after, 1, 1) == "." || substr(after, 1, 2) == "?.") head = " " substr(after, index(after, ".") + 1)
+        else return 0
+    }
     if (declKeyword == "fun") sub(/\(.*/, "", head)
     else if (declKeyword == "val" || declKeyword == "var") sub(/[:=({].*/, "", head)
     else sub(/[^[:space:]A-Za-z0-9_].*/, "", head)
     head = trim(head)
     if (declKeyword == "fun" || declKeyword == "val" || declKeyword == "var") sub(/.*\./, "", head)
     else sub(/[[:space:]].*/, "", head)
-    # A top-level object or function always has a name. Without one it is an object expression or
-    # an anonymous function continuing the line above (`val x =` then `object : T {`).
-    if (head == "" && (declKeyword == "object" || declKeyword == "fun")) return 0
     declName = (head == "") ? "<anonymous>" : head
 
     if (index(declModifiers, " internal ")) declVisibility = "internal"
@@ -498,6 +513,57 @@ package io.example.internal.util
 public object PlantedPublicObject
 KOTLIN
                 ;;
+            receiver-function-type)
+                cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
+package io.example.internal.util
+
+public fun (() -> Unit).plantedReceiverHook() { this(); this() }
+KOTLIN
+                ;;
+            receiver-generic-suspend-function-type)
+                cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
+package io.example.internal.util
+
+public fun <T> (suspend () -> T).plantedRetrying(): Unit = Unit
+KOTLIN
+                ;;
+            receiver-parenthesised-type)
+                cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
+package io.example.internal.util
+
+public fun (String).plantedShout(): String = uppercase()
+KOTLIN
+                ;;
+            receiver-nullable-function-type)
+                cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
+package io.example.internal.util
+
+public fun ((Int) -> Int)?.plantedOrIdentity(): (Int) -> Int = this ?: { it }
+KOTLIN
+                ;;
+            internal-receiver-in-public-package)
+                cat > "$src/io/example/api/Planted.kt" <<'KOTLIN'
+package io.example.api
+
+internal fun (() -> Unit).plantedTwice() { this(); this() }
+KOTLIN
+                ;;
+            object-name-on-next-line)
+                cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
+package io.example.internal.util
+
+public object
+PlantedLateObject
+KOTLIN
+                ;;
+            function-name-on-next-line)
+                cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
+package io.example.internal.util
+
+public fun
+plantedLateFunction(): Int = 1
+KOTLIN
+                ;;
             published-api)
                 cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
 package io.example.internal.util
@@ -533,6 +599,15 @@ KOTLIN
     expect_failure public-in-internal-package-marker-only public-in-internal-package plantedMarkedButExported
     expect_failure public-in-internal-package-warning-marker public-in-internal-package plantedWarningLevelHook
     expect_failure public-object-in-internal-package public-in-internal-package PlantedPublicObject
+    # A parenthesised receiver is a declaration, not an anonymous function.
+    expect_failure receiver-function-type public-in-internal-package plantedReceiverHook
+    expect_failure receiver-generic-suspend-function-type public-in-internal-package plantedRetrying
+    expect_failure receiver-parenthesised-type public-in-internal-package plantedShout
+    expect_failure receiver-nullable-function-type public-in-internal-package plantedOrIdentity
+    expect_failure internal-receiver-in-public-package internal-in-public-package plantedTwice
+    # Kotlin allows a line break before the name; the check reports the declaration unnamed.
+    expect_failure object-name-on-next-line public-in-internal-package "<anonymous>"
+    expect_failure function-name-on-next-line public-in-internal-package "<anonymous>"
     expect_failure published-api published-api plantedPublishedMember
 
     local clean="$work/compliant"
