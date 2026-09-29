@@ -86,7 +86,9 @@ public enum class FlowReadStrategy {
      * Once the response is stored in the cache, start observing
      * the cache for future changes.
      *
-     * If the network request fails, the Flow fails.
+     * If the network is unavailable and the cache holds the query, the Flow observes the cache as
+     * [ReadStrategy.NetworkFirst] falls back to it, at once. With nothing cached, or when the server
+     * answers with an error, the Flow fails.
      *
      * The bootstrap request is the only refresh this strategy performs — there is no self-healing
      * loop behind it — so it waits out the auth session-restore window before accepting an empty

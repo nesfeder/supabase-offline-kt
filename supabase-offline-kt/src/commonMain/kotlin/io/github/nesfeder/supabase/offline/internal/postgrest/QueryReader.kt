@@ -297,8 +297,8 @@ internal class QueryReader(
     }
 
     /**
-     * The network first, then the cache as it changes. A network failure fails the flow; the
-     * bootstrap waits out a restoring session like a one-shot read, as nothing retries it later.
+     * The network first, then the cache as it changes. The bootstrap waits out a restoring session
+     * like a one-shot read, as nothing retries it later; see [bootstrapFromNetwork] for its failures.
      */
     private fun networkFirstThenCacheWithState(
         slot: CacheSlot,
@@ -306,13 +306,28 @@ internal class QueryReader(
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> =
         store.overlaidPayloadFlow(slot.table, slot.cacheKey)
-            .onStart { fetchWaitingOutRestore(slot, columns, request, Retries.UPSTREAM) }
+            .onStart { bootstrapFromNetwork(slot, columns, request) }
             .map { payload ->
                 OfflineReadResult(
                     result = payload?.let { json -> buildResult(json, delegate.postgrest) },
                     refresh = RefreshState.Idle,
                 )
             }
+
+    /**
+     * The network bootstrap of a network-first reactive read. A transport failure falls back to the
+     * cached payload, at once, as a one-shot `NetworkFirst` read does; with none cached, or on a
+     * server's own error, it fails the flow.
+     */
+    private suspend fun bootstrapFromNetwork(slot: CacheSlot, columns: Columns, request: SelectRequestBuilder.() -> Unit) {
+        val retries = if (hasFreshCache(slot, cacheDuration = null)) Retries.TRANSPORT_FAILS_FAST else Retries.UPSTREAM
+        try {
+            fetchWaitingOutRestore(slot, columns, request, retries)
+        } catch (exception: Exception) {
+            if (!exception.isNetworkOrConnectivityFailure() || !hasFreshCache(slot, cacheDuration = null)) throw exception
+            sdkLogger.warning { "SELECT ${slot.table} network failed, falling back to cache" }
+        }
+    }
 
     /**
      * Sends the SELECT and offers its response to the cache, which refuses one that could roll back a
