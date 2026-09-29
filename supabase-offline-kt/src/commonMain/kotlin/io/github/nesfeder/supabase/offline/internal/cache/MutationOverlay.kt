@@ -9,14 +9,16 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.isUuid
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
-import io.github.nesfeder.supabase.offline.internal.postgrest.uuidDigits
+import io.github.nesfeder.supabase.offline.internal.postgrest.sameUuidDigits
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -190,34 +192,31 @@ internal class MutationOverlay(
         }
 
         private fun update(mutation: MutationRow) {
-            val filter = filterOf(mutation) ?: return
-            val keys = primaryKeys.of(mutation.table).toSet()
+            val filter =
+                RowFilter(filterOf(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
             val patch = json.parseToJsonElement(mutation.bodyJson) as? JsonObject ?: return
             // Rows the loop below moves aside land after these, and are not visited twice
             val heldBefore = held.size
             visible.indices.reversed().forEach { index ->
                 val row = visible[index] as? JsonObject ?: return@forEach
-                if (rowMatch(row, filter, keys) == RowMatch.MATCHES)
-                    replaceShown(index, merge(row, patch))
+                if (filter.match(row) == RowMatch.MATCHES) replaceShown(index, merge(row, patch))
             }
             (0 until heldBefore).reversed().forEach { index ->
                 val row = held[index]
-                if (rowMatch(row, filter, keys) == RowMatch.MATCHES)
-                    replaceHeld(index, merge(row, patch))
+                if (filter.match(row) == RowMatch.MATCHES) replaceHeld(index, merge(row, patch))
             }
         }
 
         private fun delete(mutation: MutationRow) {
-            val filter = filterOf(mutation) ?: return
-            val keys = primaryKeys.of(mutation.table).toSet()
+            val filter =
+                RowFilter(filterOf(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
             visible.indices.reversed().forEach { index ->
                 val row = visible[index]
-                if (row is JsonObject && rowMatch(row, filter, keys) == RowMatch.MATCHES)
+                if (row is JsonObject && filter.match(row) == RowMatch.MATCHES)
                     visible.removeWithUndo(index)
             }
             held.indices.reversed().forEach { index ->
-                if (rowMatch(held[index], filter, keys) == RowMatch.MATCHES)
-                    held.removeWithUndo(index)
+                if (filter.match(held[index]) == RowMatch.MATCHES) held.removeWithUndo(index)
             }
         }
 
@@ -333,35 +332,46 @@ internal fun returnedRowsOf(json: Json, responseData: String): List<JsonObject> 
  * or [row] lacks one.
  */
 internal fun indexOfKey(rows: List<JsonElement>, row: JsonObject, keyColumns: List<String>): Int? {
-    val key = primaryKeyOf(row, keyColumns) ?: return null
+    val key = keyValuesOf(row, keyColumns) ?: return null
+    // Read column by column: building each row's key would allocate once per row and lookup
     val index = rows.indexOfFirst { existing ->
-        val existingKey = primaryKeyOf(existing, keyColumns)
-        existingKey != null && isSameKey(key, existingKey)
+        val existingRow = existing as? JsonObject
+        existingRow != null &&
+            keyColumns.indices.all { position ->
+                sameKeyValue(key[position], keyValueOf(existingRow, keyColumns[position]))
+            }
     }
     return index.takeIf { it >= 0 }
 }
 
-/**
- * Whether two keys name the same row, comparing values by their JSON content, and two UUIDs as a
- * `uuid` column does, whatever their letter case.
- */
-private fun isSameKey(first: JsonObject, second: JsonObject): Boolean =
-    first.keys == second.keys &&
-        first.all { (column, value) ->
-            sameKeyValue(
-                (value as? JsonPrimitive)?.content,
-                (second[column] as? JsonPrimitive)?.content,
-            )
-        }
+/** [row]'s values of [keyColumns], in order, or `null` when it lacks one; see [primaryKeyOf]. */
+private fun keyValuesOf(row: JsonObject, keyColumns: List<String>): List<String>? {
+    if (keyColumns.isEmpty()) return null
+    return keyColumns.map { column -> keyValueOf(row, column) ?: return null }
+}
 
-/** Whether two key values, as JSON content, name one row. */
+/** [row]'s value of the key [column], as JSON content, or `null` when it carries none. */
+private fun keyValueOf(row: JsonObject, column: String): String? {
+    val value = row[column]
+    return if (value !is JsonPrimitive || value is JsonNull) null else value.content
+}
+
+/**
+ * Whether two key values, as JSON content, name one row: equal, or one UUID in any letter case, as
+ * a `uuid` column compares them.
+ */
 private fun sameKeyValue(first: String?, second: String?): Boolean =
     first == second ||
         (first != null &&
             second != null &&
+            first.length in UUID_KEY_LENGTHS &&
+            second.length in UUID_KEY_LENGTHS &&
             isUuid(first) &&
             isUuid(second) &&
-            uuidDigits(first) == uuidDigits(second))
+            sameUuidDigits(first, second))
+
+/** The lengths a UUID key can be written in; see [isUuid]. */
+private val UUID_KEY_LENGTHS: IntRange = 32..48
 
 /** [base] with [patch]'s columns written over it. */
 private fun merge(base: JsonObject, patch: JsonObject): JsonObject = JsonObject(base + patch)

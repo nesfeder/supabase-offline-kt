@@ -14,13 +14,16 @@ import kotlinx.serialization.json.JsonObject
  */
 internal class QueryAdmission(val conditions: List<FilterDescriptor.Condition>) {
 
+    /** [conditions], ready to judge rows. */
+    private val ready = conditions.map { condition -> RowCondition(condition, emptySet()) }
+
     /**
      * Whether [row] may appear in the query. A row that is not an object cannot be judged and is
      * admitted.
      */
     fun admits(row: JsonElement): Boolean {
         val rowObject = row as? JsonObject ?: return true
-        return conditions.none { condition -> rowMatch(rowObject, condition) == RowMatch.EXCLUDED }
+        return ready.none { condition -> condition.match(rowObject) == RowMatch.EXCLUDED }
     }
 
     /** Admissions that need no query. */

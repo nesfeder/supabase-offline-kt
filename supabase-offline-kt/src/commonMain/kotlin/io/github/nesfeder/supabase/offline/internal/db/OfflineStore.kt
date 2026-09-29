@@ -1553,7 +1553,10 @@ internal class OfflineStore(
     ): List<JsonObject> {
         if (signature == null) return emptyList()
         val known = shape ?: queryShapes.shapeOf(table, signature) ?: return emptyList()
-        if (mutations.none { mutation -> mayBringRowsIn(mutation, known) }) return emptyList()
+        // The filter's column names as a JSON body writes them, once for every mutation
+        val filterColumns = known.conditions.map { condition -> "\"${condition.column}\"" }
+        if (mutations.none { mutation -> mayBringRowsIn(mutation, known, filterColumns) })
+            return emptyList()
         val select = selectListOf(known)
         val shapes = queryShapes.shapesOf(table)
         val sameSelect =
@@ -1570,15 +1573,18 @@ internal class OfflineStore(
     /**
      * Whether [mutation] may bring a row another query holds into a query of [shape]: an UPSERT, or
      * an UPDATE whose body names a column the query's filter does, read without parsing it.
+     *
+     * @param filterColumns the names of the columns [shape]'s filter names, in double quotes.
      */
-    private fun mayBringRowsIn(mutation: MutationRow, shape: QueryShape): Boolean =
+    private fun mayBringRowsIn(
+        mutation: MutationRow,
+        shape: QueryShape,
+        filterColumns: List<String>,
+    ): Boolean =
         when (mutation.operation) {
             MutationOperation.UPSERT -> true
             MutationOperation.UPDATE ->
-                shape.hasOtherFilters ||
-                    shape.conditions.any { condition ->
-                        "\"${condition.column}\"" in mutation.bodyJson
-                    }
+                shape.hasOtherFilters || filterColumns.any { column -> column in mutation.bodyJson }
             else -> false
         }
 
