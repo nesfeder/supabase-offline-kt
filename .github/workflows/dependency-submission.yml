@@ -1,0 +1,66 @@
+name: Dependency submission
+
+# Sends the resolved Gradle dependency graph to GitHub, which cannot read a Gradle build on its
+# own. Dependabot alerts and security updates for Gradle dependencies are based on this graph.
+# Runs on pushes to main that change the build, and by hand on main.
+#
+# Two jobs, so that the job running the build never holds a write token: `resolve` runs Gradle
+# with a read-only token and saves the graph as an artifact of this run; `submit` checks nothing
+# out and runs no build, and only posts that artifact. Caching is off: the job runs rarely, and it
+# keeps the proprietary cache provider of gradle/actions out of the build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.gradle.kts'
+      - '**/gradle.properties'
+      - 'gradle/**'
+      - '.github/workflows/dependency-submission.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: dependency-submission
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve the dependency graph
+    if: github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Resolve every configuration and save the graph
+        uses: gradle/actions/dependency-submission@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          dependency-graph: generate-and-upload
+          validate-wrappers: true
+          cache-disabled: true
+          artifact-retention-days: 1
+
+  submit:
+    name: Submit the dependency graph
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # the dependency submission API requires it
+    steps:
+      - name: Submit the saved graph
+        uses: gradle/actions/dependency-submission@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          dependency-graph: download-and-submit
+          cache-disabled: true

@@ -1,0 +1,149 @@
+name: Dependabot triage
+
+# Labels a Dependabot pull request that moves a held dependency and posts that area's review
+# checklist as one comment, kept current on every push. It never approves, merges or pushes.
+# Which dependencies are held, and why: CONTRIBUTING.md, "Dependency updates".
+#
+# Why `pull_request` and not `pull_request_target`: a Dependabot branch lives in this repository,
+# so GitHub lets this job raise its token to `pull-requests: write` ("Automating Dependabot with
+# GitHub Actions" in GitHub's documentation). A pull request from a fork never gets a write token
+# on this event, and the job is skipped for any author but Dependabot. Nothing from the pull request
+# is checked out or run; its metadata reaches the script only through environment variables and
+# is only ever compared against fixed patterns.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-triage-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    name: Label held dependencies
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write # labels and the checklist comment
+    steps:
+      # Fails unless the pull request's first commit is Dependabot's and GitHub-verified.
+      - name: Read the update
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Label and post the checklist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+
+          upstream_pin=false
+          toolchain=false
+          persistence=false
+          held_minor_or_major=false
+
+          # One line per updated dependency: its name, a tab, the semver level of its update.
+          dependency_lines=$(jq -r '.[] | [.dependencyName, .updateType] | @tsv' <<< "$UPDATED_DEPENDENCIES")
+          while IFS=$'\t' read -r dependency_name update_type; do
+            held=true
+            case "$dependency_name" in
+              io.github.jan-tennert.supabase:*|io.ktor:*|org.jetbrains.kotlinx:kotlinx-coroutines*|org.jetbrains.kotlinx:kotlinx-serialization*)
+                upstream_pin=true ;;
+              org.jetbrains.kotlin:*|org.jetbrains.kotlin.*|com.android.*|co.touchlab.skie*)
+                toolchain=true ;;
+              androidx.room:*|androidx.room|androidx.sqlite:*)
+                persistence=true ;;
+              *)
+                held=false ;;
+            esac
+            if [[ "$held" == true ]]; then
+              case "$update_type" in
+                version-update:semver-minor|version-update:semver-major)
+                  held_minor_or_major=true ;;
+              esac
+            fi
+          done <<< "$dependency_lines"
+
+          labels=()
+          if [[ "$upstream_pin" == true ]]; then labels+=(upstream-pin); fi
+          if [[ "$toolchain" == true ]]; then labels+=(toolchain); fi
+          if [[ "$persistence" == true ]]; then labels+=(persistence); fi
+          if (( ${#labels[@]} == 0 )); then
+            echo "No held dependency in this update."
+            exit 0
+          fi
+
+          label_fields=()
+          for label in "${labels[@]}"; do
+            label_fields+=(-f "labels[]=$label")
+          done
+          gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/labels" "${label_fields[@]}" > /dev/null
+
+          # The comment is fixed text only: nothing from the pull request is written into it.
+          body_file="$RUNNER_TEMP/dependabot-triage.md"
+          {
+            cat <<'MARKDOWN'
+          <!-- dependabot-triage -->
+          This pull request moves a held dependency. A passing build is necessary but not sufficient; check these before merging.
+          MARKDOWN
+            if [[ "$held_minor_or_major" == true ]]; then
+              cat <<'MARKDOWN'
+
+          > [!WARNING]
+          > It moves a held dependency by a minor or major version. Version updates never do that, so this is a security update: decide it as a change of the pin (CONTRIBUTING.md, "Dependency updates"), not as a routine merge.
+          MARKDOWN
+            fi
+            if [[ "$upstream_pin" == true ]]; then
+              cat <<'MARKDOWN'
+
+          **supabase-kt, Ktor, coroutines, serialization** (`upstream-pin`)
+
+          - [ ] Read the release notes for changes to the PostgREST query builder, filters, Storage, or request and retry behavior: this library compiles supabase-kt's inline functions into its own artifact.
+          - [ ] Ktor, coroutines and serialization still match what the pinned supabase-kt release was built with, or the difference is deliberate. They are `api` dependencies, so consumers get the higher version.
+          - [ ] The change is noted under Unreleased in `CHANGELOG.md`.
+          MARKDOWN
+            fi
+            if [[ "$toolchain" == true ]]; then
+              cat <<'MARKDOWN'
+
+          **Kotlin and the Android Gradle plugin** (`toolchain`)
+
+          - [ ] The new Kotlin version does not force consumers onto a newer Kotlin than the pinned supabase-kt release needs, or that is deliberate. A Kotlin `x.y.20` release is a tooling release, not a bug fix, although semver calls it a patch.
+          - [ ] The Android Gradle plugin version is inside the Kotlin Gradle plugin's supported range.
+          - [ ] SKIE supports the new Kotlin version (the iOS framework link in CI fails if it does not).
+          MARKDOWN
+            fi
+            if [[ "$persistence" == true ]]; then
+              cat <<'MARKDOWN'
+
+          **Room and androidx.sqlite** (`persistence`)
+
+          - [ ] The exported schemas in `supabase-offline-kt/schemas/` are unchanged and the schema continuity test passes.
+          - [ ] A change to the bundled SQLite version is noted under Unreleased in `CHANGELOG.md`.
+          MARKDOWN
+            fi
+            cat <<'MARKDOWN'
+
+          <sub>Posted by the Dependabot triage workflow, which never approves or merges.</sub>
+          MARKDOWN
+          } > "$body_file"
+
+          # Update the workflow's own earlier comment rather than adding another.
+          existing_comment_ids=$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- dependabot-triage -->"))) | .id')
+          comment_id="${existing_comment_ids%%$'\n'*}"
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" -F "body=@$body_file" > /dev/null
+          else
+            gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$body_file" > /dev/null
+          fi
