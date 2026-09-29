@@ -1,0 +1,10 @@
+# actionlint, for anyone who runs it locally. CI audits the workflows with zizmor.
+#
+# actionlint 1.7.12, the newest release, predates GitHub's self-repository syntax (`uses: $/…`, an
+# action or reusable workflow from this repository at the commit being run) and reports it as a
+# malformed reference. These patterns silence exactly that report and nothing else.
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      - 'specifying action "\$/[^"]+" in invalid format because ref is missing'
+      - 'reusable workflow call "\$/[^"]+" at "uses" is not following the format'

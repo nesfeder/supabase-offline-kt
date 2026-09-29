@@ -1,8 +1,9 @@
 name: Docs
 
-# Pull requests (and pushes to main) that touch the documentation: strict build, link checks, and
-# the built site uploaded as the `docs-site` artifact so it can be downloaded and previewed.
-# Nothing is published.
+# Strict build, link checks, and the built site uploaded as the `docs-site` artifact so it can be
+# downloaded and previewed. Nothing is published. Pull requests and pushes to main reach this
+# workflow through ci.yml, which calls it when the documentation changed and folds its result into
+# the single required `Final status` check.
 #
 # Publishing to GitHub Pages happens only when this workflow runs with `deploy: true`: by hand
 # (workflow_dispatch) or from the release workflow (workflow_call). The Pages jobs are gated on
@@ -20,18 +21,6 @@ name: Docs
 #   `docs-`, which this workflow uses for itself.
 
 on:
-  pull_request:
-    paths: &docs-paths
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - 'CHANGELOG.md'
-      - 'CONTRIBUTING.md'
-      - 'demo/supabase/**'
-      - '.github/workflows/docs.yml'
-      - '.github/workflows/docs-requirements.txt'
-  push:
-    branches: [main]
-    paths: *docs-paths
   workflow_call:
     inputs:
       deploy:

@@ -1,0 +1,342 @@
+name: CI
+
+# One workflow, one required check. `Final status` is the only check branch protection needs.
+#
+#   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules
+#            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
+#            │                                        SQLite; iOS device framework link
+#            └─ docs                           Linux  docs.yml, called with deploy: false
+#   final-status ── fans in every job above
+#
+#   formatting     kempt check; skipped until .kempt.toml exists
+#   static-checks  API visibility (its self-test first); zizmor when the workflows changed
+#
+# Why a fan-in: branch protection names one check instead of a list that must change with the
+# jobs, and no workflow is path-filtered, so no required check can wait forever for a run that
+# never starts. final-status passes when every job succeeded or was skipped and fails when any
+# failed or was cancelled.
+#
+# Minutes: macOS costs ten times Linux while the repository is private. The test jobs wait for
+# formatting and static-checks, so a pull request that fails a cheap check never starts the macOS
+# job, and a pull request that changes nothing the build reads never starts either test job.
+#
+# Forks: every job runs with a read-only token and no secrets; nothing here writes anything.
+
+on:
+  # Every pull request, whatever its base, so a stacked pull request is checked the same way.
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    outputs:
+      kotlin: ${{ steps.classify.outputs.kotlin }}
+      docs: ${{ steps.classify.outputs.docs }}
+      workflows: ${{ steps.classify.outputs.workflows }}
+      formatting: ${{ steps.formatter.outputs.configured }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Anything not named below counts as a build input, so an unfamiliar path runs the tests.
+      # A change to CI itself runs everything. When the changed files cannot be listed, everything
+      # runs.
+      - name: Classify the changed files
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          changed_files="$RUNNER_TEMP/changed-files.txt"
+          everything=false
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            # The checkout is GitHub's merge of the pull request; its first parent is the base.
+            git diff --no-renames --name-only HEAD^1 HEAD > "$changed_files"
+          elif [[ -n "$PUSH_BEFORE" && ! "$PUSH_BEFORE" =~ ^0+$ ]] \
+            && git cat-file -e "${PUSH_BEFORE}^{commit}" 2> /dev/null; then
+            git diff --no-renames --name-only "$PUSH_BEFORE" HEAD > "$changed_files"
+          else
+            everything=true
+            : > "$changed_files"
+          fi
+
+          kotlin=false
+          docs=false
+          workflows=false
+          while IFS= read -r file; do
+            case "$file" in
+              .github/workflows/ci.yml | .github/actions/* | .github/scripts/*)
+                kotlin=true; docs=true; workflows=true ;;
+              .github/workflows/docs.yml | .github/workflows/docs-requirements.txt)
+                docs=true; workflows=true ;;
+              .github/workflows/* | .github/dependabot.yml)
+                workflows=true ;;
+              docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | demo/supabase/*)
+                docs=true ;;
+              .github/* | *.md | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
+                | .kempt.toml | config/license-header* | *.properties.example)
+                ;;
+              *)
+                kotlin=true ;;
+            esac
+          done < "$changed_files"
+          if [[ "$everything" == true ]]; then
+            kotlin=true; docs=true; workflows=true
+          fi
+
+          echo "::group::Changed files ($(wc -l < "$changed_files"))"
+          cat "$changed_files"
+          echo "::endgroup::"
+          echo "kotlin=$kotlin docs=$docs workflows=$workflows everything=$everything"
+          {
+            echo "kotlin=$kotlin"
+            echo "docs=$docs"
+            echo "workflows=$workflows"
+          } >> "$GITHUB_OUTPUT"
+
+      # The formatter's configuration lands in its own pull request; until then the job is skipped.
+      - name: Look for the formatter configuration
+        id: formatter
+        env:
+          KEMPT_CONFIG_HASH: ${{ hashFiles('.kempt.toml') }}
+        run: |
+          if [[ -n "$KEMPT_CONFIG_HASH" ]]; then configured=true; else configured=false; fi
+          echo "formatting configured=$configured"
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+  formatting:
+    name: Formatting
+    needs: changes
+    if: needs.changes.outputs.formatting == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KEMPT_VERSION: v0.3.1
+      # SHA-256 of kempt-fmt-x86_64-unknown-linux-gnu.tar.xz for KEMPT_VERSION, from the release's
+      # .sha256 asset. Change both together.
+      KEMPT_LINUX_X64_SHA256: 339c06f574c03db8c45de5c1f3e15aefbafd48c886b78803f94f9b8adb7d6a01
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The release archive, checked against the digest above before anything in it runs. kempt's
+      # own action pipes an installer script into a shell instead.
+      - name: Install kempt
+        run: |
+          set -euo pipefail
+          archive="kempt-fmt-x86_64-unknown-linux-gnu.tar.xz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/ZacSweers/kempt/releases/download/$KEMPT_VERSION/$archive"
+          echo "$KEMPT_LINUX_X64_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/kempt"
+          tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/kempt" --strip-components=1
+          echo "$RUNNER_TEMP/kempt" >> "$GITHUB_PATH"
+
+      - name: Download the formatters
+        run: kempt update
+
+      - name: Check formatting
+        run: kempt check
+
+  static-checks:
+    name: Static checks
+    needs: changes
+    if: needs.changes.outputs.kotlin == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Internal code stays out of the public surface. The self-test runs first, so a check that
+      # has stopped seeing violations fails loudly instead of passing quietly.
+      - name: Check API visibility
+        if: needs.changes.outputs.kotlin == 'true'
+        run: |
+          bash scripts/check-api-visibility.sh --self-test
+          bash scripts/check-api-visibility.sh
+
+      # Template injection, unpinned actions, broad permissions, persisted credentials. Findings
+      # fail the job and appear as annotations; nothing is uploaded to code scanning.
+      - name: Audit the workflows
+        if: needs.changes.outputs.workflows == 'true'
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: 1.30.1
+          inputs: .github
+          advanced-security: false
+          annotations: true
+
+  jvm-tests:
+    name: Android host tests
+    needs: [changes, formatting, static-checks]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.kotlin == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: $/.github/actions/setup-project
+
+      # Robolectric on the JVM; the host SQLite comes from the JVM driver's binary for this machine.
+      - name: Run the Android host tests
+        run: >-
+          ./gradlew
+          :supabase-offline-kt:testAndroidHostTest
+          :supabase-offline-kt-testing:testAndroidHostTest
+          --continue --stacktrace
+
+      - name: Count the tests that ran
+        if: ${{ !cancelled() }}
+        run: >-
+          python3 .github/scripts/count-test-results.py "Android host tests" testAndroidHostTest
+          supabase-offline-kt supabase-offline-kt-testing
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-host-test-reports
+          path: |
+            */build/reports/tests/
+            */build/test-results/
+          retention-days: 7
+
+  ios-tests:
+    name: iOS tests
+    needs: [changes, formatting, static-checks]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.kotlin == 'true' }}
+    # The image and Xcode the tests have always run on (macos-latest resolves to them today),
+    # named so an image migration cannot change the toolchain without a commit.
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      XCODE_VERSION: '26.6'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch "/Applications/Xcode_${XCODE_VERSION}.app"
+          xcodebuild -version
+
+      - uses: $/.github/actions/setup-project
+
+      - name: Read the Kotlin version
+        id: kotlin
+        run: |
+          version=$(sed -n 's/^kotlin = "\(.*\)"$/\1/p' gradle/libs.versions.toml)
+          if [[ -z "$version" ]]; then
+            echo "::error::No kotlin version in gradle/libs.versions.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # The Kotlin/Native toolchain, its dependencies and its compiler caches, which setup-gradle
+      # does not cache. Keyed on the Kotlin and Xcode versions; written from main only.
+      - name: Restore Kotlin/Native
+        id: konan
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-xcode${{ env.XCODE_VERSION }}-kotlin${{ steps.kotlin.outputs.version }}
+
+      - name: Run the iOS simulator tests
+        run: >-
+          ./gradlew
+          :supabase-offline-kt:iosSimulatorArm64Test
+          :supabase-offline-kt-testing:iosSimulatorArm64Test
+          --continue --stacktrace
+
+      - name: Count the tests that ran
+        if: ${{ !cancelled() }}
+        run: >-
+          python3 .github/scripts/count-test-results.py "iOS simulator tests" iosSimulatorArm64Test
+          supabase-offline-kt supabase-offline-kt-testing
+
+      # The engine suite again on the system SQLite, which the Swift package links. A separate
+      # build: see supabase-offline-kt/build.gradle.kts.
+      - name: Run the iOS suite on the system SQLite
+        run: ./gradlew :supabase-offline-kt:iosSimulatorArm64Test -Psupabase.offline.iosSqlite=system --stacktrace
+
+      - name: Count the tests that ran on the system SQLite
+        if: ${{ !cancelled() }}
+        run: >-
+          python3 .github/scripts/count-test-results.py "iOS simulator tests, system SQLite"
+          iosSimulatorArm64Test supabase-offline-kt
+
+      # Tests never compile the device target or link a framework; this does.
+      - name: Link the iOS device framework
+        run: ./gradlew :supabase-offline-kt:linkReleaseFrameworkIosArm64 --stacktrace
+
+      - name: Save Kotlin/Native
+        if: github.event_name == 'push' && steps.konan.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.konan
+          key: ${{ steps.konan.outputs.cache-primary-key }}
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-test-reports
+          path: |
+            */build/reports/tests/
+            */build/test-results/
+          retention-days: 7
+
+  docs:
+    name: Docs
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    uses: $/.github/workflows/docs.yml
+    with:
+      deploy: false
+
+  final-status:
+    name: Final status
+    if: always()
+    needs: [changes, formatting, static-checks, jvm-tests, ios-tests, docs]
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Fail if any job failed or was cancelled
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          if jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' <<< "$NEEDS" > /dev/null; then
+            echo "::error::A job failed or was cancelled."
+            exit 1
+          fi

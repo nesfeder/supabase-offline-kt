@@ -21,9 +21,10 @@ on:
 
 permissions: {}
 
+# A later push to main waits for this run rather than cancelling it.
 concurrency:
   group: dependency-submission
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   resolve:
