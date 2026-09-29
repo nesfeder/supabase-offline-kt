@@ -24,3 +24,7 @@ github.properties
 # Documentation site: local virtualenv and build output
 /.venv-docs/
 /site/
+
+# JVM crash reports a test worker writes into the module directory
+hs_err_pid*.log
+replay_pid*.log
