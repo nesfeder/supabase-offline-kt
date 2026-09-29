@@ -1,4 +1,4 @@
-@file:OptIn(SupabaseInternal::class)
+@file:OptIn(SupabaseInternal::class, ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
@@ -20,6 +20,7 @@ import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.request.get
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.StandardTestDispatcher
