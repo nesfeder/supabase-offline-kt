@@ -6,6 +6,7 @@ import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -1136,7 +1137,7 @@ internal class OfflineStore(
         if (all.isEmpty()) return cachedJson
 
         val unconfirmed = mutationQueueState.unconfirmedSends()
-        return OfflineMutationOverlay.applyPendingMutations(
+        return MutationOverlay.overlay(
             json = json,
             serverJson = cachedJson,
             pending = all,
@@ -1198,7 +1199,7 @@ internal class OfflineStore(
         mutations: List<MutationRow>,
         signature: String,
         unconfirmedSends: Set<Long>,
-    ): String = OfflineMutationOverlay.applyPendingMutations(
+    ): String = MutationOverlay.overlay(
         json = json,
         serverJson = serverJson,
         pending = mutations,
@@ -1224,7 +1225,7 @@ internal class OfflineStore(
      *
      * The [MutationRow] constructed below is **ephemeral**: it is never persisted to
      * `mutation_cache`. It exists only as a data carrier for the pure
-     * [OfflineMutationOverlay.applyPendingMutations] function. The only database write is
+     * [MutationOverlay.overlay] function. The only database write is
      * `objectDao.upsert(...)` on the affected SELECT payload. There is therefore no cleanup
      * lifecycle, unlike the offline path where real pending mutations get wiped by
      * [clearSyncedMutationsForTable] after the next successful network SELECT.
@@ -1313,7 +1314,7 @@ internal class OfflineStore(
             for (row in rows) {
                 // Gate INSERT/UPSERT appends on this specific cached query's own filters, so an online
                 // insert never lands in a signature whose exhaustive WHERE clause excludes it.
-                val updated = OfflineMutationOverlay.applyPendingMutations(
+                val updated = MutationOverlay.overlay(
                     json = json,
                     serverJson = row.payload,
                     pending = listOf(syntheticMutation),
@@ -1379,7 +1380,7 @@ internal class OfflineStore(
 
         for (signature in liveSignatures) {
             if (signature in existingSignatures) continue
-            val created = OfflineMutationOverlay.applyPendingMutations(
+            val created = MutationOverlay.overlay(
                 json = json,
                 serverJson = EMPTY_JSON_ARRAY,
                 pending = listOf(syntheticMutation),

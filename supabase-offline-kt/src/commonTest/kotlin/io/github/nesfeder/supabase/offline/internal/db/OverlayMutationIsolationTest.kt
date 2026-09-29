@@ -1,6 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
@@ -35,7 +36,7 @@ class OverlayMutationIsolationTest {
         )
 
         // When
-        val overlaid = OfflineMutationOverlay.applyPendingMutations(
+        val overlaid = MutationOverlay.overlay(
             json = OfflineJson,
             serverJson = """[{"id":1,"tags":["a"]}]""",
             pending = pending,
@@ -57,7 +58,7 @@ class OverlayMutationIsolationTest {
         )
 
         // When
-        val overlaid = OfflineMutationOverlay.applyPendingMutations(
+        val overlaid = MutationOverlay.overlay(
             json = OfflineJson,
             serverJson = """[{"id":1}]""",
             pending = pending,
@@ -74,7 +75,7 @@ class OverlayMutationIsolationTest {
         val pending = listOf(mutation(id = 7, operation = MutationOperation.INSERT, body = "not json"))
 
         // When
-        OfflineMutationOverlay.applyPendingMutations(
+        MutationOverlay.overlay(
             json = OfflineJson,
             serverJson = "[]",
             pending = pending,

@@ -1,5 +1,7 @@
-package io.github.nesfeder.supabase.offline.internal.db
+package io.github.nesfeder.supabase.offline.internal.cache
 
+import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMARY_KEY
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -57,7 +59,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * non-exhaustive [targetFilters] preserves the legacy always-append behavior, so we never hide
  * a row the server would have returned.
  */
-internal object OfflineMutationOverlay {
+internal object MutationOverlay {
 
     /**
      * Overlays [pending] onto the payload [serverJson], each mutation on its own copy so one that
@@ -70,7 +72,7 @@ internal object OfflineMutationOverlay {
      *   holds their key — for a mutation the server may already hold.
      * @param onMutationFailure Told of each skipped mutation, for logging; never its body.
      */
-    fun applyPendingMutations(
+    fun overlay(
         json: Json,
         serverJson: String,
         pending: List<MutationRow>,
