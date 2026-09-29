@@ -463,12 +463,15 @@ internal class MutationQueueState(
         rejectedCache.value = list
     }
 
-    /** Forgets every cached row; called once [OfflineStore.clearAll] has deleted the rows. */
+    /**
+     * Records that every row is gone and the queue empty; called once [OfflineStore.clearAll] has
+     * deleted them. The records then read empty without a row, so no reader writes one back.
+     */
     fun resetCaches() {
-        ownersCache.value = null
-        rejectedCache.value = null
-        coverageCache.value = null
-        unconfirmedCache.value = null
+        ownersCache.value = MutationOwners.Known(emptyMap())
+        rejectedCache.value = StoredRejectionList()
+        coverageCache.value = emptyMap()
+        unconfirmedCache.value = emptySet()
     }
 
     private suspend fun rejectedList(): StoredRejectionList {
