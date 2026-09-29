@@ -32,8 +32,9 @@ internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgre
  * Exactly what replaying the shipped queue must put on the wire, in order.
  *
  * Writes replay in the order they were queued (their ids 1 to 4), whatever their table. The INSERT
- * replays as sent: nothing records that an earlier send of it may have reached the server. The
- * delta-declared UPDATE first re-reads its row with its own filter, then sends the rebased body:
+ * carries its key, and the shipped engine kept no record of whether an earlier send of it reached the
+ * server, so it replays as an upsert that takes a row already there as its own. The delta-declared
+ * UPDATE first re-reads its row with its own filter, then sends the rebased body:
  * `done_count` 6 + (5 - 4) = 7 and `minutes_spent` 40 + (45 - 30) = 55, written as integers because
  * the queued body wrote them as integers, while `title` replays as queued.
  *
@@ -44,8 +45,8 @@ internal val SHIPPED_QUEUE_REPLAY: List<RecordedRequest> = listOf(
     RecordedRequest(
         method = "POST",
         table = "todos",
-        query = mapOf("columns" to "id,title"),
-        prefer = "return=minimal",
+        query = mapOf("on_conflict" to "id", "columns" to "id,title"),
+        prefer = "count=exact,resolution=ignore-duplicates,return=minimal",
         contentProfile = "public",
         acceptProfile = null,
         body = """[{"id":3,"title":"Water the plants"}]""",

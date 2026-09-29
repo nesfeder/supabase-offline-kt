@@ -145,8 +145,19 @@ internal class OfflineStore(
      */
     internal var sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO)
 
-    /** The mutation queue's persisted state: the owner of each queued write and the rejected list. */
-    internal val mutationQueueState: MutationQueueState = MutationQueueState(objectDao, OfflineJson, nowMillis) { sdkLogger }
+    /**
+     * The mutation queue's persisted state: the owner of each queued write, the rejected list, the
+     * synced-mutation coverage and the unconfirmed sends.
+     */
+    internal val mutationQueueState: MutationQueueState = MutationQueueState(
+        objectDao = objectDao,
+        json = OfflineJson,
+        nowMillis = nowMillis,
+        logger = { sdkLogger },
+        pendingKeyedInsertIds = {
+            mutationDao.pendingAll().filter { mutation -> isKeyedInsert(mutation) }.map { mutation -> mutation.id }.toSet()
+        },
+    )
 
     /**
      * Serializes every change to the mutation queue's bookkeeping together with the mutation rows
@@ -591,6 +602,9 @@ internal class OfflineStore(
         defaultToNull: Boolean = true
     ): Long {
         requireUserTable(table)
+        // Read before the first INSERT this process queues, so a missing record is started from the
+        // INSERTs queued before it only. Under [enqueueOwnedBy] it is read already.
+        mutationQueueState.unconfirmedSends()
         return mutationDao.insert(
             MutationRow(
                 table = table,
@@ -707,6 +721,8 @@ internal class OfflineStore(
         enqueue: suspend OfflineStore.() -> Long,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
         if (predatesCacheTeardown(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
+        // Outside the transaction below: the first read of the unconfirmed sends may write.
+        mutationQueueState.unconfirmedSends()
         if (identity == null) return@withLock EnqueueOutcome.Queued(enqueue())
         if (mutationQueueState.owners() !is MutationOwners.Known) return@withLock EnqueueOutcome.OwnershipUnreadable
         var id = 0L
@@ -922,6 +938,8 @@ internal class OfflineStore(
         if (identity != null && entry.owner != null && entry.owner != identity) return@withLock null
         if (identity != null && mutationQueueState.owners() !is MutationOwners.Known) return@withLock null
         val row = entry.toRequeuedRow(createdAtMs = nowMillis()) ?: return@withLock null
+        // Read before the re-queued write exists: it has never been sent under its new id.
+        mutationQueueState.unconfirmedSends()
         val (rejectedRow, list) = mutationQueueState.rejectedRowWith(removeId = id)
         var newId = 0L
         var owners: MutationOwners.Known? = null
@@ -1425,6 +1443,15 @@ internal class OfflineStore(
      */
     suspend fun markSendUnconfirmed(id: Long): Boolean {
         val mutation = mutationDao.byId(id) ?: return false
+        if (!isKeyedInsert(mutation)) return false
+        return updateUnconfirmedSends { current -> current + id }
+    }
+
+    /**
+     * Whether [mutation] is an INSERT whose rows all carry its table's primary key: the only kind
+     * whose replay can take rows already on the server as its own.
+     */
+    private fun isKeyedInsert(mutation: MutationRow): Boolean {
         if (mutation.operation != MutationOperation.INSERT) return false
         val body = try {
             json.parseToJsonElement(mutation.bodyJson) as? JsonArray
@@ -1432,8 +1459,7 @@ internal class OfflineStore(
             // A body that no longer parses is refused at replay; there is nothing to record.
             null
         } ?: return false
-        if (!everyRowCarriesPrimaryKey(body, primaryKeys.of(mutation.table))) return false
-        return updateUnconfirmedSends { current -> current + id }
+        return everyRowCarriesPrimaryKey(body, primaryKeys.of(mutation.table))
     }
 
     /** Clears the record that the send of mutation [id] may have reached the server: it never did. */

@@ -3,12 +3,15 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.SdkLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
@@ -172,13 +175,23 @@ internal sealed interface MutationOwners {
  * Callers hold the store's mutation-queue lock, and build each row here before opening a transaction,
  * so no transaction waits on a coroutine lock. An unreadable owner row stops replay
  * ([MutationOwners.Unreadable]); any other unreadable row is kept aside, logged, and started afresh.
+ *
+ * @property pendingKeyedInsertIds The pending INSERTs whose rows all carry their table's primary key:
+ *   what a missing or unreadable unconfirmed-sends row starts from.
  */
 internal class MutationQueueState(
     private val objectDao: ObjectDao,
     private val json: Json,
     private val nowMillis: () -> Long,
     private val logger: () -> SdkLogger,
+    private val pendingKeyedInsertIds: suspend () -> Set<Long>,
 ) {
+
+    /**
+     * Held while the coverage or unconfirmed-sends row is first read, and written back when it has to
+     * start afresh, so that write cannot overwrite a change made meanwhile. Innermost of every lock.
+     */
+    private val loadLock = Mutex()
 
     private val ownersCache = MutableStateFlow<MutationOwners?>(null)
     private val rejectedCache = MutableStateFlow<StoredRejectionList?>(null)
@@ -245,17 +258,23 @@ internal class MutationQueueState(
      */
     suspend fun syncedMutationCoverage(): Map<Long, Set<String>> {
         coverageCache.value?.let { return it }
-        val payload = objectDao.get(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE)?.payload
-        val loaded = if (payload == null) {
-            emptyMap()
-        } else {
-            decodeOrNull(StoredSyncedMutationCoverage.serializer(), payload)
-                ?.coveredSignatures
-                ?.mapValues { (_, signatures) -> signatures.toSet() }
-                ?: keepAsideUnreadable(SYNCED_MUTATION_COVERAGE_SIGNATURE, payload, emptyMap())
+        return loadLock.withLock {
+            coverageCache.value ?: loadSyncedMutationCoverage().also { loaded -> coverageCache.value = loaded }
         }
-        coverageCache.compareAndSet(null, loaded)
-        return coverageCache.value ?: loaded
+    }
+
+    /**
+     * Reads the coverage row. A missing one covers nothing, so the overlay shows every synced
+     * mutation; an unreadable one is kept aside and replaced by an empty row.
+     */
+    private suspend fun loadSyncedMutationCoverage(): Map<Long, Set<String>> {
+        val payload = objectDao.get(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE)?.payload ?: return emptyMap()
+        decodeOrNull(StoredSyncedMutationCoverage.serializer(), payload)?.let { stored ->
+            return stored.coveredSignatures.mapValues { (_, signatures) -> signatures.toSet() }
+        }
+        keepAsideUnreadable(SYNCED_MUTATION_COVERAGE_SIGNATURE, payload)
+        writeFreshRow(syncedMutationCoverageRow(emptyMap()))
+        return emptyMap()
     }
 
     /** [syncedMutationCoverage], re-emitted whenever it changes. */
@@ -274,8 +293,12 @@ internal class MutationQueueState(
         val current = syncedMutationCoverage()
         val next = changes(current).filterValues { signatures -> signatures.isNotEmpty() }
         if (next == current) return null
-        val stored = StoredSyncedMutationCoverage(coveredSignatures = next.mapValues { (_, signatures) -> signatures.sorted() })
-        return reservedRow(SYNCED_MUTATION_COVERAGE_SIGNATURE, json.encodeToString(StoredSyncedMutationCoverage.serializer(), stored)) to next
+        return syncedMutationCoverageRow(next) to next
+    }
+
+    private fun syncedMutationCoverageRow(coverage: Map<Long, Set<String>>): ObjectRow {
+        val stored = StoredSyncedMutationCoverage(coveredSignatures = coverage.mapValues { (_, signatures) -> signatures.sorted() })
+        return reservedRow(SYNCED_MUTATION_COVERAGE_SIGNATURE, json.encodeToString(StoredSyncedMutationCoverage.serializer(), stored))
     }
 
     /** Records that [coverage] was written. */
@@ -291,15 +314,24 @@ internal class MutationQueueState(
      */
     suspend fun unconfirmedSends(): Set<Long> {
         unconfirmedCache.value?.let { return it }
-        val payload = objectDao.get(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload
-        val loaded = if (payload == null) {
-            emptySet()
-        } else {
-            decodeOrNull(StoredUnconfirmedSends.serializer(), payload)?.mutationIds?.toSet()
-                ?: keepAsideUnreadable(UNCONFIRMED_SENDS_SIGNATURE, payload, emptySet())
+        return loadLock.withLock {
+            unconfirmedCache.value ?: loadUnconfirmedSends().also { loaded -> unconfirmedCache.value = loaded }
         }
-        unconfirmedCache.compareAndSet(null, loaded)
-        return unconfirmedCache.value ?: loaded
+    }
+
+    /**
+     * Reads the unconfirmed-sends row. A missing or unreadable one cannot say which sends were never
+     * made, so every keyed INSERT queued so far counts as possibly delivered — the row is read before
+     * this process queues any (see [OfflineStore.enqueueOwnedBy]) — and that set is written in its
+     * place, so a later launch reads it rather than deciding again.
+     */
+    private suspend fun loadUnconfirmedSends(): Set<Long> {
+        val payload = objectDao.get(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload
+        payload?.let { decodeOrNull(StoredUnconfirmedSends.serializer(), it) }?.let { stored -> return stored.mutationIds.toSet() }
+        if (payload != null) keepAsideUnreadable(UNCONFIRMED_SENDS_SIGNATURE, payload)
+        val possiblyDelivered = pendingKeyedInsertIds()
+        writeFreshRow(unconfirmedSendsRow(possiblyDelivered))
+        return possiblyDelivered
     }
 
     /**
@@ -311,8 +343,12 @@ internal class MutationQueueState(
         val current = unconfirmedSends()
         val next = changes(current)
         if (next == current) return null
-        val stored = StoredUnconfirmedSends(mutationIds = next.sorted())
-        return reservedRow(UNCONFIRMED_SENDS_SIGNATURE, json.encodeToString(StoredUnconfirmedSends.serializer(), stored)) to next
+        return unconfirmedSendsRow(next) to next
+    }
+
+    private fun unconfirmedSendsRow(unconfirmed: Set<Long>): ObjectRow {
+        val stored = StoredUnconfirmedSends(mutationIds = unconfirmed.sorted())
+        return reservedRow(UNCONFIRMED_SENDS_SIGNATURE, json.encodeToString(StoredUnconfirmedSends.serializer(), stored))
     }
 
     /** Records that [unconfirmed] was written. */
@@ -450,18 +486,30 @@ internal class MutationQueueState(
     /** Keeps an unreadable rejected-list payload aside and starts a new list. */
     private suspend fun moveAsideUnreadable(payload: String): StoredRejectionList {
         val fresh = StoredRejectionList()
-        return keepAsideUnreadable(REJECTED_MUTATIONS_SIGNATURE, payload, fresh).also { objectDao.upsert(rejectedRow(fresh)) }
+        keepAsideUnreadable(REJECTED_MUTATIONS_SIGNATURE, payload)
+        objectDao.upsert(rejectedRow(fresh))
+        return fresh
     }
 
-    /**
-     * Keeps an unreadable reserved payload under `<signature>.unreadable.<ms>`, logs it at ERROR, and
-     * returns [fresh] to start over with.
-     */
-    private suspend fun <T> keepAsideUnreadable(signature: String, payload: String, fresh: T): T {
+    /** Keeps an unreadable reserved payload under `<signature>.unreadable.<ms>` and logs it at ERROR. */
+    private suspend fun keepAsideUnreadable(signature: String, payload: String) {
         val asideSignature = "$signature.unreadable.${nowMillis()}"
         objectDao.upsert(reservedRow(asideSignature, payload))
         logger().error { "The mutation queue's $signature record could not be read; kept it aside as $asideSignature and started a new one" }
-        return fresh
+    }
+
+    /**
+     * Writes [row], the value a missing or unreadable record starts afresh from. If the write fails the
+     * value still holds in memory, and the record's next change writes it.
+     */
+    private suspend fun writeFreshRow(row: ObjectRow) {
+        try {
+            objectDao.upsert(row)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            logger().warning { "Could not write the mutation queue's ${row.signature} record (${failure::class.simpleName}); its next change writes it" }
+        }
     }
 
     private fun reservedRow(signature: String, payload: String): ObjectRow =
