@@ -255,6 +255,53 @@ class ResponseTrustTest {
     }
 
     @Test
+    fun under_the_authenticated_only_rule_a_narrowed_response_while_restoring_is_not_written() = runTest {
+        // Given — the signed-in user's list, cached; the anon key sees only the public row
+        objectDao.seedPayload(TABLE, TABLE, """[{"id":"public"},{"id":"my-draft"}]""")
+        rows = """[{"id":"public"}]"""
+        val sessions = FakeHeldSessionManager(signedInSession())
+        observing(
+            supabase = { dispatcher -> withAuth(dispatcher, sessions, autoLoad = true) },
+            responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
+        ) { _, observed ->
+            // When — the refresh goes out while the session restores
+            advanceTimeBy(RESTORING_FOR)
+            runCurrent()
+
+            // Then — the user's rows stay, and the refresh has not settled
+            assertEquals("""[{"id":"public"},{"id":"my-draft"}]""", objectDao.getRow(TABLE, TABLE)?.payload)
+            assertEquals(true, observed.refresh !is RefreshState.Idle, "the narrowed response ended the refresh")
+
+            // When — the session restores, and the user's request sees both rows
+            rows = """[{"id":"public"},{"id":"my-draft"},{"id":"new"}]"""
+            sessions.release()
+            settle()
+
+            // Then — the read settles on the user's full data
+            assertEquals(RefreshState.Idle, observed.refresh)
+            assertEquals(rows, observed.shown.last())
+        }
+    }
+
+    @Test
+    fun under_the_authenticated_only_rule_a_non_empty_response_signed_out_is_written() = runTest {
+        // Given — Auth installed, nobody signed in, a table public by design
+        rows = """[{"id":"public"}]"""
+        observing(
+            supabase = { dispatcher -> withAuth(dispatcher, MemorySessionManager(), autoLoad = false) },
+            responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
+        ) { server, observed ->
+            // When
+            settle()
+
+            // Then — written and settled, as under the rule before
+            assertEquals(rows, objectDao.getRow(TABLE, TABLE)?.payload)
+            assertEquals(RefreshState.Idle, observed.refresh)
+            assertEquals(1, server.reads())
+        }
+    }
+
+    @Test
     fun a_one_shot_read_without_auth_caches_an_empty_result() = runTest {
         // Given
         val server = RecordingPostgrestServer(answer = { okJson("[]") })

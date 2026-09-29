@@ -58,8 +58,10 @@ internal enum class ResponseTrustPolicy {
     SETTLED_SESSION,
 
     /**
-     * Only a signed-in session produces authoritative data: an empty response is written only when
-     * the session was signed in before and after the request, and every non-empty one is written.
+     * Only a signed-in session produces authoritative empty results: an empty response is written
+     * only when the session was signed in before and after the request. A non-empty one is written
+     * too, signed out or without the Auth plugin, but never while a stored session restores or its
+     * refresh has failed, when the anon key's narrower answer would overwrite the user's rows.
      */
     AUTHENTICATED_SESSION_ONLY,
     ;
@@ -71,13 +73,16 @@ internal enum class ResponseTrustPolicy {
      */
     fun mayCache(before: RequestSession, after: RequestSession, isEmpty: Boolean): Boolean = when (this) {
         SETTLED_SESSION -> settledIdentityOf(before)?.let { identity -> identity == settledIdentityOf(after) } ?: false
-        AUTHENTICATED_SESSION_ONLY -> !isEmpty || (before is RequestSession.SignedIn && after is RequestSession.SignedIn)
+        AUTHENTICATED_SESSION_ONLY -> when {
+            isUnsettledStoredSession(before) || isUnsettledStoredSession(after) -> false
+            else -> !isEmpty || (before is RequestSession.SignedIn && after is RequestSession.SignedIn)
+        }
     }
 
     /** Whether a reactive read's refresh takes such a response as a failure and tries again. */
     fun refreshRetries(before: RequestSession, after: RequestSession, isEmpty: Boolean): Boolean = when (this) {
         SETTLED_SESSION -> !mayCache(before, after, isEmpty)
-        AUTHENTICATED_SESSION_ONLY -> isEmpty && before !is RequestSession.SignedIn
+        AUTHENTICATED_SESSION_ONLY -> if (isEmpty) before !is RequestSession.SignedIn else !mayCache(before, after, isEmpty = false)
     }
 
     /**
@@ -89,3 +94,7 @@ internal enum class ResponseTrustPolicy {
         AUTHENTICATED_SESSION_ONLY -> isEmpty && before is RequestSession.Restoring
     }
 }
+
+/** Whether [session] belongs to a stored user whose token is not on the wire: restoring, or after a failed refresh. */
+private fun isUnsettledStoredSession(session: RequestSession): Boolean =
+    session is RequestSession.Restoring || session is RequestSession.RefreshFailed
