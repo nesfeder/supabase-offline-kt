@@ -1,4 +1,4 @@
-[![Shared Tests (Android & iOS)](https://github.com/nesfeder/supabase-offline-kt/actions/workflows/shared-tests.yml/badge.svg?branch=main)](https://github.com/nesfeder/supabase-offline-kt/actions/workflows/shared-tests.yml)
+[![CI](https://github.com/nesfeder/supabase-offline-kt/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nesfeder/supabase-offline-kt/actions/workflows/ci.yml)
 
 # Supabase Offline SDK (Kotlin Multiplatform)
 
