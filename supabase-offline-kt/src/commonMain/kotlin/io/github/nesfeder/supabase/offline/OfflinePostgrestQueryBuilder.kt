@@ -44,6 +44,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.jsonArray
 
@@ -529,8 +530,10 @@ internal class OfflinePostgrestQueryBuilderImpl(
             // against the row the caller just read, so there is no queue window to rebase across
             // — and PostgREST cannot express `col = col + x` in a PATCH anyway.
             performOnline = { delegate.update(body, request) },
-            applyOnlineSuccessOverlay = { _, startedAtTick ->
+            applyOnlineSuccessOverlay = { result, startedAtTick ->
                 patchFilteredWrite(MutationOperation.UPDATE, table, body.toString(), conversionMethod, request, startedAtTick)
+                // Rows it returned carry what the server set itself, such as a trigger's `updated_at`
+                store.patchReturnedRows(table, body, result.data, startedAtTick)
             },
             captureForQueue = {
                 captureFilteredWrite(conversionMethod, request) { descriptor ->
@@ -910,8 +913,12 @@ internal fun preferResponseForCacheOverlay(
     json: Json,
 ): String {
     return try {
-        val element = json.parseToJsonElement(responseData)
-        if (element is JsonArray && element.isNotEmpty()) responseData else requestBody.toString()
+        when (val element = json.parseToJsonElement(responseData)) {
+            is JsonArray -> if (element.isNotEmpty()) responseData else requestBody.toString()
+            // `single()` returns the one row as an object
+            is JsonObject -> JsonArray(listOf(element)).toString()
+            else -> requestBody.toString()
+        }
     } catch (_: Exception) {
         requestBody.toString()
     }

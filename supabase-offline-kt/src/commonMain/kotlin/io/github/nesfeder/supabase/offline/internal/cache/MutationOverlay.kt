@@ -211,6 +211,19 @@ internal fun payloadRowsOf(json: Json, payload: String): List<JsonElement>? = tr
     null
 }
 
+/**
+ * The rows a write's response carries: those of a JSON array, or the one object `single()` returns.
+ * Empty for a response without rows (`return=minimal`) or one that is not JSON.
+ */
+internal fun returnedRowsOf(json: Json, responseData: String): List<JsonObject> {
+    if (responseData.isBlank()) return emptyList()
+    return when (val element = try { json.parseToJsonElement(responseData) } catch (_: IllegalArgumentException) { null }) {
+        is JsonArray -> element.filterIsInstance<JsonObject>()
+        is JsonObject -> listOf(element)
+        else -> emptyList()
+    }
+}
+
 /** The index of the row in [rows] with [row]'s values in [keyColumns], or `null` when there is none or [row] lacks one. */
 internal fun indexOfKey(rows: List<JsonElement>, row: JsonObject, keyColumns: List<String>): Int? {
     val key = primaryKeyOf(row, keyColumns) ?: return null

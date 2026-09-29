@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.indexOfKey
 import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
+import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -33,6 +34,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okio.Path
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -1262,6 +1264,44 @@ internal class OfflineStore(
             onConflict = onConflict,
             ignoreDuplicates = ignoreDuplicates,
         )
+        applyPatch(table, listOf(write), liveSignatures, guardTick)
+    }
+
+    /**
+     * Patches the rows an UPDATE returned into the cached queries of [table], as [patchCachedQueries]
+     * does: each returned row that carries the table's primary key sets, in the row with that key,
+     * [body]'s columns and then its own. They are what the server wrote, columns it set itself
+     * included. Rows without the key, or a response without rows, patch nothing.
+     *
+     * @param responseData the UPDATE's response body: a JSON array of rows, one object, or empty.
+     * @param startedAtTick [monotonicTickNow] as read when the write started.
+     */
+    internal suspend fun patchReturnedRows(table: String, body: JsonElement, responseData: String, startedAtTick: Long) {
+        requireUserTable(table)
+        val keyColumns = primaryKeys.of(table)
+        val bodyColumns: Map<String, JsonElement> = body as? JsonObject ?: emptyMap()
+        val writes = returnedRowsOf(json, responseData).mapNotNull { row ->
+            val key = primaryKeyOf(row, keyColumns) ?: return@mapNotNull null
+            val byKey = FilterDescriptor(
+                conditions = key.map { (column, value) -> FilterDescriptor.Condition(column, operatorId = "eq", value = value.jsonPrimitive.content) },
+            )
+            MutationRow(
+                table = table,
+                operation = MutationOperation.UPDATE,
+                bodyJson = JsonObject(bodyColumns + row).toString(),
+                filterJson = encode(byKey, json),
+                createdAtMs = nowMillis(),
+                syncedAtMs = null,
+            )
+        }
+        if (writes.isNotEmpty()) applyPatch(table, writes, liveSignatures = null, guardTick = startedAtTick)
+    }
+
+    /**
+     * Overlays [writes], in order, on every cached query of [table] and creates the payloads live
+     * queries without one now admit; see [patchCachedQueries].
+     */
+    private suspend fun applyPatch(table: String, writes: List<MutationRow>, liveSignatures: Set<String>?, guardTick: Long) {
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
             val cached = objectDao.allForTable(table)
@@ -1273,12 +1313,12 @@ internal class OfflineStore(
                 if (rows == null) continue
                 val overlay = overlayFor(admissionOf(row.signature), unconfirmedSends = emptySet())
                 val elsewhere = known.filter { knownRow -> indexOfKey(rows, knownRow, keyColumns) == null }
-                val patched = overlay.overlayRows(rows, listOf(write), knownRows = elsewhere)
+                val patched = overlay.overlayRows(rows, writes, knownRows = elsewhere)
                 if (patched.visible == rows) continue
                 if (!writeUnlessTornDown(guardTick, row.copy(payload = overlay.encode(patched.visible), updatedAt = now))) return@withLock
             }
             val uncachedLive = (liveSignatures ?: liveSignatureProvider(table)) - cached.mapTo(mutableSetOf()) { row -> row.signature }
-            createLivePayloads(table, uncachedLive, write, known, now, guardTick)
+            createLivePayloads(table, uncachedLive, writes, known, now, guardTick)
         }
     }
 
@@ -1299,7 +1339,7 @@ internal class OfflineStore(
 
     /**
      * Writes a payload for each of [signatures], queries a live reader observes that have none, of the
-     * rows [write] wrote that the query admits. Nothing is written for a query that would stay empty,
+     * rows [writes] wrote that the query admits. Nothing is written for a query that would stay empty,
      * and nothing once [clearAll] has run since [guardTick].
      *
      * @param known rows cached for the table's other queries, the full rows an UPDATE or UPSERT changes.
@@ -1307,7 +1347,7 @@ internal class OfflineStore(
     private suspend fun createLivePayloads(
         table: String,
         signatures: Set<String>,
-        write: MutationRow,
+        writes: List<MutationRow>,
         known: List<JsonObject>,
         now: Long,
         guardTick: Long,
@@ -1315,7 +1355,7 @@ internal class OfflineStore(
         for (signature in signatures) {
             val overlay = overlayFor(admissionOf(signature), unconfirmedSends = emptySet())
             val admission = admissionOf(signature)
-            val created = overlay.overlayRows(emptyList(), listOf(write), knownRows = known).written.filter(admission::admits)
+            val created = overlay.overlayRows(emptyList(), writes, knownRows = known).written.filter(admission::admits)
             if (created.isEmpty()) continue
             val row = ObjectRow(table = table, signature = signature, payload = overlay.encode(created), updatedAt = now)
             // A created payload is not a network response: it contains no synced mutation

@@ -58,6 +58,19 @@ class PreferResponseForCacheOverlayTest {
     }
 
     @Test
+    fun wraps_the_one_object_a_single_response_returns() {
+        // Given — `select(); single()` returns the row as an object
+        val requestBody = buildJsonArray { add(buildJsonObject { put("user_id", "u-1") }) }
+        val serverResponse = """{"id":"server-assigned","user_id":"u-1"}"""
+
+        // When
+        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+
+        // Then
+        assertEquals("""[$serverResponse]""", chosen)
+    }
+
+    @Test
     fun falls_back_to_request_body_when_response_is_empty_array() {
         // Given — the INSERT-without-select() case, where the server returns []
         val requestBody = buildJsonArray {
