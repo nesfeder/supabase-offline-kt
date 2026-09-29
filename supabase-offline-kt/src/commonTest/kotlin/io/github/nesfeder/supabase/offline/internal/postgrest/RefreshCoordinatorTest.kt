@@ -2,6 +2,7 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.RefreshState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -62,6 +64,50 @@ class RefreshCoordinatorTest {
         // Then — the collector hears about it; nothing escaped to the scope's handler
         assertEquals("database disk image is malformed", thrown.message)
         assertEquals(0, uncaught.load(), "the failure escaped the shared flow")
+    }
+
+    @Test
+    fun a_shared_upstream_that_fails_right_after_a_value_delivers_the_value_then_the_failure() = runTest {
+        // One thread gives the order that dropped the value every time; a pool gives the rest of the orders
+        val oneThread = Dispatchers.Default.limitedParallelism(1)
+        repeat(FAILURE_ORDERINGS) { attempt ->
+            // Given — a shared read whose upstream fails right after its first value
+            val dispatcher = if (attempt % 2 == 0) oneThread else Dispatchers.Default
+            val coordinator = RefreshCoordinator(CoroutineScope(scope.coroutineContext + dispatcher))
+            val values = mutableListOf<OfflineReadResult>()
+
+            // When
+            val failure = withContext(dispatcher) {
+                withTimeout(5.seconds) {
+                    runCatching {
+                        coordinator.sharedReadFlow(TABLE, "todos?attempt=$attempt") {
+                            flow { emit(RESULT); throw IOException(MALFORMED) }
+                        }.collect { value -> values += value }
+                    }.exceptionOrNull()
+                }
+            }
+
+            // Then — the value, then the failure itself
+            assertEquals(1, values.size, "attempt $attempt: the value before the failure was dropped")
+            assertIs<IOException>(failure, "attempt $attempt ended with $failure")
+            assertEquals(MALFORMED, failure.message)
+        }
+    }
+
+    @Test
+    fun a_shared_upstream_that_gives_up_with_a_cancellation_ends_the_collection_with_it() = runTest {
+        // Given — a shared read whose upstream gives up with a cancellation of its own
+        val coordinator = RefreshCoordinator(scope)
+        val shared = coordinator.sharedReadFlow(TABLE, "todos?select=*") {
+            flow<OfflineReadResult> { throw CancellationException(UPSTREAM_GAVE_UP) }
+        }
+
+        // When
+        val failure = withContext(Dispatchers.Default) { withTimeout(5.seconds) { runCatching { shared.first() }.exceptionOrNull() } }
+
+        // Then — the collector sees the cancellation, not "no element"
+        assertIs<CancellationException>(failure, "the collection ended with $failure")
+        assertEquals(UPSTREAM_GAVE_UP, failure.message)
     }
 
     @Test
@@ -156,5 +202,8 @@ class RefreshCoordinatorTest {
         const val TABLE = "todos"
         const val SIGNATURES = 20
         val RESULT = OfflineReadResult(result = null, refresh = RefreshState.Idle)
+        const val FAILURE_ORDERINGS = 500
+        const val MALFORMED = "database disk image is malformed"
+        const val UPSTREAM_GAVE_UP = "the shared upstream gave up"
     }
 }

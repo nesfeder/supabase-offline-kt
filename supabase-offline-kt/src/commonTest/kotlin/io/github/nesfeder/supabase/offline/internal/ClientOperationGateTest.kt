@@ -1,6 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,13 +11,20 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -87,12 +95,14 @@ class ClientOperationGateTest {
 
     @Test
     fun closing_ends_a_collection_waiting_for_its_next_value_with_the_closed_error() = runTest {
-        // Close and the collection's own end race, so run it enough times to see either order
+        // Close and the collection's own end race, so run it enough times to see either order. Unconfined
+        // ends the upstream inside close() itself, before anything else close() does
         repeat(ORDERINGS) { attempt ->
             // Given — a collector waiting for a value that never comes
             val gate = ClientOperationGate()
             val entered = CompletableDeferred<Unit>()
-            val collection = async(Dispatchers.Default) {
+            val dispatcher = if (attempt % 2 == 0) Dispatchers.Default else Dispatchers.Unconfined
+            val collection = async(dispatcher) {
                 runCatching {
                     gate.callCollecting(flow { emit(1); awaitCancellation() }).collect { entered.complete(Unit) }
                 }.exceptionOrNull()
@@ -109,7 +119,118 @@ class ClientOperationGateTest {
         }
     }
 
+    @Test
+    fun a_value_and_then_an_upstream_failure_reach_the_collector_in_that_order() = runTest {
+        // The failure and the collector's taking of the value race, so run it enough times to see both orders
+        repeat(FAILURE_ORDERINGS) { attempt ->
+            // Given — an upstream that fails right after a value
+            val gate = ClientOperationGate()
+            val values = mutableListOf<Int>()
+
+            // When
+            val failure = withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) {
+                    runCatching { gate.callCollecting(flow { emit(1); throw Boom("right after a value") }).collect { values += it } }.exceptionOrNull()
+                }
+            }
+
+            // Then — the value, and then the failure itself
+            assertEquals(listOf(1), values, "attempt $attempt: the value sent before the failure was dropped")
+            assertIs<Boom>(failure, "attempt $attempt ended with $failure")
+            assertEquals("right after a value", failure.message)
+            assertEquals(0, gate.inFlight)
+        }
+    }
+
+    @Test
+    fun an_upstream_cancellation_reaches_the_collector_as_a_cancellation() = runTest {
+        // Given — upstreams that give up with a cancellation of their own, after a value and at once
+        val gate = ClientOperationGate()
+        val values = mutableListOf<Int>()
+        val caught = mutableListOf<Throwable>()
+
+        // When
+        val afterAValue = withContext(Dispatchers.Default) {
+            runCatching { gate.callCollecting(flow { emit(1); throw CancellationException(GAVE_UP) }).collect { values += it } }.exceptionOrNull()
+        }
+        withContext(Dispatchers.Default) {
+            gate.callCollecting(flow<Int> { throw CancellationException(GAVE_UP) }).catch { failure -> caught += failure }.collect { }
+        }
+        val first = withContext(Dispatchers.Default) {
+            runCatching { gate.callCollecting(flow<Int> { throw CancellationException(GAVE_UP) }).first() }.exceptionOrNull()
+        }
+
+        // Then — the collector sees the cancellation, after the value before it, and never a completion
+        assertEquals(listOf(1), values)
+        assertIs<CancellationException>(afterAValue, "a collection whose upstream gave up ended with $afterAValue")
+        assertEquals(GAVE_UP, afterAValue.message)
+        assertEquals(listOf(GAVE_UP), caught.map { failure -> failure.message }, "catch saw $caught")
+        assertIs<CancellationException>(first, "first() on an upstream that gave up threw $first")
+        assertEquals(0, gate.inFlight)
+    }
+
+    @Test
+    fun a_slow_collector_is_handed_the_latest_value_not_a_superseded_one() = runTest {
+        // Given — a source of snapshots, as every read the gate carries is, that moves on while the
+        // collector is busy with its first value
+        val gate = ClientOperationGate()
+        val source = MutableStateFlow(0)
+        val seen = mutableListOf<Int>()
+
+        // When
+        withContext(Dispatchers.Default) {
+            withTimeout(5.seconds) {
+                gate.callCollecting(source).first { value ->
+                    seen += value
+                    if (value == 0) {
+                        for (next in 1..LAST_SNAPSHOT) {
+                            source.value = next
+                            delay(2)
+                        }
+                        delay(50)
+                    }
+                    value == LAST_SNAPSHOT
+                }
+            }
+        }
+
+        // Then — the collector went from the first snapshot straight to the latest, as it would bare
+        assertEquals(listOf(0, LAST_SNAPSHOT), seen)
+    }
+
+    @Test
+    fun closing_from_inside_the_collector_empties_the_gate_at_once_and_ends_with_the_closed_error() = runTest {
+        // Given — a live collection
+        val gate = ClientOperationGate()
+        val emptied = CompletableDeferred<Boolean>()
+
+        // When — its collector closes the gate and waits for it to empty, as close() does
+        val failure = withContext(Dispatchers.Default) {
+            withTimeout(5.seconds) {
+                runCatching {
+                    gate.callCollecting(flow { repeat(Int.MAX_VALUE) { emit(it) } }).collect {
+                        if (!emptied.isCompleted) {
+                            gate.close()
+                            emptied.complete(withTimeoutOrNull(PROMPTLY) { gate.awaitNoCallsInFlight() } != null)
+                        }
+                    }
+                }.exceptionOrNull()
+            }
+        }
+
+        // Then — the gate emptied while the collector was still inside its body, and the collection
+        // ended with the closed error
+        assertTrue(emptied.await(), "the gate did not empty while its collector was inside its body")
+        assertClientClosedError(failure, "the collection closed from inside its collector")
+    }
+
+    private class Boom(message: String) : RuntimeException(message)
+
     private companion object {
         const val ORDERINGS = 200
+        const val FAILURE_ORDERINGS = 500
+        const val GAVE_UP = "the upstream gave up"
+        const val LAST_SNAPSHOT = 10
+        val PROMPTLY: Duration = 2.seconds
     }
 }

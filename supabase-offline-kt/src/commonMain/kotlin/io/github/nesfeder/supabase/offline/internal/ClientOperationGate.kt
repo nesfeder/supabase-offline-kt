@@ -14,9 +14,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.buffer
-import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -77,28 +76,46 @@ internal class ClientOperationGate {
     }
 
     /**
-     * [flow] as a call for as long as it is collected. When [close] runs, [flow]'s collection is
-     * cancelled, so the call leaves once that work has stopped, however its collector is stuck; the
-     * collector reads the closed error next.
+     * [flow] as a call for as long as it is collected, run apart from its collector one value at a
+     * time. [close] ends the collection with the closed error, however its collector is stuck; the
+     * upstream's own failure, a cancellation included, reaches the collector after the values before it.
      */
-    fun <T> callCollecting(flow: Flow<T>): Flow<T> = channelFlow {
-        call {
-            // Leaves the gate only once the collection has ended, even when the collector is cancelled
-            coroutineScope {
-                val upstream = launch(start = CoroutineStart.UNDISPATCHED) { flow.collect { value -> send(value) } }
-                val onClose = closing.invokeOnCompletion {
-                    // The error first: once cancelled, the collection may end the channel cleanly
-                    this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
-                    upstream.cancel()
-                }
+    fun <T> callCollecting(flow: Flow<T>): Flow<T> = flow {
+        coroutineScope {
+            val values = Channel<T>(Channel.RENDEZVOUS)
+            // One permit per value the collector has finished with: the upstream never runs ahead
+            val taken = Channel<Unit>(Channel.CONFLATED)
+            val upstream = launch(start = CoroutineStart.UNDISPATCHED) {
                 try {
-                    upstream.join()
-                } finally {
-                    onClose.dispose()
+                    call {
+                        flow.collect { value ->
+                            values.send(value)
+                            taken.receive()
+                        }
+                    }
+                    values.close()
+                } catch (failure: Throwable) {
+                    // Refused, stopped, or the upstream's own failure: the channel ends with it after the values
+                    values.close(failure)
+                    // Only ours (the collector's or close()'s) rethrows, so the upstream's never cancels the collector
+                    if (failure is CancellationException && !isActive) throw failure
                 }
             }
+            // The closed error first: once cancelled, the upstream ends the channel with its cancellation
+            val onClose = closing.invokeOnCompletion {
+                values.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
+                upstream.cancel()
+            }
+            try {
+                for (value in values) {
+                    emit(value)
+                    taken.trySend(Unit)
+                }
+            } finally {
+                onClose.dispose()
+            }
         }
-    }.buffer(Channel.RENDEZVOUS)
+    }
 
     /**
      * Refuses every call from now on and ends the flows being collected.

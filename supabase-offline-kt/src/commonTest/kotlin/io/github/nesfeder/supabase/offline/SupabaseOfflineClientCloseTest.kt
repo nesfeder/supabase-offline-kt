@@ -21,7 +21,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.flow.toList
@@ -175,8 +177,9 @@ class SupabaseOfflineClientCloseTest {
                 if (variant == STUCK_IN_ITS_BODY) {
                     appScope.launch { read.collect { entered.complete(Unit); awaitCancellation() } }
                 } else {
+                    // Rendezvous, so the channel nobody reads holds its producer, as an app's unread one does
+                    val values = read.buffer(Channel.RENDEZVOUS).produceIn(appScope)
                     appScope.launch {
-                        val values = read.produceIn(this)
                         values.receive()
                         entered.complete(Unit)
                     }

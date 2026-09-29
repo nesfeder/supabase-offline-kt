@@ -13,8 +13,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -78,12 +80,19 @@ internal class RefreshCoordinator(
             this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
         }
         try {
-            entry.flow.collect { emission ->
+            entry.flow.takeWhile { emission ->
                 when (emission) {
-                    is Emission.Value -> send(emission.result)
-                    is Emission.Failure -> throw emission.cause
+                    is Emission.Value -> {
+                        send(emission.result)
+                        true
+                    }
+                    is Emission.Failure -> {
+                        // Closed, not thrown: a throw cancels the collector, which can drop the value just sent
+                        this@channelFlow.close(emission.cause)
+                        false
+                    }
                 }
-            }
+            }.collect()
         } finally {
             closedWatcher.cancel()
             withContext(NonCancellable) { release(key, entry) }
