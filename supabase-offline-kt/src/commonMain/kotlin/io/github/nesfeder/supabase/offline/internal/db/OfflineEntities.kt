@@ -28,8 +28,22 @@ internal data class ObjectRow(
     @ColumnInfo(name = "signature") val signature: String,
     /** Full JSON payload from PostgREST (usually a JSON array string). */
     @ColumnInfo(name = "payload") val payload: String,
+    /**
+     * When the payload was fetched, in epoch milliseconds; negated when it is stale: served, but
+     * fetched again when the network allows. See [isStaleStamp] and [fetchedAtOf].
+     */
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
+
+/** Whether a payload stamped [updatedAt] is stale: served, but fetched again when it can be. */
+internal fun isStaleStamp(updatedAt: Long): Boolean = updatedAt < 0
+
+/** When a payload stamped [updatedAt] was fetched, or made, stale or not. */
+internal fun fetchedAtOf(updatedAt: Long): Long = if (updatedAt < 0) -updatedAt else updatedAt
+
+/** [updatedAt] marked stale, keeping when the payload was fetched; one stamped 0 reads as 1. */
+internal fun staleStampOf(updatedAt: Long): Long =
+    if (updatedAt < 0) updatedAt else -maxOf(updatedAt, 1L)
 
 @Dao
 internal interface ObjectDao {
@@ -135,11 +149,11 @@ internal interface ObjectDao {
     suspend fun totalPayloadBytes(): Long
 
     /**
-     * Delete up to [limit] oldest payload rows across all tables, ordered by [ObjectRow.updatedAt].
-     * Used by [OfflineStore.enforceDbSizeLimitIfNeeded] to evict old cache entries when the summed
-     * payload size grows beyond the configured limit. The engine's reserved rows (see
-     * [RESERVED_TABLE_NAME]) are never candidates: they hold the rejected-mutation list and the
-     * owner of each queued mutation, which no refetch can restore.
+     * Delete up to [limit] oldest payload rows across all tables, ordered by when each was fetched
+     * ([fetchedAtOf]), stale or not. Used by [OfflineStore.enforceDbSizeLimitIfNeeded] to evict old
+     * cache entries when the summed payload size grows beyond the configured limit. The engine's
+     * reserved rows (see [RESERVED_TABLE_NAME]) are never candidates: they hold the
+     * rejected-mutation list and the owner of each queued mutation, which no refetch can restore.
      *
      * @param limit maximum number of rows to delete in this batch.
      * @param keptSignatures signatures that are never candidates: queries a live reader shows. A
@@ -152,7 +166,7 @@ internal interface ObjectDao {
             "WHERE rowid IN (" +
             "SELECT rowid FROM object_cache WHERE table_name != '$RESERVED_TABLE_NAME' " +
             "AND signature NOT IN (:keptSignatures) " +
-            "ORDER BY updated_at ASC LIMIT :limit" +
+            "ORDER BY abs(updated_at) ASC LIMIT :limit" +
             ")"
     )
     suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int

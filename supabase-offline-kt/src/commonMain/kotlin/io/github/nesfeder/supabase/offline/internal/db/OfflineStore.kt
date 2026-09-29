@@ -9,9 +9,14 @@ import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
+import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
+import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
 import io.github.nesfeder.supabase.offline.internal.cache.indexOfKey
+import io.github.nesfeder.supabase.offline.internal.cache.mayGainRowsBy
+import io.github.nesfeder.supabase.offline.internal.cache.patchMayLeaveWrong
 import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
+import io.github.nesfeder.supabase.offline.internal.cache.selectListOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -21,10 +26,14 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.TimeSource
@@ -180,6 +189,16 @@ internal class OfflineStore(
      * client.
      */
     internal var onCacheNotServed: () -> Unit = {}
+
+    /**
+     * Told of the cached queries of a table a write marked stale, and of live ones it may have
+     * changed without a payload, so their live readers fetch again. Wired by the client.
+     */
+    internal var onQueriesMarkedStale: (table: String, signatures: Set<String>) -> Unit = { _, _ ->
+    }
+
+    /** Ids for the writes a patch overlays, one per write, below any queued mutation's. */
+    private val patchIds = AtomicLong(0L)
 
     /**
      * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
@@ -1342,8 +1361,13 @@ internal class OfflineStore(
         }
         if (!first) return
         sdkLogger.warning {
-            "Overlay skipped pending ${mutation.operation} ${mutation.id} on ${mutation.table}: " +
-                "${failure::class.simpleName}"
+            if (mutation.id < 0) {
+                "Cache patch skipped an accepted ${mutation.operation} on ${mutation.table}: " +
+                    "${failure::class.simpleName}"
+            } else {
+                "Overlay skipped pending ${mutation.operation} ${mutation.id} on ${mutation.table}: " +
+                    "${failure::class.simpleName}"
+            }
         }
     }
 
@@ -1551,6 +1575,24 @@ internal class OfflineStore(
         )
 
     /**
+     * The overlay a patch runs for a query with [admission]: the server holds every row the write
+     * made, so a row a refresh already holds is not added twice, and an upsert row with no key to
+     * place it by is left out, the query marked stale instead.
+     */
+    private fun patchOverlayFor(admission: QueryAdmission): MutationOverlay =
+        MutationOverlay(
+            json = json,
+            admission = admission,
+            primaryKeys = primaryKeys,
+            mayAlreadyHold = { true },
+            placesKeylessUpsertRows = false,
+            onMutationFailure = ::logSkippedOverlay,
+        )
+
+    /** A new id for a write a patch overlays, so a failure is logged once per write. */
+    private fun nextPatchId(): Long = patchIds.decrementAndFetch()
+
+    /**
      * Whether the server may already hold [mutation]'s rows — it replayed, or its send may have
      * reached the server — so a payload's row with the same key may be the mutation's own.
      */
@@ -1560,10 +1602,11 @@ internal class OfflineStore(
     /**
      * Patches a write the server accepted, or a row it sent, into every cached query of [table],
      * and creates a payload for each live query of the table that has none and admits one of its
-     * rows. Each query shows only the rows it admits. Rows cached for the table's other queries
-     * stand in for rows the write changes but the query does not hold yet, so a row an UPDATE makes
-     * match joins. A patched payload keeps its fetch time and a created one is stale: local rows
-     * are not fresh data.
+     * rows. Each query shows only the rows it admits. Rows cached for the table's other queries,
+     * read with the same select list, stand in for rows the write changes but the query does not
+     * hold yet, so a row an UPDATE makes match joins. A patched payload keeps its fetch time and a
+     * created one is stale: local rows are not fresh data. A query the patch may leave wrong is
+     * marked stale, and its live readers fetch again.
      *
      * Serialized with every other writer of [table]'s cached payloads, and it moves the table's
      * stale-refresh watermark first, so a response already in flight cannot roll the patch back.
@@ -1597,6 +1640,7 @@ internal class OfflineStore(
         val guardTick = startedAtTick ?: monotonicTick()
         val write =
             MutationRow(
+                id = nextPatchId(),
                 table = table,
                 operation = operation,
                 bodyJson = bodyJson,
@@ -1644,6 +1688,7 @@ internal class OfflineStore(
                             }
                     )
                 MutationRow(
+                    id = nextPatchId(),
                     table = table,
                     operation = MutationOperation.UPDATE,
                     bodyJson = JsonObject(bodyColumns + row).toString(),
@@ -1658,7 +1703,8 @@ internal class OfflineStore(
 
     /**
      * Overlays [writes], in order, on every cached query of [table] and creates the payloads live
-     * queries without one now admit; see [patchCachedQueries]. A cache that is not the current
+     * queries without one now admit; see [patchCachedQueries]. A query the patch may leave wrong
+     * ([patchMayLeaveWrong]) is marked stale and fetched again. A cache that is not the current
      * identity's is left alone.
      */
     private suspend fun applyPatch(
@@ -1668,6 +1714,7 @@ internal class OfflineStore(
         guardTick: Long,
     ) {
         if (!cacheServesCurrentIdentity()) return
+        val toFetchAgain = mutableSetOf<String>()
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
             val cached = objectDao.allForTable(table)
@@ -1678,96 +1725,129 @@ internal class OfflineStore(
             if (cached.isEmpty() && uncachedLive.isEmpty()) return@withLock
             if (!cacheTakesWritesOfCurrentIdentity()) return@withLock
             val parsed = cached.map { row -> row to payloadRowsOf(json, row.payload) }
-            val keyColumns = primaryKeys.of(table)
-            val known = rowsByKey(parsed, keyColumns)
             val shapes = queryShapes.shapesOf(table)
+            val known = KnownRows(parsed, shapes, primaryKeys.of(table))
             for ((row, rows) in parsed) {
                 if (rows == null) continue
-                val overlay =
-                    overlayFor(
-                        shapes[row.signature]?.admission ?: QueryAdmission.EVERY_ROW,
-                        unconfirmedSends = emptySet(),
-                    )
-                val elsewhere = known.filter { knownRow ->
-                    indexOfKey(rows, knownRow, keyColumns) == null
-                }
-                val patched = overlay.overlayRows(rows, writes, knownRows = elsewhere)
-                if (patched.visible == rows) continue
+                val target = known.targetFor(row.signature, shapes[row.signature], rows)
+                val overlay = patchOverlayFor(target.admission)
+                val patched = overlay.overlayRows(rows, writes, knownRows = target.sameSelectRows)
+                val wrong = patchMayLeaveWrong(writes, target, json, ::conflictColumnsOf)
+                if (patched.visible == rows && (!wrong || isStaleStamp(row.updatedAt))) continue
                 // The payload stays as old as what the server last said: a local write is not fresh
-                // data
-                if (
-                    !writeUnlessTornDown(
-                        guardTick,
-                        row.copy(payload = overlay.encode(patched.visible)),
-                    )
-                )
-                    return@withLock
+                // data, and one it may leave wrong is stale
+                val stamp = if (wrong) staleStampOf(row.updatedAt) else row.updatedAt
+                val next = row.copy(payload = overlay.encode(patched.visible), updatedAt = stamp)
+                if (!writeUnlessTornDown(guardTick, next)) return@withLock
+                if (wrong) toFetchAgain += row.signature
             }
-            createLivePayloads(table, uncachedLive, shapes, writes, known, guardTick)
+            toFetchAgain +=
+                createLivePayloads(table, uncachedLive, shapes, writes, known, guardTick)
         }
+        if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }
 
+    /** The upsert-rule columns of [mutation]; see [conflictColumnsOf]. */
+    private fun conflictColumnsOf(mutation: MutationRow): List<String> =
+        conflictColumnsOf(mutation, primaryKeys)
+
     /**
-     * The rows of [parsed] payloads that carry the whole [keyColumns], one per key, taken from the
-     * most recently written payload that holds it.
+     * The rows a table's cached queries hold, one per key, taken from the most recently fetched
+     * payload that holds it, each with the select list it was read with.
+     *
+     * @param keyColumns the table's key columns; rows without them are left out.
      */
-    private fun rowsByKey(
+    private class KnownRows(
         parsed: List<Pair<ObjectRow, List<JsonElement>?>>,
-        keyColumns: List<String>,
-    ): List<JsonObject> {
-        val seen = mutableListOf<JsonObject>()
-        parsed
-            .sortedByDescending { (row, _) -> row.updatedAt }
-            .forEach { (_, rows) ->
-                rows.orEmpty().forEach { element ->
-                    val row = element as? JsonObject
-                    if (
-                        row != null &&
-                            primaryKeyOf(row, keyColumns) != null &&
-                            indexOfKey(seen, row, keyColumns) == null
-                    )
-                        seen += row
+        shapes: Map<String, QueryShape?>,
+        private val keyColumns: List<String>,
+    ) {
+        /** A row, the query that holds it, and its select list; `null` when that is not known. */
+        private class Held(val signature: String, val select: String?, val row: JsonObject)
+
+        private val held: List<Held> =
+            parsed
+                .sortedByDescending { (row, _) -> fetchedAtOf(row.updatedAt) }
+                .flatMap { (row, rows) ->
+                    val select = shapes[row.signature]?.let(::selectListOf)
+                    rows.orEmpty().mapNotNull { element ->
+                        (element as? JsonObject)
+                            ?.takeIf { primaryKeyOf(it, keyColumns) != null }
+                            ?.let { Held(row.signature, select, it) }
+                    }
                 }
+
+        /** What the patch of the query cached under [signature], holding [rows], may draw on. */
+        fun targetFor(signature: String, shape: QueryShape?, rows: List<JsonElement>): PatchTarget {
+            val select = shape?.let(::selectListOf)
+            val elsewhere = held.filter { entry ->
+                entry.signature != signature && indexOfKey(rows, entry.row, keyColumns) == null
             }
-        return seen
+            val same =
+                distinctByKey(
+                    elsewhere.filter { entry -> select != null && entry.select == select }
+                )
+            val other =
+                distinctByKey(
+                        elsewhere.filter { entry -> select == null || entry.select != select }
+                    )
+                    .filter { row -> indexOfKey(same, row, keyColumns) == null }
+            return PatchTarget(rows, shape, sameSelectRows = same, otherSelectRows = other)
+        }
+
+        /** The first row of [entries] per key. */
+        private fun distinctByKey(entries: List<Held>): List<JsonObject> {
+            val seen = mutableListOf<JsonObject>()
+            entries.forEach { entry ->
+                if (indexOfKey(seen, entry.row, keyColumns) == null) seen += entry.row
+            }
+            return seen
+        }
     }
 
     /**
      * Writes a payload for each of [signatures], queries a live reader observes that have none, of
      * the rows [writes] wrote that the query admits. Nothing is written for a query that would stay
-     * empty, and nothing once the cache was cleared or dropped since [guardTick].
+     * empty, and nothing once the cache was cleared or dropped since [guardTick]. A query the rows
+     * known here may not show right gets no payload; it is returned, to be fetched again.
      *
      * @param shapes the table's known query shapes, by cache key.
-     * @param known rows cached for the table's other queries, the full rows an UPDATE or UPSERT
-     *   changes.
+     * @param known the rows the table's other queries hold.
+     * @return the queries to fetch again.
      */
     private suspend fun createLivePayloads(
         table: String,
         signatures: Set<String>,
         shapes: Map<String, QueryShape?>,
         writes: List<MutationRow>,
-        known: List<JsonObject>,
+        known: KnownRows,
         guardTick: Long,
-    ) {
+    ): Set<String> {
+        val toFetchAgain = mutableSetOf<String>()
         for (signature in signatures) {
             // A live query's shape is known while it is read; unknown conditions admit
             val shape = shapes[signature]
-            val admission = shape?.admission ?: QueryAdmission.EVERY_ROW
-            val overlay = overlayFor(admission, unconfirmedSends = emptySet())
+            val target = known.targetFor(signature, shape, rows = emptyList())
+            if (patchMayLeaveWrong(writes, target, json, ::conflictColumnsOf)) {
+                toFetchAgain += signature
+                continue
+            }
+            val admission = target.admission
+            val overlay = patchOverlayFor(admission)
             val created =
                 overlay
-                    .overlayRows(emptyList(), writes, knownRows = known)
+                    .overlayRows(emptyList(), writes, knownRows = target.sameSelectRows)
                     .written
                     .filter(admission::admits)
             if (created.isEmpty()) continue
-            // Local rows alone are not the query's answer: stale, so a read with a cache duration
-            // asks the server
+            // Local rows alone are not the query's answer: stale, so a read asks the server when it
+            // can
             val row =
                 ObjectRow(
                     table = table,
                     signature = signature,
                     payload = overlay.encode(created),
-                    updatedAt = STALE_UPDATED_AT,
+                    updatedAt = staleStampOf(nowMillis()),
                 )
             // A created payload is not a network response: it contains no synced mutation
             val written = mutationQueueMutex.withLock {
@@ -1780,30 +1860,61 @@ internal class OfflineStore(
                     }
                 }
             }
-            if (!written) return
+            if (!written) return toFetchAgain
             if (shape != null) queryShapes.remember(table, signature, shape, persist = true)
         }
+        return toFetchAgain
     }
 
     /**
-     * Marks every cached query of [table] stale after a write the cache cannot patch: a response
-     * already in flight is refused, and a read with a cache duration fetches again. The payloads
-     * stay, so an offline read without a duration still has them.
+     * Marks stale the cached queries of [table] an UPDATE or DELETE the cache cannot patch may have
+     * reached, and has their live readers fetch again: a query holding a row [narrowing] does not
+     * exclude, and, for an UPDATE, one whose filter may admit a row the write changes. With no
+     * [narrowing], every query of the table. The payloads stay, so an offline read still has them.
      *
+     * @param narrowing conditions the write's filter includes, all of which a row it reaches meets.
      * @param startedAtTick [monotonicTickNow] as read when the write started; nothing is written if
      *   the cache was cleared or dropped since, or is not the current identity's.
      */
-    suspend fun markCachedQueriesStale(table: String, startedAtTick: Long) {
+    suspend fun markQueriesAWriteMayReach(
+        table: String,
+        operation: String,
+        bodyJson: String,
+        narrowing: FilterDescriptor?,
+        startedAtTick: Long,
+    ) {
         requireUserTable(table)
         if (!cacheTakesWritesOfCurrentIdentity()) return
+        val patch =
+            (if (operation == MutationOperation.UPDATE) json.parseToJsonElement(bodyJson) else null)
+                as? JsonObject
+        val toFetchAgain = mutableSetOf<String>()
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
-            for (row in objectDao.allForTable(table)) {
-                if (row.updatedAt == STALE_UPDATED_AT) continue
-                if (!writeUnlessTornDown(startedAtTick, row.copy(updatedAt = STALE_UPDATED_AT)))
-                    return@withLock
+            val shapes = queryShapes.shapesOf(table)
+            val cached = objectDao.allForTable(table)
+            for (row in cached) {
+                val reached =
+                    narrowing == null ||
+                        payloadRowsOf(json, row.payload).orEmpty().any { element ->
+                            element !is JsonObject ||
+                                rowMatch(element, narrowing) != RowMatch.EXCLUDED
+                        } ||
+                        (patch != null && mayGainRowsBy(patch, shapes[row.signature]))
+                if (!reached) continue
+                toFetchAgain += row.signature
+                if (isStaleStamp(row.updatedAt)) continue
+                val next = row.copy(updatedAt = staleStampOf(row.updatedAt))
+                if (!writeUnlessTornDown(startedAtTick, next)) return@withLock
+            }
+            // A live query with nothing cached may gain the rows an UPDATE changes
+            if (patch != null) {
+                toFetchAgain +=
+                    liveSignatureProvider(table) -
+                        cached.mapTo(mutableSetOf()) { row -> row.signature }
             }
         }
+        if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }
 
     /**
@@ -2021,11 +2132,6 @@ internal class OfflineStore(
     }
 
     private companion object {
-        /**
-         * The `updated_at` of a cached payload known to be stale: older than any cache duration.
-         */
-        const val STALE_UPDATED_AT = 0L
-
         /**
          * How long a synced mutation may stand in for its write on cached queries that have not
          * been refreshed since it replayed: a day, by the device clock.

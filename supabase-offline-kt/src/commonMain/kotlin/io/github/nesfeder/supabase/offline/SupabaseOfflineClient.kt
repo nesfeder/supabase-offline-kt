@@ -450,6 +450,9 @@ internal class SupabaseOfflineClientImpl(
         // into a real cache row for a cache-less-but-observed subscription.
         store.liveSignatureProvider = refreshCoordinator::liveSignaturesFor
         store.allLiveSignaturesProvider = refreshCoordinator::allLiveSignatures
+        store.onQueriesMarkedStale = { table, signatures ->
+            refreshCoordinator.requestRefresh(table, signatures)
+        }
         store.sdkLogger = sdkLogger
         store.primaryKeys = primaryKeys
         // Overlays and counts show the current session's queued writes only.

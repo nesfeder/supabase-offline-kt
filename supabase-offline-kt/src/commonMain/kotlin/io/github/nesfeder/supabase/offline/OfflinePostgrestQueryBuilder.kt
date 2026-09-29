@@ -35,6 +35,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.postgrest.UnsupportedOfflineFilterException
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromBuilder
+import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromRequest
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorStrictFromRequest
 import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.wasRolledBack
@@ -647,8 +648,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
     /**
      * Patches an UPDATE or DELETE the server applied into the cached queries of [table], by the
      * filter the queue would record for it. When that filter cannot be recorded exactly, or there
-     * is none, no row is guessed at: the table's cached queries are marked stale and its live
-     * readers refresh.
+     * is none, no row is guessed at: the cached queries it may have reached are marked stale, by
+     * the part of the filter that can be read, and their live readers fetch again.
      */
     private suspend fun patchFilteredWrite(
         operation: String,
@@ -670,10 +671,16 @@ internal class OfflinePostgrestQueryBuilderImpl(
             }
         if (filter == null) {
             sdkLogger.info {
-                "$operation $table: its filter cannot be matched against cached rows; refreshing the table's cached queries"
+                "$operation $table: its filter cannot be matched against cached rows; refreshing the queries it may reach"
             }
-            store.markCachedQueriesStale(table, startedAtTick)
-            refreshCoordinator.requestRefresh(table)
+            // The flat conditions a row it reaches meets, logical groups and the rest aside
+            val narrowing =
+                buildDescriptorFromRequest(
+                    defaultSchema = delegate.schema,
+                    conversionMethod = conversionMethod,
+                    request = request,
+                )
+            store.markQueriesAWriteMayReach(table, operation, bodyJson, narrowing, startedAtTick)
             return
         }
         store.patchCachedQueries(

@@ -18,6 +18,8 @@ import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.db.AddPayloadOutcome
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
+import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
@@ -123,7 +125,7 @@ internal class QueryReader(
                     fetchWaitingOutRestore(slot, columns, request, retries)
                 } catch (exception: Exception) {
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
-                    val cached = readCached(slot, readStrategy.cacheDuration)
+                    val cached = readCached(slot, readStrategy.cacheDuration, servesStale = true)
                     if (cached != null) {
                         sdkLogger.warning { "SELECT $table network failed, falling back to cache" }
                         cached
@@ -137,16 +139,16 @@ internal class QueryReader(
                 fetchWaitingOutRestore(slot, columns, request, Retries.UPSTREAM)
             }
             is ReadStrategy.CacheFirst -> {
-                val cached = readCached(slot, readStrategy.cacheDuration)
+                val cached = readCached(slot, readStrategy.cacheDuration, servesStale = false)
                 if (cached != null) {
                     sdkLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
-                    fetchWaitingOutRestore(slot, columns, request, Retries.UPSTREAM)
+                    cacheFirstFromNetwork(slot, columns, request, readStrategy.cacheDuration)
                 }
             }
             is ReadStrategy.CacheOnly -> {
-                val cached = readCached(slot, readStrategy.cacheDuration)
+                val cached = readCached(slot, readStrategy.cacheDuration, servesStale = true)
                 if (cached != null) {
                     sdkLogger.info { "SELECT $table served from cache" }
                     cached
@@ -155,6 +157,32 @@ internal class QueryReader(
                     throw NoSuchElementException("No valid cached data found for this query")
                 }
             }
+        }
+    }
+
+    /**
+     * A cache-first read the cache did not answer: the network, and, when that cannot be reached, a
+     * stale payload within [cacheDuration] — stale means fetch again when the network allows, not
+     * unusable.
+     */
+    private suspend fun cacheFirstFromNetwork(
+        slot: CacheSlot,
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+        cacheDuration: Duration?,
+    ): PostgrestResult {
+        // A stale payload answers a transport failure, so upstream's waits before one would only
+        // delay it
+        val retries =
+            if (hasFreshCache(slot, cacheDuration)) Retries.TRANSPORT_FAILS_FAST
+            else Retries.UPSTREAM
+        return try {
+            fetchWaitingOutRestore(slot, columns, request, retries)
+        } catch (exception: Exception) {
+            if (!exception.isNetworkOrConnectivityFailure()) throw exception
+            val stale = readCached(slot, cacheDuration, servesStale = true) ?: throw exception
+            sdkLogger.warning { "SELECT ${slot.table} network failed, serving the stale cache" }
+            stale
         }
     }
 
@@ -303,7 +331,7 @@ internal class QueryReader(
                 refresh = { refreshFromNetwork(slot, columns, request) },
                 accelerator = accelerator,
                 onRefreshState = { state -> refreshState.value = state },
-                refreshRequests = refreshCoordinator.refreshRequestsFor(slot.table),
+                refreshRequests = refreshCoordinator.refreshRequestsFor(slot.table, slot.cacheKey),
             )
         // One result per distinct payload: a refresh-state change re-emits the same result instance
         val results =
@@ -513,13 +541,18 @@ internal class QueryReader(
     }
 
     /**
-     * The cached payload of the query with its mutations overlaid, or `null` when none is cached or
-     * it is older than [cacheDuration].
+     * The cached payload of the query with its mutations overlaid, or `null` when none is cached,
+     * it was fetched longer than [cacheDuration] ago, or it is stale and not [servesStale].
      */
-    private suspend fun readCached(slot: CacheSlot, cacheDuration: Duration?): PostgrestResult? {
+    private suspend fun readCached(
+        slot: CacheSlot,
+        cacheDuration: Duration?,
+        servesStale: Boolean,
+    ): PostgrestResult? {
         val (table, cacheKey) = slot
         val (payload, updatedAt) = store.getPayloadWithTimestamp(table, cacheKey) ?: return null
-        if (!isFresh(updatedAt, cacheDuration)) return null
+        if (!servesStale && isStaleStamp(updatedAt)) return null
+        if (!isFresh(fetchedAtOf(updatedAt), cacheDuration)) return null
         val overlaid =
             store.overlayCachedPayload(
                 table = table,
@@ -531,20 +564,21 @@ internal class QueryReader(
     }
 
     /**
-     * Whether [readCached] would answer: a payload is cached and not older than [cacheDuration].
+     * Whether a fallback to the cache would answer: a payload is cached, stale or not, fetched
+     * within [cacheDuration].
      */
     private suspend fun hasFreshCache(slot: CacheSlot, cacheDuration: Duration?): Boolean {
         val (_, updatedAt) =
             store.getPayloadWithTimestamp(slot.table, slot.cacheKey) ?: return false
-        return isFresh(updatedAt, cacheDuration)
+        return isFresh(fetchedAtOf(updatedAt), cacheDuration)
     }
 
     /**
-     * Whether a payload written at [updatedAt] is within [cacheDuration]; any age is when it is
+     * Whether a payload fetched at [fetchedAt] is within [cacheDuration]; any age is when it is
      * `null`.
      */
-    private fun isFresh(updatedAt: Long, cacheDuration: Duration?): Boolean =
-        cacheDuration == null || nowMillis() - updatedAt <= cacheDuration.inWholeMilliseconds
+    private fun isFresh(fetchedAt: Long, cacheDuration: Duration?): Boolean =
+        cacheDuration == null || nowMillis() - fetchedAt <= cacheDuration.inWholeMilliseconds
 
     /** Where the query is cached; see [cacheSlotOf]. */
     private fun cacheSlotOf(columns: Columns, request: SelectRequestBuilder.() -> Unit): CacheSlot =

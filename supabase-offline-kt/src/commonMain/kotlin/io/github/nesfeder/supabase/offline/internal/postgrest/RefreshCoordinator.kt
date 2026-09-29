@@ -63,24 +63,37 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
     /** Table → (signature → live-collector count). A signature is "live" while its count is > 0. */
     private val liveSignatures = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
 
-    /** Tables whose live queries should fetch again; only readers already waiting see a request. */
+    /**
+     * Queries that should fetch again, by table, `null` for all of it; only readers already waiting
+     * see a request.
+     */
     private val refreshRequests =
-        MutableSharedFlow<String>(
+        MutableSharedFlow<RefreshRequest>(
             extraBufferCapacity = REFRESH_REQUEST_BUFFER,
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
 
     /**
-     * Asks every live `CacheFirstThenNetwork` query of [table] whose refresh has finished to run it
-     * again.
+     * A request that the live queries of [table] fetch again: those cached under [signatures], or
+     * every one when it is `null`.
      */
-    fun requestRefresh(table: String) {
-        refreshRequests.tryEmit(table)
+    private data class RefreshRequest(val table: String, val signatures: Set<String>?)
+
+    /**
+     * Asks every live `CacheFirstThenNetwork` query of [table] whose refresh has finished to run it
+     * again, or only those cached under [signatures] when given.
+     */
+    fun requestRefresh(table: String, signatures: Set<String>? = null) {
+        refreshRequests.tryEmit(RefreshRequest(table, signatures))
     }
 
-    /** The refresh requests for [table], one [Unit] each. */
-    fun refreshRequestsFor(table: String): Flow<Unit> =
-        refreshRequests.filter { requested -> requested == table }.map {}
+    /** The refresh requests for the query of [table] cached under [signature], one [Unit] each. */
+    fun refreshRequestsFor(table: String, signature: String): Flow<Unit> =
+        refreshRequests
+            .filter { request ->
+                request.table == table && (request.signatures?.contains(signature) ?: true)
+            }
+            .map {}
 
     /**
      * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A

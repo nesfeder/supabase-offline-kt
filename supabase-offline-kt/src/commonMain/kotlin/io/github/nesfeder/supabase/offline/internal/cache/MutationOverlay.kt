@@ -33,6 +33,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * @param primaryKeys each table's key columns.
  * @param mayAlreadyHold whether an INSERT's rows may already be in the payload, which is then
  *   checked by key before a row is added: true for a mutation the server may already hold.
+ * @param placesKeylessUpsertRows whether an UPSERT row without its conflict columns is added as a
+ *   new row; without them nothing tells whether it replaces one.
  * @param onMutationFailure told of each skipped mutation, for logging; never its body.
  */
 internal class MutationOverlay(
@@ -40,6 +42,7 @@ internal class MutationOverlay(
     private val admission: QueryAdmission,
     private val primaryKeys: PrimaryKeys,
     private val mayAlreadyHold: (MutationRow) -> Boolean,
+    private val placesKeylessUpsertRows: Boolean = true,
     private val onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> },
 ) {
 
@@ -160,7 +163,7 @@ internal class MutationOverlay(
                     return@forEach
                 }
                 if (primaryKeyOf(row, keyColumns) == null) {
-                    place(row)
+                    if (placesKeylessUpsertRows) place(row)
                     return@forEach
                 }
                 val shown = indexOfKey(visible, row, keyColumns)
@@ -246,16 +249,9 @@ internal class MutationOverlay(
             else -> emptyList()
         }
 
-    /**
-     * The columns an UPSERT matches existing rows on: its conflict columns, or the table's primary
-     * key.
-     */
+    /** The columns an UPSERT matches existing rows on; see [conflictColumnsOf]. */
     private fun conflictColumnsOf(mutation: MutationRow): List<String> =
-        mutation.onConflict
-            ?.split(',')
-            ?.map { column -> column.trim() }
-            ?.filter { column -> column.isNotEmpty() }
-            ?.takeIf { it.isNotEmpty() } ?: primaryKeys.of(mutation.table)
+        conflictColumnsOf(mutation, primaryKeys)
 
     /**
      * The rows an UPDATE or DELETE targets; `null`, which touches nothing, when it has no readable
@@ -277,6 +273,17 @@ internal data class OverlaidRows(
     val held: List<JsonObject>,
     val written: List<JsonObject>,
 )
+
+/**
+ * The columns an UPSERT matches existing rows on: its conflict columns, or its table's primary key
+ * as [primaryKeys] names it.
+ */
+internal fun conflictColumnsOf(mutation: MutationRow, primaryKeys: PrimaryKeys): List<String> =
+    mutation.onConflict
+        ?.split(',')
+        ?.map { column -> column.trim() }
+        ?.filter { column -> column.isNotEmpty() }
+        ?.takeIf { it.isNotEmpty() } ?: primaryKeys.of(mutation.table)
 
 /** The rows of [payload], or `null` when it is not a JSON array. */
 internal fun payloadRowsOf(json: Json, payload: String): List<JsonElement>? =

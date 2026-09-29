@@ -11,6 +11,7 @@ import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_SIGNATURE_PRE
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.db.StorageRow
+import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -126,7 +127,7 @@ internal open class InMemoryObjectDao : ObjectDao {
         val oldest =
             rows.values
                 .filter { it.table != RESERVED_TABLE_NAME && it.signature !in keptSignatures }
-                .sortedBy { it.updatedAt }
+                .sortedBy { fetchedAtOf(it.updatedAt) }
                 .take(limit)
         oldest.forEach { row ->
             rows.remove(row.table to row.signature)
