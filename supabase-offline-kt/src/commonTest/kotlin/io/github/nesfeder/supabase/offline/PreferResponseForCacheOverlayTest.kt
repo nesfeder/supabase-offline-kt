@@ -61,6 +61,48 @@ class PreferResponseForCacheOverlayTest {
     }
 
     @Test
+    fun keeps_the_columns_the_caller_wrote_that_a_narrow_response_leaves_out() {
+        // Given — `select(Columns.list("id"))`: the response names the id only
+        val requestBody = buildJsonArray {
+            add(buildJsonObject { put("title", "a") })
+            add(buildJsonObject { put("title", "b") })
+        }
+        val serverResponse = """[{"id":1},{"id":2}]"""
+
+        // When
+        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+
+        // Then — each returned row, with the columns written in its place
+        assertEquals("""[{"id":1,"title":"a"},{"id":2,"title":"b"}]""", chosen)
+    }
+
+    @Test
+    fun matches_returned_rows_to_written_rows_by_key_when_fewer_came_back() {
+        // Given — an upsert that ignored a duplicate returns only the row it wrote
+        val requestBody = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("id", 1)
+                    put("title", "a")
+                }
+            )
+            add(
+                buildJsonObject {
+                    put("id", 2)
+                    put("title", "b")
+                }
+            )
+        }
+        val serverResponse = """[{"id":2,"updated_at":"t1"}]"""
+
+        // When
+        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+
+        // Then
+        assertEquals("""[{"id":2,"updated_at":"t1","title":"b"}]""", chosen)
+    }
+
+    @Test
     fun wraps_the_one_object_a_single_response_returns() {
         // Given — `select(); single()` returns the row as an object
         val requestBody = buildJsonArray { add(buildJsonObject { put("user_id", "u-1") }) }
