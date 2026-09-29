@@ -1,0 +1,29 @@
+# Keeps editors close to what `kempt format` (ktfmt, kotlinlang style) produces, so a contributor's
+# editor and the formatting check agree before the check runs.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{kt,kts}]
+indent_style = space
+indent_size = 4
+max_line_length = 100
+# ktfmt sorts imports as one ASCII-ordered block (kotlin.* before kotlinx.*), with no java, javax
+# or alias groups at the end and no blank lines.
+ij_kotlin_imports_layout = *
+ij_kotlin_allow_trailing_comma = true
+ij_kotlin_allow_trailing_comma_on_call_site = true
+ij_kotlin_name_count_to_use_star_import = 2147483647
+ij_kotlin_name_count_to_use_star_import_for_members = 2147483647
+
+[*.swift]
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml,toml,json}]
+indent_style = space
+indent_size = 2

@@ -1,5 +1,3 @@
-rootProject.name = "supabase-offline-kt"
-
 pluginManagement {
     repositories {
         google {
@@ -26,6 +24,8 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
+
+rootProject.name = "supabase-offline-kt"
 
 include(":supabase-offline-kt")
 include(":supabase-offline-kt-testing")
