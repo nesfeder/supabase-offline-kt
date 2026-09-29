@@ -1,6 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -12,18 +13,19 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * What a replay logs, ported from the previous standalone engine's syncer tests: INFO when a
  * table starts and finishes, DEBUG per replayed write, and a WARNING when a write is dropped as
  * permanently rejected or the table pauses for connectivity. No message carries row data.
  */
-class OfflineMutationSyncerLoggingTest {
+class MutationQueueReplayerLoggingTest {
 
     private val server = RecordingPostgrestServer()
     private val logger = RecordingOfflineLogger()
     private val store = newTestOfflineStore()
-    private val syncer = OfflineMutationSyncer(
+    private val syncer = MutationQueueReplayer(
         store = store,
         supabase = server.supabaseClient(),
         sdkLogger = logger.asSdkLogger(),
@@ -70,7 +72,7 @@ class OfflineMutationSyncerLoggingTest {
 
         // Then
         assertEquals(
-            listOf("Permanent failure for INSERT on $TABLE, dropping mutation"),
+            listOf("Permanent failure for INSERT on $TABLE (409); moved to the rejected list"),
             messagesAt(OfflineLogLevel.WARNING),
         )
     }
@@ -88,8 +90,39 @@ class OfflineMutationSyncerLoggingTest {
         assertEquals(listOf("Network unavailable, pausing sync for $TABLE"), messagesAt(OfflineLogLevel.WARNING))
     }
 
+    @Test
+    fun a_queued_write_whose_body_no_longer_parses_is_logged_before_it_leaves_the_queue() = runTest {
+        // Given — a stored INSERT body that is not a JSON array, carrying a private value
+        val mutationDao = FakeMutationDao()
+        val storeWithCorruptRow = newTestOfflineStore(mutationDao = mutationDao)
+        mutationDao.insert(
+            MutationRow(
+                table = TABLE,
+                operation = MutationOperation.INSERT,
+                bodyJson = "not-json $PRIVATE_VALUE",
+                filterJson = null,
+                createdAtMs = 0L,
+            ),
+        )
+        val corruptSyncer = MutationQueueReplayer(
+            store = storeWithCorruptRow,
+            supabase = server.supabaseClient(),
+            sdkLogger = logger.asSdkLogger(),
+        )
+
+        // When
+        corruptSyncer.syncAllTables()
+
+        // Then — a warning names the table and the problem, and carries none of the payload
+        val warnings = messagesAt(OfflineLogLevel.WARNING)
+        assertTrue(warnings.any { it.contains(TABLE) && it.contains("no longer parses") }, "got $warnings")
+        assertTrue(logger.entries.none { it.message.contains(PRIVATE_VALUE) }, "the payload must never be logged")
+        assertTrue(server.requests.isEmpty())
+    }
+
     private companion object {
         const val TABLE = "todos"
+        const val PRIVATE_VALUE = "private-row-value"
         val ROWS: JsonArray = Json.parseToJsonElement("""[{"id":1,"title":"Buy milk"}]""") as JsonArray
     }
 }

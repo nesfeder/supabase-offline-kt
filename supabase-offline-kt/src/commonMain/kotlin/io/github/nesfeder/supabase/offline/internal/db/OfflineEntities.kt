@@ -8,6 +8,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /* ───────────────────────── Object cache ───────────────────────── */
@@ -47,6 +48,18 @@ internal interface ObjectDao {
     @Query("SELECT * FROM object_cache WHERE table_name = :table")
     suspend fun allForTable(table: String): List<ObjectRow>
 
+    /**
+     * The signature of every cached SELECT payload for [table], without loading the payloads.
+     *
+     * Used by [OfflineStore.clearSyncedMutationsForTable] to decide which cached queries a synced
+     * mutation's overlay still stands in for.
+     *
+     * @param table Table whose cached signatures are listed.
+     * @return Every cached signature of [table], in no particular order.
+     */
+    @Query("SELECT signature FROM object_cache WHERE table_name = :table")
+    suspend fun signaturesForTable(table: String): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(row: ObjectRow)
 
@@ -61,7 +74,9 @@ internal interface ObjectDao {
     suspend fun deleteAll()
 
     /**
-     * Summed character length of every cached SELECT payload across all tables and signatures.
+     * Summed character length of every cached SELECT payload across all tables and signatures,
+     * leaving out the engine's reserved rows (see [RESERVED_TABLE_NAME]): they are engine state,
+     * not cache, and must never push a real payload out.
      *
      * This is the **logical** size of the object cache, used by
      * [OfflineStore.enforceDbSizeLimitIfNeeded] as the eviction signal. The on-disk database
@@ -73,13 +88,18 @@ internal interface ObjectDao {
      *
      * @return total payload length in characters, or `0` when the cache is empty.
      */
-    @Query("SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM object_cache")
+    @Query(
+        "SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM object_cache " +
+            "WHERE table_name != '$RESERVED_TABLE_NAME'"
+    )
     suspend fun totalPayloadBytes(): Long
 
     /**
      * Delete up to [limit] oldest payload rows across all tables, ordered by [ObjectRow.updatedAt].
      * Used by [OfflineStore.enforceDbSizeLimitIfNeeded] to evict old cache entries when the
-     * summed payload size grows beyond the configured limit.
+     * summed payload size grows beyond the configured limit. The engine's reserved rows (see
+     * [RESERVED_TABLE_NAME]) are never candidates: they hold the rejected-mutation list and the
+     * owner of each queued mutation, which no refetch can restore.
      *
      * @param limit maximum number of rows to delete in this batch.
      * @return the number of rows actually deleted; `0` once the table is empty, which the
@@ -88,7 +108,8 @@ internal interface ObjectDao {
     @Query(
         "DELETE FROM object_cache " +
                 "WHERE rowid IN (" +
-                "SELECT rowid FROM object_cache ORDER BY updated_at ASC LIMIT :limit" +
+                "SELECT rowid FROM object_cache WHERE table_name != '$RESERVED_TABLE_NAME' " +
+                "ORDER BY updated_at ASC LIMIT :limit" +
                 ")"
     )
     suspend fun deleteOldestPayloadRows(limit: Int): Int
@@ -208,8 +229,8 @@ internal data class MutationRow(
     val filterJson: String?,
 
     /**
-     * Client-side timestamp (epoch millis) when the mutation was enqueued.
-     * Used to enforce FIFO ordering when syncing.
+     * Client-side timestamp (epoch millis) when the mutation was enqueued. Informational only:
+     * replay and overlay order by [id], because a wall clock can step backwards.
      */
     @ColumnInfo(name = "created_at_ms")
     val createdAtMs: Long,
@@ -276,29 +297,74 @@ internal data class MutationRow(
 @Dao
 internal interface MutationDao {
 
+    /**
+     * Stores [row]. A row whose [MutationRow.id] is `0` receives the next autoincrement id.
+     *
+     * @param row The mutation to store.
+     * @return The row's id: the one it was given, or the one SQLite assigned.
+     */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(row: MutationRow)
+    suspend fun insert(row: MutationRow): Long
 
     /**
-     * Pending mutations for a specific table, ordered by enqueue time.
+     * Pending mutations for a specific table, in insertion order.
      *
-     * Only rows with [MutationRow.syncedAtMs] == null are considered pending.
+     * Only rows with [MutationRow.syncedAtMs] == null are considered pending. The order is the
+     * autoincrement [MutationRow.id], never the wall clock: `created_at_ms` can step backwards (a
+     * clock change, an NTP correction) and ties within a millisecond, and replay order has to be
+     * the order the writes were made.
      */
     @Query(
         "SELECT * FROM mutation_cache " +
                 "WHERE table_name = :table AND synced_at_ms IS NULL " +
-                "ORDER BY created_at_ms ASC"
+                "ORDER BY id ASC"
     )
     suspend fun pendingForTable(table: String): List<MutationRow>
 
     /**
-     * All pending mutations across all tables, ordered by enqueue time.
+     * All pending mutations across all tables, in insertion order (by [MutationRow.id]).
      */
-    @Query("SELECT * FROM mutation_cache WHERE synced_at_ms IS NULL ORDER BY created_at_ms ASC")
+    @Query("SELECT * FROM mutation_cache WHERE synced_at_ms IS NULL ORDER BY id ASC")
     suspend fun pendingAll(): List<MutationRow>
+
+    /**
+     * Every pending mutation across all tables, in insertion order, re-emitted on every queue
+     * change.
+     */
+    @Query("SELECT * FROM mutation_cache WHERE synced_at_ms IS NULL ORDER BY id ASC")
+    fun pendingAllFlow(): Flow<List<MutationRow>>
+
+    /** The ids of the mutations queued before [id], in any table, that are still pending, in order. */
+    @Query("SELECT id FROM mutation_cache WHERE synced_at_ms IS NULL AND id < :id ORDER BY id ASC")
+    suspend fun pendingIdsBefore(id: Long): List<Long>
+
+    /** Whether the mutation [id] is queued and not yet synced. */
+    @Query("SELECT EXISTS(SELECT 1 FROM mutation_cache WHERE id = :id AND synced_at_ms IS NULL)")
+    suspend fun isPending(id: Long): Boolean
+
+    /** The mutation [id], pending or synced, or `null` when it is not queued. */
+    @Query("SELECT * FROM mutation_cache WHERE id = :id")
+    suspend fun byId(id: Long): MutationRow?
+
+    /** The ids of [table]'s synced mutations still retained for the overlay. */
+    @Query("SELECT id FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NOT NULL")
+    suspend fun syncedIdsForTable(table: String): List<Long>
 
     @Query("SELECT COUNT(*) FROM mutation_cache")
     suspend fun countAll(): Int
+
+    /** The id of every queued mutation, pending or synced. */
+    @Query("SELECT id FROM mutation_cache")
+    suspend fun allIds(): List<Long>
+
+    /**
+     * Synced mutations marked synced before [syncedBeforeMs], by the device clock.
+     *
+     * @param syncedBeforeMs The cut-off, in epoch milliseconds.
+     * @return The rows, in insertion order.
+     */
+    @Query("SELECT * FROM mutation_cache WHERE synced_at_ms IS NOT NULL AND synced_at_ms < :syncedBeforeMs ORDER BY id ASC")
+    suspend fun syncedBefore(syncedBeforeMs: Long): List<MutationRow>
 
     @Query("SELECT COUNT(*) FROM mutation_cache WHERE synced_at_ms IS NULL")
     suspend fun countPending(): Int
@@ -319,13 +385,14 @@ internal interface MutationDao {
     suspend fun deleteById(id: Long)
 
     /**
-     * All mutations for a table (pending + already-synced), ordered by enqueue time.
-     * Used when applying overlays on top of cached SELECT data while offline.
+     * All mutations for a table (pending + already-synced), in insertion order (by
+     * [MutationRow.id]). Used when applying overlays on top of cached SELECT data while offline.
      */
-    @Query("SELECT * FROM mutation_cache WHERE table_name = :table ORDER BY created_at_ms ASC")
+    @Query("SELECT * FROM mutation_cache WHERE table_name = :table ORDER BY id ASC")
     suspend fun allForTable(table: String): List<MutationRow>
 
-    @Query("SELECT * FROM mutation_cache WHERE table_name = :table ORDER BY created_at_ms ASC")
+    /** [allForTable], re-emitted on every queue change. */
+    @Query("SELECT * FROM mutation_cache WHERE table_name = :table ORDER BY id ASC")
     fun allForTableFlow(table: String): Flow<List<MutationRow>>
 
     /**
@@ -334,18 +401,21 @@ internal interface MutationDao {
     @Query("UPDATE mutation_cache SET synced_at_ms = :syncedAtMs WHERE id = :id")
     suspend fun markSynced(id: Long, syncedAtMs: Long)
 
-    /**
-     * Delete all mutations for a table that have already been synced.
-     *
-     * Called after a successful fresh SELECT for that table so the cache
-     * doesn't grow without bounds.
-     */
-    @Query("DELETE FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NOT NULL")
-    suspend fun deleteSyncedForTable(table: String)
-
     /** Deletes every queued mutation (pending + already-synced) across all tables. */
     @Query("DELETE FROM mutation_cache")
     suspend fun deleteAll()
+
+    /**
+     * Runs [block] in one write transaction: every DAO call it makes, on any of the database's
+     * DAOs, commits together or not at all. Keep [block] to DAO calls — never wait on a coroutine
+     * lock inside it, or a writer holding that lock could wait on this transaction's connection.
+     *
+     * @param block The writes to make atomically.
+     */
+    @Transaction
+    suspend fun runInTransaction(block: suspend () -> Unit) {
+        block()
+    }
 }
 
 /* ───────────────────────── Mutation operations ───────────────────────── */

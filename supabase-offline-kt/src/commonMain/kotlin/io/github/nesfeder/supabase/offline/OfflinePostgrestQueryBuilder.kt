@@ -3,10 +3,17 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
+import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
+import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResolver
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
@@ -16,8 +23,11 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.UnsupportedOffline
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromBuilder
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromRequest
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorStrictFromRequest
+import io.github.nesfeder.supabase.offline.internal.postgrest.wasRolledBack
+import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
 import io.github.jan.supabase.annotations.SupabaseExperimental
+import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
@@ -25,6 +35,7 @@ import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.KSerializer
@@ -41,10 +52,11 @@ import kotlinx.serialization.json.jsonArray
  * The mutation verbs are named to mirror the supabase-kt SDK (`insertJson` / `insertWith` /
  * `upsertJson` / `upsertWith` / `updateJson` / `updateWith` / `delete`) but return a
  * [MutationOutcome] rather than a bare [PostgrestResult]: an online write reports
- * [MutationOutcome.Applied] carrying the live response, while a write queued because the network was
- * unavailable reports [MutationOutcome.Queued]. Callers that read the written row back branch on the
- * outcome; callers that fire-and-forget can ignore it. Use [MutationOutcome.resultOrNull] for the
- * "result or null when queued" shape.
+ * [MutationOutcome.Applied] carrying the live response, while a write that waits in the queue — the
+ * network unavailable, or earlier writes still pending — reports [MutationOutcome.Queued]. Callers
+ * that read the written row back branch on the outcome; callers that fire-and-forget can ignore it.
+ * Use [MutationOutcome.resultOrNull] for the "result or null when queued" shape. See
+ * [MutationStrategy.QueueIfOffline] for how a write moves through the queue.
  */
 public interface OfflinePostgrestQueryBuilder {
 
@@ -265,6 +277,31 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * to an empty flow (recovery still happens on the capped schedule) for direct construction.
      */
     private val accelerator: Flow<Unit> = emptyFlow(),
+    /**
+     * The identity a write is made for, read as the write is issued and recorded as its owner when
+     * it is queued; see [OfflineStore.enqueueOwnedBy]. `null` from the provider means it cannot be
+     * told, and the write is then sent directly, never queued.
+     */
+    private val queueIdentity: suspend () -> QueueIdentity? = { delegate.postgrest.supabaseClient.currentQueueIdentity() },
+    /**
+     * Asks for a replay pass. Called when a write was queued behind pending writes, and when more
+     * are pending after a write sent at the head, so they go out without waiting for the app. Does
+     * nothing when built directly. A switch that turns automatic replay off must not stop these
+     * passes: they are what sends an online write that returned `Queued` (see `BackgroundSyncTrigger`).
+     */
+    private val requestSync: () -> Unit = {},
+    /** Tells a dry run from a write before the write is queued; see [DryRunProbe]. */
+    private val dryRunProbe: DryRunProbe = delegate,
+    /**
+     * Sends a queued write at the head of its identity's queue. The real client passes its one
+     * syncer, which every builder and replay pass share; built directly, the builder has its own.
+     */
+    private val headSender: MutationQueueReplayer = MutationQueueReplayer(
+        store = store,
+        supabase = delegate.postgrest.supabaseClient,
+        sdkLogger = sdkLogger,
+        currentIdentity = queueIdentity,
+    ),
 ) : OfflinePostgrestQueryBuilder {
 
     constructor(
@@ -274,13 +311,24 @@ internal class OfflinePostgrestQueryBuilderImpl(
         authSessionState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
         refreshCoordinator: RefreshCoordinator = defaultRefreshCoordinator(),
         accelerator: Flow<Unit> = emptyFlow(),
+        queueIdentity: suspend () -> QueueIdentity? = { delegate.postgrest.supabaseClient.currentQueueIdentity() },
+        requestSync: () -> Unit = {},
+        headSender: MutationQueueReplayer = MutationQueueReplayer(
+            store = store,
+            supabase = delegate.postgrest.supabaseClient,
+            sdkLogger = sdkLogger,
+            currentIdentity = queueIdentity,
+        ),
     ) : this(
-        PostgrestQueryBuilderWrapperImpl(delegate),
-        store,
-        sdkLogger,
-        authSessionState,
-        refreshCoordinator,
-        accelerator,
+        delegate = PostgrestQueryBuilderWrapperImpl(delegate),
+        store = store,
+        sdkLogger = sdkLogger,
+        authSessionState = authSessionState,
+        refreshCoordinator = refreshCoordinator,
+        accelerator = accelerator,
+        queueIdentity = queueIdentity,
+        requestSync = requestSync,
+        headSender = headSender,
     )
 
     private val json: Json = OfflineJson
@@ -324,7 +372,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             mutationStrategy = mutationStrategy,
             performOnline = { delegate.insert(body, request) },
-            applyOnlineSuccessOverlay = { result ->
+            applyOnlineSuccessOverlay = { result, startedAtTick ->
                 // Honor QueueIfOffline's "UI reflects immediately" promise on the online-success
                 // path so reactive `selectAsFlow` observers re-emit without waiting for a re-fetch.
                 // OnlineOnly callers opted out of this — leave their cache untouched.
@@ -336,17 +384,20 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     bodyJson = preferResponseForCache(body, result.data),
                     filterJson = descriptor?.let { FilterEngine.encode(it, json) },
                     defaultToNull = insertBuilder.defaultToNull,
+                    startedAtTick = startedAtTick,
                 )
             },
-            enqueueOffline = { _ ->
+            captureForQueue = {
                 val insertBuilder = InsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(insertBuilder)
-                store.enqueueInsert(
-                    table = table,
-                    body = body,
-                    defaultToNull = insertBuilder.defaultToNull,
-                    filter = descriptor
-                )
+                QueueCapture.Queueable {
+                    enqueueInsert(
+                        table = table,
+                        body = body,
+                        defaultToNull = insertBuilder.defaultToNull,
+                        filter = descriptor
+                    )
+                }
             },
         )
     }
@@ -388,7 +439,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             mutationStrategy = mutationStrategy,
             performOnline = { delegate.upsert(body, request) },
-            applyOnlineSuccessOverlay = { result ->
+            applyOnlineSuccessOverlay = { result, startedAtTick ->
                 val upsertBuilder = UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(upsertBuilder)
                 store.applyLocalMutationToCache(
@@ -399,19 +450,22 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     defaultToNull = upsertBuilder.defaultToNull,
                     onConflict = upsertBuilder.onConflict,
                     ignoreDuplicates = upsertBuilder.ignoreDuplicates,
+                    startedAtTick = startedAtTick,
                 )
             },
-            enqueueOffline = { _ ->
+            captureForQueue = {
                 val upsertBuilder = UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(upsertBuilder)
-                store.enqueueUpsert(
-                    table = table,
-                    bodyJson = body,
-                    defaultToNull = upsertBuilder.defaultToNull,
-                    onConflict = upsertBuilder.onConflict,
-                    ignoreDuplicates = upsertBuilder.ignoreDuplicates,
-                    filter = descriptor
-                )
+                QueueCapture.Queueable {
+                    enqueueUpsert(
+                        table = table,
+                        bodyJson = body,
+                        defaultToNull = upsertBuilder.defaultToNull,
+                        onConflict = upsertBuilder.onConflict,
+                        ignoreDuplicates = upsertBuilder.ignoreDuplicates,
+                        filter = descriptor
+                    )
+                }
             },
         )
     }
@@ -457,7 +511,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             // against the row the caller just read, so there is no queue window to rebase across
             // — and PostgREST cannot express `col = col + x` in a PATCH anyway.
             performOnline = { delegate.update(body, request) },
-            applyOnlineSuccessOverlay = {
+            applyOnlineSuccessOverlay = { _, startedAtTick ->
                 // Online-success overlay keeps the lenient capture: it never replays, so an
                 // un-representable filter is harmless here (worst case it overlays nothing).
                 val descriptor = buildDescriptorFromRequest(
@@ -470,30 +524,18 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     operation = MutationOperation.UPDATE,
                     bodyJson = body.toString(),
                     filterJson = descriptor?.let { FilterEngine.encode(it, json) },
+                    startedAtTick = startedAtTick,
                 )
             },
-            enqueueOffline = { originalFailure ->
-                val descriptor = try {
-                    buildDescriptorStrictFromRequest(
-                        defaultSchema = delegate.schema,
-                        conversionMethod = conversionMethod,
-                        request = request
+            captureForQueue = {
+                captureFilteredWrite(conversionMethod, request) { descriptor ->
+                    enqueueUpdate(
+                        table = table,
+                        body = body,
+                        filter = descriptor,
+                        deltaColumns = deltaColumns
                     )
-                } catch (lossy: UnsupportedOfflineFilterException) {
-                    // Refuse to queue a mutation whose filter we cannot capture faithfully:
-                    // replaying it would target a broader row set than the caller wrote. Fail
-                    // the original write instead so the caller sees it did not succeed.
-                    // The reason quotes the filter's value, so it stays at DEBUG.
-                    sdkLogger.error { "Refusing to queue offline UPDATE for $table: its filter cannot be captured exactly" }
-                    sdkLogger.debug { "Offline UPDATE for $table not queued: ${lossy.message}" }
-                    throw originalFailure
                 }
-                store.enqueueUpdate(
-                    table = table,
-                    body = body,
-                    filter = descriptor,
-                    deltaColumns = deltaColumns
-                )
             },
         )
     }
@@ -523,7 +565,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             mutationStrategy = mutationStrategy,
             performOnline = { delegate.delete(request) },
-            applyOnlineSuccessOverlay = {
+            applyOnlineSuccessOverlay = { _, startedAtTick ->
                 val descriptor = buildDescriptorFromRequest(
                     defaultSchema = delegate.schema,
                     conversionMethod = conversionMethod,
@@ -534,28 +576,16 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     operation = MutationOperation.DELETE,
                     bodyJson = "{}",
                     filterJson = descriptor?.let { FilterEngine.encode(it, json) },
+                    startedAtTick = startedAtTick,
                 )
             },
-            enqueueOffline = { originalFailure ->
-                val descriptor = try {
-                    buildDescriptorStrictFromRequest(
-                        defaultSchema = delegate.schema,
-                        conversionMethod = conversionMethod,
-                        request = request
+            captureForQueue = {
+                captureFilteredWrite(conversionMethod, request) { descriptor ->
+                    enqueueDelete(
+                        table = table,
+                        filter = descriptor
                     )
-                } catch (lossy: UnsupportedOfflineFilterException) {
-                    // Refuse to queue a DELETE whose filter we cannot capture faithfully:
-                    // replaying it would delete a broader row set than the caller wrote. Fail
-                    // the original call instead so the caller sees it did not succeed.
-                    // The reason quotes the filter's value, so it stays at DEBUG.
-                    sdkLogger.error { "Refusing to queue offline DELETE for $table: its filter cannot be captured exactly" }
-                    sdkLogger.debug { "Offline DELETE for $table not queued: ${lossy.message}" }
-                    throw originalFailure
                 }
-                store.enqueueDelete(
-                    table = table,
-                    filter = descriptor
-                )
             },
         )
     }
@@ -563,50 +593,225 @@ internal class OfflinePostgrestQueryBuilderImpl(
     // --------------------------------------------------------------------------
 
     /**
-     * Shared body for the offline-aware mutation verbs. Runs the online mutation via
-     * [performOnline]; on success it applies the verb-specific cache overlay
-     * ([applyOnlineSuccessOverlay]) for `QueueIfOffline` callers and returns
-     * [MutationOutcome.Applied]. On a connectivity failure under `QueueIfOffline` it enqueues the
-     * mutation via [enqueueOffline] and returns [MutationOutcome.Queued]; any other failure (and
-     * every failure under `OnlineOnly`) is rethrown.
+     * How a write would be queued, decided before it is sent: either the action that queues it, or
+     * why it cannot be queued faithfully.
+     */
+    private sealed interface QueueCapture {
+
+        /** The write can be queued; [enqueue] inserts its mutation row and returns the id. */
+        class Queueable(val enqueue: suspend OfflineStore.() -> Long) : QueueCapture
+
+        /**
+         * The write cannot be queued faithfully. [reason] carries no filter value and may be logged
+         * at any level; [detail] may quote the filter, so it is logged at DEBUG only.
+         */
+        class Refused(val reason: String, val detail: String? = null) : QueueCapture
+    }
+
+    /**
+     * The queue capture of an UPDATE or DELETE: queueable only with a filter the strict capture
+     * records exactly and that replays in full. Anything else would replay against more rows than
+     * the caller targeted — every row RLS admits, for a missing filter — so it is refused up front
+     * rather than queued and refused at replay.
+     */
+    private fun captureFilteredWrite(
+        conversionMethod: PropertyConversionMethod,
+        request: PostgrestRequestBuilder.() -> Unit,
+        enqueue: suspend OfflineStore.(FilterDescriptor) -> Long,
+    ): QueueCapture {
+        val descriptor = try {
+            buildDescriptorStrictFromRequest(
+                defaultSchema = delegate.schema,
+                conversionMethod = conversionMethod,
+                request = request
+            )
+        } catch (lossy: UnsupportedOfflineFilterException) {
+            return QueueCapture.Refused(reason = "its filter cannot be captured exactly", detail = lossy.message)
+        }
+        return when {
+            descriptor == null -> QueueCapture.Refused("a write without a filter would reach every row")
+            !FilterEngine.replaysFully(descriptor) -> QueueCapture.Refused("its filter cannot be replayed in full")
+            else -> QueueCapture.Queueable { enqueue(descriptor) }
+        }
+    }
+
+    /**
+     * Sends or queues one write. `OnlineOnly` sends it and nothing else. `QueueIfOffline` saves it to
+     * the mutation queue first and sends it at once only at the head of its identity's queue: accepted,
+     * it is `Applied`; unanswered or answered `503`/`520`, so that it may not have run, it stays
+     * `Queued`; refused, it leaves the queue and the failure is thrown; behind other mutations, it
+     * waits and a pass is requested. A write the queue cannot hold faithfully — a dry run, one it cannot classify, a filter
+     * it cannot record, an unknown identity — is sent directly and never queued. The request lambda
+     * runs up to three times: to capture, to classify and to send.
      *
-     * @param verbLabel human-readable verb name for log lines (e.g. `"INSERT"`).
-     * @param table target table name, for log lines.
-     * @param mutationStrategy the caller's offline strategy.
-     * @param performOnline issues the live PostgREST mutation and returns its result.
-     * @param applyOnlineSuccessOverlay applies the online-success cache overlay; invoked only for
-     *   [MutationStrategy.QueueIfOffline].
-     * @param enqueueOffline enqueues the mutation for later replay; it receives the original network
-     *   failure so a verb that refuses to queue an un-capturable filter can rethrow it verbatim.
-     * @return [MutationOutcome.Applied] when the server executed the mutation, or
-     *   [MutationOutcome.Queued] when it was queued for replay.
+     * @param applyOnlineSuccessOverlay Patches the cache with the result, given the write's start tick.
+     * @param captureForQueue How the write would be queued; see [QueueCapture].
      */
     private suspend fun executeMutation(
         verbLabel: String,
         table: String,
         mutationStrategy: MutationStrategy,
         performOnline: suspend () -> PostgrestResult,
-        applyOnlineSuccessOverlay: suspend (PostgrestResult) -> Unit,
-        enqueueOffline: suspend (originalFailure: Exception) -> Unit,
+        applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
+        captureForQueue: () -> QueueCapture,
     ): MutationOutcome {
-        return try {
+        if (mutationStrategy == MutationStrategy.OnlineOnly) {
             val result = performOnline()
             sdkLogger.debug { "$verbLabel $table response: ${result.data}" }
+            return MutationOutcome.Applied(result)
+        }
 
-            if (mutationStrategy == MutationStrategy.QueueIfOffline) {
-                applyOnlineSuccessOverlay(result)
+        val startedAtTick = store.monotonicTickNow()
+        // Taken as the write is issued: a session switch while it is in flight must not re-own it.
+        val identity = queueIdentity()
+        val direct = DirectSend(verbLabel, table, performOnline, applyOnlineSuccessOverlay, startedAtTick)
+
+        val queueable = when (val capture = captureForQueue()) {
+            is QueueCapture.Queueable -> capture
+            // Replaying it would target a broader row set than the caller wrote.
+            is QueueCapture.Refused -> {
+                capture.detail?.let { detail -> sdkLogger.debug { "Offline $verbLabel for $table would not be queued: $detail" } }
+                return direct.send(OfflineLogLevel.ERROR) { "Refusing to queue offline $verbLabel for $table: ${capture.reason}" }
+            }
+        }
+        if (identity == null) {
+            return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: the session's identity cannot be told" }
+        }
+        when (val verdict = dryRunProbe.classify(performOnline)) {
+            DryRunVerdict.NotDryRun -> Unit
+            DryRunVerdict.DryRun ->
+                return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: a dry run is never queued" }
+            // The write's own failure, before any request: sending it directly reports it as it is.
+            is DryRunVerdict.NotBuilt ->
+                return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: its request could not be built" }
+            DryRunVerdict.Unavailable -> {
+                reportUnclassifiableWriteOnce()
+                return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: it may be a dry run" }
+            }
+            is DryRunVerdict.Sent -> {
+                reportUnclassifiableWriteOnce()
+                return direct.applied(verdict.result)
+            }
+        }
+
+        val mutationId = when (val enqueued = store.enqueueOwnedBy(identity.storedValue, startedAtTick) { queueable.enqueue(this) }) {
+            is EnqueueOutcome.Queued -> enqueued.id
+            EnqueueOutcome.LocalDataCleared ->
+                return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: local data was cleared while it was in flight" }
+            EnqueueOutcome.OwnershipUnreadable ->
+                return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: the queue's owner records cannot be read" }
+        }
+
+        val sent = try {
+            headSender.sendAtHead(mutationId, identity, performOnline) { result -> direct.overlay(result) }
+        } catch (cancellation: CancellationException) {
+            // Cancelled on the wire: whether the server got it is not known, so it stays queued, and
+            // a pass sends it.
+            requestSync()
+            throw cancellation
+        }
+        return when (sent) {
+            MutationQueueReplayer.HeadSendOutcome.NotAtHead -> {
+                sdkLogger.info { "$verbLabel $table queued behind pending mutations" }
+                requestSync()
+                MutationOutcome.Queued
             }
 
-            MutationOutcome.Applied(result)
-        } catch (exception: Exception) {
-            when {
-                mutationStrategy == MutationStrategy.QueueIfOffline && exception.isNetworkOrConnectivityFailure() -> {
-                    enqueueOffline(exception)
-                    sdkLogger.info { "$verbLabel $table queued offline (network unavailable)" }
-                    MutationOutcome.Queued
-                }
+            is MutationQueueReplayer.HeadSendOutcome.Sent -> {
+                sdkLogger.debug { "$verbLabel $table response: ${sent.result.data}" }
+                requestPassIfPending(identity)
+                MutationOutcome.Applied(sent.result)
+            }
 
-                else -> throw exception
+            is MutationQueueReplayer.HeadSendOutcome.StaysQueued -> {
+                sdkLogger.info {
+                    if (sent.cause.isNetworkOrConnectivityFailure()) {
+                        "$verbLabel $table queued offline (network unavailable)"
+                    } else {
+                        "$verbLabel $table queued (the server answered ${sent.cause.httpStatusOrNull()}; " +
+                            "it may not have run)"
+                    }
+                }
+                MutationOutcome.Queued
+            }
+
+            is MutationQueueReplayer.HeadSendOutcome.Refused -> {
+                requestPassIfPending(identity)
+                throw sent.cause
+            }
+
+            is MutationQueueReplayer.HeadSendOutcome.Cleared -> {
+                sdkLogger.info { "$verbLabel $table returned after local data was cleared; the cache is left as it was" }
+                requestPassIfPending(identity)
+                sent.result?.let { result -> MutationOutcome.Applied(result) } ?: throw checkNotNull(sent.cause)
+            }
+        }
+    }
+
+    /** Asks for a pass when [identity] has mutations queued, which the head it just left held back. */
+    private suspend fun requestPassIfPending(identity: QueueIdentity) {
+        if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) requestSync()
+    }
+
+    /** Logs, once per store, that the dry-run check cannot tell: such writes lose their offline safety net. */
+    private fun reportUnclassifiableWriteOnce() {
+        if (store.claimUnclassifiableWriteReport()) {
+            sdkLogger.error {
+                "Could not tell whether a write is a dry run; such writes are sent without being queued, " +
+                    "so they fail rather than queue when offline"
+            }
+        }
+    }
+
+    /**
+     * A write sent directly, outside the queue, and the cache patch that follows its success.
+     */
+    private inner class DirectSend(
+        private val verbLabel: String,
+        private val table: String,
+        private val performOnline: suspend () -> PostgrestResult,
+        private val applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
+        private val startedAtTick: Long,
+    ) {
+
+        /**
+         * Sends the write. A connectivity failure is logged with [whyNotQueued] and rethrown, like
+         * every other failure.
+         *
+         * @param level The level to log a connectivity failure at.
+         * @param whyNotQueued Why the write was not queued, for the log line.
+         * @return [MutationOutcome.Applied].
+         */
+        suspend fun send(level: OfflineLogLevel, whyNotQueued: () -> String): MutationOutcome {
+            val result = try {
+                performOnline()
+            } catch (failure: Exception) {
+                if (failure.isNetworkOrConnectivityFailure()) sdkLogger.log(level, whyNotQueued)
+                throw failure
+            }
+            return applied(result)
+        }
+
+        /** The outcome of a write the server applied with [result], its cache patch done. */
+        suspend fun applied(result: PostgrestResult): MutationOutcome {
+            sdkLogger.debug { "$verbLabel $table response: ${result.data}" }
+            overlay(result)
+            return MutationOutcome.Applied(result)
+        }
+
+        /**
+         * Patches the cache with [result], unless PostgREST rolled the write back or local data was
+         * cleared since it started.
+         */
+        suspend fun overlay(result: PostgrestResult) {
+            when {
+                result.wasRolledBack ->
+                    sdkLogger.debug { "$verbLabel $table was rolled back (a dry run); the cache is left as it was" }
+
+                store.wasClearedSince(startedAtTick) ->
+                    sdkLogger.info { "$verbLabel $table returned after local data was cleared; the cache is left as it was" }
+
+                else -> applyOnlineSuccessOverlay(result, startedAtTick)
             }
         }
     }
@@ -617,11 +822,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
     companion object {
 
         /**
-         * A fresh, standalone [RefreshCoordinator] for direct/test construction only — the real
-         * client always injects its client-scoped instance so single-flight refresh spans every
-         * builder. The scope is a supervised engine scope on `Dispatchers.Default`; because the
-         * coordinator's shares use `WhileSubscribed(0, 0)`, no coroutine outlives an active
-         * collection, so a short-lived subscription leaves nothing running behind it.
+         * A standalone coordinator for a builder constructed directly, as tests do; the client
+         * injects its own. Its engine scope contains any failure a share leaks.
          */
         private fun defaultRefreshCoordinator(): RefreshCoordinator = RefreshCoordinator(newEngineScope(sdkLogger = null))
     }

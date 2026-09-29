@@ -27,8 +27,13 @@ internal fun engineExceptionHandler(sdkLogger: SdkLogger?): CoroutineExceptionHa
  * A supervised engine scope on [Dispatchers.Default] carrying [engineExceptionHandler].
  *
  * @param sdkLogger where the handler logs.
- * @param parent the job to cancel it with, or `null` for a root scope.
- * @return the scope.
  */
-internal fun newEngineScope(sdkLogger: SdkLogger?, parent: Job? = null): CoroutineScope =
-    CoroutineScope(SupervisorJob(parent) + Dispatchers.Default + engineExceptionHandler(sdkLogger))
+internal fun newEngineScope(sdkLogger: SdkLogger?): CoroutineScope =
+    CoroutineScope(SupervisorJob() + Dispatchers.Default + engineExceptionHandler(sdkLogger))
+
+/**
+ * A supervised child of [parent] on [parent]'s dispatcher, carrying [engineExceptionHandler]:
+ * cancelling it stops everything launched in it and leaves [parent] running.
+ */
+internal fun childEngineScope(parent: CoroutineScope, sdkLogger: SdkLogger?): CoroutineScope =
+    CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]) + engineExceptionHandler(sdkLogger))

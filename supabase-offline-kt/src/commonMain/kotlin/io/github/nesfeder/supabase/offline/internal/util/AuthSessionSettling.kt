@@ -19,35 +19,37 @@ import kotlin.time.Duration.Companion.seconds
 internal val AUTH_SESSION_SETTLE_TIMEOUT: Duration = 10.seconds
 
 /**
- * Whether a replay fired under [status] would carry the user JWT. supabase-kt's token resolution
- * reads `currentSessionOrNull()`, which is non-null **only** for [SessionStatus.Authenticated] —
- * `Initializing` (cold-start restore in flight), `NotAuthenticated`, and `RefreshFailure` (expired
- * token, refresh not yet landed — the usual state right after an offline window, which is exactly
- * when the queue is non-empty) all send the anon key, turning every owner-scoped write into an
- * RLS 403 that the permanent-failure classification would then drop.
+ * Whether a replay fired under [status] goes out with a settled identity. Two statuses qualify:
+ *
+ * - [SessionStatus.Authenticated]: requests carry the user's JWT, and the queue replays that user's
+ *   writes.
+ * - [SessionStatus.NotAuthenticated]: requests carry the anon key, and the queue replays the writes
+ *   made while signed out — the anonymous identity's own queue. An anonymous write is sent the way
+ *   it was made.
+ *
+ * `Initializing` (cold-start restore in flight) and `RefreshFailure` (expired token, refresh not
+ * yet landed — the usual state right after an offline window) are not settled: the stored user is
+ * still the identity, but requests would go out on the anon key, turning that user's owner-scoped
+ * writes into RLS refusals.
  *
  * Extracted as a pure function so the mapping is unit-testable without a real Supabase auth
  * client.
  */
 internal fun isReplaySafeSessionStatus(status: SessionStatus): Boolean =
-    status is SessionStatus.Authenticated
+    status is SessionStatus.Authenticated || status is SessionStatus.NotAuthenticated
 
 /**
- * Suspends until this client's session reaches [SessionStatus.Authenticated] — the only status
- * under which requests carry the user JWT (see [isReplaySafeSessionStatus]) — bounded by
- * [timeout].
+ * Suspends until this client's session is settled — [SessionStatus.Authenticated] or
+ * [SessionStatus.NotAuthenticated], see [isReplaySafeSessionStatus] — bounded by [timeout].
  *
- * Callers that replay queued mutations must gate on this: a replay fired in any other status is
- * sent on the anon key, RLS rejects it with a 403, and the permanent-failure classification drops
- * the mutation — silently losing a write that would have succeeded once the restore or token
- * refresh landed.
+ * Callers that replay queued mutations gate on this: a replay fired while the session restores or
+ * its refresh has not landed would send the signed-in user's writes on the anon key, where RLS
+ * refuses them.
  *
  * @param timeout Upper bound on the wait; see [AUTH_SESSION_SETTLE_TIMEOUT].
- * @return `true` when the session is authenticated and a replay would carry the user JWT;
- *   `false` when the bound elapsed first (still restoring, signed out, or an unrecovered refresh
- *   failure) — callers should defer and keep the queue intact for a later trigger. An SDK without
- *   the Auth plugin installed has no session model at all, so the probe failure is treated as
- *   safe (fail-open), preserving pre-gate behavior for auth-less clients.
+ * @return `true` when the session is settled; `false` when the bound elapsed first — callers defer
+ *   and keep the queue intact for a later trigger. An SDK without the Auth plugin installed has no
+ *   session model at all, so the probe failure is treated as settled (fail-open).
  */
 internal suspend fun SupabaseClient.awaitReplaySafeSession(
     timeout: Duration = AUTH_SESSION_SETTLE_TIMEOUT,

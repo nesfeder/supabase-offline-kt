@@ -24,6 +24,8 @@ import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
@@ -126,7 +128,9 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  * @param baseDirectoryProvider base directory for downloaded storage files.
  * @param sdkLogger the SDK logger.
  * @param onClose what the client's `close()` releases, as the factories wire the database.
- * @param coordinatorScope the scope the client's own scope is a child of, or `null` for a fresh one.
+ * @param coordinatorScope the parent of the client's own scope, whose dispatcher runs its background
+ *   work (refresh loops, replay passes it starts itself); pass `runTest`'s `backgroundScope` to drive
+ *   it from the test scheduler.
  * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
  *   database's scrub.
  * @return the offline client.
@@ -137,28 +141,17 @@ internal fun newTestOfflineClient(
     baseDirectoryProvider: () -> Path = { "/tmp".toPath() },
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
     onClose: () -> Unit = {},
-    coordinatorScope: CoroutineScope? = null,
+    coordinatorScope: CoroutineScope = newEngineScope(sdkLogger),
     scrubDatabase: suspend () -> Unit = {},
-): SupabaseOfflineClientImpl = if (coordinatorScope == null) {
-    SupabaseOfflineClientImpl(
-        supabase = supabase,
-        store = store,
-        baseDirectoryProvider = baseDirectoryProvider,
-        sdkLogger = sdkLogger,
-        scrubDatabase = scrubDatabase,
-        onClose = onClose,
-    )
-} else {
-    SupabaseOfflineClientImpl(
-        supabase = supabase,
-        store = store,
-        baseDirectoryProvider = baseDirectoryProvider,
-        sdkLogger = sdkLogger,
-        coordinatorScope = coordinatorScope,
-        scrubDatabase = scrubDatabase,
-        onClose = onClose,
-    )
-}
+): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
+    supabase = supabase,
+    store = store,
+    baseDirectoryProvider = baseDirectoryProvider,
+    sdkLogger = sdkLogger,
+    coordinatorScope = coordinatorScope,
+    scrubDatabase = scrubDatabase,
+    onClose = onClose,
+)
 
 /**
  * Builds the Storage file cache over [store], under [baseDirectory] (a real directory: the storage
@@ -229,3 +222,12 @@ internal suspend fun <T> SupabaseOfflineClient.closingAfter(block: suspend (Supa
     } finally {
         close()
     }
+
+/**
+ * A scope whose coroutines never run: nothing ever advances its scheduler. Pass it as a client's
+ * `coordinatorScope` in a test that drives every replay pass itself, so a pass the engine starts on
+ * its own cannot race the one under test.
+ *
+ * @return the scope.
+ */
+internal fun idleCoroutineScope(): CoroutineScope = CoroutineScope(StandardTestDispatcher(TestCoroutineScheduler()))
