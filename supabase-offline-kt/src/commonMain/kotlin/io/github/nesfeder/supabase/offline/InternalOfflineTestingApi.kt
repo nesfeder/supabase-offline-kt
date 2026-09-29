@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 /**
@@ -9,8 +11,9 @@ package io.github.nesfeder.supabase.offline
  * `buildInMemorySupabaseOfflineClient` instead.
  */
 @RequiresOptIn(
-    message = "This hook exists only for the supabase-offline-kt-testing artifact. Use " +
-        "buildInMemorySupabaseOfflineClient from supabase-offline-kt-testing instead.",
+    message =
+        "This hook exists only for the supabase-offline-kt-testing artifact. Use " +
+            "buildInMemorySupabaseOfflineClient from supabase-offline-kt-testing instead.",
     level = RequiresOptIn.Level.ERROR,
 )
 @Retention(AnnotationRetention.BINARY)

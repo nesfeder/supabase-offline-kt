@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.SupabaseClient
@@ -9,8 +11,8 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.HttpClientEngine
-import kotlinx.coroutines.flow.first
 import kotlin.io.encoding.Base64
+import kotlinx.coroutines.flow.first
 
 /**
  * A real supabase-kt client with the Auth plugin installed over an in-memory session store, signed
@@ -24,16 +26,17 @@ internal suspend fun newTestSupabaseClientWithAuth(
     engine: HttpClientEngine,
     alwaysAutoRefresh: Boolean = false,
 ): SupabaseClient {
-    val supabase = newTestSupabaseClient(engine = engine) {
-        install(Postgrest) { maxRetries = 0 }
-        install(Auth) {
-            sessionManager = MemorySessionManager()
-            codeVerifierCache = MemoryCodeVerifierCache()
-            autoLoadFromStorage = false
-            this.alwaysAutoRefresh = alwaysAutoRefresh
-            enableLifecycleCallbacks = false
+    val supabase =
+        newTestSupabaseClient(engine = engine) {
+            install(Postgrest) { maxRetries = 0 }
+            install(Auth) {
+                sessionManager = MemorySessionManager()
+                codeVerifierCache = MemoryCodeVerifierCache()
+                autoLoadFromStorage = false
+                this.alwaysAutoRefresh = alwaysAutoRefresh
+                enableLifecycleCallbacks = false
+            }
         }
-    }
     supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing }
     return supabase
 }
@@ -46,7 +49,12 @@ internal suspend fun newTestSupabaseClientWithAuth(
  */
 internal suspend fun SupabaseClient.signInForTest(subject: String, expiresInSeconds: Long = 3600) {
     auth.importSession(
-        UserSession(accessToken = testJwt(subject), refreshToken = "refresh-token", expiresIn = expiresInSeconds, tokenType = "bearer"),
+        UserSession(
+            accessToken = testJwt(subject),
+            refreshToken = "refresh-token",
+            expiresIn = expiresInSeconds,
+            tokenType = "bearer",
+        ),
         autoRefresh = false,
     )
 }
@@ -60,6 +68,9 @@ internal suspend fun SupabaseClient.signInForTest(subject: String, expiresInSeco
 internal fun testJwt(subject: String): String {
     val encoder = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
     val header = encoder.encode("""{"alg":"HS256","typ":"JWT"}""".encodeToByteArray())
-    val payload = encoder.encode("""{"sub":"$subject","role":"authenticated","exp":9999999999}""".encodeToByteArray())
+    val payload =
+        encoder.encode(
+            """{"sub":"$subject","role":"authenticated","exp":9999999999}""".encodeToByteArray()
+        )
     return "$header.$payload.signature"
 }

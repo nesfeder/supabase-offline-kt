@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import android.content.Context
@@ -7,9 +9,6 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlinx.coroutines.test.runTest
-import okio.Path.Companion.toPath
-import org.junit.runner.RunWith
 import java.io.File
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -20,6 +19,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import okio.Path.Companion.toPath
+import org.junit.runner.RunWith
 
 /**
  * The Android factory builds a client over the real Room database builder for every supported
@@ -42,9 +44,12 @@ class CreateSupabaseOfflineClientAndroidTest {
     private fun testSupabaseClient(): SupabaseClient = newTestSupabaseClient()
 
     private fun uniqueDirectory(): File =
-        File(context.cacheDir, "offline-client-${Random.nextLong().toULong()}").also { directories += it }
+        File(context.cacheDir, "offline-client-${Random.nextLong().toULong()}").also {
+            directories += it
+        }
 
-    private fun configIn(directory: File) = SupabaseOfflineConfig(offlineStoragePath = directory.absolutePath.toPath())
+    private fun configIn(directory: File) =
+        SupabaseOfflineConfig(offlineStoragePath = directory.absolutePath.toPath())
 
     @Test
     fun `createSupabaseOfflineClient returns non-null client with default config`() = runTest {
@@ -74,7 +79,11 @@ class CreateSupabaseOfflineClientAndroidTest {
     @Test
     fun `createSupabaseOfflineClient allows unlimited cache size`() = runTest {
         // Given
-        val config = SupabaseOfflineConfig(cacheSizeBytes = CACHE_SIZE_UNLIMITED, fileCacheSizeBytes = CACHE_SIZE_UNLIMITED)
+        val config =
+            SupabaseOfflineConfig(
+                cacheSizeBytes = CACHE_SIZE_UNLIMITED,
+                fileCacheSizeBytes = CACHE_SIZE_UNLIMITED,
+            )
 
         // When
         createSupabaseOfflineClient(context, testSupabaseClient(), config).closingAfter { client ->
@@ -89,10 +98,14 @@ class CreateSupabaseOfflineClientAndroidTest {
         val config = configIn(uniqueDirectory())
         createSupabaseOfflineClient(context, testSupabaseClient(), config).closingAfter {
             // When / Then — two engines on one file would replay the same queue twice
-            val failure = assertFailsWith<IllegalStateException> {
-                createSupabaseOfflineClient(context, testSupabaseClient(), config)
-            }
-            assertTrue("already open" in failure.message.orEmpty(), "unclear message: ${failure.message}")
+            val failure =
+                assertFailsWith<IllegalStateException> {
+                    createSupabaseOfflineClient(context, testSupabaseClient(), config)
+                }
+            assertTrue(
+                "already open" in failure.message.orEmpty(),
+                "unclear message: ${failure.message}",
+            )
         }
     }
 
@@ -101,7 +114,9 @@ class CreateSupabaseOfflineClientAndroidTest {
         // Given
         createSupabaseOfflineClient(context, testSupabaseClient()).closingAfter {
             // When / Then
-            assertFailsWith<IllegalStateException> { createSupabaseOfflineClient(context, testSupabaseClient()) }
+            assertFailsWith<IllegalStateException> {
+                createSupabaseOfflineClient(context, testSupabaseClient())
+            }
         }
     }
 
@@ -123,7 +138,8 @@ class CreateSupabaseOfflineClientAndroidTest {
     @Test
     fun `a closed client refuses further use`() = runTest {
         // Given
-        val client = createSupabaseOfflineClient(context, testSupabaseClient(), configIn(uniqueDirectory()))
+        val client =
+            createSupabaseOfflineClient(context, testSupabaseClient(), configIn(uniqueDirectory()))
 
         // When
         client.close()
@@ -142,12 +158,16 @@ class CreateSupabaseOfflineClientAndroidTest {
         defaultDatabase.delete()
 
         // When — the first query opens the database
-        createSupabaseOfflineClient(context, testSupabaseClient(), configIn(directory)).closingAfter { client ->
-            client.pendingMutationCount()
-        }
+        createSupabaseOfflineClient(context, testSupabaseClient(), configIn(directory))
+            .closingAfter { client ->
+                client.pendingMutationCount()
+            }
 
         // Then — it lives in the configured directory, and nothing was created at the default path
-        assertTrue(File(directory, "supabase_offline.db").exists(), "the database is not in offlineStoragePath")
+        assertTrue(
+            File(directory, "supabase_offline.db").exists(),
+            "the database is not in offlineStoragePath",
+        )
         assertFalse(defaultDatabase.exists(), "a database was created at the default path as well")
     }
 

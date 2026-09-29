@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
@@ -5,9 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Level gating and lazy message construction of the SDK's internal [SdkLogger].
- */
+/** Level gating and lazy message construction of the SDK's internal [SdkLogger]. */
 class SdkLoggerTest {
 
     @Test
@@ -40,7 +40,10 @@ class SdkLoggerTest {
         assertEquals(4, recorder.entries.size)
         assertEquals(RecordingOfflineLogger.Entry(OfflineLogLevel.DEBUG, "d"), recorder.entries[0])
         assertEquals(RecordingOfflineLogger.Entry(OfflineLogLevel.INFO, "i"), recorder.entries[1])
-        assertEquals(RecordingOfflineLogger.Entry(OfflineLogLevel.WARNING, "w"), recorder.entries[2])
+        assertEquals(
+            RecordingOfflineLogger.Entry(OfflineLogLevel.WARNING, "w"),
+            recorder.entries[2],
+        )
         assertEquals(RecordingOfflineLogger.Entry(OfflineLogLevel.ERROR, "e"), recorder.entries[3])
     }
 
@@ -106,9 +109,18 @@ class SdkLoggerTest {
         var warningEvaluated = false
 
         // When
-        logger.debug { debugEvaluated = true; "d" }
-        logger.info { infoEvaluated = true; "i" }
-        logger.warning { warningEvaluated = true; "w" }
+        logger.debug {
+            debugEvaluated = true
+            "d"
+        }
+        logger.info {
+            infoEvaluated = true
+            "i"
+        }
+        logger.warning {
+            warningEvaluated = true
+            "w"
+        }
 
         // Then
         assertEquals(false, debugEvaluated)
@@ -125,7 +137,10 @@ class SdkLoggerTest {
         var called = false
 
         // When
-        logger.debug { called = true; "msg" }
+        logger.debug {
+            called = true
+            "msg"
+        }
 
         // Then
         assertEquals(true, called)
@@ -139,7 +154,10 @@ class SdkLoggerTest {
         var called = false
 
         // When
-        logger.debug { called = true; "msg" }
+        logger.debug {
+            called = true
+            "msg"
+        }
 
         // Then
         assertEquals(false, called)
@@ -175,6 +193,9 @@ class SdkLoggerTest {
 
         // Then
         assertEquals(1, recorder.entries.size)
-        assertEquals(RecordingOfflineLogger.Entry(OfflineLogLevel.WARNING, "explicit"), recorder.entries[0])
+        assertEquals(
+            RecordingOfflineLogger.Entry(OfflineLogLevel.WARNING, "explicit"),
+            recorder.entries[0],
+        )
     }
 }

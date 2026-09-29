@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
@@ -8,11 +10,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.toByteArray
-import kotlinx.coroutines.async
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.Path
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -21,6 +18,11 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.Path
+import okio.SYSTEM
 
 /**
  * An object path can never reach a file outside the storage cache.
@@ -41,7 +43,9 @@ class StoragePathContainmentTest {
 
     @BeforeTest
     fun setUp() {
-        root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-containment-${Random.nextLong().toULong()}"
+        root =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-containment-${Random.nextLong().toULong()}"
         dataDirectory = root / "data"
         sentinel = root / SENTINEL_NAME
         FileSystem.SYSTEM.createDirectories(dataDirectory)
@@ -55,11 +59,16 @@ class StoragePathContainmentTest {
         FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)
     }
 
-    private fun bucket() = newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
+    private fun bucket() =
+        newTestBucketApi(delegate = delegate, baseDirectory = dataDirectory, store = store)
 
     private fun assertNothingEscaped() {
         assertTrue(FileSystem.SYSTEM.exists(sentinel), "the file outside the cache was deleted")
-        assertEquals(SENTINEL_CONTENT, FileSystem.SYSTEM.read(sentinel) { readUtf8() }, "the file outside the cache was overwritten")
+        assertEquals(
+            SENTINEL_CONTENT,
+            FileSystem.SYSTEM.read(sentinel) { readUtf8() },
+            "the file outside the cache was overwritten",
+        )
         assertEquals(
             setOf("data", SENTINEL_NAME),
             FileSystem.SYSTEM.list(root).map { it.name }.toSet(),
@@ -69,7 +78,7 @@ class StoragePathContainmentTest {
 
     private suspend fun primeCache(path: String) {
         delegate.onDownload = { "cached".encodeToByteArray() }
-        bucket().downloadAuthenticated(path) { }
+        bucket().downloadAuthenticated(path) {}
     }
 
     @Test
@@ -80,7 +89,7 @@ class StoragePathContainmentTest {
         delegate.onDownload = { throw notFoundRestException() }
 
         // When
-        assertFailsWith<Exception> { bucket().downloadAuthenticated(CLIMBING_PATH) { } }
+        assertFailsWith<Exception> { bucket().downloadAuthenticated(CLIMBING_PATH) {} }
 
         // Then
         assertNothingEscaped()
@@ -154,7 +163,7 @@ class StoragePathContainmentTest {
         delegate.onDownload = { "escaped".encodeToByteArray() }
 
         // When
-        val bytes = bucket().downloadAuthenticated("../../../escaped.txt") { }
+        val bytes = bucket().downloadAuthenticated("../../../escaped.txt") {}
 
         // Then — the caller still gets the bytes; they are just not cached
         assertContentEquals("escaped".encodeToByteArray(), bytes)
@@ -168,7 +177,7 @@ class StoragePathContainmentTest {
         val absolute = "/" + (root / "absolute.txt").toString()
 
         // When
-        val bytes = bucket().downloadAuthenticated(absolute) { }
+        val bytes = bucket().downloadAuthenticated(absolute) {}
 
         // Then
         assertContentEquals("escaped".encodeToByteArray(), bytes)
@@ -180,27 +189,30 @@ class StoragePathContainmentTest {
         // Given — a leading slash, an empty segment, a trailing slash, dot segments, and NUL and
         // other control characters
         delegate.onDownload = { "bytes".encodeToByteArray() }
-        val uncacheable = listOf(
-            "/leading.txt",
-            "a//b.txt",
-            "folder/",
-            "./here.txt",
-            "a/./b.txt",
-            "a/../b.txt",
-            "nul\u0000.txt",
-            "line\nbreak.txt",
-            "tab\t.txt",
-            "delete\u007F.txt",
-        )
+        val uncacheable =
+            listOf(
+                "/leading.txt",
+                "a//b.txt",
+                "folder/",
+                "./here.txt",
+                "a/./b.txt",
+                "a/../b.txt",
+                "nul\u0000.txt",
+                "line\nbreak.txt",
+                "tab\t.txt",
+                "delete\u007F.txt",
+            )
 
         // When
-        val results = uncacheable.map { path -> bucket().downloadAuthenticated(path) { } }
+        val results = uncacheable.map { path -> bucket().downloadAuthenticated(path) {} }
 
         // Then — every download returned its bytes and nothing was written anywhere
         results.forEach { bytes -> assertContentEquals("bytes".encodeToByteArray(), bytes) }
         assertEquals(
             emptyList(),
-            FileSystem.SYSTEM.listRecursively(dataDirectory).filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.toList(),
+            FileSystem.SYSTEM.listRecursively(dataDirectory)
+                .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
+                .toList(),
         )
         assertNothingEscaped()
     }
@@ -208,11 +220,17 @@ class StoragePathContainmentTest {
     @Test
     fun a_cache_row_that_points_outside_the_cache_is_never_followed() = runTest {
         // Given — a row whose recorded local path is the sentinel (a tampered or foreign database)
-        store.addStorage(bucketId = BUCKET, path = "tampered.txt", file = sentinel, size = 7, eTag = null)
+        store.addStorage(
+            bucketId = BUCKET,
+            path = "tampered.txt",
+            file = sentinel,
+            size = 7,
+            eTag = null,
+        )
         delegate.onDownload = { throw notFoundRestException() }
 
         // When — the not-found download evicts the row's file
-        assertFailsWith<Exception> { bucket().downloadAuthenticated("tampered.txt") { } }
+        assertFailsWith<Exception> { bucket().downloadAuthenticated("tampered.txt") {} }
 
         // Then
         assertNothingEscaped()
@@ -236,24 +254,36 @@ class StoragePathContainmentTest {
         delegate.onDownload = { "EVIL".encodeToByteArray() }
 
         // When
-        val bytes = bucket().downloadAuthenticated("link/victim.txt") { }
+        val bytes = bucket().downloadAuthenticated("link/victim.txt") {}
 
         // Then — the caller still gets its bytes; the file outside is untouched
         assertContentEquals("EVIL".encodeToByteArray(), bytes)
-        assertEquals(SENTINEL_CONTENT, FileSystem.SYSTEM.read(outside / "victim.txt") { readUtf8() })
+        assertEquals(
+            SENTINEL_CONTENT,
+            FileSystem.SYSTEM.read(outside / "victim.txt") { readUtf8() },
+        )
     }
 
     @Test
     fun a_delete_never_follows_a_symlink_out_of_the_cache() = runTest {
         // Given — a row for the object, as a download before the link appeared would have left
         val outside = symlinkInsideTheCache()
-        store.addStorage(BUCKET, "link/victim.txt", dataDirectory / "storage" / BUCKET / "link" / "victim.txt", 8, null)
+        store.addStorage(
+            BUCKET,
+            "link/victim.txt",
+            dataDirectory / "storage" / BUCKET / "link" / "victim.txt",
+            8,
+            null,
+        )
 
         // When
         bucket().delete(listOf("link/victim.txt"))
 
         // Then
-        assertTrue(FileSystem.SYSTEM.exists(outside / "victim.txt"), "a delete followed a symlink out of the cache")
+        assertTrue(
+            FileSystem.SYSTEM.exists(outside / "victim.txt"),
+            "a delete followed a symlink out of the cache",
+        )
     }
 
     @Test
@@ -266,33 +296,38 @@ class StoragePathContainmentTest {
         cache.clear { store.clearAll() }
 
         // Then
-        assertTrue(FileSystem.SYSTEM.exists(outside / "victim.txt"), "clearing followed a symlink out of the cache")
+        assertTrue(
+            FileSystem.SYSTEM.exists(outside / "victim.txt"),
+            "clearing followed a symlink out of the cache",
+        )
     }
 
     @Test
     fun encoded_and_lookalike_climbs_stay_inside_the_bucket_directory() = runTest {
         // Given — percent-encoded dots and slashes, fullwidth and other Unicode lookalikes
-        val paths = listOf(
-            "%2e%2e/%2e%2e/%2e%2e/sentinel.txt",
-            "%2E%2E%2F%2E%2E%2F%2E%2E%2Fsentinel.txt",
-            "\uFF0E\uFF0E/\uFF0E\uFF0E/\uFF0E\uFF0E/sentinel.txt",
-            "\uFF0E\uFF0E\uFF0F\uFF0E\uFF0E\uFF0Fsentinel.txt",
-            "\u2024\u2024/\u2024\u2024/sentinel.txt",
-            "\uFE52\uFE52/\uFE52\uFE52/sentinel.txt",
-            ".\u0307./x.txt",
-            "..\u200B/..\u200B/sentinel.txt",
-            "\u2025/\u2025/sentinel.txt",
-            "..%00/x.txt",
-        )
+        val paths =
+            listOf(
+                "%2e%2e/%2e%2e/%2e%2e/sentinel.txt",
+                "%2E%2E%2F%2E%2E%2F%2E%2E%2Fsentinel.txt",
+                "\uFF0E\uFF0E/\uFF0E\uFF0E/\uFF0E\uFF0E/sentinel.txt",
+                "\uFF0E\uFF0E\uFF0F\uFF0E\uFF0E\uFF0Fsentinel.txt",
+                "\u2024\u2024/\u2024\u2024/sentinel.txt",
+                "\uFE52\uFE52/\uFE52\uFE52/sentinel.txt",
+                ".\u0307./x.txt",
+                "..\u200B/..\u200B/sentinel.txt",
+                "\u2025/\u2025/sentinel.txt",
+                "..%00/x.txt",
+            )
         delegate.onDownload = { "EVIL".encodeToByteArray() }
 
         // When
-        paths.forEach { path -> bucket().downloadAuthenticated(path) { } }
+        paths.forEach { path -> bucket().downloadAuthenticated(path) {} }
 
         // Then — one file per path, every one inside the cache, nothing escaped
-        val written = FileSystem.SYSTEM.listRecursively(dataDirectory)
-            .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
-            .toList()
+        val written =
+            FileSystem.SYSTEM.listRecursively(dataDirectory)
+                .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
+                .toList()
         assertEquals(paths.size, written.size, "two lookalike paths shared one file")
         assertTrue(written.all { it.isStrictlyInside(dataDirectory) })
         assertNothingEscaped()
@@ -301,22 +336,33 @@ class StoragePathContainmentTest {
     @Test
     fun refused_paths_write_nothing_through_either_download() = runTest {
         // Given
-        val refused = listOf("../escape.txt", "/abs.txt", "a/../b.txt", "a//b.txt", "a\\b.txt", "x/./y.txt", "nul\u0000.txt")
+        val refused =
+            listOf(
+                "../escape.txt",
+                "/abs.txt",
+                "a/../b.txt",
+                "a//b.txt",
+                "a\\b.txt",
+                "x/./y.txt",
+                "nul\u0000.txt",
+            )
         delegate.onDownload = { "BYTES".encodeToByteArray() }
 
         // When — the byte-array and the channel downloads
         refused.forEach { path ->
-            assertEquals("BYTES", bucket().downloadAuthenticated(path) { }.decodeToString())
+            assertEquals("BYTES", bucket().downloadAuthenticated(path) {}.decodeToString())
             val channel = ByteChannel()
             val reader = async { channel.toByteArray() }
-            bucket().downloadAuthenticated(path, channel) { }
+            bucket().downloadAuthenticated(path, channel) {}
             assertEquals("BYTES", reader.await().decodeToString())
         }
 
         // Then — no file anywhere and no row
         assertEquals(
             emptyList(),
-            FileSystem.SYSTEM.listRecursively(dataDirectory).filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.toList(),
+            FileSystem.SYSTEM.listRecursively(dataDirectory)
+                .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
+                .toList(),
         )
         assertTrue(store.allStorageRows().isEmpty())
         assertNothingEscaped()
@@ -327,7 +373,9 @@ class StoragePathContainmentTest {
         const val SENTINEL_NAME = "sentinel.txt"
         const val SENTINEL_CONTENT = "keep me"
 
-        /** From `<data>/storage/<bucket>/`, three levels up is the directory holding the sentinel. */
+        /**
+         * From `<data>/storage/<bucket>/`, three levels up is the directory holding the sentinel.
+         */
         const val CLIMBING_PATH = "../../../$SENTINEL_NAME"
     }
 }

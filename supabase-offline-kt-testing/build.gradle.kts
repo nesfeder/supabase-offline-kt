@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -18,7 +20,7 @@ kotlin {
         }
 
         // Runs commonTest on the JVM for the Android target.
-        withHostTest { }
+        withHostTest {}
     }
 
     iosArm64()

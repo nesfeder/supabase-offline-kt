@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.testdoubles
@@ -12,13 +14,13 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.io.IOException
-import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * One server answering PostgREST and Storage, for tests that drive a whole client: every reply and
@@ -56,7 +58,11 @@ internal class RecordingBackendServer(val marker: String) {
                 respond(
                     content = "an avatar for $marker".encodeToByteArray(),
                     status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, ContentType.Application.OctetStream.toString()),
+                    headers =
+                        headersOf(
+                            HttpHeaders.ContentType,
+                            ContentType.Application.OctetStream.toString(),
+                        ),
                 )
             }
             request.url.encodedPath.startsWith("/rest/v1/") -> {
@@ -65,7 +71,11 @@ internal class RecordingBackendServer(val marker: String) {
                 restArrived.update { count -> count + 1 }
                 restHold.value?.await()
                 if (request.method == HttpMethod.Get) {
-                    respond("""[{"id":1,"email":"$marker@example.com","bio":"${"lorem ".repeat(40)}"}]""", HttpStatusCode.OK, json)
+                    respond(
+                        """[{"id":1,"email":"$marker@example.com","bio":"${"lorem ".repeat(40)}"}]""",
+                        HttpStatusCode.OK,
+                        json,
+                    )
                 } else {
                     respond("[]", HttpStatusCode.OK, json)
                 }
@@ -75,8 +85,9 @@ internal class RecordingBackendServer(val marker: String) {
     }
 
     /** A supabase-kt client with PostgREST and Storage whose requests reach this server. */
-    fun supabaseClient(): SupabaseClient = newTestSupabaseClient(engine = engine) {
-        install(Postgrest) { maxRetries = 0 }
-        install(Storage) { resumable { cache = FakeResumableCache() } }
-    }
+    fun supabaseClient(): SupabaseClient =
+        newTestSupabaseClient(engine = engine) {
+            install(Postgrest) { maxRetries = 0 }
+            install(Storage) { resumable { cache = FakeResumableCache() } }
+        }
 }

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import android.net.Uri
@@ -21,8 +23,8 @@ public suspend fun BucketApi.ensureLocalFile(
 }
 
 /**
- * The cached copy of [objectPath] as a `file:` [Uri], downloading it first when none is cached.
- * See [ensureLocalFile].
+ * The cached copy of [objectPath] as a `file:` [Uri], downloading it first when none is cached. See
+ * [ensureLocalFile].
  *
  * @param objectPath the object path within this bucket.
  * @param isPublic whether to download through the public URL rather than the authenticated one.

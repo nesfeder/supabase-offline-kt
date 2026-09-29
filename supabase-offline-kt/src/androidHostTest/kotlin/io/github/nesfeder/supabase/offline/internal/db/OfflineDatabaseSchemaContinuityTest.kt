@@ -1,35 +1,41 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import java.io.File
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.io.File
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
  * Pins the exported Room schema that existing installs are on.
  *
  * Every device that ran the engine before it moved here holds `supabase_offline.db` at schema
- * version 2 with identity hash `5a519d822fb8c3ead14608102c6846d9`, and that file holds users' unsent
- * writes. Any change to a table, column, index or the version number changes the hash, and Room
- * then takes the destructive fallback on the device — deleting those writes. The exported schema is
- * the record of what the build compiles; these cases fail the build if it drifts.
+ * version 2 with identity hash `5a519d822fb8c3ead14608102c6846d9`, and that file holds users'
+ * unsent writes. Any change to a table, column, index or the version number changes the hash, and
+ * Room then takes the destructive fallback on the device — deleting those writes. The exported
+ * schema is the record of what the build compiles; these cases fail the build if it drifts.
  *
  * Reads the checked-in `schemas/` directory (its location is passed in by the build), so it runs on
  * the JVM host only.
  */
 class OfflineDatabaseSchemaContinuityTest {
 
-    /** The build passes the schemas directory; the relative fallback serves a run from the module directory. */
-    private val schemaDirectory = File(
-        System.getProperty("supabase.offline.schemaDirectory") ?: "schemas",
-        "io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase",
-    )
+    /**
+     * The build passes the schemas directory; the relative fallback serves a run from the module
+     * directory.
+     */
+    private val schemaDirectory =
+        File(
+            System.getProperty("supabase.offline.schemaDirectory") ?: "schemas",
+            "io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase",
+        )
 
     private fun exportedSchema(version: Int): JsonObject {
         val file = File(schemaDirectory, "$version.json")
@@ -58,7 +64,10 @@ class OfflineDatabaseSchemaContinuityTest {
 
         // Then — raising it is a deliberate schema change that needs its own migration
         assertEquals(ShippedDatabaseFixture.VERSION.toInt(), current)
-        assertTrue(File(schemaDirectory, "$current.json").isFile, "the current version must be exported")
+        assertTrue(
+            File(schemaDirectory, "$current.json").isFile,
+            "the current version must be exported",
+        )
     }
 
     @Test
@@ -103,20 +112,31 @@ class OfflineDatabaseSchemaContinuityTest {
         )
     }
 
-    /** Every statement Room runs to create [schema]: each table, its indices, then setup queries. */
+    /**
+     * Every statement Room runs to create [schema]: each table, its indices, then setup queries.
+     */
     private fun creationStatements(schema: JsonObject): List<String> = buildList {
         schema.getValue("entities").jsonArray.forEach { element ->
             val entity = element.jsonObject
             val tableName = entity.getValue("tableName").jsonPrimitive.content
             add(entity.getValue("createSql").jsonPrimitive.content.withTableName(tableName))
             entity["indices"]?.jsonArray?.forEach { index ->
-                add(index.jsonObject.getValue("createSql").jsonPrimitive.content.withTableName(tableName))
+                add(
+                    index.jsonObject
+                        .getValue("createSql")
+                        .jsonPrimitive
+                        .content
+                        .withTableName(tableName)
+                )
             }
         }
-        schema.getValue("setupQueries").jsonArray.forEach { query -> add(query.jsonPrimitive.content) }
+        schema.getValue("setupQueries").jsonArray.forEach { query ->
+            add(query.jsonPrimitive.content)
+        }
     }
 
-    private fun String.withTableName(tableName: String): String = replace(TABLE_NAME_PLACEHOLDER, tableName)
+    private fun String.withTableName(tableName: String): String =
+        replace(TABLE_NAME_PLACEHOLDER, tableName)
 
     private companion object {
         const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"

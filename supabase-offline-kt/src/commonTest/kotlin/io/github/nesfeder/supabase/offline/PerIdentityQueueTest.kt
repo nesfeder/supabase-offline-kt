@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
@@ -7,6 +9,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,8 +18,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * The queue is kept per identity: each write records who made it, a pass replays only the current
@@ -27,19 +29,26 @@ class PerIdentityQueueTest {
     private val store = newTestOfflineStore()
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
-    private val builder = OfflinePostgrestQueryBuilderImpl(
-        delegate = server.supabaseClient().postgrest.from(TABLE),
-        store = store,
-        queueIdentity = { session },
-    )
-    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
+    private val builder =
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = store,
+            queueIdentity = { session },
+        )
+    private val syncer =
+        MutationQueueReplayer(
+            store = store,
+            supabase = server.supabaseClient(),
+            currentIdentity = { session },
+        )
 
     private suspend fun writeOffline(title: String): MutationOutcome {
         server.answer = { connectivityFailure() }
         return builder.insertJson(rows("""[{"title":"$title"}]"""))
     }
 
-    private fun sentBodies(): List<String> = server.requests.filter { it.method == "POST" }.map { it.body }
+    private fun sentBodies(): List<String> =
+        server.requests.filter { it.method == "POST" }.map { it.body }
 
     @Test
     fun a_signed_in_user_can_queue_while_anonymous_writes_are_held() = runTest {
@@ -70,7 +79,10 @@ class PerIdentityQueueTest {
         // Then — only A's write went out; the anonymous one waits
         assertEquals(1, report.syncedCount)
         assertEquals(listOf("""[{"title":"A's note"}]"""), sentBodies().drop(sentBefore))
-        assertEquals(listOf("""[{"title":"anonymous note"}]"""), store.allPendingMutations().map { it.bodyJson })
+        assertEquals(
+            listOf("""[{"title":"anonymous note"}]"""),
+            store.allPendingMutations().map { it.bodyJson },
+        )
     }
 
     @Test
@@ -138,8 +150,14 @@ class PerIdentityQueueTest {
         assertEquals(1, countsAsA)
         assertEquals(1, store.pendingMutationCountFlow().first())
         assertEquals(1, store.pendingMutationCount())
-        assertEquals(listOf("""[{"title":"anonymous note"}]"""), store.pendingMutationsFlow(null).first().map { it.bodyJson })
-        assertEquals("""[{"title":"anonymous note"}]""", store.cachePayloadWithOverlayFlow(TABLE, TABLE).first())
+        assertEquals(
+            listOf("""[{"title":"anonymous note"}]"""),
+            store.pendingMutationsFlow(null).first().map { it.bodyJson },
+        )
+        assertEquals(
+            """[{"title":"anonymous note"}]""",
+            store.cachePayloadWithOverlayFlow(TABLE, TABLE).first(),
+        )
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

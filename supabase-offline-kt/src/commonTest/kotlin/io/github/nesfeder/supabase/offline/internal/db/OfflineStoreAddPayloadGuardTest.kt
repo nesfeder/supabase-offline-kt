@@ -1,15 +1,17 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import kotlinx.coroutines.test.runTest
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.test.runTest
 
 /**
  * Tests for the empty-clobber guard in [OfflineStore.addPayload]: **an unattributed empty never
@@ -20,16 +22,16 @@ import kotlin.time.ExperimentalTime
  * usable JWT, RLS filters every row, and the server returns `200 OK` with body `[]`. Written over
  * previously-cached good data, that response makes every reactive `selectAsFlow` observer re-emit
  * an empty list — a loading placeholder that never resolves, or a list screen that goes blank —
- * until the subscription is recreated. Written into a *cold* slot it is the same
- * bug one step earlier: nothing is overwritten, but the phantom empty becomes the answer every
- * later cache-first read is served. Both are refused, along with an empty over an already-empty
- * slot (which would only refresh the timestamp keeping the phantom alive).
+ * until the subscription is recreated. Written into a *cold* slot it is the same bug one step
+ * earlier: nothing is overwritten, but the phantom empty becomes the answer every later cache-first
+ * read is served. Both are refused, along with an empty over an already-empty slot (which would
+ * only refresh the timestamp keeping the phantom alive).
  *
- * The guard is bypassed by `authoritativeEmpty = true` — the resolver's signal that the
- * producing request went out with an authenticated session, so an empty result is the
- * server's real answer (every matching row deleted, e.g. from another device, or the user
- * genuinely has no rows). An attributed empty writes into a cold slot too, which is how a
- * legitimately-empty first read still seeds the cache for collectors.
+ * The guard is bypassed by `authoritativeEmpty = true` — the resolver's signal that the producing
+ * request went out with an authenticated session, so an empty result is the server's real answer
+ * (every matching row deleted, e.g. from another device, or the user genuinely has no rows). An
+ * attributed empty writes into a cold slot too, which is how a legitimately-empty first read still
+ * seeds the cache for collectors.
  */
 class OfflineStoreAddPayloadGuardTest {
 
@@ -164,12 +166,13 @@ class OfflineStoreAddPayloadGuardTest {
         val store = buildStore(objectDao)
 
         // When — the request carried an authenticated session and the user genuinely has no rows
-        val outcome = store.addPayload(
-            table = "attachments",
-            signature = "sig-A",
-            payload = "[]",
-            authoritativeEmpty = true,
-        )
+        val outcome =
+            store.addPayload(
+                table = "attachments",
+                signature = "sig-A",
+                payload = "[]",
+                authoritativeEmpty = true,
+            )
 
         // Then — the attributed empty seeds the cold slot, so collectors observe an empty list
         // instead of waiting forever for a row that is never coming. This is the half of the
@@ -188,12 +191,13 @@ class OfflineStoreAddPayloadGuardTest {
         val store = buildStore(objectDao, nowMillis = { 5_000L })
 
         // When — an auth-ready refresh confirms the table is still empty
-        val outcome = store.addPayload(
-            table = "ratings",
-            signature = "sig-A",
-            payload = "[]",
-            authoritativeEmpty = true,
-        )
+        val outcome =
+            store.addPayload(
+                table = "ratings",
+                signature = "sig-A",
+                payload = "[]",
+                authoritativeEmpty = true,
+            )
 
         // Then — the row is rewritten so `updatedAt` moves forward. The attributed path must keep
         // doing this even though the unattributed one now refuses it: a cache-duration read that

@@ -1,7 +1,17 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.RefreshState
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,14 +26,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.IOException
-import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.random.Random
-import kotlin.test.AfterTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * The shared refresh flows: a failure in one reaches its collectors instead of the process, and a
@@ -37,9 +39,12 @@ class RefreshCoordinatorTest {
 
     private val scopeJob = SupervisorJob()
     private val uncaught = AtomicInt(0)
-    private val scope = CoroutineScope(
-        scopeJob + Dispatchers.Default + CoroutineExceptionHandler { _, _ -> uncaught.addAndFetch(1) },
-    )
+    private val scope =
+        CoroutineScope(
+            scopeJob +
+                Dispatchers.Default +
+                CoroutineExceptionHandler { _, _ -> uncaught.addAndFetch(1) }
+        )
 
     @AfterTest
     fun tearDown() {
@@ -50,14 +55,16 @@ class RefreshCoordinatorTest {
     fun a_failure_in_the_shared_upstream_reaches_its_collector_and_not_the_scope() = runTest {
         // Given — the cache read under a shared refresh fails, as a malformed database does
         val coordinator = RefreshCoordinator(scope)
-        val shared = coordinator.sharedReadFlow(TABLE, "todos?select=*") {
-            flow<OfflineReadResult> { throw IOException("database disk image is malformed") }
-        }
+        val shared =
+            coordinator.sharedReadFlow(TABLE, "todos?select=*") {
+                flow<OfflineReadResult> { throw IOException("database disk image is malformed") }
+            }
 
         // When
-        val thrown = withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) { assertFailsWith<IOException> { shared.first() } }
-        }
+        val thrown =
+            withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) { assertFailsWith<IOException> { shared.first() } }
+            }
 
         // Then — the collector hears about it; nothing escaped to the scope's handler
         assertEquals("database disk image is malformed", thrown.message)
@@ -79,14 +86,19 @@ class RefreshCoordinatorTest {
         }
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) {
-                assertFailsWith<IOException> { coordinator.sharedReadFlow(TABLE, "todos?select=*", upstream).first() }
+                assertFailsWith<IOException> {
+                    coordinator.sharedReadFlow(TABLE, "todos?select=*", upstream).first()
+                }
             }
         }
 
         // When
-        val second = withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) { coordinator.sharedReadFlow(TABLE, "todos?select=*", upstream).first() }
-        }
+        val second =
+            withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) {
+                    coordinator.sharedReadFlow(TABLE, "todos?select=*", upstream).first()
+                }
+            }
 
         // Then
         assertEquals(RESULT, second)
@@ -100,12 +112,13 @@ class RefreshCoordinatorTest {
 
         // When
         repeat(SIGNATURES) { index ->
-            val shared = coordinator.sharedReadFlow(TABLE, "todos?title=ilike.*$index*") {
-                flow {
-                    emit(RESULT)
-                    awaitCancellation()
+            val shared =
+                coordinator.sharedReadFlow(TABLE, "todos?title=ilike.*$index*") {
+                    flow {
+                        emit(RESULT)
+                        awaitCancellation()
+                    }
                 }
-            }
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { shared.first() } }
         }
 
@@ -133,16 +146,21 @@ class RefreshCoordinatorTest {
         // When — 400 collectors on 4 signatures join and leave concurrently, each followed by a
         // one-shot reader racing the removal of the entry it just left
         withContext(Dispatchers.Default) {
-            val collectors = List(400) { index ->
-                launch {
-                    delay(Random.nextLong(0, 5))
-                    val signature = "$TABLE?sig=${index % 4}"
-                    val collector = launch { coordinator.sharedReadFlow(TABLE, signature, upstream).collect { } }
-                    delay(Random.nextLong(0, 5))
-                    collector.cancelAndJoin()
-                    withTimeout(5.seconds) { coordinator.sharedReadFlow(TABLE, signature, upstream).first() }
+            val collectors =
+                List(400) { index ->
+                    launch {
+                        delay(Random.nextLong(0, 5))
+                        val signature = "$TABLE?sig=${index % 4}"
+                        val collector = launch {
+                            coordinator.sharedReadFlow(TABLE, signature, upstream).collect {}
+                        }
+                        delay(Random.nextLong(0, 5))
+                        collector.cancelAndJoin()
+                        withTimeout(5.seconds) {
+                            coordinator.sharedReadFlow(TABLE, signature, upstream).first()
+                        }
+                    }
                 }
-            }
             collectors.forEach { it.join() }
             withTimeout(5.seconds) { while (scopeJob.children.any()) delay(10) }
         }

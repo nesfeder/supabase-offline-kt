@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import android.content.Context
@@ -13,8 +15,8 @@ import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirector
  * Creates the offline client for Android over [supabase]. Its database is in the app's database
  * directory (`supabase_offline.db`) and downloaded files under `<filesDir>/supabase_offline`, or
  * both in [SupabaseOfflineConfig.offlineStoragePath] when that is set. Earlier versions kept the
- * database in the default directory whatever the configuration said; the first client created
- * with a configured directory moves it there, unsent writes and all.
+ * database in the default directory whatever the configuration said; the first client created with
+ * a configured directory moves it there, unsent writes and all.
  *
  * Create one client per database and keep it: while it is open, creating another on the same
  * database throws. [SupabaseOfflineClient.close] releases it.
@@ -41,6 +43,7 @@ import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirector
  *     </device-transfer>
  * </data-extraction-rules>
  * ```
+ *
  * and the same four `<exclude>` lines in a `<full-backup-content>` file for Android 11 and earlier
  * (`android:fullBackupContent`). With [SupabaseOfflineConfig.offlineStoragePath] set, exclude that
  * directory instead.
@@ -62,9 +65,12 @@ public fun createSupabaseOfflineClient(
     return openOfflineClient(
         supabase = supabase,
         config = config,
-        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
+        databasePath =
+            configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
         dataDirectory = configuredDirectory ?: PlatformBaseDirectory(context).path,
-        openDatabase = { databasePath -> getRoomDatabase(getDatabaseBuilder(context, databasePath.toString())) },
+        openDatabase = { databasePath ->
+            getRoomDatabase(getDatabaseBuilder(context, databasePath.toString()))
+        },
         defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
     )
 }

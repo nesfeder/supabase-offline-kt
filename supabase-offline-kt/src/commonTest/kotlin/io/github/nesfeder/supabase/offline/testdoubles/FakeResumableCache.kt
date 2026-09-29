@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.storage.resumable.CachePair
@@ -28,5 +30,7 @@ internal class FakeResumableCache : ResumableCache {
         entries.clear()
     }
 
-    override suspend fun entries(): List<CachePair> = entries.map { (fingerprint, entry) -> fingerprint to entry }
+    override suspend fun entries(): List<CachePair> = entries.map { (fingerprint, entry) ->
+        fingerprint to entry
+    }
 }

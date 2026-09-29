@@ -1,21 +1,22 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.util
 
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.HttpRequestBuilder
-import kotlinx.coroutines.CancellationException
-import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CancellationException
+import kotlinx.io.IOException
 
 /**
- * Tests for [httpStatusOrNull], [isPermanentMutationFailure] and
- * [isNetworkOrConnectivityFailure]. We pay special attention to exercising all
- * logical branches, including cause-chain handling.
+ * Tests for [httpStatusOrNull], [isPermanentMutationFailure] and [isNetworkOrConnectivityFailure].
+ * We pay special attention to exercising all logical branches, including cause-chain handling.
  */
 class ThrowableExtensionsTest {
 
@@ -131,15 +132,16 @@ class ThrowableExtensionsTest {
 
     @Test
     fun isPermanentMutationFailureStatus_false_forTransient4xx() {
-        // Given / When / Then — 408 Request Timeout & 429 Too Many Requests are treated as transient
+        // Given / When / Then — 408 Request Timeout & 429 Too Many Requests are treated as
+        // transient
         assertFalse(408.isPermanentMutationFailureStatus())
         assertFalse(429.isPermanentMutationFailureStatus())
     }
 
     /**
      * Inverted from the previous standalone engine, which asserted 401 was permanent. The engine
-     * now keeps a queued write through a 401: right after reconnect the access token can still
-     * be expired while supabase-kt's refresh is in flight, and dropping the write would lose it.
+     * now keeps a queued write through a 401: right after reconnect the access token can still be
+     * expired while supabase-kt's refresh is in flight, and dropping the write would lose it.
      */
     @Test
     fun isPermanentMutationFailureStatus_false_for401Unauthorized() {

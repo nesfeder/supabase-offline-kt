@@ -1,16 +1,18 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.internal.db.MutationOperation as StoredOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
+import kotlin.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlin.time.Instant
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation as StoredOperation
 
 /**
  * The [MutationOperation] a stored operation string names.
@@ -18,13 +20,14 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation as Stor
  * @param stored A `mutation_cache.operation` value.
  * @return The operation, or `null` for a value no build of the engine writes.
  */
-internal fun mutationOperationOf(stored: String): MutationOperation? = when (stored) {
-    StoredOperation.INSERT -> MutationOperation.Insert
-    StoredOperation.UPSERT -> MutationOperation.Upsert
-    StoredOperation.UPDATE -> MutationOperation.Update
-    StoredOperation.DELETE -> MutationOperation.Delete
-    else -> null
-}
+internal fun mutationOperationOf(stored: String): MutationOperation? =
+    when (stored) {
+        StoredOperation.INSERT -> MutationOperation.Insert
+        StoredOperation.UPSERT -> MutationOperation.Upsert
+        StoredOperation.UPDATE -> MutationOperation.Update
+        StoredOperation.DELETE -> MutationOperation.Delete
+        else -> null
+    }
 
 /**
  * This mutation row as a [PendingMutation].
@@ -53,7 +56,10 @@ internal fun MutationRow.toPendingMutation(json: Json, primaryKeys: PrimaryKeys)
  * @param primaryKeys Where the table's key columns come from, for [RejectedMutation.rowKeys].
  * @return The rejected mutation. A stored operation no build writes is reported as an update.
  */
-internal fun StoredRejection.toRejectedMutation(json: Json, primaryKeys: PrimaryKeys): RejectedMutation {
+internal fun StoredRejection.toRejectedMutation(
+    json: Json,
+    primaryKeys: PrimaryKeys,
+): RejectedMutation {
     val operation = mutationOperationOf(operation) ?: MutationOperation.Update
     val body = bodyOf(operation, bodyJson, json)
     return RejectedMutation(
@@ -63,15 +69,16 @@ internal fun StoredRejection.toRejectedMutation(json: Json, primaryKeys: Primary
         createdAt = Instant.fromEpochMilliseconds(createdAtMs),
         rowKeys = rowKeysOf(body, filterJson, primaryKeys.of(table), json),
         body = body,
-        serverError = serverError?.let { stored ->
-            ServerError(
-                status = stored.status,
-                code = stored.code,
-                message = stored.message,
-                details = stored.details,
-                hint = stored.hint,
-            )
-        },
+        serverError =
+            serverError?.let { stored ->
+                ServerError(
+                    status = stored.status,
+                    code = stored.code,
+                    message = stored.message,
+                    details = stored.details,
+                    hint = stored.hint,
+                )
+            },
         message = message,
         rejectedAt = Instant.fromEpochMilliseconds(rejectedAtMs),
         bodyOmittedChars = bodyOmittedChars,
@@ -98,18 +105,20 @@ private fun rowKeysOf(
     keyColumns: List<String>,
     json: Json,
 ): List<JsonObject> {
-    val fromBody = when (body) {
-        is JsonArray -> body.mapNotNull { row -> primaryKeyOf(row, keyColumns) }
-        else -> emptyList()
-    }
+    val fromBody =
+        when (body) {
+            is JsonArray -> body.mapNotNull { row -> primaryKeyOf(row, keyColumns) }
+            else -> emptyList()
+        }
     if (fromBody.isNotEmpty()) return fromBody
 
     val filter = FilterEngine.decodeOrNull(filterJson, json) ?: return emptyList()
     if (filter.mode != FilterDescriptor.Mode.AND) return emptyList()
     val keyValues = keyColumns.associateWith { column ->
-        val condition = filter.conditions.singleOrNull { condition ->
-            condition.column == column && condition.operatorId == EQ_OPERATOR
-        } ?: return emptyList()
+        val condition =
+            filter.conditions.singleOrNull { condition ->
+                condition.column == column && condition.operatorId == EQ_OPERATOR
+            } ?: return emptyList()
         JsonPrimitive(condition.value)
     }
     return listOf(JsonObject(keyValues))

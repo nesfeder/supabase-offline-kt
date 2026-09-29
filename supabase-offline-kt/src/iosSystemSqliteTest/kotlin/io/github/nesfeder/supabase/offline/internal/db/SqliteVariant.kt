@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 /**
@@ -21,5 +23,6 @@ internal object SqliteVariant {
      * @param compileOptions what `PRAGMA compile_options` lists.
      * @return `true` for Apple's system SQLite.
      */
-    fun isExpectedLibrary(compileOptions: Set<String>): Boolean = "OMIT_LOAD_EXTENSION" in compileOptions
+    fun isExpectedLibrary(compileOptions: Set<String>): Boolean =
+        "OMIT_LOAD_EXTENSION" in compileOptions
 }

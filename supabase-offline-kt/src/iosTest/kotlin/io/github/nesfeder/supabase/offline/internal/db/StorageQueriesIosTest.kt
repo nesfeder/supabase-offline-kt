@@ -1,12 +1,14 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.SYSTEM
 
 /**
  * The file cache's storage-row queries against a real database, on this build's SQLite — so they
@@ -14,7 +16,9 @@ import kotlin.test.assertEquals
  */
 class StorageQueriesIosTest {
 
-    private val directory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-storage-queries-${Random.nextLong().toULong()}"
+    private val directory =
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "supabase-offline-storage-queries-${Random.nextLong().toULong()}"
 
     @AfterTest
     fun tearDown() {
@@ -25,14 +29,16 @@ class StorageQueriesIosTest {
     fun the_storage_queries_return_the_same_rows_on_this_sqlite() = runTest {
         // Given
         FileSystem.SYSTEM.createDirectories(directory)
-        val database = getRoomDatabase(getDatabaseBuilder((directory / "supabase_offline.db").toString()))
+        val database =
+            getRoomDatabase(getDatabaseBuilder((directory / "supabase_offline.db").toString()))
 
         // When
-        val results = try {
-            database.runStorageQueries()
-        } finally {
-            database.close()
-        }
+        val results =
+            try {
+                database.runStorageQueries()
+            } finally {
+                database.close()
+            }
 
         // Then
         assertEquals(EXPECTED_STORAGE_QUERY_RESULTS, results)

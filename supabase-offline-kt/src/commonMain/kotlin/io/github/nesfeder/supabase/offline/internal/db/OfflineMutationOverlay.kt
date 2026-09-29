@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMARY_KEY
@@ -13,26 +15,25 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Utilities for overlaying **pending offline mutations** on top of a SELECT
- * response payload.
+ * Utilities for overlaying **pending offline mutations** on top of a SELECT response payload.
  *
- * This is where we make the local cache appear "eventually consistent" with
- * mutations that have been queued while the device is offline.
+ * This is where we make the local cache appear "eventually consistent" with mutations that have
+ * been queued while the device is offline.
  *
  * High-level behaviour
  * --------------------
  * Given:
- *  - [serverJson]: a raw JSON payload from PostgREST `select()` (we assume
- *    it is a JSON array of row objects).
- *  - [pending]: a list of [MutationRow] representing INSERT / UPSERT /
- *    UPDATE / DELETE operations that were queued while offline.
+ * - [serverJson]: a raw JSON payload from PostgREST `select()` (we assume it is a JSON array of row
+ *   objects).
+ * - [pending]: a list of [MutationRow] representing INSERT / UPSERT / UPDATE / DELETE operations
+ *   that were queued while offline.
  *
  * We:
- *  1. Parse the server payload into a mutable list of JSON elements.
- *  2. For each mutation:
+ * 1. Parse the server payload into a mutable list of JSON elements.
+ * 2. For each mutation:
  *     - decode its filter descriptor (if any) via [FilterEngine.decodeOrNull]
  *     - apply an insert / upsert / patch / delete in memory
- *  3. Serialize the modified array back into a JSON string.
+ * 3. Serialize the modified array back into a JSON string.
  *
  * If the payload does not parse, or isn't an array, we return [serverJson] unchanged. A mutation
  * that cannot be applied — its stored body no longer parses, or its filter cannot be evaluated
@@ -42,11 +43,10 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * Note on filters
  * ---------------
- * [MutationRow.filterJson] (when present) is a serialized
- * [FilterDescriptor]. We use [FilterEngine.matches] to decide which rows a
- * mutation applies to. For complex filters we can't faithfully model
- * offline, we fall back to "no matches" so that we **under-apply** rather
- * than silently diverging from server behaviour.
+ * [MutationRow.filterJson] (when present) is a serialized [FilterDescriptor]. We use
+ * [FilterEngine.matches] to decide which rows a mutation applies to. For complex filters we can't
+ * faithfully model offline, we fall back to "no matches" so that we **under-apply** rather than
+ * silently diverging from server behaviour.
  *
  * Note on query visibility
  * ------------------------
@@ -54,8 +54,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * ([targetFilters], a [SignatureFilters]). When the query's signature is exhaustive, a row its
  * WHERE clause excludes is dropped rather than appended — so, e.g., an online INSERT of a `done`
  * row never lands in a cached `status=eq.open` payload. This gate is conservative: a `null` or
- * non-exhaustive [targetFilters] preserves the legacy always-append behavior, so we never hide
- * a row the server would have returned.
+ * non-exhaustive [targetFilters] preserves the legacy always-append behavior, so we never hide a
+ * row the server would have returned.
  */
 internal object OfflineMutationOverlay {
 
@@ -63,8 +63,8 @@ internal object OfflineMutationOverlay {
      * Overlays [pending] onto the payload [serverJson], each mutation on its own copy so one that
      * throws is skipped whole. Returns [serverJson] unchanged when it is not a JSON array.
      *
-     * @param targetFilters The cached query's filters: when exhaustive, appended rows it excludes are
-     *   dropped; `null` appends them all.
+     * @param targetFilters The cached query's filters: when exhaustive, appended rows it excludes
+     *   are dropped; `null` appends them all.
      * @param keyColumns The table's primary key, which an unfiltered UPSERT row merges on.
      * @param appendsOnlyUnseenKeys Whether an INSERT's rows are left out where the payload already
      *   holds their key — for a mutation the server may already hold.
@@ -82,11 +82,12 @@ internal object OfflineMutationOverlay {
         if (pending.isEmpty()) return serverJson
 
         // 1) Parse server payload as JSON array; if it does not parse or is not an array, bail.
-        val array = try {
-            json.parseToJsonElement(serverJson) as? JsonArray
-        } catch (_: IllegalArgumentException) {
-            null
-        } ?: return serverJson
+        val array =
+            try {
+                json.parseToJsonElement(serverJson) as? JsonArray
+            } catch (_: IllegalArgumentException) {
+                null
+            } ?: return serverJson
 
         // Copy rows into a mutable buffer we can modify.
         var rows = array.toMutableList()
@@ -96,7 +97,14 @@ internal object OfflineMutationOverlay {
         pending.forEach { mutation ->
             val working = rows.toMutableList()
             try {
-                applyMutation(json, working, mutation, targetFilters, keyColumns.takeIf { appendsOnlyUnseenKeys(mutation) }, keyColumns)
+                applyMutation(
+                    json,
+                    working,
+                    mutation,
+                    targetFilters,
+                    keyColumns.takeIf { appendsOnlyUnseenKeys(mutation) },
+                    keyColumns,
+                )
                 rows = working
             } catch (failure: Exception) {
                 onMutationFailure(mutation, failure)
@@ -128,11 +136,9 @@ internal object OfflineMutationOverlay {
             MutationOperation.UPSERT ->
                 applyUpsertMutation(json, rows, mutation, descriptor, targetFilters, keyColumns)
 
-            MutationOperation.UPDATE ->
-                applyUpdateMutation(json, rows, mutation, descriptor)
+            MutationOperation.UPDATE -> applyUpdateMutation(json, rows, mutation, descriptor)
 
-            MutationOperation.DELETE ->
-                applyDeleteMutation(rows, descriptor)
+            MutationOperation.DELETE -> applyDeleteMutation(rows, descriptor)
         }
     }
 
@@ -159,7 +165,10 @@ internal object OfflineMutationOverlay {
         keyColumns: List<String>,
     ) {
         when (val bodyElement = json.parseToJsonElement(mutation.bodyJson)) {
-            is JsonArray -> bodyElement.forEach { element -> appendIfAdmitted(rows, element, targetFilters, keyColumns) }
+            is JsonArray ->
+                bodyElement.forEach { element ->
+                    appendIfAdmitted(rows, element, targetFilters, keyColumns)
+                }
             is JsonObject -> appendIfAdmitted(rows, bodyElement, targetFilters, keyColumns)
             else -> Unit
         }
@@ -173,18 +182,18 @@ internal object OfflineMutationOverlay {
      * Apply an UPSERT mutation.
      *
      * Offline we approximate PostgREST behaviour as:
-     *  - If [descriptor] is null: each body row that carries the table's primary key and matches a
-     *    row already in the payload by that key is merged into it (left untouched with
-     *    `ignoreDuplicates`); every other row is appended, as for an INSERT.
-     *  - If [descriptor] matches existing rows:
-     *      - with `ignoreDuplicates` set: leave them untouched (ON CONFLICT DO NOTHING)
-     *      - otherwise: shallow-merge the UPSERT body into each matching row
-     *  - If [descriptor] matches no rows:
-     *      - append the UPSERT body (insert new row)
+     * - If [descriptor] is null: each body row that carries the table's primary key and matches a
+     *   row already in the payload by that key is merged into it (left untouched with
+     *   `ignoreDuplicates`); every other row is appended, as for an INSERT.
+     * - If [descriptor] matches existing rows:
+     *     - with `ignoreDuplicates` set: leave them untouched (ON CONFLICT DO NOTHING)
+     *     - otherwise: shallow-merge the UPSERT body into each matching row
+     * - If [descriptor] matches no rows:
+     *     - append the UPSERT body (insert new row)
      *
      * We only operate on a single row object from the body:
-     *  - if body is an object: use it directly
-     *  - if body is an array: use the first element if it is an object
+     * - if body is an object: use it directly
+     * - if body is an array: use the first element if it is an object
      */
     private fun applyUpsertMutation(
         json: Json,
@@ -198,11 +207,12 @@ internal object OfflineMutationOverlay {
 
         // No target filter → the conflict target is the primary key: merge by key, else append.
         if (descriptor == null) {
-            val bodyRows = when (bodyElement) {
-                is JsonArray -> bodyElement
-                is JsonObject -> listOf(bodyElement)
-                else -> return
-            }
+            val bodyRows =
+                when (bodyElement) {
+                    is JsonArray -> bodyElement
+                    is JsonObject -> listOf(bodyElement)
+                    else -> return
+                }
             bodyRows.forEach { element ->
                 val index = indexOfKey(rows, element, keyColumns)
                 if (index == null) {
@@ -217,11 +227,12 @@ internal object OfflineMutationOverlay {
             return
         }
 
-        val patchObj: JsonObject = when (bodyElement) {
-            is JsonObject -> bodyElement
-            is JsonArray -> bodyElement.firstOrNull() as? JsonObject ?: return
-            else -> return
-        }
+        val patchObj: JsonObject =
+            when (bodyElement) {
+                is JsonObject -> bodyElement
+                is JsonArray -> bodyElement.firstOrNull() as? JsonObject ?: return
+                else -> return
+            }
 
         val indices = matchingIndices(rows, descriptor)
         if (indices.isEmpty()) {
@@ -251,17 +262,17 @@ internal object OfflineMutationOverlay {
     /**
      * Apply an UPDATE mutation.
      *
-     * - If [descriptor] is null: we cannot safely know which rows to touch,
-     *   so we skip this mutation offline.
+     * - If [descriptor] is null: we cannot safely know which rows to touch, so we skip this
+     *   mutation offline.
      * - Otherwise:
-     *   - decode `body` as a JSON object
-     *   - shallow-merge body into every row that matches [descriptor]
+     *     - decode `body` as a JSON object
+     *     - shallow-merge body into every row that matches [descriptor]
      */
     private fun applyUpdateMutation(
         json: Json,
         rows: MutableList<JsonElement>,
         mutation: MutationRow,
-        descriptor: FilterDescriptor?
+        descriptor: FilterDescriptor?,
     ) {
         if (descriptor == null) return
 
@@ -282,13 +293,12 @@ internal object OfflineMutationOverlay {
     /**
      * Apply a DELETE mutation.
      *
-     * - If [descriptor] is null: we don't know which rows to remove, so we
-     *   do nothing offline.
+     * - If [descriptor] is null: we don't know which rows to remove, so we do nothing offline.
      * - Otherwise: remove all rows that match [descriptor].
      */
     private fun applyDeleteMutation(
         rows: MutableList<JsonElement>,
-        descriptor: FilterDescriptor?
+        descriptor: FilterDescriptor?,
     ) {
         if (descriptor == null) return
         val indices = matchingIndices(rows, descriptor)
@@ -311,10 +321,10 @@ internal object OfflineMutationOverlay {
      * evaluate) is always appended, matching the legacy behavior — we drop a row only when we can
      * prove it doesn't belong.
      *
-     * @param rows          The mutable buffer of cached rows.
-     * @param element       The candidate row to append.
+     * @param rows The mutable buffer of cached rows.
+     * @param element The candidate row to append.
      * @param targetFilters Parsed filters of the cached query, or `null` for legacy always-append.
-     * @param keyColumns    The table's primary key; a row whose key is already present is not added.
+     * @param keyColumns The table's primary key; a row whose key is already present is not added.
      */
     private fun appendIfAdmitted(
         rows: MutableList<JsonElement>,
@@ -332,7 +342,11 @@ internal object OfflineMutationOverlay {
      * The index of the row in [rows] with [element]'s primary key, or `null` when [element] carries
      * no whole key or no row has it.
      */
-    private fun indexOfKey(rows: List<JsonElement>, element: JsonElement, keyColumns: List<String>): Int? {
+    private fun indexOfKey(
+        rows: List<JsonElement>,
+        element: JsonElement,
+        keyColumns: List<String>,
+    ): Int? {
         val key = primaryKeyOf(element, keyColumns) ?: return null
         val index = rows.indexOfFirst { existing ->
             val existingKey = primaryKeyOf(existing, keyColumns)
@@ -344,7 +358,9 @@ internal object OfflineMutationOverlay {
     /** Whether two primary keys name the same row, comparing values by their JSON content. */
     private fun sameKey(first: JsonObject, second: JsonObject): Boolean =
         first.keys == second.keys &&
-            first.all { (column, value) -> (value as? JsonPrimitive)?.content == (second[column] as? JsonPrimitive)?.content }
+            first.all { (column, value) ->
+                (value as? JsonPrimitive)?.content == (second[column] as? JsonPrimitive)?.content
+            }
 
     /**
      * Returns the indices of all rows that satisfy [descriptor] according to
@@ -352,7 +368,7 @@ internal object OfflineMutationOverlay {
      */
     private fun matchingIndices(
         rows: List<JsonElement>,
-        descriptor: FilterDescriptor
+        descriptor: FilterDescriptor,
     ): List<Int> {
         val result = mutableListOf<Int>()
         rows.forEachIndexed { index, element ->
@@ -372,7 +388,7 @@ internal object OfflineMutationOverlay {
      */
     private fun mergeObjects(
         base: JsonObject,
-        patch: JsonObject
+        patch: JsonObject,
     ): JsonObject {
         val combined = base.toMutableMap()
         for ((k, v) in patch) {

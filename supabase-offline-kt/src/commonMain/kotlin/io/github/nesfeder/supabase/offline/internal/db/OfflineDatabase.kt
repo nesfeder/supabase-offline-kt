@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.room.ConstructedBy
@@ -11,7 +13,6 @@ import androidx.sqlite.execSQL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 
-
 /**
  * Current schema version of [OfflineDatabase]. Declared here rather than inline so
  * [OFFLINE_DB_MIGRATIONS] can be checked against it — see the migration test, which fails a bump
@@ -23,7 +24,7 @@ internal const val OFFLINE_DB_VERSION: Int = 2
 @Database(
     entities = [ObjectRow::class, StorageRow::class, MutationRow::class],
     version = OFFLINE_DB_VERSION,
-    exportSchema = true
+    exportSchema = true,
 )
 internal abstract class OfflineDatabase : RoomDatabase() {
 
@@ -50,11 +51,12 @@ internal expect object OfflineDatabaseConstructor : RoomDatabaseConstructor<Offl
  * additive `ALTER TABLE` carries the queue across instead. Every existing row gets `NULL`, which
  * the syncer reads as "no declarations" and replays verbatim, exactly as before.
  */
-internal val MIGRATION_1_2: Migration = object : Migration(1, 2) {
-    override fun migrate(connection: SQLiteConnection) {
-        connection.execSQL("ALTER TABLE mutation_cache ADD COLUMN delta_json TEXT")
+internal val MIGRATION_1_2: Migration =
+    object : Migration(1, 2) {
+        override fun migrate(connection: SQLiteConnection) {
+            connection.execSQL("ALTER TABLE mutation_cache ADD COLUMN delta_json TEXT")
+        }
     }
-}
 
 /**
  * Every migration [getRoomDatabase] registers, in ascending order.
@@ -69,8 +71,9 @@ internal val OFFLINE_DB_MIGRATIONS: List<Migration> = listOf(MIGRATION_1_2)
 
 /**
  * The SQLite driver the offline database opens with when none is passed to [getRoomDatabase]: the
- * bundled SQLite everywhere, so every install runs one version. `-Psupabase.offline.iosSqlite=system`
- * swaps the iOS implementation for the system SQLite; the module's build file says why at build time.
+ * bundled SQLite everywhere, so every install runs one version.
+ * `-Psupabase.offline.iosSqlite=system` swaps the iOS implementation for the system SQLite; the
+ * module's build file says why at build time.
  *
  * @return a new driver instance.
  */

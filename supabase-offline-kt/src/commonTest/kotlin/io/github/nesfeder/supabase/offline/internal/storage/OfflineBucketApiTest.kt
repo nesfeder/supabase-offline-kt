@@ -1,21 +1,17 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.storage
 
+import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
-import io.github.jan.supabase.exceptions.NotFoundRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import io.ktor.utils.io.ByteChannel
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.runTest
-import kotlinx.io.IOException
-import okio.FileSystem
-import okio.Path
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -28,11 +24,17 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
-import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
-import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlinx.io.IOException
+import okio.FileSystem
+import okio.Path
+import okio.SYSTEM
 
 /**
  * Behavioral tests for [CachingBucketApi]'s download-with-disk-cache path: successful caching,
@@ -58,11 +60,15 @@ class OfflineBucketApiTest {
     private lateinit var fake: FakeBucketApi
     private lateinit var offlineApi: CachingBucketApi
 
-    private val localFile: Path get() = objectFilePathOrNull(baseDir, BUCKET, OBJECT_PATH) ?: error("uncacheable fixture path")
+    private val localFile: Path
+        get() =
+            objectFilePathOrNull(baseDir, BUCKET, OBJECT_PATH) ?: error("uncacheable fixture path")
 
     @BeforeTest
     fun setUp() {
-        baseDir = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-bucket-test-${Random.nextLong()}"
+        baseDir =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-bucket-test-${Random.nextLong()}"
         createdDirs += baseDir
         store = newTestOfflineStore()
         fake = FakeBucketApi(bucketId = BUCKET)
@@ -93,7 +99,11 @@ class OfflineBucketApiTest {
 
         // Then the network is re-attempted (not blindly short-circuited to cache) and, only after
         // it fails, the cached bytes are served instead
-        assertEquals(2, fake.downloadInvocations, "network re-attempted before falling back to cache")
+        assertEquals(
+            2,
+            fake.downloadInvocations,
+            "network re-attempted before falling back to cache",
+        )
         assertContentEquals(payload, second, "cached bytes served on transport failure")
     }
 
@@ -107,19 +117,27 @@ class OfflineBucketApiTest {
         assertNotNull(store.getStorageByKey(BUCKET, OBJECT_PATH), "precondition: cache row tracked")
 
         // When the object is now missing on the server. Supabase Storage surfaces this as a
-        // NotFoundRestException carried on an HTTP 400 (body reports 404), so statusCode reads 400 —
+        // NotFoundRestException carried on an HTTP 400 (body reports 404), so statusCode reads 400
+        // —
         // only the exception TYPE marks it as object-missing, which is what this asserts.
         val notFound = notFoundRestException()
         assertEquals(400, notFound.statusCode, "production carrier is HTTP 400, not a literal 404")
         fake.onDownload = { throw notFound }
 
         // Then the failure is rethrown (cache is NOT served) and the stale cache is evicted
-        val thrown = assertFailsWith<NotFoundRestException> {
-            offlineApi.downloadAuthenticated(OBJECT_PATH)
-        }
+        val thrown =
+            assertFailsWith<NotFoundRestException> {
+                offlineApi.downloadAuthenticated(OBJECT_PATH)
+            }
         assertSame(notFound, thrown, "original not-found error rethrown, not swallowed")
-        assertFalse(FileSystem.SYSTEM.exists(localFile), "stale cache file evicted when object missing")
-        assertNull(store.getStorageByKey(BUCKET, OBJECT_PATH), "stale cache row evicted when object missing")
+        assertFalse(
+            FileSystem.SYSTEM.exists(localFile),
+            "stale cache file evicted when object missing",
+        )
+        assertNull(
+            store.getStorageByKey(BUCKET, OBJECT_PATH),
+            "stale cache row evicted when object missing",
+        )
     }
 
     @Test
@@ -134,13 +152,14 @@ class OfflineBucketApiTest {
         fake.onDownload = { awaitCancellation() }
         var served: ByteArray? = null
         var caught: Throwable? = null
-        val job = launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
-                served = offlineApi.downloadAuthenticated(OBJECT_PATH)
-            } catch (error: Throwable) {
-                caught = error
+        val job =
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    served = offlineApi.downloadAuthenticated(OBJECT_PATH)
+                } catch (error: Throwable) {
+                    caught = error
+                }
             }
-        }
 
         // When the in-flight download is cancelled
         job.cancelAndJoin()
@@ -169,7 +188,10 @@ class OfflineBucketApiTest {
         // object-missing signal — evicting here would nuke good cache on a token refresh)
         assertContentEquals(payload, served, "cache served through a transient auth failure")
         assertTrue(FileSystem.SYSTEM.exists(localFile), "cache file retained on 403 (not evicted)")
-        assertNotNull(store.getStorageByKey(BUCKET, OBJECT_PATH), "cache row retained on 403 (not evicted)")
+        assertNotNull(
+            store.getStorageByKey(BUCKET, OBJECT_PATH),
+            "cache row retained on 403 (not evicted)",
+        )
     }
 
     @Test
@@ -188,11 +210,15 @@ class OfflineBucketApiTest {
         // Then the not-found error propagates (no cache bytes are ever streamed to the channel,
         // because the wrapper finishes the download into a file before touching the channel) and
         // the stale cache is evicted — the byte-channel overload funnels through the same guard.
-        val thrown = assertFailsWith<NotFoundRestException> {
-            offlineApi.downloadAuthenticated(OBJECT_PATH, channel)
-        }
+        val thrown =
+            assertFailsWith<NotFoundRestException> {
+                offlineApi.downloadAuthenticated(OBJECT_PATH, channel)
+            }
         assertSame(notFound, thrown, "channel overload rethrows the original not-found error")
-        assertFalse(FileSystem.SYSTEM.exists(localFile), "stale cache file evicted on channel object-missing")
+        assertFalse(
+            FileSystem.SYSTEM.exists(localFile),
+            "stale cache file evicted on channel object-missing",
+        )
     }
 
     private companion object {

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.HttpRequestException
@@ -13,16 +15,16 @@ import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 /**
  * Clearing local data is identity teardown (sign-out, account switch, account deletion). Once it
@@ -37,7 +39,12 @@ class ClearLocalDataDuringWritesTest {
     private val mutationDao = FakeMutationDao()
     private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
     /** Passes run only when a test starts one, so none the engine starts can race the clear. */
-    private val client = newTestOfflineClient(supabase = server.supabaseClient(), store = store, coordinatorScope = idleCoroutineScope())
+    private val client =
+        newTestOfflineClient(
+            supabase = server.supabaseClient(),
+            store = store,
+            coordinatorScope = idleCoroutineScope(),
+        )
     private val parked = CompletableDeferred<Unit>()
     private val release = CompletableDeferred<Unit>()
 
@@ -87,33 +94,34 @@ class ClearLocalDataDuringWritesTest {
     }
 
     @Test
-    fun a_write_whose_response_arrives_after_clearing_is_not_overlaid_onto_the_next_users_cache() = runTest {
-        // Given — the outgoing user's insert is in flight
-        server.answer = {
-            parked.complete(Unit)
-            release.await()
-            okJson("[]")
-        }
-        val write = async {
-            client.from(TABLE).insertJson(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
-        }
-        parked.await()
+    fun a_write_whose_response_arrives_after_clearing_is_not_overlaid_onto_the_next_users_cache() =
+        runTest {
+            // Given — the outgoing user's insert is in flight
+            server.answer = {
+                parked.complete(Unit)
+                release.await()
+                okJson("[]")
+            }
+            val write = async {
+                client.from(TABLE).insertJson(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
+            }
+            parked.await()
 
-        // When — the cache is cleared, the next user's first read lands, then the old response
-        client.clearAllCache()
-        store.addPayload(
-            table = TABLE,
-            signature = SIGNATURE,
-            payload = "[]",
-            authoritativeEmpty = true,
-            requestStartedAtTick = store.monotonicTickNow(),
-        )
-        release.complete(Unit)
-        write.await()
+            // When — the cache is cleared, the next user's first read lands, then the old response
+            client.clearAllCache()
+            store.addPayload(
+                table = TABLE,
+                signature = SIGNATURE,
+                payload = "[]",
+                authoritativeEmpty = true,
+                requestStartedAtTick = store.monotonicTickNow(),
+            )
+            release.complete(Unit)
+            write.await()
 
-        // Then — the next user's cache holds only what their own read returned
-        assertEquals("[]", objectDao.getRow(TABLE, SIGNATURE)?.payload)
-    }
+            // Then — the next user's cache holds only what their own read returned
+            assertEquals("[]", objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        }
 
     @Test
     fun a_write_that_fails_offline_after_clearing_is_not_queued() = runTest {
@@ -124,7 +132,9 @@ class ClearLocalDataDuringWritesTest {
             connectivityFailure()
         }
         val write = async {
-            runCatching { client.from(TABLE).insertJson(rows("""[{"id":1,"title":"outgoing user's row"}]""")) }
+            runCatching {
+                client.from(TABLE).insertJson(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
+            }
         }
         parked.await()
 

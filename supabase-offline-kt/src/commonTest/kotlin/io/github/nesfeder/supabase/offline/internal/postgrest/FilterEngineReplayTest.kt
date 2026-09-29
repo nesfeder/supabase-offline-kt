@@ -1,28 +1,30 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Pins the replay path of [FilterEngine] against the wrapper-stripping defect: supabase-kt encodes
  * `isIn` params as `in.(a,b,c)` (and range operators as `sl.(min,max)`, array operators as
  * `cs.{a,b}`), the strict capture stores the value with its wrapper intact, and replay must strip
  * that wrapper before splitting — otherwise the replayed filter targets corrupted values like
- * `"(a"` / `"c)"`. Each test drives the same pipeline the offline mutation queue uses:
- * capture ([buildDescriptorStrict]) → [FilterEngine.encode] → [FilterEngine.decodeOrNull] →
+ * `"(a"` / `"c)"`. Each test drives the same pipeline the offline mutation queue uses: capture
+ * ([buildDescriptorStrict]) → [FilterEngine.encode] → [FilterEngine.decodeOrNull] →
  * [FilterEngine.applyTo], asserting the replayed request carries the caller's original param.
  * Overlay parity is asserted via [FilterEngine.matchesRow], which always stripped parens.
  *
@@ -53,15 +55,17 @@ class FilterEngineReplayTest {
         return builder.params
     }
 
-    private fun rowWithStatus(status: String): JsonObject =
-        buildJsonObject { put("status", status) }
+    private fun rowWithStatus(status: String): JsonObject = buildJsonObject {
+        put("status", status)
+    }
 
     @Test
     fun `in filter with multiple elements survives capture encode decode and replay`() {
         // Given a queued mutation captured from an isIn filter with several values
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { isIn("status", listOf("active", "pending", "archived")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { isIn("status", listOf("active", "pending", "archived")) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When the descriptor is persisted, restored, and replayed
@@ -75,9 +79,10 @@ class FilterEngineReplayTest {
     @Test
     fun `in filter with a single element survives capture encode decode and replay`() {
         // Given the single-element case, where the corrupted form would be "(row-1)"
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { isIn("id", listOf("row-1")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { isIn("id", listOf("row-1")) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
@@ -91,11 +96,12 @@ class FilterEngineReplayTest {
     @Test
     fun `overlay matching and replayed request agree on in filter values`() {
         // Given a captured isIn filter
-        val descriptor = assertNotNull(
-            buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { isIn("status", listOf("active", "pending")) }
-            }
-        )
+        val descriptor =
+            assertNotNull(
+                buildDescriptorStrictFromRequest(schema, conversion) {
+                    filter { isIn("status", listOf("active", "pending")) }
+                }
+            )
 
         // When the same descriptor drives both the offline overlay and the replayed request
         val replayed = replayParams(descriptor)
@@ -114,9 +120,10 @@ class FilterEngineReplayTest {
     @Test
     fun `range filter value survives capture and replay with its wrapper intact`() {
         // Given a captured range filter, encoded by supabase-kt as "sl.(1,10)"
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { sl("distance", 1 to 10) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { sl("distance", 1 to 10) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
@@ -130,9 +137,10 @@ class FilterEngineReplayTest {
     @Test
     fun `cs filter with braces survives capture and replay`() {
         // Given a captured contains filter, encoded by supabase-kt as "cs.{tag1,tag2}"
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { cs("tags", listOf("tag1", "tag2")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { cs("tags", listOf("tag1", "tag2")) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
@@ -147,15 +155,17 @@ class FilterEngineReplayTest {
     fun `in filter with a quoted embedded-comma element survives capture and replay`() {
         // Given an isIn value containing a comma. supabase-kt's escapeValue quote-wraps any
         // element containing , . : ( ) — so this encodes as in.("north,south",east).
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { isIn("region", listOf("north,south", "east")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { isIn("region", listOf("north,south", "east")) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
 
-        // Then the two-element filter replays intact, not as the three-element in.(north,south,east)
+        // Then the two-element filter replays intact, not as the three-element
+        // in.(north,south,east)
         // that a naive comma split produces — that form targets a different set of rows.
         assertEquals(original.params["region"], replayed["region"])
         assertEquals(listOf("""in.("north,south",east)"""), replayed["region"])
@@ -164,9 +174,10 @@ class FilterEngineReplayTest {
     @Test
     fun `in filter elements quoted for dots colons and parens survive capture and replay`() {
         // Given the rest of escapeValue's quote-triggering character set
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { isIn("key", listOf("plain", "has.dot", "has:colon", "has(paren)")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { isIn("key", listOf("plain", "has.dot", "has:colon", "has(paren)")) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
@@ -183,11 +194,12 @@ class FilterEngineReplayTest {
     @Test
     fun `overlay matching agrees with replay on a quoted embedded-comma element`() {
         // Given a captured isIn filter whose first element contains a comma
-        val descriptor = assertNotNull(
-            buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { isIn("status", listOf("on,hold", "active")) }
-            }
-        )
+        val descriptor =
+            assertNotNull(
+                buildDescriptorStrictFromRequest(schema, conversion) {
+                    filter { isIn("status", listOf("on,hold", "active")) }
+                }
+            )
 
         // When the descriptor drives the offline overlay
         // Then it matches the two real values and neither torn half
@@ -204,9 +216,10 @@ class FilterEngineReplayTest {
     fun `cs filter in its Pair-range form survives capture and replay`() {
         // Given a contains filter built from a Pair. supabase-kt routes that through
         // encodeOverlapAsRange, producing cs.[1,5] — a range, not the cs.{a,b} element list.
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { filter("span", FilterOperator.CS, 1 to 5) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { filter("span", FilterOperator.CS, 1 to 5) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
@@ -222,9 +235,10 @@ class FilterEngineReplayTest {
     @Test
     fun `ov filter in its Pair-range form survives capture and replay`() {
         // Given the same range encoding under the overlaps operator
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { filter("window", FilterOperator.OV, "lo" to "hi") }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { filter("window", FilterOperator.OV, "lo" to "hi") }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
@@ -238,9 +252,10 @@ class FilterEngineReplayTest {
     @Test
     fun `ov filter in its list form still replays as a brace list`() {
         // Given the list form of the same operator — the range handling must not capture it
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { ov("tags", listOf("p", "q")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { ov("tags", listOf("p", "q")) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
@@ -255,9 +270,10 @@ class FilterEngineReplayTest {
     fun `cs filter list element containing a backslash replays byte-exact`() {
         // Given a cs list element containing a backslash. encodeOverlapAsArray joins plain
         // toString() output — it never calls escapeValue — so the backslash is literal content.
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { cs("tags", listOf("""a\b""")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { cs("tags", listOf("""a\b""")) }
+            }
         assertEquals(listOf("""cs.{a\b}"""), original.params["tags"])
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
@@ -273,9 +289,10 @@ class FilterEngineReplayTest {
     @Test
     fun `cs filter list element containing a double quote replays byte-exact`() {
         // Given a cs list element containing a bare double quote, again unescaped by the encoder
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { cs("tags", listOf("""a"b""")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { cs("tags", listOf("""a"b""")) }
+            }
         assertEquals(listOf("""cs.{a"b}"""), original.params["tags"])
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
@@ -290,9 +307,10 @@ class FilterEngineReplayTest {
     @Test
     fun `ov filter list element containing an escape sequence replays byte-exact`() {
         // Given the same corner under a second array operator, with both characters at once
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { ov("tags", listOf("""a\"b""")) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { ov("tags", listOf("""a\"b""")) }
+            }
         assertEquals(listOf("""ov.{a\"b}"""), original.params["tags"])
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
@@ -308,9 +326,10 @@ class FilterEngineReplayTest {
     fun `range bound containing a double quote replays instead of being dropped`() {
         // Given a range bound containing a double quote. encodeAsRange interpolates both bounds
         // raw — "(${first},${second})" — so this too is literal content, not quoting.
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { sl("window", """a"b""" to "z") }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { sl("window", """a"b""" to "z") }
+            }
         assertEquals(listOf("""sl.(a"b,z)"""), original.params["window"])
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
@@ -326,9 +345,10 @@ class FilterEngineReplayTest {
     @Test
     fun `range bound containing a backslash replays byte-exact`() {
         // Given a range bound containing a backslash
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { sl("window", """a\b""" to "z") }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { sl("window", """a\b""" to "z") }
+            }
         assertEquals(listOf("""sl.(a\b,z)"""), original.params["window"])
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
@@ -343,9 +363,10 @@ class FilterEngineReplayTest {
     @Test
     fun `cs Pair-range bound containing a backslash replays byte-exact`() {
         // Given the bracket range form, built by encodeOverlapAsRange's raw interpolation
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { filter("span", FilterOperator.CS, """a\b""" to "z") }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { filter("span", FilterOperator.CS, """a\b""" to "z") }
+            }
         assertEquals(listOf("""cs.[a\b,z]"""), original.params["span"])
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
@@ -361,11 +382,17 @@ class FilterEngineReplayTest {
     fun `overlay and replay agree on an in value shaped like a bracket range`() {
         // Given a stored `in` value carrying the bracket shape. It is not decodable JSON, so
         // parseArray yields null and replay drops the condition entirely.
-        val descriptor = FilterDescriptor(
-            conditions = listOf(
-                FilterDescriptor.Condition(column = "status", operatorId = "in", value = "[a,b]")
+        val descriptor =
+            FilterDescriptor(
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(
+                            column = "status",
+                            operatorId = "in",
+                            value = "[a,b]",
+                        )
+                    )
             )
-        )
 
         // When the same descriptor drives the overlay and the replayed request
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -381,11 +408,12 @@ class FilterEngineReplayTest {
     @Test
     fun `empty in filter matches no row in the overlay`() {
         // Given the captured match-nothing filter, encoded as in.()
-        val descriptor = assertNotNull(
-            buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { isIn("status", emptyList()) }
-            }
-        )
+        val descriptor =
+            assertNotNull(
+                buildDescriptorStrictFromRequest(schema, conversion) {
+                    filter { isIn("status", emptyList()) }
+                }
+            )
 
         // When the overlay evaluates rows against it
         // Then nothing matches — including a row whose column is the empty string, which a
@@ -398,9 +426,10 @@ class FilterEngineReplayTest {
     @Test
     fun `empty in filter replays as a match-nothing filter instead of being dropped`() {
         // Given a captured isIn filter with no values, encoded by supabase-kt as "in.()"
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { isIn("status", emptyList<String>()) }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { isIn("status", emptyList<String>()) }
+            }
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
         // When
@@ -418,12 +447,22 @@ class FilterEngineReplayTest {
     fun `replaysFully is false when one condition of several is dropped`() {
         // Given a stored filter whose second condition cannot be parsed back (the bracket shape
         // is not decodable JSON) alongside a first condition that replays fine
-        val descriptor = FilterDescriptor(
-            conditions = listOf(
-                FilterDescriptor.Condition(column = "user_id", operatorId = "eq", value = "u1"),
-                FilterDescriptor.Condition(column = "status", operatorId = "in", value = "[a,b]"),
+        val descriptor =
+            FilterDescriptor(
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(
+                            column = "user_id",
+                            operatorId = "eq",
+                            value = "u1",
+                        ),
+                        FilterDescriptor.Condition(
+                            column = "status",
+                            operatorId = "in",
+                            value = "[a,b]",
+                        ),
+                    )
             )
-        )
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -440,9 +479,10 @@ class FilterEngineReplayTest {
         // Given a range whose first bound contains a comma. encodeAsRange interpolates both
         // bounds verbatim into "(${first},${second})", so the wire form is indistinguishable from
         // a three-token body and neither reading can be shown to be the caller's.
-        val original = SelectRequestBuilder(schema, conversion).apply {
-            filter { sl("window", "a,b" to "c") }
-        }
+        val original =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { sl("window", "a,b" to "c") }
+            }
         assertEquals(listOf("sl.(a,b,c)"), original.params["window"])
         val descriptor = assertNotNull(buildDescriptorStrict(original))
 
@@ -470,11 +510,17 @@ class FilterEngineReplayTest {
     @Test
     fun `replaysFully is false for an unrecognized operator id`() {
         // Given a stored row whose operator no longer resolves (a corrupted or pre-strict row)
-        val descriptor = FilterDescriptor(
-            conditions = listOf(
-                FilterDescriptor.Condition(column = "status", operatorId = "bogus", value = "x")
+        val descriptor =
+            FilterDescriptor(
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition(
+                            column = "status",
+                            operatorId = "bogus",
+                            value = "x",
+                        )
+                    )
             )
-        )
 
         // When / Then: nothing lands on the request, so the mutation must not be issued
         assertEquals(null, replayParams(descriptor)["status"])
@@ -486,41 +532,53 @@ class FilterEngineReplayTest {
         // Given one descriptor per encoding the replay path claims to support. The gate is
         // fail-closed — a false negative silently drops a user's queued write — so this sweep is
         // the guard against tightening replay without noticing what it stopped accepting.
-        val replayable = listOf(
-            "eq" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { eq("user_id", "u1") }
-            },
-            "in multi" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { isIn("status", listOf("a", "b", "c")) }
-            },
-            "in empty" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { isIn("status", emptyList<String>()) }
-            },
-            "in embedded comma" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { isIn("status", listOf("a,b", "c")) }
-            },
-            "cs list" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { cs("tags", listOf("a", "b")) }
-            },
-            "cs range" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { filter("span", FilterOperator.CS, "a" to "z") }
-            },
-            "ov list" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { ov("tags", listOf("a", "b")) }
-            },
-            "sl range" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { sl("window", "a" to "z") }
-            },
-            "adj range" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { adjacent("window", "a" to "z") }
-            },
-            "is null" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { exact("deleted_at", null) }
-            },
-            "ilike" to buildDescriptorStrictFromRequest(schema, conversion) {
-                filter { ilike("name", "%foo%") }
-            },
-        )
+        val replayable =
+            listOf(
+                "eq" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { eq("user_id", "u1") }
+                    },
+                "in multi" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { isIn("status", listOf("a", "b", "c")) }
+                    },
+                "in empty" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { isIn("status", emptyList<String>()) }
+                    },
+                "in embedded comma" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { isIn("status", listOf("a,b", "c")) }
+                    },
+                "cs list" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { cs("tags", listOf("a", "b")) }
+                    },
+                "cs range" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { filter("span", FilterOperator.CS, "a" to "z") }
+                    },
+                "ov list" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { ov("tags", listOf("a", "b")) }
+                    },
+                "sl range" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { sl("window", "a" to "z") }
+                    },
+                "adj range" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { adjacent("window", "a" to "z") }
+                    },
+                "is null" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { exact("deleted_at", null) }
+                    },
+                "ilike" to
+                    buildDescriptorStrictFromRequest(schema, conversion) {
+                        filter { ilike("name", "%foo%") }
+                    },
+            )
 
         // When / Then: each survives the store/restore cycle and replays in full
         replayable.forEach { (label, captured) ->

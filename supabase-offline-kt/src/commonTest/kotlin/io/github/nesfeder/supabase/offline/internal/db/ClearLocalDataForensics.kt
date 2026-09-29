@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.sqlite.execSQL
@@ -10,6 +12,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.ktor.http.HttpStatusCode
+import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
@@ -23,11 +26,10 @@ import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.SYSTEM
-import kotlin.random.Random
 
 /**
- * Where a cleared user's data could still be read from the raw database files, looked for while
- * the client is open and again after it closes. Every marker field is `false` on a clean clear.
+ * Where a cleared user's data could still be read from the raw database files, looked for while the
+ * client is open and again after it closes. Every marker field is `false` on a clean clear.
  *
  * @property reservedRowsBeforeClear the mutation queue's reserved rows the clear had to remove.
  * @property reservedRowsAfterClear those left once the client closed.
@@ -44,7 +46,12 @@ internal data class ClearLocalDataForensics(
 ) {
     /** Whether the marker was found anywhere. */
     val anyRecoverable: Boolean =
-        inDatabaseWhileOpen || inWalWhileOpen || inShmWhileOpen || inDatabaseAfterClose || inWalAfterClose || inShmAfterClose
+        inDatabaseWhileOpen ||
+            inWalWhileOpen ||
+            inShmWhileOpen ||
+            inDatabaseAfterClose ||
+            inWalAfterClose ||
+            inShmAfterClose
 }
 
 /**
@@ -65,19 +72,28 @@ internal suspend fun runClearLocalDataForensics(
     val marker = "MARKER${Random.nextLong().toULong().toString(16)}"
     val padding = "lorem ".repeat(60)
     var phase = Phase.ONLINE
-    val server = RecordingPostgrestServer(
-        answer = { request ->
-            when (phase) {
-                Phase.ONLINE -> {
-                    val id = request.query["id"]?.removePrefix("eq.") ?: "0"
-                    okJson("""[{"id":$id,"email":"$marker-$id@example.com","bio":"$padding"}]""")
+    val server =
+        RecordingPostgrestServer(
+            answer = { request ->
+                when (phase) {
+                    Phase.ONLINE -> {
+                        val id = request.query["id"]?.removePrefix("eq.") ?: "0"
+                        okJson(
+                            """[{"id":$id,"email":"$marker-$id@example.com","bio":"$padding"}]"""
+                        )
+                    }
+                    Phase.OFFLINE -> connectivityFailure()
+                    Phase.REJECTING ->
+                        postgrestError(
+                            HttpStatusCode.BadRequest,
+                            code = "23514",
+                            message = "check failed for $marker",
+                        )
                 }
-                Phase.OFFLINE -> connectivityFailure()
-                Phase.REJECTING -> postgrestError(HttpStatusCode.BadRequest, code = "23514", message = "check failed for $marker")
             }
-        },
-    )
-    val client = openClient(server.supabaseClient(), SupabaseOfflineConfig(offlineStoragePath = directory))
+        )
+    val client =
+        openClient(server.supabaseClient(), SupabaseOfflineConfig(offlineStoragePath = directory))
     val databasePath = directory / OFFLINE_DATABASE_FILE_NAME
     val wal = "$databasePath-wal".toPath()
     val shm = "$databasePath-shm".toPath()
@@ -85,25 +101,46 @@ internal suspend fun runClearLocalDataForensics(
         val profiles = client.from("profiles")
         repeat(CACHED_PAYLOADS) { index -> profiles.select { filter { eq("id", index) } } }
         phase = Phase.OFFLINE
-        profiles.insertJson(buildJsonArray { add(buildJsonObject { put("email", "$marker-rejected@example.com") }) })
+        profiles.insertJson(
+            buildJsonArray { add(buildJsonObject { put("email", "$marker-rejected@example.com") }) }
+        )
         phase = Phase.REJECTING
         client.syncAllPendingMutations()
         phase = Phase.OFFLINE
-        profiles.insertJson(buildJsonArray { add(buildJsonObject { put("id", 77); put("email", "$marker@example.com") }) })
-        check((client as SupabaseOfflineClientImpl).rejectedMutationList().size == 1) { "the rejection was not recorded" }
+        profiles.insertJson(
+            buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("id", 77)
+                        put("email", "$marker@example.com")
+                    }
+                )
+            }
+        )
+        check((client as SupabaseOfflineClientImpl).rejectedMutationList().size == 1) {
+            "the rejection was not recorded"
+        }
         check(client.pendingMutationCount() == 1) { "the offline write was not queued" }
-        check(containsMarker(databasePath, marker) || containsMarker(wal, marker)) { "the marker never reached the database" }
+        check(containsMarker(databasePath, marker) || containsMarker(wal, marker)) {
+            "the marker never reached the database"
+        }
         val reservedBefore = reservedRowCount(databasePath)
 
         // A screen still observing the table while it is cleared, as an app's would be: its reads
         // hold the database open while the clear rewrites it
         coroutineScope {
-            val observer = launch(Dispatchers.Default) { runCatching { profiles.selectAsFlow().collect { } } }
+            val observer =
+                launch(Dispatchers.Default) { runCatching { profiles.selectAsFlow().collect {} } }
             client.clearAllCache()
             observer.cancelAndJoin()
         }
 
-        val whileOpen = Triple(containsMarker(databasePath, marker), containsMarker(wal, marker), containsMarker(shm, marker))
+        val whileOpen =
+            Triple(
+                containsMarker(databasePath, marker),
+                containsMarker(wal, marker),
+                containsMarker(shm, marker),
+            )
         client.close()
         return ClearLocalDataForensics(
             inDatabaseWhileOpen = whileOpen.first,
@@ -121,7 +158,11 @@ internal suspend fun runClearLocalDataForensics(
 }
 
 /** What the forensics server answers. */
-private enum class Phase { ONLINE, OFFLINE, REJECTING }
+private enum class Phase {
+    ONLINE,
+    OFFLINE,
+    REJECTING,
+}
 
 private const val CACHED_PAYLOADS = 40
 

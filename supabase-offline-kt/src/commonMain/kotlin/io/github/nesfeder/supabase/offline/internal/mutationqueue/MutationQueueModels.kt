@@ -1,8 +1,10 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import kotlin.time.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlin.time.Instant
 
 /*
  * The mutation queue's own vocabulary, named after the offline API sheet so a later change can
@@ -28,10 +30,11 @@ internal enum class MutationOperation {
  * One write waiting in the queue.
  *
  * @property id The mutation's stable id: the mutation row's autoincrement id. It survives process
- * death and is carried by a [RejectedMutation] when the server refuses the write.
+ *   death and is carried by a [RejectedMutation] when the server refuses the write.
  * @property table The table the write targets.
  * @property operation What the write does.
- * @property createdAt When the write was queued, by the device clock. Replay order is [id], not this.
+ * @property createdAt When the write was queued, by the device clock. Replay order is [id], not
+ *   this.
  * @property rowKeys The primary-key values the engine can determine for the rows the write touches:
  *   one object per body row that carries the key, or the key's `eq` conditions of the filter. Empty
  *   when they cannot be determined.
@@ -79,8 +82,8 @@ internal data class ServerError(
  *   that no longer parses, or a filter that cannot be replayed faithfully).
  * @property message A human-readable reason.
  * @property rejectedAt When the write was refused.
- * @property bodyOmittedChars The size of the body when it was too large to keep on the rejected list
- *   and was dropped from it, or `null` when it was kept. Such a write cannot be retried.
+ * @property bodyOmittedChars The size of the body when it was too large to keep on the rejected
+ *   list and was dropped from it, or `null` when it was kept. Such a write cannot be retried.
  */
 internal data class RejectedMutation(
     val id: Long,
@@ -158,8 +161,8 @@ internal sealed interface SyncStop {
     data class TransientFailure(val cause: Throwable) : SyncStop
 
     /**
-     * The server refused a write with `403` or `409` while an earlier write of the same identity — in
-     * any table — was still pending. The earlier write may be the parent row or the row a policy
+     * The server refused a write with `403` or `409` while an earlier write of the same identity —
+     * in any table — was still pending. The earlier write may be the parent row or the row a policy
      * checks, so the refusal is not taken as final: the write is kept and the pass stops.
      *
      * @property mutationId The held write.

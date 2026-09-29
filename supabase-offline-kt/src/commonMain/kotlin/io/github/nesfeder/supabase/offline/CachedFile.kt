@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import kotlin.time.Instant
@@ -18,7 +20,8 @@ import kotlin.time.Instant
  * @property sizeBytes size of the file on disk, in bytes.
  */
 @ConsistentCopyVisibility
-public data class CachedFile internal constructor(
+public data class CachedFile
+internal constructor(
     public val path: String,
     public val fetchedAt: Instant,
     public val sizeBytes: Long,

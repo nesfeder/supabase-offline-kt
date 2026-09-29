@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.postgrest
@@ -12,13 +14,13 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * Each queued write records the identity that made it, and a pass sends only the current identity's
@@ -32,16 +34,18 @@ class QueueOwnershipTest {
     private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity? = USER_A
-    private val syncer = MutationQueueReplayer(
-        store = store,
-        supabase = server.supabaseClient(),
-        currentIdentity = { session },
-    )
-    private val builder = OfflinePostgrestQueryBuilderImpl(
-        delegate = server.supabaseClient().postgrest.from(TABLE),
-        store = store,
-        queueIdentity = { session },
-    )
+    private val syncer =
+        MutationQueueReplayer(
+            store = store,
+            supabase = server.supabaseClient(),
+            currentIdentity = { session },
+        )
+    private val builder =
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = store,
+            queueIdentity = { session },
+        )
 
     private suspend fun writeOffline(title: String): MutationOutcome {
         server.answer = { connectivityFailure() }
@@ -124,24 +128,25 @@ class QueueOwnershipTest {
     }
 
     @Test
-    fun a_queue_written_before_owners_were_recorded_is_adopted_by_the_first_identity_to_replay() = runTest {
-        // Given — a pending write with no recorded owner, as an older build leaves it
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"legacy"}]"""))
+    fun a_queue_written_before_owners_were_recorded_is_adopted_by_the_first_identity_to_replay() =
+        runTest {
+            // Given — a pending write with no recorded owner, as an older build leaves it
+            store.enqueueInsert(table = TABLE, body = rows("""[{"title":"legacy"}]"""))
 
-        // When — A's pass sees it but cannot reach the server; then B and A sync online
-        server.answer = { connectivityFailure() }
-        syncer.sync()
-        server.answer = { okJson("[]") }
-        session = USER_B
-        val asB = syncer.sync()
-        session = USER_A
-        val asA = syncer.sync()
+            // When — A's pass sees it but cannot reach the server; then B and A sync online
+            server.answer = { connectivityFailure() }
+            syncer.sync()
+            server.answer = { okJson("[]") }
+            session = USER_B
+            val asB = syncer.sync()
+            session = USER_A
+            val asA = syncer.sync()
 
-        // Then — it became A's at A's first pass: B never sent it, A did
-        assertEquals(0, asB.syncedCount)
-        assertEquals(1, asA.syncedCount)
-        assertEquals("""[{"title":"legacy"}]""", server.requests.last().body)
-    }
+            // Then — it became A's at A's first pass: B never sent it, A did
+            assertEquals(0, asB.syncedCount)
+            assertEquals(1, asA.syncedCount)
+            assertEquals("""[{"title":"legacy"}]""", server.requests.last().body)
+        }
 
     @Test
     fun a_pass_whose_identity_cannot_be_told_sends_nothing() = runTest {

@@ -1,24 +1,26 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.engine.mock.MockEngine
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.Path
-import okio.Path.Companion.toPath
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.Path
+import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /**
  * Verifies [SupabaseOfflineClientImpl.clearAllCache] wipes downloaded storage files from disk (not
@@ -39,13 +41,16 @@ class SupabaseOfflineClientClearCacheTest {
     @Test
     fun clearAllCache_wipes_storage_directory_from_disk() = runTest {
         // Given a client whose offline cache has a downloaded storage file on disk
-        val baseDir = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-clearcache-test-${Random.nextLong()}"
+        val baseDir =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-clearcache-test-${Random.nextLong()}"
         createdDirs += baseDir
         // A never-hit client with no plugins: clearAllCache is local-only.
-        val client = newTestOfflineClient(
-            supabase = newTestSupabaseClient(plugins = {}),
-            baseDirectoryProvider = { baseDir },
-        )
+        val client =
+            newTestOfflineClient(
+                supabase = newTestSupabaseClient(plugins = {}),
+                baseDirectoryProvider = { baseDir },
+            )
         val storageFile = baseDir / "storage" / "avatars" / "me.png"
         FileSystem.SYSTEM.createDirectories(storageFile.parent!!)
         FileSystem.SYSTEM.write(storageFile) { write("cached-bytes".encodeToByteArray()) }
@@ -55,7 +60,10 @@ class SupabaseOfflineClientClearCacheTest {
         client.clearAllCache()
 
         // Then the on-disk storage tree is gone
-        assertFalse(FileSystem.SYSTEM.exists(baseDir / "storage"), "storage directory wiped from disk")
+        assertFalse(
+            FileSystem.SYSTEM.exists(baseDir / "storage"),
+            "storage directory wiped from disk",
+        )
     }
 
     @Test
@@ -65,11 +73,12 @@ class SupabaseOfflineClientClearCacheTest {
         val store = newTestOfflineStore(storageDao = storageDao)
         store.addStorage("avatars", "me.png", "/tmp/me.png".toPath(), 3, null)
         var rowsLeftAtScrub: Int? = null
-        val client = newTestOfflineClient(
-            supabase = newTestSupabaseClient(plugins = {}),
-            store = store,
-            scrubDatabase = { rowsLeftAtScrub = storageDao.all().size },
-        )
+        val client =
+            newTestOfflineClient(
+                supabase = newTestSupabaseClient(plugins = {}),
+                store = store,
+                scrubDatabase = { rowsLeftAtScrub = storageDao.all().size },
+            )
 
         // When
         client.clearAllCache()

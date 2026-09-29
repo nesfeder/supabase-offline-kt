@@ -1,7 +1,12 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.ReadStrategy
@@ -11,11 +16,17 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Columns
 import io.ktor.client.engine.mock.MockEngine
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -35,20 +46,11 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertIs
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlin.time.ExperimentalTime
 
 /**
- * Integration tests across the real resolver stack: [OfflineSelectResolver] +
- * [cacheFirstWithParallelRefresh] + a real [OfflineStore] (in-memory DAO fakes) + a real
- * [RefreshCoordinator]. Only the network SELECT is scripted.
+ * Integration tests across the real resolver stack:
+ * [OfflineSelectResolver] + [cacheFirstWithParallelRefresh] + a real [OfflineStore] (in-memory DAO
+ * fakes) + a real [RefreshCoordinator]. Only the network SELECT is scripted.
  *
  * These pin the junctions the isolated unit tests can't: the resolver wiring the accelerator and
  * coordinator into the combinator, the per-query [OfflineReadResult] surface, single-flight
@@ -62,29 +64,40 @@ class OfflineSelectResolverRecoveryTest {
     @Test
     fun with_state_reports_no_data_then_stalled_then_network_idle_on_late_success() =
         runTest(UnconfinedTestDispatcher()) {
-            // Given: a network SELECT that fails until told otherwise — nothing cached, network down
+            // Given: a network SELECT that fails until told otherwise — nothing cached, network
+            // down
             val postgrest = testPostgrest()
             val accelerator = MutableSharedFlow<Unit>()
             var failing = true
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onSelect = { if (failing) throw RuntimeException("network down") else postgrestResultOf(freshPayload, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        if (failing) throw RuntimeException("network down")
+                        else postgrestResultOf(freshPayload, postgrest)
+                    },
+                )
             val resolver = buildResolver(wrapper, backgroundScope, accelerator)
 
-            // When: a CacheFirstThenNetwork state-carrying subscription starts and the fast ladder exhausts
+            // When: a CacheFirstThenNetwork state-carrying subscription starts and the fast ladder
+            // exhausts
             val reads = mutableListOf<OfflineReadResult>()
             val collector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
                     .collect { read -> reads += read }
             }
             advanceTimeBy(5_000)
             runCurrent()
 
-            // Then: the first emission is the typed no-data state, and the ladder exhaustion is Stalled —
+            // Then: the first emission is the typed no-data state, and the ladder exhaustion is
+            // Stalled —
             // never a fabricated empty payload
-            assertNull(reads.first().result, "fresh cache-less subscription starts at no-data, not empty []")
+            assertNull(
+                reads.first().result,
+                "fresh cache-less subscription starts at no-data, not empty []",
+            )
             assertIs<RefreshState.InFlight>(reads.first().refresh)
             assertTrue(
                 reads.any { it.result == null && it.refresh is RefreshState.Stalled },
@@ -110,18 +123,20 @@ class OfflineSelectResolverRecoveryTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given: a network SELECT that succeeds immediately
             val postgrest = testPostgrest()
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onSelect = { postgrestResultOf(freshPayload, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = { postgrestResultOf(freshPayload, postgrest) },
+                )
             val resolver = buildResolver(wrapper, backgroundScope)
 
             // When: a CacheFirstThenNetwork subscription collects, mapped the way every consumer
             // maps it (drop the typed no-data state, dedupe consecutive payloads)
             val emissions = mutableListOf<String>()
             val collector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
                     .mapNotNull { read -> read.result?.data }
                     .distinctUntilChanged()
                     .collect { data -> emissions += data }
@@ -140,24 +155,36 @@ class OfflineSelectResolverRecoveryTest {
             // Given: a scripted network counter
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onSelect = { networkCalls++; postgrestResultOf(freshPayload, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf(freshPayload, postgrest)
+                    },
+                )
             val resolver = buildResolver(wrapper, backgroundScope)
 
             // When: two collectors subscribe to the same query (same signature) concurrently
             val firstCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             val secondCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
 
             // Then: exactly one refresh executed — the loop was shared, not duplicated
-            assertEquals(1, networkCalls, "two collectors on one signature share a single refresh loop")
+            assertEquals(
+                1,
+                networkCalls,
+                "two collectors on one signature share a single refresh loop",
+            )
 
             firstCollector.cancelAndJoin()
             secondCollector.cancelAndJoin()
@@ -170,29 +197,37 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             val secondPayload = """[{"id":"project-2"}]"""
             var networkCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onSelect = {
-                    networkCalls++
-                    postgrestResultOf(if (networkCalls == 1) freshPayload else secondPayload, postgrest)
-                },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf(
+                            if (networkCalls == 1) freshPayload else secondPayload,
+                            postgrest,
+                        )
+                    },
+                )
             val resolver = buildResolver(wrapper, backgroundScope)
 
             // When: one collector subscribes, receives the first refresh, then fully unsubscribes
             val firstCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             firstCollector.cancelAndJoin()
             advanceUntilIdle()
             assertEquals(1, networkCalls, "the first subscription runs exactly one refresh")
 
-            // And: a genuinely fresh collector subscribes to the same signature after the first left
+            // And: a genuinely fresh collector subscribes to the same signature after the first
+            // left
             val laterReads = mutableListOf<String>()
             val secondCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
                     .mapNotNull { read -> read.result?.data }
                     .distinctUntilChanged()
                     .collect { data -> laterReads += data }
@@ -201,10 +236,15 @@ class OfflineSelectResolverRecoveryTest {
 
             // Then: the memoized single-flight share did not replay the first subscription's stale
             // outcome — with replayExpirationMillis = 0 the replay cache was dropped when the last
-            // collector left, so the re-subscription starts a genuinely fresh refresh (second network
+            // collector left, so the re-subscription starts a genuinely fresh refresh (second
+            // network
             // call) and observes the fresh payload rather than a stale replayed one.
             assertEquals(2, networkCalls, "a re-subscription starts a fresh refresh, not a replay")
-            assertEquals(secondPayload, laterReads.last(), "re-subscription serves fresh data, not a stale replay")
+            assertEquals(
+                secondPayload,
+                laterReads.last(),
+                "re-subscription serves fresh data, not a stale replay",
+            )
 
             secondCollector.cancelAndJoin()
         }
@@ -212,19 +252,26 @@ class OfflineSelectResolverRecoveryTest {
     @Test
     fun one_shot_cache_first_misses_cache_when_a_live_subscription_is_unpopulated() =
         runTest(UnconfinedTestDispatcher()) {
-            // Given: a live CacheFirstThenNetwork subscription whose network is down — with the seed
+            // Given: a live CacheFirstThenNetwork subscription whose network is down — with the
+            // seed
             // removed, it populates nothing
             val postgrest = testPostgrest()
             var failing = true
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onSelect = { if (failing) throw RuntimeException("network down") else postgrestResultOf(freshPayload, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        if (failing) throw RuntimeException("network down")
+                        else postgrestResultOf(freshPayload, postgrest)
+                    },
+                )
             val resolver = buildResolver(wrapper, backgroundScope)
 
             val live = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             runCurrent()
 
@@ -232,7 +279,8 @@ class OfflineSelectResolverRecoveryTest {
             failing = false
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.CacheFirst()) {}
 
-            // Then: it missed the (non-existent, un-seeded) cache and went to the network — a phantom
+            // Then: it missed the (non-existent, un-seeded) cache and went to the network — a
+            // phantom
             // "[]" seed would have short-circuited it to an empty cache hit instead
             assertEquals(freshPayload, oneShot.data)
 
@@ -246,15 +294,21 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var networkCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { networkCalls++; postgrestResultOf(serverRows, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf(serverRows, postgrest)
+                    },
+                )
             val objectDao = FakeObjectDao()
             val resolver = buildResolver(wrapper, backgroundScope, objectDao = objectDao)
             val primingCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             primingCollector.cancelAndJoin()
@@ -267,7 +321,8 @@ class OfflineSelectResolverRecoveryTest {
             serverRows = "[]"
             val emissions = mutableListOf<String>()
             val collector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
                     .mapNotNull { read -> read.result?.data }
                     .distinctUntilChanged()
                     .collect { data -> emissions += data }
@@ -296,14 +351,18 @@ class OfflineSelectResolverRecoveryTest {
             var serverRows = freshPayload
             var authState = AuthSessionState.AUTHENTICATED
             val accelerator = MutableSharedFlow<Unit>()
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { postgrestResultOf(serverRows, postgrest) },
-            )
-            val resolver = buildResolver(wrapper, backgroundScope, accelerator, authState = { authState })
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = { postgrestResultOf(serverRows, postgrest) },
+                )
+            val resolver =
+                buildResolver(wrapper, backgroundScope, accelerator, authState = { authState })
             val primingCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             primingCollector.cancelAndJoin()
@@ -316,7 +375,8 @@ class OfflineSelectResolverRecoveryTest {
             // When: a new subscription refreshes during the restore window
             val emissions = mutableListOf<String>()
             val collector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
                     .mapNotNull { read -> read.result?.data }
                     .distinctUntilChanged()
                     .collect { data -> emissions += data }
@@ -346,15 +406,18 @@ class OfflineSelectResolverRecoveryTest {
             // Given: a cached non-empty payload from a prior authenticated subscription
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { postgrestResultOf(serverRows, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = { postgrestResultOf(serverRows, postgrest) },
+                )
             val objectDao = FakeObjectDao()
             val resolver = buildResolver(wrapper, backgroundScope, objectDao = objectDao)
             val primingCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             primingCollector.cancelAndJoin()
@@ -378,15 +441,24 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var authState = AuthSessionState.AUTHENTICATED
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { postgrestResultOf(serverRows, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = { postgrestResultOf(serverRows, postgrest) },
+                )
             val objectDao = FakeObjectDao()
-            val resolver = buildResolver(wrapper, backgroundScope, authState = { authState }, objectDao = objectDao)
+            val resolver =
+                buildResolver(
+                    wrapper,
+                    backgroundScope,
+                    authState = { authState },
+                    objectDao = objectDao,
+                )
             val primingCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             primingCollector.cancelAndJoin()
@@ -414,18 +486,27 @@ class OfflineSelectResolverRecoveryTest {
             var serverRows = freshPayload
             var authState = AuthSessionState.AUTHENTICATED
             var flipMidRequest = false
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = {
-                    if (flipMidRequest) authState = AuthSessionState.UNAUTHENTICATED
-                    postgrestResultOf(serverRows, postgrest)
-                },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        if (flipMidRequest) authState = AuthSessionState.UNAUTHENTICATED
+                        postgrestResultOf(serverRows, postgrest)
+                    },
+                )
             val objectDao = FakeObjectDao()
-            val resolver = buildResolver(wrapper, backgroundScope, authState = { authState }, objectDao = objectDao)
+            val resolver =
+                buildResolver(
+                    wrapper,
+                    backgroundScope,
+                    authState = { authState },
+                    objectDao = objectDao,
+                )
             val primingCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             primingCollector.cancelAndJoin()
@@ -453,14 +534,18 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var authStateProvider: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED }
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { postgrestResultOf(serverRows, postgrest) },
-            )
-            val resolver = buildResolver(wrapper, backgroundScope, authState = { authStateProvider() })
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = { postgrestResultOf(serverRows, postgrest) },
+                )
+            val resolver =
+                buildResolver(wrapper, backgroundScope, authState = { authStateProvider() })
             val primingCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             primingCollector.cancelAndJoin()
@@ -469,13 +554,15 @@ class OfflineSelectResolverRecoveryTest {
             serverRows = "[]"
             var stateReads = 0
             authStateProvider = {
-                if (stateReads++ == 0) AuthSessionState.RESTORING else AuthSessionState.AUTHENTICATED
+                if (stateReads++ == 0) AuthSessionState.RESTORING
+                else AuthSessionState.AUTHENTICATED
             }
 
             // When: a new subscription runs its first refresh attempt (snapshot = RESTORING)
             val emissions = mutableListOf<String>()
             val collector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
                     .mapNotNull { read -> read.result?.data }
                     .distinctUntilChanged()
                     .collect { data -> emissions += data }
@@ -503,11 +590,12 @@ class OfflineSelectResolverRecoveryTest {
             // excluded by design — it never issues a request, so it has nothing to retry. Running
             // them from one body keeps the wiring pinned for all three instead of for whichever
             // two someone remembered to copy.
-            val networkBoundStrategies = listOf(
-                "NetworkFirst" to ReadStrategy.NetworkFirst(),
-                "NetworkOnly" to ReadStrategy.NetworkOnly,
-                "CacheFirst (cold miss)" to ReadStrategy.CacheFirst(),
-            )
+            val networkBoundStrategies =
+                listOf(
+                    "NetworkFirst" to ReadStrategy.NetworkFirst(),
+                    "NetworkOnly" to ReadStrategy.NetworkOnly,
+                    "CacheFirst (cold miss)" to ReadStrategy.CacheFirst(),
+                )
 
             for ((strategyName, strategy) in networkBoundStrategies) {
                 // And: a cold cache and a read that races session restore — the request carries
@@ -518,19 +606,24 @@ class OfflineSelectResolverRecoveryTest {
                 var authState = AuthSessionState.RESTORING
                 var networkCalls = 0
                 val accelerator = MutableSharedFlow<Unit>()
-                val wrapper = FakePostgrestQueryBuilderWrapper(
-                    table = "plans",
-                    postgrest = postgrest,
-                    onSelect = { networkCalls++; postgrestResultOf(serverRows, postgrest) },
-                )
+                val wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "plans",
+                        postgrest = postgrest,
+                        onSelect = {
+                            networkCalls++
+                            postgrestResultOf(serverRows, postgrest)
+                        },
+                    )
                 val objectDao = FakeObjectDao()
-                val resolver = buildResolver(
-                    wrapper = wrapper,
-                    scope = backgroundScope,
-                    accelerator = accelerator,
-                    authState = { authState },
-                    objectDao = objectDao,
-                )
+                val resolver =
+                    buildResolver(
+                        wrapper = wrapper,
+                        scope = backgroundScope,
+                        accelerator = accelerator,
+                        authState = { authState },
+                        objectDao = objectDao,
+                    )
 
                 // When: the one-shot read runs inside the restore window
                 val oneShot = async { resolver.select(Columns.ALL, strategy) {} }
@@ -555,7 +648,11 @@ class OfflineSelectResolverRecoveryTest {
                 // instead of an empty list, and the cache converges on them
                 assertEquals(2, networkCalls, "$strategyName: the edge cut the backoff short")
                 assertEquals(freshPayload, oneShot.await().data, strategyName)
-                assertEquals(freshPayload, objectDao.allForTable("plans").single().payload, strategyName)
+                assertEquals(
+                    freshPayload,
+                    objectDao.allForTable("plans").single().payload,
+                    strategyName,
+                )
             }
         }
 
@@ -566,18 +663,23 @@ class OfflineSelectResolverRecoveryTest {
             // RLS-filtered
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { networkCalls++; postgrestResultOf("[]", postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf("[]", postgrest)
+                    },
+                )
             val objectDao = FakeObjectDao()
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                authState = { AuthSessionState.RESTORING },
-                objectDao = objectDao,
-            )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    authState = { AuthSessionState.RESTORING },
+                    objectDao = objectDao,
+                )
 
             // When: a one-shot read walks the whole ladder
             val oneShot = async { resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {} }
@@ -622,16 +724,21 @@ class OfflineSelectResolverRecoveryTest {
             var serverRows = "[]"
             var authState = AuthSessionState.RESTORING
             var networkCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { networkCalls++; postgrestResultOf(serverRows, postgrest) },
-            )
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                authState = { authState },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf(serverRows, postgrest)
+                    },
+                )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    authState = { authState },
+                )
             val oneShot = async { resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {} }
             runCurrent()
             assertEquals(1, networkCalls)
@@ -660,25 +767,36 @@ class OfflineSelectResolverRecoveryTest {
             var authState = AuthSessionState.RESTORING
             var networkCalls = 0
             val accelerator = MutableSharedFlow<Unit>()
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { networkCalls++; postgrestResultOf(serverRows, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf(serverRows, postgrest)
+                    },
+                )
             val store = buildStore()
             store.enqueueInsert(
                 table = "plans",
-                body = buildJsonArray {
-                    add(buildJsonObject { put("id", "plan-queued"); put("user_id", "u-1") })
-                },
+                body =
+                    buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("id", "plan-queued")
+                                put("user_id", "u-1")
+                            }
+                        )
+                    },
             )
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                accelerator = accelerator,
-                authState = { authState },
-                store = store,
-            )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    accelerator = accelerator,
+                    authState = { authState },
+                    store = store,
+                )
 
             // When: a one-shot read runs inside the restore window
             val oneShot = async { resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {} }
@@ -712,23 +830,25 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             var networkCalls = 0
             val inFlight = CompletableDeferred<Unit>()
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = {
-                    networkCalls++
-                    if (networkCalls == 1) inFlight.await()
-                    postgrestResultOf("[]", postgrest)
-                },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        if (networkCalls == 1) inFlight.await()
+                        postgrestResultOf("[]", postgrest)
+                    },
+                )
             val objectDao = FakeObjectDao()
             val store = buildStore(objectDao)
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                authState = { AuthSessionState.RESTORING },
-                store = store,
-            )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    authState = { AuthSessionState.RESTORING },
+                    store = store,
+                )
             val oneShot = async { resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {} }
             runCurrent()
             assertEquals(1, networkCalls, "the request must be in flight before teardown")
@@ -756,16 +876,21 @@ class OfflineSelectResolverRecoveryTest {
             // restore window only matters when it actually shapes the answer
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { networkCalls++; postgrestResultOf(freshPayload, postgrest) },
-            )
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                authState = { AuthSessionState.RESTORING },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf(freshPayload, postgrest)
+                    },
+                )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    authState = { AuthSessionState.RESTORING },
+                )
 
             // When: a one-shot read runs
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
@@ -784,18 +909,23 @@ class OfflineSelectResolverRecoveryTest {
             // sit waiting on a sign-in that may never come.
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { networkCalls++; postgrestResultOf("[]", postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf("[]", postgrest)
+                    },
+                )
             val objectDao = FakeObjectDao()
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                authState = { AuthSessionState.UNAUTHENTICATED },
-                objectDao = objectDao,
-            )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    authState = { AuthSessionState.UNAUTHENTICATED },
+                    objectDao = objectDao,
+                )
 
             // When: a one-shot read runs on the anon key
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
@@ -814,18 +944,23 @@ class OfflineSelectResolverRecoveryTest {
             // Given: a signed-in session and a table that genuinely has no rows for this user
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { networkCalls++; postgrestResultOf("[]", postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        postgrestResultOf("[]", postgrest)
+                    },
+                )
             val objectDao = FakeObjectDao()
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                authState = { AuthSessionState.AUTHENTICATED },
-                objectDao = objectDao,
-            )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    authState = { AuthSessionState.AUTHENTICATED },
+                    objectDao = objectDao,
+                )
 
             // When: a one-shot read runs
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
@@ -847,22 +982,26 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var authState = AuthSessionState.AUTHENTICATED
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { postgrestResultOf(serverRows, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = { postgrestResultOf(serverRows, postgrest) },
+                )
             val objectDao = FakeObjectDao()
             val mutationDao = FakeMutationDao()
             val store = buildStore(objectDao, mutationDao)
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                authState = { authState },
-                store = store,
-            )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    authState = { authState },
+                    store = store,
+                )
             val primingCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             primingCollector.cancelAndJoin()
@@ -870,9 +1009,15 @@ class OfflineSelectResolverRecoveryTest {
 
             store.enqueueInsert(
                 table = "plans",
-                body = buildJsonArray {
-                    add(buildJsonObject { put("id", "plan-replayed"); put("user_id", "u-1") })
-                },
+                body =
+                    buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("id", "plan-replayed")
+                                put("user_id", "u-1")
+                            }
+                        )
+                    },
             )
             store.markMutationSynced(id = mutationDao.inserted.single().id, table = "plans")
 
@@ -902,24 +1047,27 @@ class OfflineSelectResolverRecoveryTest {
             var serverRows = "[]"
             var authState = AuthSessionState.UNAUTHENTICATED
             val accelerator = MutableSharedFlow<Unit>()
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "plans",
-                postgrest = postgrest,
-                onSelect = { postgrestResultOf(serverRows, postgrest) },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = { postgrestResultOf(serverRows, postgrest) },
+                )
             val objectDao = FakeObjectDao()
-            val resolver = buildResolver(
-                wrapper = wrapper,
-                scope = backgroundScope,
-                accelerator = accelerator,
-                authState = { authState },
-                objectDao = objectDao,
-            )
+            val resolver =
+                buildResolver(
+                    wrapper = wrapper,
+                    scope = backgroundScope,
+                    accelerator = accelerator,
+                    authState = { authState },
+                    objectDao = objectDao,
+                )
 
             // When: the subscription runs long enough to exhaust the fast ladder
             val reads = mutableListOf<OfflineReadResult>()
             val collector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
                     .collect { read -> reads += read }
             }
             advanceTimeBy(5_000)
@@ -929,7 +1077,10 @@ class OfflineSelectResolverRecoveryTest {
             // only RESTORING as retryable would land here at Idle over a slot that was never
             // written — a subscription that looks healthy while showing an empty screen, with no
             // retry left to fix it when the token refresh recovers.
-            assertTrue(objectDao.allForTable("plans").isEmpty(), "the RLS-shaped empty is not cached")
+            assertTrue(
+                objectDao.allForTable("plans").isEmpty(),
+                "the RLS-shaped empty is not cached",
+            )
             assertNull(reads.last().result, "and the subscription is still at no-data")
             assertTrue(
                 reads.none { it.refresh is RefreshState.Idle },
@@ -963,23 +1114,28 @@ class OfflineSelectResolverRecoveryTest {
             var serverRows = freshPayload
             var networkCalls = 0
             val inFlight = CompletableDeferred<Unit>()
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onSelect = {
-                    networkCalls++
-                    // Snapshot before parking: this request's answer is the server as it was when
-                    // the request went out, not as it is when the response is finally delivered.
-                    val answer = serverRows
-                    if (networkCalls == 2) inFlight.await()
-                    postgrestResultOf(answer, postgrest)
-                },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        // Snapshot before parking: this request's answer is the server as it was
+                        // when
+                        // the request went out, not as it is when the response is finally
+                        // delivered.
+                        val answer = serverRows
+                        if (networkCalls == 2) inFlight.await()
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
             val objectDao = FakeObjectDao()
             val store = buildStore(objectDao)
             val resolver = buildResolver(wrapper, backgroundScope, store = store)
             val primingCollector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             advanceUntilIdle()
             primingCollector.cancelAndJoin()
@@ -990,7 +1146,8 @@ class OfflineSelectResolverRecoveryTest {
             // the user saves a second project — it succeeds online and is patched into the cache
             val emissions = mutableListOf<String>()
             val collector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
                     .mapNotNull { read -> read.result?.data }
                     .distinctUntilChanged()
                     .collect { data -> emissions += data }
@@ -1005,7 +1162,11 @@ class OfflineSelectResolverRecoveryTest {
                 defaultToNull = true,
             )
             runCurrent()
-            assertEquals(bothProjects, emissions.last(), "the save is visible before the race resolves")
+            assertEquals(
+                bothProjects,
+                emissions.last(),
+                "the save is visible before the race resolves",
+            )
 
             // And: the server now holds both rows, and the parked pre-insert response is delivered
             serverRows = bothProjects
@@ -1022,7 +1183,8 @@ class OfflineSelectResolverRecoveryTest {
             )
             assertEquals(bothProjects, emissions.last(), "the collector never loses the saved row")
             assertFalse(
-                emissions.contains(freshPayload) && emissions.indexOf(freshPayload) > emissions.indexOf(bothProjects),
+                emissions.contains(freshPayload) &&
+                    emissions.indexOf(freshPayload) > emissions.indexOf(bothProjects),
                 "the cache must never revert to the pre-insert payload",
             )
             assertEquals(3, networkCalls, "a refused stale response triggers exactly one re-fetch")
@@ -1037,20 +1199,23 @@ class OfflineSelectResolverRecoveryTest {
             val postgrest = testPostgrest()
             var networkCalls = 0
             val inFlight = CompletableDeferred<Unit>()
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onSelect = {
-                    networkCalls++
-                    if (networkCalls == 1) inFlight.await()
-                    postgrestResultOf(freshPayload, postgrest)
-                },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        if (networkCalls == 1) inFlight.await()
+                        postgrestResultOf(freshPayload, postgrest)
+                    },
+                )
             val objectDao = FakeObjectDao()
             val store = buildStore(objectDao)
             val resolver = buildResolver(wrapper, backgroundScope, store = store)
             val collector = launch {
-                resolver.selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}.collect { }
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
             }
             runCurrent()
             assertEquals(1, networkCalls, "the refresh must be in flight before teardown")
@@ -1083,13 +1248,14 @@ class OfflineSelectResolverRecoveryTest {
         authState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
         objectDao: FakeObjectDao = FakeObjectDao(),
         store: OfflineStore = buildStore(objectDao),
-    ): OfflineSelectResolver = OfflineSelectResolver(
-        delegate = wrapper,
-        store = store,
-        authSessionState = authState,
-        refreshCoordinator = RefreshCoordinator(scope),
-        accelerator = accelerator,
-    )
+    ): OfflineSelectResolver =
+        OfflineSelectResolver(
+            delegate = wrapper,
+            store = store,
+            authSessionState = authState,
+            refreshCoordinator = RefreshCoordinator(scope),
+            accelerator = accelerator,
+        )
 
     /**
      * Minimal real [Postgrest] for [FakePostgrestQueryBuilderWrapper] / [postgrestResultOf] — the
@@ -1101,8 +1267,9 @@ class OfflineSelectResolverRecoveryTest {
     private fun buildStore(
         objectDao: FakeObjectDao = FakeObjectDao(),
         mutationDao: FakeMutationDao = FakeMutationDao(),
-    ): OfflineStore = newTestOfflineStore(
-        objectDao = objectDao,
-        mutationDao = mutationDao,
-    )
+    ): OfflineStore =
+        newTestOfflineStore(
+            objectDao = objectDao,
+            mutationDao = mutationDao,
+        )
 }

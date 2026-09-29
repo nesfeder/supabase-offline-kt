@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.postgrest
@@ -9,6 +11,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -16,10 +22,6 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
 /**
  * A pass marks each mutation in flight while it sends it, and releases the mark however the send
@@ -32,11 +34,12 @@ class InFlightReleaseTest {
     private val objectDao = FakeObjectDao()
     private val store = newTestOfflineStore(objectDao = objectDao)
     private val server = RecordingPostgrestServer()
-    private val replayer = MutationQueueReplayer(
-        store = store,
-        supabase = server.supabaseClient(),
-        currentIdentity = { QueueIdentity.Anonymous },
-    )
+    private val replayer =
+        MutationQueueReplayer(
+            store = store,
+            supabase = server.supabaseClient(),
+            currentIdentity = { QueueIdentity.Anonymous },
+        )
 
     @Test
     fun a_store_failure_during_a_pass_does_not_stop_the_passes_after_it() = runTest {
@@ -44,14 +47,19 @@ class InFlightReleaseTest {
         store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        objectDao.failNextUpsertOf { row -> row.table == RESERVED_TABLE_NAME && row.signature == UNCONFIRMED_SENDS_SIGNATURE }
+        objectDao.failNextUpsertOf { row ->
+            row.table == RESERVED_TABLE_NAME && row.signature == UNCONFIRMED_SENDS_SIGNATURE
+        }
 
         // When — one pass meets the failure, and the next runs once the disk recovers
         val failed = runCatching { replayer.sync() }
         val next = replayer.sync()
 
         // Then — the first sent nothing and kept the write; the next sent it
-        assertTrue(failed.isFailure || failed.getOrThrow().stop is SyncStop.TransientFailure, "got $failed")
+        assertTrue(
+            failed.isFailure || failed.getOrThrow().stop is SyncStop.TransientFailure,
+            "got $failed",
+        )
         assertEquals(1, next.syncedCount)
         assertEquals(null, next.stop)
         assertEquals(1, server.requests.size)
@@ -64,17 +72,20 @@ class InFlightReleaseTest {
         store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        objectDao.failNextUpsertOf { row -> row.table == RESERVED_TABLE_NAME && row.signature == UNCONFIRMED_SENDS_SIGNATURE }
+        objectDao.failNextUpsertOf { row ->
+            row.table == RESERVED_TABLE_NAME && row.signature == UNCONFIRMED_SENDS_SIGNATURE
+        }
         runCatching { replayer.sync() }
         replayer.sync()
 
         // When — the app writes again
-        val builder = OfflinePostgrestQueryBuilderImpl(
-            delegate = server.supabaseClient().postgrest.from(TABLE),
-            store = store,
-            queueIdentity = { QueueIdentity.Anonymous },
-            headSender = replayer,
-        )
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from(TABLE),
+                store = store,
+                queueIdentity = { QueueIdentity.Anonymous },
+                headSender = replayer,
+            )
         val later = builder.insertJson(rows("""[{"id":"k2","title":"Eggs"}]"""))
 
         // Then — it is sent at once, not queued behind a send that is no longer happening

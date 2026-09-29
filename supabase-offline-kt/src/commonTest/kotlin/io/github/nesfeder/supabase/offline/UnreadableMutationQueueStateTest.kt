@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.HttpRequestException
@@ -19,13 +21,13 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * The mutation queue's own bookkeeping — who owns which write, the rejected list, the unconfirmed
@@ -38,11 +40,12 @@ class UnreadableMutationQueueStateTest {
     private val objectDao = FakeObjectDao()
     private val store = newTestOfflineStore(objectDao = objectDao)
     private val server = RecordingPostgrestServer()
-    private val builder = OfflinePostgrestQueryBuilderImpl(
-        delegate = server.supabaseClient().postgrest.from(TABLE),
-        store = store,
-        queueIdentity = { QueueIdentity.User("user-a") },
-    )
+    private val builder =
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = store,
+            queueIdentity = { QueueIdentity.User("user-a") },
+        )
 
     @Test
     fun unreadable_ownership_does_not_make_an_online_write_throw() = runTest {
@@ -51,24 +54,32 @@ class UnreadableMutationQueueStateTest {
         store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"old"}"""), byId("2"))
 
         // When — online, the app edits another row
-        val outcome = runCatching { builder.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", 1) } } }
+        val outcome = runCatching {
+            builder.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+                filter { eq("id", 1) }
+            }
+        }
 
         // Then — it gets an outcome, not an internal-state exception
         assertTrue(outcome.isSuccess, "online write failed with ${outcome.exceptionOrNull()}")
     }
 
     @Test
-    fun unreadable_ownership_makes_an_offline_write_fail_with_its_own_connectivity_error() = runTest {
-        // Given
-        objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
-        server.answer = { connectivityFailure() }
+    fun unreadable_ownership_makes_an_offline_write_fail_with_its_own_connectivity_error() =
+        runTest {
+            // Given
+            objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
+            server.answer = { connectivityFailure() }
 
-        // When
-        val outcome = runCatching { builder.insertJson(rows("""[{"id":"n1"}]""")) }
+            // When
+            val outcome = runCatching { builder.insertJson(rows("""[{"id":"n1"}]""")) }
 
-        // Then — never an IllegalStateException
-        assertIs<HttpRequestException>(outcome.exceptionOrNull(), "offline write failed with ${outcome.exceptionOrNull()}")
-    }
+            // Then — never an IllegalStateException
+            assertIs<HttpRequestException>(
+                outcome.exceptionOrNull(),
+                "offline write failed with ${outcome.exceptionOrNull()}",
+            )
+        }
 
     @Test
     fun unreadable_ownership_stops_replay_without_sending_and_says_so_once() = runTest {
@@ -77,7 +88,12 @@ class UnreadableMutationQueueStateTest {
         store.sdkLogger = logger.asSdkLogger()
         objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"whose?"}]"""))
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { QueueIdentity.User("user-a") })
+        val syncer =
+            MutationQueueReplayer(
+                store = store,
+                supabase = server.supabaseClient(),
+                currentIdentity = { QueueIdentity.User("user-a") },
+            )
 
         // When — two passes
         val first = syncer.sync()
@@ -88,13 +104,18 @@ class UnreadableMutationQueueStateTest {
         assertEquals(SyncStop.OwnershipUnreadable, second.stop)
         assertTrue(server.requests.isEmpty())
         assertEquals(1, store.allPendingMutations().size)
-        assertEquals(1, logger.entriesAt(OfflineLogLevel.ERROR).count { "owner records" in it.message })
+        assertEquals(
+            1,
+            logger.entriesAt(OfflineLogLevel.ERROR).count { "owner records" in it.message },
+        )
     }
 
     @Test
     fun unreadable_ownership_declines_a_retry_rather_than_throw() = runTest {
         // Given — a rejected write, and then ownership bookkeeping that does not decode
-        store.enqueueOwnedBy("user:user-a") { enqueueInsert(table = TABLE, body = rows("""[{"title":"refused"}]""")) }
+        store.enqueueOwnedBy("user:user-a") {
+            enqueueInsert(table = TABLE, body = rows("""[{"title":"refused"}]"""))
+        }
         val refused = store.allPendingMutations().single()
         store.rejectMutation(refused, "refused", serverError = null)
         objectDao.seedPayload(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{not json")
@@ -115,7 +136,8 @@ class UnreadableMutationQueueStateTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"refused"}]"""))
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"fine"}]"""))
         server.answer = { request ->
-            if ("refused" in request.body) postgrestError(HttpStatusCode.BadRequest) else okJson("[]")
+            if ("refused" in request.body) postgrestError(HttpStatusCode.BadRequest)
+            else okJson("[]")
         }
 
         // When
@@ -135,7 +157,8 @@ class UnreadableMutationQueueStateTest {
 
         // When — two launches in turn read it
         listOf(1_000L, 2_000L).forEach { launchedAt ->
-            newTestOfflineStore(objectDao = objectDao, nowMillis = { launchedAt }).hasUnconfirmedSend(1)
+            newTestOfflineStore(objectDao = objectDao, nowMillis = { launchedAt })
+                .hasUnconfirmedSend(1)
         }
 
         // Then — the first kept it aside and wrote a readable record in its place
@@ -149,7 +172,9 @@ class UnreadableMutationQueueStateTest {
 
         // When
         listOf(1_000L, 2_000L).forEach { launchedAt ->
-            newTestOfflineStore(objectDao = objectDao, nowMillis = { launchedAt }).mutationQueueState.syncedMutationCoverage()
+            newTestOfflineStore(objectDao = objectDao, nowMillis = { launchedAt })
+                .mutationQueueState
+                .syncedMutationCoverage()
         }
 
         // Then
@@ -157,10 +182,15 @@ class UnreadableMutationQueueStateTest {
     }
 
     private fun keptAsideCopiesOf(signature: String): Int =
-        objectDao.rowsOf(RESERVED_TABLE_NAME).count { row -> row.signature.startsWith("$signature.unreadable.") }
+        objectDao.rowsOf(RESERVED_TABLE_NAME).count { row ->
+            row.signature.startsWith("$signature.unreadable.")
+        }
 
     private fun byId(id: String): FilterDescriptor =
-        FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))
+        FilterDescriptor(
+            conditions =
+                listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id))
+        )
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
 

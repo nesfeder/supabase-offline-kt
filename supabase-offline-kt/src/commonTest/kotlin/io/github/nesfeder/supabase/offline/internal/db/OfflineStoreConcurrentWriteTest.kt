@@ -1,9 +1,17 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -12,25 +20,18 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlin.time.ExperimentalTime
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /**
  * Tests that the object cache's read-modify-write paths are serialized per table.
  *
- * [OfflineStore.applyLocalMutationToCache] snapshots every cached payload for a table, patches
- * each in memory, and writes each back whole. Two of those running at once on the same table
- * — a batch job persists its rows from several parallel workers, and two sync
- * runs can drive that job concurrently — used to interleave freely: the second writer read the
- * payload before the first had written, appended its own row, and wrote the first's row back
- * out. Nothing replays an online-success overlay (it never enters the mutation queue), so the
- * lost row stayed out of every reactive `selectAsFlow` observer until something re-fetched the
- * signature. On screen that was a blank loading placeholder for minutes after
- * its row was already on the server.
+ * [OfflineStore.applyLocalMutationToCache] snapshots every cached payload for a table, patches each
+ * in memory, and writes each back whole. Two of those running at once on the same table — a batch
+ * job persists its rows from several parallel workers, and two sync runs can drive that job
+ * concurrently — used to interleave freely: the second writer read the payload before the first had
+ * written, appended its own row, and wrote the first's row back out. Nothing replays an
+ * online-success overlay (it never enters the mutation queue), so the lost row stayed out of every
+ * reactive `selectAsFlow` observer until something re-fetched the signature. On screen that was a
+ * blank loading placeholder for minutes after its row was already on the server.
  *
  * Every test parks one writer between its read and its write with
  * [FakeObjectDao.onAllForTableSnapshot], so the interleaving is exact rather than timing-dependent.
@@ -141,8 +142,9 @@ class OfflineStoreConcurrentWriteTest {
     private fun buildStore(
         objectDao: FakeObjectDao,
         tick: () -> Long,
-    ): OfflineStore = newTestOfflineStore(
-        objectDao = objectDao,
-        monotonicTick = tick,
-    )
+    ): OfflineStore =
+        newTestOfflineStore(
+            objectDao = objectDao,
+            monotonicTick = tick,
+        )
 }

@@ -1,17 +1,19 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
 
 /**
  * Tests for [OfflineStore]'s size-based eviction — the loop that keeps the object cache within
@@ -19,8 +21,8 @@ import kotlin.time.ExperimentalTime
  *
  * The core guarantee is termination: eviction is driven by the cache's **logical** size (summed
  * payload length) rather than the on-disk file size, which never shrinks after `DELETE` and
- * previously made the loop spin forever holding the eviction mutex once the cache first crossed
- * its limit. These tests lock in that termination (progress guard and hard iteration cap), the
+ * previously made the loop spin forever holding the eviction mutex once the cache first crossed its
+ * limit. These tests lock in that termination (progress guard and hard iteration cap), the
  * oldest-first eviction order, the unlimited-cache short-circuit, the small-cache hysteresis
  * handling, and deadlock-free concurrent writes.
  */
@@ -38,11 +40,12 @@ class OfflineStoreEvictionTest {
                 updatedAt = index.toLong(), // 0 = oldest ... 4 = newest
             )
         }
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 250L,
-            evictionBatchSize = 1,
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 250L,
+                evictionBatchSize = 1,
+            )
 
         // When enforcement runs
         store.enforceDbSizeLimitIfNeeded()
@@ -63,11 +66,12 @@ class OfflineStoreEvictionTest {
         // pathological condition that made file-size-based eviction spin forever.
         val objectDao = FakeObjectDao()
         objectDao.fixedTotalPayloadBytes = 10_000L
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 1_000L,
-            evictionBatchSize = 10,
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 1_000L,
+                evictionBatchSize = 10,
+            )
 
         // When enforcement runs it must return rather than spin
         store.enforceDbSizeLimitIfNeeded()
@@ -84,11 +88,12 @@ class OfflineStoreEvictionTest {
         val objectDao = FakeObjectDao()
         objectDao.fixedTotalPayloadBytes = 10_000L
         objectDao.forcedDeleteCount = 5
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 1_000L,
-            evictionBatchSize = 5,
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 1_000L,
+                evictionBatchSize = 5,
+            )
 
         // When enforcement runs it must still terminate
         store.enforceDbSizeLimitIfNeeded()
@@ -102,11 +107,12 @@ class OfflineStoreEvictionTest {
         // Given a cache whose measured size equals the limit
         val objectDao = FakeObjectDao()
         objectDao.fixedTotalPayloadBytes = 1_000L
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 1_000L,
-            evictionBatchSize = 5,
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 1_000L,
+                evictionBatchSize = 5,
+            )
 
         // When enforcement runs
         store.enforceDbSizeLimitIfNeeded()
@@ -128,18 +134,22 @@ class OfflineStoreEvictionTest {
             )
         }
         // 4 * 4096 = 16_384 bytes of payload; limit 8 KiB; minRetained 50 MB >> limit
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 8_192L,
-            evictionBatchSize = 1,
-            minRetainedBytes = 50L * 1024L * 1024L,
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 8_192L,
+                evictionBatchSize = 1,
+                minRetainedBytes = 50L * 1024L * 1024L,
+            )
 
         // When enforcement runs
         store.enforceDbSizeLimitIfNeeded()
 
         // Then the oversized minRetainedBytes headroom coerced to a no-op and eviction still ran
-        assertTrue(objectDao.totalPayloadBytes() <= 8_192L, "small cache should evict to the ceiling")
+        assertTrue(
+            objectDao.totalPayloadBytes() <= 8_192L,
+            "small cache should evict to the ceiling",
+        )
         assertTrue(objectDao.evictedRows >= 1, "eviction must not be blocked by minRetainedBytes")
     }
 
@@ -156,12 +166,13 @@ class OfflineStoreEvictionTest {
             )
         }
         // 10 * 100 = 1_000 bytes cached; ceiling 700; headroom 300 -> drain down to 400.
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 700L,
-            evictionBatchSize = 1,
-            minRetainedBytes = 300L,
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 700L,
+                evictionBatchSize = 1,
+                minRetainedBytes = 300L,
+            )
 
         // When enforcement runs after the cache crosses the ceiling
         store.enforceDbSizeLimitIfNeeded()
@@ -194,11 +205,12 @@ class OfflineStoreEvictionTest {
                 updatedAt = index.toLong(),
             )
         }
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = null,
-            evictionBatchSize = 10,
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = null,
+                evictionBatchSize = 10,
+            )
 
         // When enforcement runs
         store.enforceDbSizeLimitIfNeeded()
@@ -213,11 +225,12 @@ class OfflineStoreEvictionTest {
     fun add_payload_with_unlimited_cache_skips_enforcement() = runTest {
         // Given an unlimited cache
         val objectDao = FakeObjectDao()
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = null,
-            nowMillis = incrementingClock(),
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = null,
+                nowMillis = incrementingClock(),
+            )
 
         // When a payload large enough to otherwise trigger enforcement is written
         store.addPayload("ratings", "sig", "x".repeat(8_192))
@@ -230,12 +243,13 @@ class OfflineStoreEvictionTest {
     fun add_payload_larger_than_limit_evicts_older_entries() = runTest {
         // Given a small cache holding an older entry
         val objectDao = FakeObjectDao()
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 9_500L,
-            evictionBatchSize = 1,
-            nowMillis = incrementingClock(),
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 9_500L,
+                evictionBatchSize = 1,
+                nowMillis = incrementingClock(),
+            )
         store.addPayload("ratings", "old", "x".repeat(800))
 
         // When a large payload pushes the cache over the limit
@@ -258,12 +272,13 @@ class OfflineStoreEvictionTest {
             payload = "x".repeat(2_000),
             updatedAt = 0L,
         )
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 1_000L,
-            evictionBatchSize = 50,
-            nowMillis = incrementingClock(),
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 1_000L,
+                evictionBatchSize = 50,
+                nowMillis = incrementingClock(),
+            )
 
         // When 31 small writes arrive, the periodic backstop has not yet fired
         repeat(31) { index -> store.addPayload("ratings", "small-$index", "x") }
@@ -288,11 +303,12 @@ class OfflineStoreEvictionTest {
                 updatedAt = index.toLong(),
             )
         }
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 250L,
-            evictionBatchSize = 0,
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 250L,
+                evictionBatchSize = 0,
+            )
 
         // When enforcement runs
         store.enforceDbSizeLimitIfNeeded()
@@ -304,26 +320,31 @@ class OfflineStoreEvictionTest {
             objectDao.totalPayloadBytes() <= 250L,
             "eviction must make progress despite a non-positive batch size",
         )
-        assertTrue(objectDao.evictedRows >= 1, "a non-positive batch size must not disable eviction")
+        assertTrue(
+            objectDao.evictedRows >= 1,
+            "a non-positive batch size must not disable eviction",
+        )
     }
 
     @Test
     fun concurrent_add_payload_calls_do_not_deadlock() = runTest {
         // Given a small cache and many large concurrent writers, each of which triggers eviction
         val objectDao = FakeObjectDao()
-        val store = buildStore(
-            objectDao = objectDao,
-            maxDbSizeBytes = 40_960L,
-            evictionBatchSize = 5,
-            nowMillis = incrementingClock(),
-        )
+        val store =
+            buildStore(
+                objectDao = objectDao,
+                maxDbSizeBytes = 40_960L,
+                evictionBatchSize = 5,
+                nowMillis = incrementingClock(),
+            )
 
         // When 50 writes race through the eviction mutex
-        val writers = List(50) { index ->
-            launch {
-                store.addPayload("ratings", "sig-$index", "x".repeat(4_096))
+        val writers =
+            List(50) { index ->
+                launch {
+                    store.addPayload("ratings", "sig-$index", "x".repeat(4_096))
+                }
             }
-        }
         writers.forEach { writer -> writer.join() }
 
         // Then every writer completed without deadlocking and the cache stayed bounded
@@ -344,11 +365,12 @@ class OfflineStoreEvictionTest {
     ): OfflineStore =
         newTestOfflineStore(
             objectDao = objectDao,
-            settings = OfflineCacheSettings(
-                maxDbSizeBytes = maxDbSizeBytes,
-                evictionBatchSize = evictionBatchSize,
-                minRetainedBytes = minRetainedBytes,
-            ),
+            settings =
+                OfflineCacheSettings(
+                    maxDbSizeBytes = maxDbSizeBytes,
+                    evictionBatchSize = evictionBatchSize,
+                    minRetainedBytes = minRetainedBytes,
+                ),
             nowMillis = nowMillis,
         )
 

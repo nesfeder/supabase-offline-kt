@@ -1,14 +1,24 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.postgrest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.serialization.json.JsonArray
@@ -16,21 +26,13 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlin.time.ExperimentalTime
 
 /**
  * Behavioral contract for the mutation verbs on [OfflinePostgrestQueryBuilderImpl], which return a
  * [MutationOutcome] ([MutationOutcome.Applied] online / [MutationOutcome.Queued] offline).
  *
- * Verbs run against a scripted [FakePostgrestQueryBuilderWrapper] delegate (no HTTP transport) and a
- * real [OfflineStore] over in-memory DAO fakes, so the enqueue side effect is observable via the
+ * Verbs run against a scripted [FakePostgrestQueryBuilderWrapper] delegate (no HTTP transport) and
+ * a real [OfflineStore] over in-memory DAO fakes, so the enqueue side effect is observable via the
  * fake mutation DAO. A connectivity failure is scripted as a [kotlinx.io.IOException] — the shape
  * `isNetworkOrConnectivityFailure` classifies as a transport failure and therefore queues.
  */
@@ -44,14 +46,16 @@ class MutationOutcomeTest {
         val postgrest = testPostgrest()
         val serverRow = """[{"id":"row-1","name":"Widget"}]"""
         val mutationDao = FakeMutationDao()
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "attachments",
-                postgrest = postgrest,
-                onInsert = { postgrestResultOf(serverRow, postgrest) },
-            ),
-            mutationDao = mutationDao,
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "attachments",
+                        postgrest = postgrest,
+                        onInsert = { postgrestResultOf(serverRow, postgrest) },
+                    ),
+                mutationDao = mutationDao,
+            )
 
         // When
         val outcome = builder.insertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
@@ -67,14 +71,16 @@ class MutationOutcomeTest {
         // Given — the delegate INSERT fails with a transport error
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "attachments",
-                postgrest = postgrest,
-                onInsert = { throw IOException("network down") },
-            ),
-            mutationDao = mutationDao,
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "attachments",
+                        postgrest = postgrest,
+                        onInsert = { throw IOException("network down") },
+                    ),
+                mutationDao = mutationDao,
+            )
 
         // When
         val outcome = builder.insertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
@@ -90,14 +96,16 @@ class MutationOutcomeTest {
         // Given — OnlineOnly strategy with a transport failure
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "attachments",
-                postgrest = postgrest,
-                onInsert = { throw IOException("network down") },
-            ),
-            mutationDao = mutationDao,
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "attachments",
+                        postgrest = postgrest,
+                        onInsert = { throw IOException("network down") },
+                    ),
+                mutationDao = mutationDao,
+            )
 
         // When / Then — the failure surfaces, nothing is queued
         assertFailsWith<IOException> {
@@ -111,14 +119,16 @@ class MutationOutcomeTest {
         // Given — a queued UPSERT (network down under QueueIfOffline)
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "beta_feedback",
-                postgrest = postgrest,
-                onUpsert = { throw IOException("network down") },
-            ),
-            mutationDao = mutationDao,
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "beta_feedback",
+                        postgrest = postgrest,
+                        onUpsert = { throw IOException("network down") },
+                    ),
+                mutationDao = mutationDao,
+            )
 
         // When / Then — the `resultOrNull()` bridge contract for a caller that treats "no server
         // row" as an error, e.g. a repository that reads `resultOrNull()?.decodeAs() ?:
@@ -126,9 +136,10 @@ class MutationOutcomeTest {
         // (A caller that must read its row back even when queued should instead stamp a
         // client-owned id and project the row from its own payload.)
         assertFailsWith<IllegalStateException> {
-            builder.upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
-                .resultOrNull()?.data
-                ?: error("write was queued offline; no server row to read back")
+            builder
+                .upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
+                .resultOrNull()
+                ?.data ?: error("write was queued offline; no server row to read back")
         }
         // And the write really was queued (enqueued exactly once).
         assertEquals(1, mutationDao.inserted.size)
@@ -139,20 +150,25 @@ class MutationOutcomeTest {
         // Given — a queued UPSERT (network down under QueueIfOffline)
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "notes",
-                postgrest = postgrest,
-                onUpsert = { throw IOException("network down") },
-            ),
-            mutationDao = mutationDao,
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "notes",
+                        postgrest = postgrest,
+                        onUpsert = { throw IOException("network down") },
+                    ),
+                mutationDao = mutationDao,
+            )
 
         // When — a caller reads the row back with a null-safe `resultOrNull()?...` chain rather
         // than `error(...)`, so a Queued outcome falls through to null instead of throwing (the
         // caller then does an explicit id fetch, or reports that no row came back).
-        val fellThrough = builder.upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
-            .resultOrNull()?.data
+        val fellThrough =
+            builder
+                .upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
+                .resultOrNull()
+                ?.data
 
         // Then — the chain short-circuits to null, and the write was still queued.
         assertEquals(null, fellThrough)
@@ -166,14 +182,16 @@ class MutationOutcomeTest {
         // Given
         val postgrest = testPostgrest()
         val serverRow = """[{"id":"log-1"}]"""
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "notes",
-                postgrest = postgrest,
-                onUpsert = { postgrestResultOf(serverRow, postgrest) },
-            ),
-            mutationDao = FakeMutationDao(),
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "notes",
+                        postgrest = postgrest,
+                        onUpsert = { postgrestResultOf(serverRow, postgrest) },
+                    ),
+                mutationDao = FakeMutationDao(),
+            )
 
         // When
         val outcome = builder.upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
@@ -190,25 +208,28 @@ class MutationOutcomeTest {
         // Given — a queued UPDATE whose filter is representable in the offline descriptor
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onUpdate = { throw IOException("network down") },
-            ),
-            mutationDao = mutationDao,
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "projects",
+                        postgrest = postgrest,
+                        onUpdate = { throw IOException("network down") },
+                    ),
+                mutationDao = mutationDao,
+            )
 
         // When — a simple equality filter (strict capture succeeds)
-        val outcome = builder.updateJson(
-            body = buildJsonObject { put("retired_at", "2026-07-12T00:00:00Z") },
-            mutationStrategy = MutationStrategy.QueueIfOffline,
-        ) {
-            filter {
-                eq("id", "project-1")
-                eq("user_id", "user-1")
+        val outcome =
+            builder.updateJson(
+                body = buildJsonObject { put("retired_at", "2026-07-12T00:00:00Z") },
+                mutationStrategy = MutationStrategy.QueueIfOffline,
+            ) {
+                filter {
+                    eq("id", "project-1")
+                    eq("user_id", "user-1")
+                }
             }
-        }
 
         // Then — queued and enqueued
         assertEquals(MutationOutcome.Queued, outcome)
@@ -222,14 +243,16 @@ class MutationOutcomeTest {
         // original transport failure instead of queuing an over-broad replay.
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = postgrest,
-                onUpdate = { throw IOException("network down") },
-            ),
-            mutationDao = mutationDao,
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "projects",
+                        postgrest = postgrest,
+                        onUpdate = { throw IOException("network down") },
+                    ),
+                mutationDao = mutationDao,
+            )
 
         // When / Then — the original failure is rethrown and nothing is queued
         assertFailsWith<IOException> {
@@ -255,22 +278,25 @@ class MutationOutcomeTest {
         // Given
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
-        val builder = buildBuilder(
-            wrapper = FakePostgrestQueryBuilderWrapper(
-                table = "note_projects",
-                postgrest = postgrest,
-                onDelete = { throw IOException("network down") },
-            ),
-            mutationDao = mutationDao,
-        )
+        val builder =
+            buildBuilder(
+                wrapper =
+                    FakePostgrestQueryBuilderWrapper(
+                        table = "note_projects",
+                        postgrest = postgrest,
+                        onDelete = { throw IOException("network down") },
+                    ),
+                mutationDao = mutationDao,
+            )
 
         // When
-        val outcome = builder.delete(MutationStrategy.QueueIfOffline) {
-            filter {
-                eq("note_id", "log-1")
-                eq("user_id", "user-1")
+        val outcome =
+            builder.delete(MutationStrategy.QueueIfOffline) {
+                filter {
+                    eq("note_id", "log-1")
+                    eq("user_id", "user-1")
+                }
             }
-        }
 
         // Then
         assertEquals(MutationOutcome.Queued, outcome)
@@ -286,14 +312,14 @@ class MutationOutcomeTest {
     private fun buildBuilder(
         wrapper: FakePostgrestQueryBuilderWrapper,
         mutationDao: MutationDao,
-    ): OfflinePostgrestQueryBuilderImpl = OfflinePostgrestQueryBuilderImpl(
-        delegate = wrapper,
-        store = buildStore(mutationDao),
-    )
+    ): OfflinePostgrestQueryBuilderImpl =
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = wrapper,
+            store = buildStore(mutationDao),
+        )
 
-    private fun buildStore(mutationDao: MutationDao): OfflineStore = newTestOfflineStore(
-        mutationDao = mutationDao,
-    )
+    private fun buildStore(mutationDao: MutationDao): OfflineStore =
+        newTestOfflineStore(mutationDao = mutationDao)
 
     private fun testPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 }
