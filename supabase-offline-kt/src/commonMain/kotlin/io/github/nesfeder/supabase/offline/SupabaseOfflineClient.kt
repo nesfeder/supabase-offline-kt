@@ -530,13 +530,17 @@ internal class SupabaseOfflineClientImpl(
     }
 
     /**
-     * Makes the cache [identity]'s. A cache no identity owns is adopted by a user; anything else
-     * another identity cached is dropped — the cached queries and the Storage file cache, never the
-     * mutation queue — under [clearAllCache]'s locks in its order, and live queries fetch again.
+     * Makes the cache [identity]'s. A cache no identity owns is adopted by a user, and by nobody
+     * signed in while it holds nothing; anything else another identity cached is dropped — the
+     * cached queries and the Storage file cache, never the mutation queue — under [clearAllCache]'s
+     * locks in its order, and live queries fetch again.
      */
     private suspend fun settleCacheOwner(identity: QueueIdentity) {
-        val claimant = identity.storedValue.takeIf { identity is QueueIdentity.User }
-        if (store.cacheOwner.owner(claimant = claimant) == identity.storedValue) return
+        if (
+            store.cacheOwnerClaimingFor(identity.storedValue, claimsForUser = true) ==
+                identity.storedValue
+        )
+            return
         // The send lock alone: no pass is stopped, as none of the queue goes
         mutationQueueReplayer.holdingSends {
             fileCache.clear {

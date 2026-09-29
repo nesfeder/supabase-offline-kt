@@ -42,17 +42,19 @@ internal class CacheOwnerRecord(private val objectDao: ObjectDao, private val js
     fun emptiedCount(): Long = emptied.value
 
     /**
-     * The recorded owner, or `null` when none is recorded. When none is and [claimant] is given,
-     * [claimant] is recorded first and returned: the first identity to use an unowned cache owns
-     * it.
+     * The recorded owner, or `null` when none is recorded. When none is, [claimant] is given and
+     * [mayClaim] agrees, [claimant] is recorded first and returned: it owns the cache from then on.
      */
-    suspend fun owner(claimant: String? = null): String? {
+    suspend fun owner(
+        claimant: String? = null,
+        mayClaim: suspend () -> Boolean = { true },
+    ): String? {
         state.value?.let { known ->
             if (known.value != null || claimant == null) return known.value
         }
         return mutex.withLock {
             val recorded = loaded().value
-            if (recorded != null || claimant == null) return@withLock recorded
+            if (recorded != null || claimant == null || !mayClaim()) return@withLock recorded
             objectDao.upsert(rowOf(claimant))
             state.value = Owner(claimant)
             claimant

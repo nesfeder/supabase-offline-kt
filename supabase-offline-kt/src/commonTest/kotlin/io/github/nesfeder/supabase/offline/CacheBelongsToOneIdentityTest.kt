@@ -123,6 +123,7 @@ class CacheBelongsToOneIdentityTest {
         sessions: SessionManager = MemorySessionManager(),
         restoresStoredSession: Boolean = false,
         responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
+        scrubDatabase: suspend () -> Unit = {},
         plugins: SupabaseClientBuilder.() -> Unit = {
             install(Auth) {
                 sessionManager = sessions
@@ -156,6 +157,7 @@ class CacheBelongsToOneIdentityTest {
                     ),
                 baseDirectoryProvider = { dataDirectory },
                 coordinatorScope = backgroundScope,
+                scrubDatabase = scrubDatabase,
                 responseTrust = responseTrust,
             )
             .also { runCurrent() }
@@ -345,6 +347,21 @@ class CacheBelongsToOneIdentityTest {
         awaitCacheOwner("user:A")
         assertEquals(listOf(rowsOf("A")), objectDao.rowsOf(TABLE).map { row -> row.payload })
         assertEquals(ownerRecordOf("user:A"), recordedOwner())
+    }
+
+    @Test
+    fun a_new_install_signed_out_drops_nothing_and_rewrites_nothing() = runTest {
+        // Given — nothing cached, and nobody signed in
+        var scrubs = 0
+
+        // When — the client starts and a list is read
+        val client = launchClient(newServer(), scrubDatabase = { scrubs++ })
+        assertEquals("[]", client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly).data)
+        awaitCacheOwner("anonymous")
+
+        // Then — the empty cache is nobody's without a drop, and the answer is kept
+        assertEquals(0, scrubs)
+        assertEquals(listOf("[]"), objectDao.rowsOf(TABLE).map { row -> row.payload })
     }
 
     @Test

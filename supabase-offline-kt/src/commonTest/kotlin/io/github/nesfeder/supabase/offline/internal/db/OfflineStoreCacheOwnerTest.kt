@@ -158,6 +158,20 @@ class OfflineStoreCacheOwnerTest {
     }
 
     @Test
+    fun nobody_signed_in_claims_a_cache_that_holds_nothing() = runTest {
+        // Given — nothing cached, and nobody signed in
+        identity = QueueIdentity.Anonymous.storedValue
+
+        // When
+        val written = store.addPayload(TABLE, SIGNATURE, ROWS)
+
+        // Then — claimed, and written: no earlier user's rows are there to protect
+        assertEquals(AddPayloadOutcome.WRITTEN, written)
+        assertEquals(ownerRecordOf(QueueIdentity.Anonymous.storedValue), recordedOwner())
+        assertEquals(0, notServed)
+    }
+
+    @Test
     fun an_owner_record_this_build_cannot_read_belongs_to_nobody() = runTest {
         // Given
         objectDao.seedPayload(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE, """{"version":9}""")

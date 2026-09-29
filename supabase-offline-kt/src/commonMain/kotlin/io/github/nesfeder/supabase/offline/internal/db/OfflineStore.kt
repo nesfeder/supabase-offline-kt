@@ -439,12 +439,28 @@ internal class OfflineStore(
             return true
         }
         val identity = identityProvider()
-        val isUser = identity != null && identity != QueueIdentity.Anonymous.storedValue
-        val owner = cacheOwner.owner(claimant = identity.takeIf { forWrite && isUser })
-        val mine = identity != null && (owner == identity || (owner == null && isUser))
+        val owner = identity?.let { cacheOwnerClaimingFor(it, claimsForUser = forWrite) }
+        val mine =
+            identity != null &&
+                (owner == identity ||
+                    (owner == null && identity != QueueIdentity.Anonymous.storedValue))
         if (!mine) onCacheNotServed()
         return mine
     }
+
+    /**
+     * The cache's recorded owner, recording [identity] first when none is and it may claim the
+     * cache: a user when [claimsForUser]; nobody signed in only while the cache holds nothing,
+     * since rows an earlier build left may be a user's.
+     */
+    internal suspend fun cacheOwnerClaimingFor(identity: String, claimsForUser: Boolean): String? =
+        cacheOwner.owner(
+            claimant = identity,
+            mayClaim = {
+                if (identity != QueueIdentity.Anonymous.storedValue) claimsForUser
+                else objectDao.totalPayloadBytes() == 0L && storageDao.all().isEmpty()
+            },
+        )
 
     /**
      * Rolling count of [addPayload] writes, used to run size enforcement only periodically instead
