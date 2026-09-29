@@ -189,6 +189,9 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
     fun allLiveSignatures(): Set<String> =
         liveSignatures.value.values.flatMapTo(mutableSetOf()) { perTable -> perTable.keys }
 
+    /** The tables with a live collector. */
+    fun liveTables(): Set<String> = liveSignatures.value.keys
+
     private companion object {
         /**
          * Refresh requests kept for a slow reader; the oldest go first, which a conflated reader

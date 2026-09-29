@@ -107,6 +107,13 @@ internal interface ObjectDao {
     @Query("DELETE FROM object_cache") suspend fun deleteAll()
 
     /**
+     * Deletes every row of every table but [table]: the cache's payloads, keeping the engine's
+     * rows.
+     */
+    @Query("DELETE FROM object_cache WHERE table_name != :table")
+    suspend fun deleteAllExceptTable(table: String)
+
+    /**
      * Summed character length of every cached SELECT payload across all tables and signatures,
      * leaving out the engine's reserved rows (see [RESERVED_TABLE_NAME]): they are engine state,
      * not cache, and must never push a real payload out.

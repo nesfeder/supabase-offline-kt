@@ -109,6 +109,15 @@ internal open class InMemoryObjectDao : ObjectDao {
         keys.forEach { observers[it]?.value = null }
     }
 
+    override suspend fun deleteAllExceptTable(table: String) {
+        rows.keys
+            .filter { (rowTable, _) -> rowTable != table }
+            .forEach { key ->
+                rows.remove(key)
+                observers[key]?.value = null
+            }
+    }
+
     override suspend fun totalPayloadBytes(): Long =
         rows.values.filter { it.table != RESERVED_TABLE_NAME }.sumOf { it.payload.length.toLong() }
 

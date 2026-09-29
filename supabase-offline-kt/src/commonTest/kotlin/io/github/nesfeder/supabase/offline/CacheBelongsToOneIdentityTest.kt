@@ -142,6 +142,10 @@ class CacheBelongsToOneIdentityTest {
                 plugins()
             }
         runCurrent()
+        if (signedInAs != null) {
+            supabase.signInForTest(signedInAs)
+            runCurrent()
+        }
         return newTestOfflineClient(
                 supabase = supabase,
                 store =
@@ -154,13 +158,7 @@ class CacheBelongsToOneIdentityTest {
                 coordinatorScope = backgroundScope,
                 responseTrust = responseTrust,
             )
-            .also {
-                if (signedInAs != null) {
-                    runCurrent()
-                    supabase.signInForTest(signedInAs)
-                }
-                runCurrent()
-            }
+            .also { runCurrent() }
     }
 
     /**
@@ -168,8 +166,13 @@ class CacheBelongsToOneIdentityTest {
      * of real time: dropping it runs partly on real threads, the file cache's.
      */
     private suspend fun TestScope.awaitCacheOwner(owner: String) {
+        awaitUntil { recordedOwner() == ownerRecordOf(owner) }
+    }
+
+    /** Runs the test's scheduler until [condition] holds, for at most five seconds of real time. */
+    private suspend fun TestScope.awaitUntil(condition: () -> Boolean) {
         val deadline = TimeSource.Monotonic.markNow() + 5.seconds
-        while (recordedOwner() != ownerRecordOf(owner) && deadline.hasNotPassedNow()) {
+        while (!condition() && deadline.hasNotPassedNow()) {
             runCurrent()
             withContext(Dispatchers.Default) { delay(10) }
         }
@@ -374,13 +377,14 @@ class CacheBelongsToOneIdentityTest {
                 // When
                 val client = launchClient(newServer(), plugins = plugins)
 
-                // Then — adopted, and still served once the client has settled
+                // Then — served as it is, recorded as nobody's by the first write, never dropped
                 val items = client.from(TABLE)
                 assertEquals(
                     rowsOf("A"),
                     items.select(readStrategy = ReadStrategy.CacheOnly()).data,
                     label,
                 )
+                client.from(OTHER_TABLE).select(readStrategy = ReadStrategy.NetworkOnly)
                 awaitCacheOwner("anonymous")
                 advanceTimeBy(1.minutes)
                 runCurrent()
@@ -475,6 +479,7 @@ class CacheBelongsToOneIdentityTest {
         // Then — B never gets A's copy; once settled, the file and its row are gone
         assertNull(bucket.cachedFile(OBJECT_PATH))
         awaitCacheOwner("user:B")
+        awaitUntil { !FileSystem.SYSTEM.exists(cached.path.toPath()) }
         assertFalse(FileSystem.SYSTEM.exists(cached.path.toPath()))
         assertEquals(emptyList(), storageDao.all().map { row -> row.path })
         val fetched = bucket.ensureCachedFile(OBJECT_PATH)
@@ -514,6 +519,7 @@ class CacheBelongsToOneIdentityTest {
 
     private companion object {
         const val TABLE = "notes"
+        const val OTHER_TABLE = "tags"
         const val BUCKET = "avatars"
         const val OBJECT_PATH = "me.png"
 

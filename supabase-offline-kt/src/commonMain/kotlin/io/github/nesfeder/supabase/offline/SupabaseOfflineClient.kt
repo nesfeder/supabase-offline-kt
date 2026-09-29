@@ -22,9 +22,11 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.BackgroundSync
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
@@ -44,14 +46,19 @@ import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -255,6 +262,12 @@ public interface SupabaseOfflineClient {
      * un-synced offline writes, and downloaded objects (e.g. avatars) never carry over to the next
      * user on the same device, and no personal data survives on disk after an account is deleted.
      *
+     * With the Auth plugin, the cached queries and downloaded files also belong to one identity at
+     * a time without this call: once the session settles as another user, or signed out, what was
+     * cached before is no longer served, and is deleted and scrubbed from the database files as
+     * this call does. Queued writes are kept then, each for the identity that made it; only this
+     * call removes them. A session that is restoring, or whose refresh failed, keeps its cache.
+     *
      * A replay pass in progress is cancelled first, and no queued write is sent once clearing has
      * begun. A write whose request was already in flight is neither overlaid onto the cache nor
      * queued when it returns, and a cache patch already under way when clearing begins writes
@@ -422,6 +435,15 @@ internal class SupabaseOfflineClientImpl(
     /** The identity the overlay and counts are for, read once per session status. */
     private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
 
+    /**
+     * A read or write found the cache another identity's: [keepCacheWithTheSession] looks again.
+     */
+    private val cacheOwnerChecks =
+        MutableSharedFlow<Unit>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
     init {
         if (prepareFileCacheDirectories) fileCache.prepareDirectories()
         // Let the store see which signatures are live so a server-successful mutation materializes
@@ -434,12 +456,16 @@ internal class SupabaseOfflineClientImpl(
         store.identityProvider = ::overlayIdentityValue
         store.identityChanges = sessionChanges()
         store.ownerlessMutationsAreAnonymous = authPluginOrNull() == null
+        // The cache is one identity's at a time; without Auth there is only one
+        store.cacheOwnedPerIdentity = authPluginOrNull() != null
+        store.onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) }
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
         // and not added while requests may be walking it.
         supabase.installDryRunCheck()
         supabase.installReadShapeCheck()
         supabase.installTransportFailureCapture()
         replayWhenTheSessionSettles()
+        keepCacheWithTheSession()
     }
 
     private fun authPluginOrNull(): Auth? = supabase.pluginManager.getPluginOrNull(Auth)
@@ -475,6 +501,52 @@ internal class SupabaseOfflineClientImpl(
                 if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true)
                     backgroundSync.request()
             }
+        }
+    }
+
+    /**
+     * Keeps the cache the settled identity's, in the client's scope so [close] stops it: when the
+     * session settles, or a read finds the cache another identity's, [settleCacheOwner] runs as a
+     * call through the gate. A session that restores or whose refresh failed is not settled.
+     */
+    private fun keepCacheWithTheSession() {
+        val auth = authPluginOrNull() ?: return
+        clientScope.launch {
+            merge(auth.sessionStatus.map {}, cacheOwnerChecks).conflate().collect {
+                val identity = replayIdentityFor(auth.sessionStatus.value) ?: return@collect
+                try {
+                    operationGate.call { settleCacheOwner(identity) }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    if (operationGate.isClosed) return@collect
+                    sdkLogger.error {
+                        "Could not drop the cache for the new session " +
+                            "(${failure::class.simpleName}); it is not served until it is"
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Makes the cache [identity]'s. A cache no identity owns is adopted by a user; anything else
+     * another identity cached is dropped — the cached queries and the Storage file cache, never the
+     * mutation queue — under [clearAllCache]'s locks in its order, and live queries fetch again.
+     */
+    private suspend fun settleCacheOwner(identity: QueueIdentity) {
+        val claimant = identity.storedValue.takeIf { identity is QueueIdentity.User }
+        if (store.cacheOwner.owner(claimant = claimant) == identity.storedValue) return
+        // The send lock alone: no pass is stopped, as none of the queue goes
+        mutationQueueReplayer.holdingSends {
+            fileCache.clear {
+                store.dropCacheFor(identity.storedValue)
+                scrubDatabase()
+            }
+        }
+        sdkLogger.info { "The session settled into another identity; the cache was emptied for it" }
+        refreshCoordinator.liveTables().forEach { table ->
+            refreshCoordinator.requestRefresh(table)
         }
     }
 
@@ -625,12 +697,19 @@ internal class SupabaseOfflineClientImpl(
     /**
      * Clears once, locks outermost first: the replayer's send lock, after it cancels passes in
      * flight; the file cache's lock; the store's, around [OfflineStore.clearAll]'s one transaction.
-     * The scrub runs after that transaction, and the cache files go last.
+     * Signed out, that transaction records the emptied cache as nobody's; a user's first use claims
+     * it, so no user id is written back by the clear. The scrub runs after that transaction, and
+     * the cache files go last.
      */
     override suspend fun clearAllCache(): Unit = operationGate.call {
+        val owner =
+            QueueIdentity.Anonymous.storedValue.takeIf {
+                authPluginOrNull() != null &&
+                    supabase.currentReplayIdentity() == QueueIdentity.Anonymous
+            }
         mutationQueueReplayer.clearLocalData {
             fileCache.clear {
-                store.clearAll()
+                store.clearAll(owner)
                 scrubDatabase()
             }
         }

@@ -145,6 +145,34 @@ internal class ReservedRowsDatabaseScenarios(
     }
 
     /**
+     * Room's delete of every table's rows but the engine's own: the cached queries go, and the
+     * reserved rows stay.
+     */
+    suspend fun roomDropsTheCachedQueriesAndKeepsTheEnginesRows(path: String) {
+        // Given — the shipped database's cache rows, and two rows of the engine's own
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val objectDao = database.objectDao()
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{}", 0))
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE, "{}", 0))
+            val reservedBefore = PreviousEngineQueries.reservedRowCount(path)
+
+            // When
+            objectDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
+
+            // Then
+            ShippedDatabaseFixture.OBJECT_ROWS.map { row -> row.table }
+                .distinct()
+                .forEach { table -> assertEquals(emptyList(), objectDao.signaturesForTable(table)) }
+            assertEquals(reservedBefore, PreviousEngineQueries.reservedRowCount(path))
+            assertEquals(2L, reservedBefore)
+        } finally {
+            database.close()
+        }
+    }
+
+    /**
      * Room's queries over query-shape records: found and deleted by prefix, and those whose payload
      * is gone deleted as orphans, while the rest stay.
      */

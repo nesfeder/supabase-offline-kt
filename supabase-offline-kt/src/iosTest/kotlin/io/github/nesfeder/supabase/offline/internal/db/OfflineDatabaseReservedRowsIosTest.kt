@@ -62,6 +62,11 @@ class OfflineDatabaseReservedRowsIosTest {
     }
 
     @Test
+    fun room_drops_the_cached_queries_and_keeps_the_engines_rows() = runTest {
+        scenarios.roomDropsTheCachedQueriesAndKeepsTheEnginesRows(dbPath)
+    }
+
+    @Test
     fun room_replays_pending_writes_in_insertion_order() = runTest {
         scenarios.roomReplaysPendingWritesInInsertionOrder(dbPath)
     }

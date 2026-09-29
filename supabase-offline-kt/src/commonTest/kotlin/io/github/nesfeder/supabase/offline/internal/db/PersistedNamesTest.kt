@@ -37,6 +37,20 @@ class PersistedNamesTest {
         assertEquals("mutation_owners", MUTATION_OWNERS_SIGNATURE)
         assertEquals("synced_mutation_coverage", SYNCED_MUTATION_COVERAGE_SIGNATURE)
         assertEquals("unconfirmed_sends", UNCONFIRMED_SENDS_SIGNATURE)
+        assertEquals("cache_owner", CACHE_OWNER_SIGNATURE)
+    }
+
+    @Test
+    fun whose_the_cache_is_is_written_under_this_name_with_these_keys() = runTest {
+        // When — the cache dropped for a user, then for nobody signed in
+        store.dropCacheFor(QueueIdentity.User("u-1").storedValue)
+        val forUser = objectDao.getRow(RESERVED_TABLE_NAME, "cache_owner")?.payload
+        store.dropCacheFor(QueueIdentity.Anonymous.storedValue)
+        val forNobody = objectDao.getRow(RESERVED_TABLE_NAME, "cache_owner")?.payload
+
+        // Then
+        assertEquals("""{"version":1,"owner":"user:u-1"}""", forUser)
+        assertEquals("""{"version":1,"owner":"anonymous"}""", forNobody)
     }
 
     @Test

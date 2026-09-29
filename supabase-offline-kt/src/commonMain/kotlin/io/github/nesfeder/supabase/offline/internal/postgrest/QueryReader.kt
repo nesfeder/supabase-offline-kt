@@ -317,8 +317,8 @@ internal class QueryReader(
 
     /**
      * The refresh of a reactive read: a network SELECT written through to the cache. A response the
-     * trust policy does not take as settled throws [UntrustedResponseException], so the loop
-     * retries.
+     * trust policy does not take as settled, or one the cache refused while it passed to another
+     * identity, throws [UntrustedResponseException], so the loop retries.
      */
     private suspend fun refreshFromNetwork(
         slot: CacheSlot,
@@ -328,10 +328,19 @@ internal class QueryReader(
         val fetched = fetchAndCache(slot, columns, request, requestSession(), Retries.UPSTREAM)
         if (fetched.wasRefusedAfterClear) return
         if (
-            trustPolicy.refreshRetries(fetched.sessionBefore, fetched.sessionAfter, fetched.isEmpty)
+            fetched.outcome == AddPayloadOutcome.DROPPED_OTHER_OWNER ||
+                trustPolicy.refreshRetries(
+                    fetched.sessionBefore,
+                    fetched.sessionAfter,
+                    fetched.isEmpty,
+                )
         ) {
             sdkLogger.warning {
-                "SELECT ${slot.table} answered while the session was not settled; will retry"
+                if (fetched.outcome == AddPayloadOutcome.DROPPED_OTHER_OWNER) {
+                    "SELECT ${slot.table} answered while the cache passed to another identity; will retry"
+                } else {
+                    "SELECT ${slot.table} answered while the session was not settled; will retry"
+                }
             }
             throw UntrustedResponseException(slot.table)
         }

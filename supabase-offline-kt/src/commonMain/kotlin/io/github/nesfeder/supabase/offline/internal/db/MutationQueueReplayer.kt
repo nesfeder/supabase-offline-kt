@@ -161,6 +161,12 @@ internal class MutationQueueReplayer(
         sendLock.withLock { clear() }
     }
 
+    /**
+     * Runs [block] under the send lock, as [clearLocalData] runs its clear, but lets every pass and
+     * queued write go on: for a drop of the cache that keeps the mutation queue.
+     */
+    suspend fun <T> holdingSends(block: suspend () -> T): T = sendLock.withLock { block() }
+
     /** What happened to a mutation offered for sending at the head of its queue. */
     sealed interface HeadSendOutcome {
 

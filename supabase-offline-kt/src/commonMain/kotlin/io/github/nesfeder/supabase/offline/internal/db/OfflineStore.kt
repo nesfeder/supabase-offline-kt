@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -99,6 +100,13 @@ internal enum class AddPayloadOutcome {
      * still carry the outgoing session's JWT and would re-import the very rows teardown removed.
      */
     DROPPED_CACHE_CLEARED,
+
+    /**
+     * The cache belongs to another identity than the current session's, or was dropped for a new
+     * one after the request started; see [OfflineStore.dropCacheFor]. The caller may ask again,
+     * once the cache is the current identity's.
+     */
+    DROPPED_OTHER_OWNER,
 }
 
 /** What [OfflineStore.enqueueOwnedBy] did with a write. */
@@ -154,6 +162,24 @@ internal class OfflineStore(
 
     /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
     internal val queryShapes: QueryShapeRecords = QueryShapeRecords(objectDao, json)
+
+    /**
+     * The identity the query cache and the Storage file cache belong to; see [CacheOwnerRecord].
+     */
+    internal val cacheOwner: CacheOwnerRecord = CacheOwnerRecord(objectDao, json)
+
+    /**
+     * Whether the cache belongs to one identity at a time, checked on every read and write: `true`
+     * with the Auth plugin. Without it there is one identity, which owns the cache for good. Wired
+     * by the client.
+     */
+    internal var cacheOwnedPerIdentity: Boolean = false
+
+    /**
+     * Told when the cache was not served to, or written for, the current identity. Wired by the
+     * client.
+     */
+    internal var onCacheNotServed: () -> Unit = {}
 
     /**
      * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
@@ -310,6 +336,13 @@ internal class OfflineStore(
     private val cacheClearedTick = MutableStateFlow(0L)
 
     /**
+     * Tick of the most recent time the cache was emptied: by [clearAll], or by [dropCacheFor] when
+     * it passed to another identity. No cache write whose operation started before it lands. Unlike
+     * [cacheClearedTick] it leaves queueing alone, since a drop keeps the mutation queue.
+     */
+    private val cacheDroppedTick = MutableStateFlow(0L)
+
+    /**
      * Reads the shared tick source. Callers that are about to issue a network SELECT capture this
      * **before** the request goes out and hand it back to [addPayload] as `requestStartedAtTick`.
      *
@@ -353,28 +386,65 @@ internal class OfflineStore(
 
     /**
      * Whether a response produced by a request that started at [requestStartedAtTick] belongs to a
-     * cache generation that [clearAll] has since discarded.
+     * cache generation that [clearAll] or [dropCacheFor] has since discarded.
      *
      * @param requestStartedAtTick Tick captured before the request went out, or `null` for writers
      *   that carry no request-time information (they are never dropped).
-     * @return `true` when the cache was torn down after the request left.
+     * @return `true` when the cache was emptied after the request left.
      */
     private fun predatesCacheTeardown(requestStartedAtTick: Long?): Boolean {
+        if (requestStartedAtTick == null) return false
+        return requestStartedAtTick < cacheDroppedTick.value
+    }
+
+    /**
+     * Whether [clearAll] — which empties the mutation queue too — ran after [requestStartedAtTick].
+     */
+    private fun predatesQueueTeardown(requestStartedAtTick: Long?): Boolean {
         if (requestStartedAtTick == null) return false
         return requestStartedAtTick < cacheClearedTick.value
     }
 
     /**
-     * Whether [clearAll] has run since [tick] was read from [monotonicTickNow].
-     *
-     * A write captures a tick before its request goes out; if the cache was torn down while the
-     * request was in flight, the write belongs to the outgoing identity and must neither be
-     * overlaid onto the cache nor queued.
+     * Whether the cache was cleared, or dropped for another identity, since [tick] was read from
+     * [monotonicTickNow]: a write whose request was in flight then must not be overlaid onto it.
      *
      * @param tick A tick read before the operation started.
-     * @return `true` when a teardown happened after [tick].
+     * @return `true` when the cache was emptied after [tick].
      */
     internal fun wasClearedSince(tick: Long): Boolean = predatesCacheTeardown(tick)
+
+    /**
+     * Whether the cache may be read for the current identity: it is that identity's, or no
+     * identity's yet and the identity is a user, who adopts it. Without the Auth plugin there is
+     * one identity, and it always may. When it may not, the client is told, so a settled session
+     * drops the cache for the new identity.
+     */
+    internal suspend fun cacheServesCurrentIdentity(): Boolean =
+        cacheIsCurrentIdentitys(forWrite = false)
+
+    /**
+     * Whether the cache may be written for the current identity, as [cacheServesCurrentIdentity]
+     * says; a cache no identity owns is first recorded as that identity's, so what is written into
+     * it is never adopted by another.
+     */
+    internal suspend fun cacheTakesWritesOfCurrentIdentity(): Boolean =
+        cacheIsCurrentIdentitys(forWrite = true)
+
+    /** [cacheServesCurrentIdentity], or with [forWrite] [cacheTakesWritesOfCurrentIdentity]. */
+    private suspend fun cacheIsCurrentIdentitys(forWrite: Boolean): Boolean {
+        if (!cacheOwnedPerIdentity) {
+            if (forWrite)
+                identityProvider()?.let { identity -> cacheOwner.owner(claimant = identity) }
+            return true
+        }
+        val identity = identityProvider()
+        val isUser = identity != null && identity != QueueIdentity.Anonymous.storedValue
+        val owner = cacheOwner.owner(claimant = identity.takeIf { forWrite && isUser })
+        val mine = identity != null && (owner == identity || (owner == null && isUser))
+        if (!mine) onCacheNotServed()
+        return mine
+    }
 
     /**
      * Rolling count of [addPayload] writes, used to run size enforcement only periodically instead
@@ -405,10 +475,12 @@ internal class OfflineStore(
     /**
      * Writes a network SELECT's [payload] for [table]/[signature], unless it must be refused:
      * [AddPayloadOutcome.DROPPED_CACHE_CLEARED] when its request started before [clearAll],
-     * [AddPayloadOutcome.DROPPED_STALE] when it started before the table's last local write (it
-     * would roll that write back), and [AddPayloadOutcome.DROPPED_EMPTY] for an empty payload that
-     * is not [authoritativeEmpty]. A payload written with a start tick is recorded as containing
-     * the table's synced mutations. Runs under the table's write lock.
+     * [AddPayloadOutcome.DROPPED_OTHER_OWNER] when the cache is not the current identity's or was
+     * dropped for it after the request started, [AddPayloadOutcome.DROPPED_STALE] when it started
+     * before the table's last local write (it would roll that write back), and
+     * [AddPayloadOutcome.DROPPED_EMPTY] for an empty payload that is not [authoritativeEmpty]. A
+     * payload written with a start tick is recorded as containing the table's synced mutations.
+     * Runs under the table's write lock.
      *
      * @param authoritativeEmpty Whether an empty [payload] is the server's real answer (the request
      *   went out signed in), so it may replace cached rows or seed a cold slot.
@@ -429,6 +501,9 @@ internal class OfflineStore(
         shape: QueryShape? = null,
     ): AddPayloadOutcome {
         requireUserTable(table)
+        // Before the locks: telling the identity may read the stored session. A drop that lands
+        // between here and the write is caught by its tick below.
+        val ownedByCurrentIdentity = cacheTakesWritesOfCurrentIdentity()
         // The guards and the write are one critical section under the table's write lock, so a
         // response is judged against the watermark *after* any overlay in progress has recorded
         // its write, and never lands between an overlay's snapshot and its write-back (where the
@@ -438,28 +513,30 @@ internal class OfflineStore(
                 mutationQueueMutex.withLock {
                     teardownMutex.withLock {
                         when {
-                            // The cache was wiped for an identity change while this request was in
-                            // flight.
-                            // Its rows belong to the outgoing account; writing them here undoes the
-                            // teardown.
-                            predatesCacheTeardown(requestStartedAtTick) ->
+                            // The cache was wiped for an identity change while this request was
+                            // in flight. Its rows belong to the outgoing account; writing them
+                            // here undoes the teardown.
+                            predatesQueueTeardown(requestStartedAtTick) ->
                                 AddPayloadOutcome.DROPPED_CACHE_CLEARED
 
-                            // The response left before the local write landed; keeping the cache is
-                            // the only
-                            // answer that preserves it. The caller re-fetches to converge on real
-                            // server state.
+                            // The cache is another identity's, or became the current one's after
+                            // this request left: its rows would mix two identities' data.
+                            !ownedByCurrentIdentity ||
+                                predatesCacheTeardown(requestStartedAtTick) ->
+                                AddPayloadOutcome.DROPPED_OTHER_OWNER
+
+                            // The response left before the local write landed; keeping the cache
+                            // is the only answer that preserves it. The caller re-fetches to
+                            // converge on real server state.
                             isStaleRelativeToLocalWrite(table, requestStartedAtTick) ->
                                 AddPayloadOutcome.DROPPED_STALE
 
                             !isTrusted -> AddPayloadOutcome.DROPPED_UNTRUSTED
 
                             // Nothing about this emptiness is known to describe the signed-in
-                            // user's data, so
-                            // it is never written — not over cached rows, and not into a cold or
-                            // already-empty
-                            // slot where it would become the answer every later cache-first read is
-                            // served.
+                            // user's data, so it is never written — not over cached rows, and not
+                            // into a cold or already-empty slot where it would become the answer
+                            // every later cache-first read is served.
                             !authoritativeEmpty && isEmptyJsonArrayPayload(payload) ->
                                 AddPayloadOutcome.DROPPED_EMPTY
 
@@ -548,13 +625,19 @@ internal class OfflineStore(
         return isLargePayload || cadenceReached
     }
 
-    suspend fun getPayload(table: String, signature: String): String? {
-        if (isReservedTable(table)) return null
-        return objectDao.get(table, signature)?.payload
-    }
+    /**
+     * The payload cached for [table]/[signature], or `null` when none is, or the cache is not the
+     * current identity's.
+     */
+    suspend fun getPayload(table: String, signature: String): String? =
+        getPayloadWithTimestamp(table, signature)?.first
 
+    /**
+     * The payload cached for [table]/[signature] with the time it was written, or `null` when none
+     * is, or the cache is not the current identity's.
+     */
     suspend fun getPayloadWithTimestamp(table: String, signature: String): Pair<String, Long>? {
-        if (isReservedTable(table)) return null
+        if (isReservedTable(table) || !cacheServesCurrentIdentity()) return null
         val row = objectDao.get(table, signature) ?: return null
         return row.payload to row.updatedAt
     }
@@ -594,8 +677,11 @@ internal class OfflineStore(
      * Wipes every cached payload, storage-object row and mutation, the mutation queue's records
      * included, in one transaction, and marks the teardown so that no response or cache patch
      * started before it lands afterwards. For identity changes: sign-out, account switch, deletion.
+     *
+     * @param owner the identity the emptied cache belongs to, recorded in the same transaction;
+     *   `null` records none, and the next identity to use the cache claims it.
      */
-    suspend fun clearAll() {
+    suspend fun clearAll(owner: String? = null) {
         // Under the mutation-queue lock, so a write whose operation predates this teardown cannot
         // slip its mutation row in between the tick and the deletes (see [enqueueOwnedBy]); and
         // under the teardown lock, so no overlay or payload write that checked the tick before it
@@ -607,6 +693,7 @@ internal class OfflineStore(
                 // Never move the teardown tick backwards: two teardowns racing here must leave the
                 // later one, or the earlier assignment would re-admit responses it disqualified.
                 cacheClearedTick.update { existing -> if (existing >= tick) existing else tick }
+                cacheDroppedTick.update { existing -> if (existing >= tick) existing else tick }
                 // One transaction: a clear that fails part-way must not leave mutations without the
                 // owner records in object_cache, where the next identity would adopt them. The
                 // mutations go first as well, so even a store without transactions never does.
@@ -614,10 +701,39 @@ internal class OfflineStore(
                     mutationDao.deleteAll()
                     storageDao.deleteAll()
                     objectDao.deleteAll()
+                    if (owner != null) objectDao.upsert(cacheOwner.rowOf(owner))
                 }
                 mutationQueueState.resetCaches()
                 queryShapes.forgetAll()
+                cacheOwner.recorded(owner)
                 loggedOverlaySkips.value = emptySet()
+            }
+        }
+    }
+
+    /**
+     * Empties the cache for [owner], the identity it now belongs to: every cached query with its
+     * shape record, and every Storage row, go in one transaction that records [owner]. The mutation
+     * queue and its records stay. No response or cache patch started before it lands afterwards;
+     * the files of the Storage cache are its caller's to delete.
+     */
+    suspend fun dropCacheFor(owner: String) {
+        // The locks and order of [clearAll], which this is but for the mutation queue
+        mutationQueueMutex.withLock {
+            teardownMutex.withLock {
+                val tick = monotonicTick()
+                cacheDroppedTick.update { existing -> if (existing >= tick) existing else tick }
+                mutationDao.runInTransaction {
+                    storageDao.deleteAll()
+                    objectDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
+                    objectDao.deleteWithSignaturePrefix(
+                        RESERVED_TABLE_NAME,
+                        QUERY_SHAPE_SIGNATURE_PREFIX,
+                    )
+                    objectDao.upsert(cacheOwner.rowOf(owner))
+                }
+                queryShapes.forgetAll()
+                cacheOwner.recorded(owner)
             }
         }
     }
@@ -831,7 +947,7 @@ internal class OfflineStore(
         startedAtTick: Long? = null,
         enqueue: suspend OfflineStore.() -> Long,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
-        if (predatesCacheTeardown(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
+        if (predatesQueueTeardown(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
         // Outside the transaction below: the first read of the unconfirmed sends may write.
         mutationQueueState.unconfirmedSends()
         if (identity == null) return@withLock EnqueueOutcome.Queued(enqueue())
@@ -1285,8 +1401,8 @@ internal class OfflineStore(
     /**
      * The cached payload of [table]/[signature] with the current identity's mutations overlaid, as
      * it changes; `null` while nothing is known. With no payload but mutations that produce rows,
-     * the overlay onto an empty list is emitted without being stored. Inputs and output are
-     * de-duplicated, so an unrelated write does not re-emit.
+     * the overlay onto an empty list is emitted without being stored. A cache that is not the
+     * current identity's counts as no payload. Inputs and output are de-duplicated.
      */
     fun overlaidPayloadFlow(
         table: String,
@@ -1294,46 +1410,87 @@ internal class OfflineStore(
         shape: QueryShape? = null,
     ): Flow<String?> {
         if (isReservedTable(table)) return flowOf(null)
-        return combine(
-                observePayload(table, signature).distinctUntilChanged(),
-                mutationDao.allForTableFlow(table).distinctUntilChanged(),
-                mutationQueueState.ownersFlow(),
-                identityChanges,
-                mutationQueueState.syncedMutationCoverageFlow(),
-            ) { cachedJson, allMutations, owners, _, coverage ->
-                // A live query's shape is known for as long as it is read; it is written once a
-                // payload exists
-                if (shape != null)
-                    queryShapes.remember(table, signature, shape, persist = cachedJson != null)
-                val mutations =
-                    visibleTo(identityProvider(), owners, allMutations).filter { mutation ->
-                        belongsOnPayload(mutation, signature, coverage)
-                    }
-                val unconfirmed = mutationQueueState.unconfirmedSends()
-                when {
-                    cachedJson != null ->
-                        if (mutations.isEmpty()) cachedJson
-                        else
-                            overlayMutations(
-                                cachedJson,
-                                mutations,
-                                admissionOf(table, signature, shape),
-                                unconfirmed,
-                            )
-
-                    mutations.isNotEmpty() ->
-                        overlayMutations(
-                                EMPTY_JSON_ARRAY,
-                                mutations,
-                                admissionOf(table, signature, shape),
-                                unconfirmed,
-                            )
-                            .takeUnless { overlaid -> isEmptyJsonArrayPayload(overlaid) }
-
-                    else -> null
+        return flow {
+            // A payload received before the cache was emptied may reach this reader after the new
+            // owner does: until what it receives matches the database, the database is read
+            var trustedEmptiedCount = cacheOwner.emptiedCount()
+            combine(
+                    observePayload(table, signature).distinctUntilChanged(),
+                    mutationDao.allForTableFlow(table).distinctUntilChanged(),
+                    mutationQueueState.ownersFlow(),
+                    identityChanges,
+                    mutationQueueState.syncedMutationCoverageFlow(),
+                ) { storedJson, allMutations, owners, _, coverage ->
+                    // Owner first: the count moves before it, so a new owner comes with a new count
+                    val served = cacheServesCurrentIdentity()
+                    val emptiedCount = cacheOwner.emptiedCount()
+                    val currentJson =
+                        if (emptiedCount == trustedEmptiedCount) {
+                            storedJson
+                        } else {
+                            objectDao.get(table, signature)?.payload.also { current ->
+                                if (current == storedJson) trustedEmptiedCount = emptiedCount
+                            }
+                        }
+                    overlaidOrNull(
+                        table,
+                        signature,
+                        shape,
+                        currentJson.takeIf { served },
+                        allMutations,
+                        owners,
+                        coverage,
+                    )
                 }
+                .distinctUntilChanged()
+                .collect { payload -> emit(payload) }
+        }
+    }
+
+    /**
+     * [overlaidPayloadFlow]'s value for [cachedJson], the payload the current identity is served
+     * (`null` for none), with [allMutations] overlaid as [owners] and [coverage] say.
+     */
+    private suspend fun overlaidOrNull(
+        table: String,
+        signature: String,
+        shape: QueryShape?,
+        cachedJson: String?,
+        allMutations: List<MutationRow>,
+        owners: MutationOwners,
+        coverage: Map<Long, Set<String>>,
+    ): String? {
+        // A live query's shape is known for as long as it is read; it is written once a payload
+        // exists
+        if (shape != null)
+            queryShapes.remember(table, signature, shape, persist = cachedJson != null)
+        val mutations =
+            visibleTo(identityProvider(), owners, allMutations).filter { mutation ->
+                belongsOnPayload(mutation, signature, coverage)
             }
-            .distinctUntilChanged()
+        val unconfirmed = mutationQueueState.unconfirmedSends()
+        return when {
+            cachedJson != null ->
+                if (mutations.isEmpty()) cachedJson
+                else
+                    overlayMutations(
+                        cachedJson,
+                        mutations,
+                        admissionOf(table, signature, shape),
+                        unconfirmed,
+                    )
+
+            mutations.isNotEmpty() ->
+                overlayMutations(
+                        EMPTY_JSON_ARRAY,
+                        mutations,
+                        admissionOf(table, signature, shape),
+                        unconfirmed,
+                    )
+                    .takeUnless { overlaid -> isEmptyJsonArrayPayload(overlaid) }
+
+            else -> null
+        }
     }
 
     /**
@@ -1405,7 +1562,7 @@ internal class OfflineStore(
      * @param liveSignatures the table's queries with a live reader; by default
      *   [liveSignatureProvider]'s.
      * @param startedAtTick [monotonicTickNow] as read when the write started; nothing is written if
-     *   [clearAll] ran since. `null` takes the tick now.
+     *   the cache was cleared or dropped since. `null` takes the tick now.
      */
     internal suspend fun patchCachedQueries(
         table: String,
@@ -1485,7 +1642,8 @@ internal class OfflineStore(
 
     /**
      * Overlays [writes], in order, on every cached query of [table] and creates the payloads live
-     * queries without one now admit; see [patchCachedQueries].
+     * queries without one now admit; see [patchCachedQueries]. A cache that is not the current
+     * identity's is left alone.
      */
     private suspend fun applyPatch(
         table: String,
@@ -1493,9 +1651,16 @@ internal class OfflineStore(
         liveSignatures: Set<String>?,
         guardTick: Long,
     ) {
+        if (!cacheServesCurrentIdentity()) return
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
             val cached = objectDao.allForTable(table)
+            val uncachedLive =
+                (liveSignatures ?: liveSignatureProvider(table)) -
+                    cached.mapTo(mutableSetOf()) { row -> row.signature }
+            // Only a patch that may write records whose the cache is
+            if (cached.isEmpty() && uncachedLive.isEmpty()) return@withLock
+            if (!cacheTakesWritesOfCurrentIdentity()) return@withLock
             val parsed = cached.map { row -> row to payloadRowsOf(json, row.payload) }
             val keyColumns = primaryKeys.of(table)
             val known = rowsByKey(parsed, keyColumns)
@@ -1522,9 +1687,6 @@ internal class OfflineStore(
                 )
                     return@withLock
             }
-            val uncachedLive =
-                (liveSignatures ?: liveSignatureProvider(table)) -
-                    cached.mapTo(mutableSetOf()) { row -> row.signature }
             createLivePayloads(table, uncachedLive, shapes, writes, known, guardTick)
         }
     }
@@ -1557,7 +1719,7 @@ internal class OfflineStore(
     /**
      * Writes a payload for each of [signatures], queries a live reader observes that have none, of
      * the rows [writes] wrote that the query admits. Nothing is written for a query that would stay
-     * empty, and nothing once [clearAll] has run since [guardTick].
+     * empty, and nothing once the cache was cleared or dropped since [guardTick].
      *
      * @param shapes the table's known query shapes, by cache key.
      * @param known rows cached for the table's other queries, the full rows an UPDATE or UPSERT
@@ -1613,10 +1775,11 @@ internal class OfflineStore(
      * stay, so an offline read without a duration still has them.
      *
      * @param startedAtTick [monotonicTickNow] as read when the write started; nothing is written if
-     *   [clearAll] ran since.
+     *   the cache was cleared or dropped since, or is not the current identity's.
      */
     suspend fun markCachedQueriesStale(table: String, startedAtTick: Long) {
         requireUserTable(table)
+        if (!cacheTakesWritesOfCurrentIdentity()) return
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
             for (row in objectDao.allForTable(table)) {
@@ -1628,7 +1791,8 @@ internal class OfflineStore(
     }
 
     /**
-     * Writes [row] unless [clearAll] has run since [guardTick], as one step with the teardown.
+     * Writes [row] unless the cache was cleared or dropped since [guardTick], as one step with the
+     * teardown.
      *
      * @return `false` when a teardown voided the write.
      */
