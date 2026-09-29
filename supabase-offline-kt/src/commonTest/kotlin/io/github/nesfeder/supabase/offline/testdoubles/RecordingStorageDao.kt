@@ -19,12 +19,16 @@ internal class RecordingStorageDao : InMemoryStorageDao() {
 
     private val allCalls = AtomicInt(0)
     private val totalSizeCalls = AtomicInt(0)
+    private val deleteAllCalls = AtomicInt(0)
 
     /** How many times every row was loaded. */
     val scans: Int get() = allCalls.load()
 
     /** How many times the total size was summed. */
     val totalSizeQueries: Int get() = totalSizeCalls.load()
+
+    /** How many times every row was deleted. */
+    val clears: Int get() = deleteAllCalls.load()
 
     /** Forgets the calls recorded so far. */
     fun resetCounts() {
@@ -40,6 +44,11 @@ internal class RecordingStorageDao : InMemoryStorageDao() {
     override suspend fun all(): List<StorageRow> {
         allCalls.addAndFetch(1)
         return super.all()
+    }
+
+    override suspend fun deleteAll() {
+        deleteAllCalls.addAndFetch(1)
+        super.deleteAll()
     }
 
     override suspend fun totalSizeBytes(): Long {

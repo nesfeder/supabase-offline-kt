@@ -447,6 +447,7 @@ internal class SupabaseOfflineClientImpl(
             queueIdentity = { supabase.currentQueueIdentity() },
             requestSync = backgroundSync::request,
             headSender = mutationQueueReplayer,
+            ensureClientOpen = ::ensureOpen,
         )
     }
 
@@ -652,7 +653,7 @@ internal class SupabaseOfflineClientImpl(
      * @return What the pass synced, rejected and left pending.
      */
     internal suspend fun syncPendingMutationsReport(table: String? = null): SyncReport =
-        mutationQueueReplayer.sync(table = table)
+        inClientScope { mutationQueueReplayer.sync(table = table) }
 
     /**
      * The current session's pending mutations — of [table], or of every table — in replay order,
@@ -661,28 +662,34 @@ internal class SupabaseOfflineClientImpl(
      * @param table The table to observe, or `null` for the whole queue.
      * @return A flow of pending mutations.
      */
-    internal fun pendingMutations(table: String? = null): Flow<List<PendingMutation>> =
-        store.pendingMutationsFlow(table).map { rows ->
+    internal fun pendingMutations(table: String? = null): Flow<List<PendingMutation>> {
+        ensureOpen()
+        return store.pendingMutationsFlow(table).map { rows ->
             rows.mapNotNull { row -> row.toPendingMutation(store.json, DefaultPrimaryKeys) }
         }
+    }
 
     /**
      * The persisted rejected mutations, oldest first, as they change. The list keeps the newest 100.
      *
      * @return A flow of rejected mutations; it fails if the persisted list cannot be decoded.
      */
-    internal fun rejectedMutations(): Flow<List<RejectedMutation>> =
-        store.mutationQueueState.rejectionsFlow().map { entries ->
+    internal fun rejectedMutations(): Flow<List<RejectedMutation>> {
+        ensureOpen()
+        return store.mutationQueueState.rejectionsFlow().map { entries ->
             entries.map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
         }
+    }
 
     /**
      * The persisted rejected mutations, oldest first.
      *
      * @return The list; it throws if the persisted list cannot be decoded.
      */
-    internal suspend fun rejectedMutationList(): List<RejectedMutation> =
-        store.mutationQueueState.rejections().map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+    internal suspend fun rejectedMutationList(): List<RejectedMutation> {
+        ensureOpen()
+        return store.mutationQueueState.rejections().map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+    }
 
     /**
      * Removes a rejected mutation from the list.
@@ -690,7 +697,10 @@ internal class SupabaseOfflineClientImpl(
      * @param id The rejected mutation's id.
      * @return `true` when it was on the list.
      */
-    internal suspend fun dismissRejectedMutation(id: Long): Boolean = store.dismissRejectedMutation(id)
+    internal suspend fun dismissRejectedMutation(id: Long): Boolean {
+        ensureOpen()
+        return store.dismissRejectedMutation(id)
+    }
 
     /**
      * Puts a rejected mutation back at the tail of the queue and requests a replay pass.
@@ -700,6 +710,7 @@ internal class SupabaseOfflineClientImpl(
      *   or the pending queue — belongs to another identity than the current session's.
      */
     internal suspend fun retryRejectedMutation(id: Long): Long? {
+        ensureOpen()
         val identity = supabase.currentQueueIdentity() ?: return null
         val newId = store.retryRejectedMutation(id, identity.storedValue) ?: return null
         backgroundSync.request()
@@ -715,6 +726,7 @@ internal class SupabaseOfflineClientImpl(
      * @return `true` when it was pending, the current session's, and not being sent right now.
      */
     internal suspend fun discardPendingMutation(id: Long): Boolean {
+        ensureOpen()
         val identity = supabase.currentQueueIdentity() ?: return false
         return mutationQueueReplayer.discardPendingMutation(id, identity)
     }

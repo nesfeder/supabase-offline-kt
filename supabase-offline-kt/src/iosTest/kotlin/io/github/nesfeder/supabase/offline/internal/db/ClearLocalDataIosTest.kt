@@ -7,13 +7,13 @@ import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
- * Clearing local data leaves nothing of the cleared user readable in the raw database files, on the
- * database the iOS factory opens with this build's SQLite — bundled, or Apple's, whose default
- * `secure_delete` is FAST and leaves freed pages as they were: not in the database, its `-wal` or
- * its `-shm`, while the client is open or after it closes.
+ * Clearing local data leaves nothing of the cleared user, the mutation queue's reserved rows
+ * included, readable in the files of the database the iOS factory opens with this build's SQLite.
  */
 class ClearLocalDataIosTest {
 
@@ -29,7 +29,9 @@ class ClearLocalDataIosTest {
         // Given / When — cached reads and a queued write carrying a marker, then a clear
         val report = runClearLocalDataForensics(directory) { supabase, config -> createSupabaseOfflineClient(supabase, config) }
 
-        // Then
+        // Then — the mutation queue's reserved rows were there, and nothing is left of any of it
+        assertTrue(report.reservedRowsBeforeClear >= 2, "the queue's reserved rows were not present: $report")
+        assertEquals(0, report.reservedRowsAfterClear, "a reserved row survived the clear: $report")
         assertFalse(report.anyRecoverable, "a cleared user's data can be read back with the ${SqliteVariant.NAME} SQLite: $report")
     }
 }

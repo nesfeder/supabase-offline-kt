@@ -302,6 +302,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
         sdkLogger = sdkLogger,
         currentIdentity = queueIdentity,
     ),
+    /** Throws once the client that built this builder has closed; checked before every read and write. */
+    private val ensureClientOpen: () -> Unit = {},
 ) : OfflinePostgrestQueryBuilder {
 
     constructor(
@@ -319,6 +321,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             sdkLogger = sdkLogger,
             currentIdentity = queueIdentity,
         ),
+        ensureClientOpen: () -> Unit = {},
     ) : this(
         delegate = PostgrestQueryBuilderWrapperImpl(delegate),
         store = store,
@@ -329,6 +332,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         queueIdentity = queueIdentity,
         requestSync = requestSync,
         headSender = headSender,
+        ensureClientOpen = ensureClientOpen,
     )
 
     private val json: Json = OfflineJson
@@ -346,6 +350,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         readStrategy: ReadStrategy,
         request: SelectRequestBuilder.() -> Unit
     ): PostgrestResult {
+        ensureClientOpen()
         return selectResolver.select(columns, readStrategy, request)
     }
 
@@ -655,6 +660,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
     ): MutationOutcome {
+        ensureClientOpen()
         if (mutationStrategy == MutationStrategy.OnlineOnly) {
             val result = performOnline()
             sdkLogger.debug { "$verbLabel $table response: ${result.data}" }
