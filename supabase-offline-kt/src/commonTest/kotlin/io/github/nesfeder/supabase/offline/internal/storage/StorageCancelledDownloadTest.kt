@@ -83,8 +83,7 @@ class StorageCancelledDownloadTest {
     @Test
     fun a_download_cancelled_while_the_cache_refuses_its_file_leaves_no_file() = runTest {
         // Given — the whole object is on disk, the file system refuses to move it into place, and
-        // the
-        // caller is cancelled while the cache is trying
+        // the caller is cancelled while the cache is trying
         fileSystem.failMoves = true
         lateinit var caller: Job
         fileSystem.onMove = { _, _ -> caller.cancel() }
@@ -94,8 +93,8 @@ class StorageCancelledDownloadTest {
             name to cancelledDownload(download) { job -> caller = job }
         }
 
-        // Then — every call ended cancelled, and the finished file the cache could not keep went
-        // too
+        // Then — every call ended cancelled, and the finished file the cache could not keep is
+        // gone as well
         assertEquals(DOWNLOADS.map { (name, _) -> name to CANCELLED_AND_CLEAN }, outcomes)
     }
 

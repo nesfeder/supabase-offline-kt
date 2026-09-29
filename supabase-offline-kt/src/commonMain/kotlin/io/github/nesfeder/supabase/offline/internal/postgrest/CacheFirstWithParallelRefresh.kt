@@ -106,8 +106,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
             cache.collect { value -> send(value) }
         } catch (failure: Throwable) {
             // The collector's cancellation rethrows; the cache's own failure, a cancellation
-            // included,
-            // ends the flow after the values it sent
+            // included, ends the flow after the values it sent
             if (failure is CancellationException && !isActive) throw failure
             this@channelFlow.close(failure)
         }

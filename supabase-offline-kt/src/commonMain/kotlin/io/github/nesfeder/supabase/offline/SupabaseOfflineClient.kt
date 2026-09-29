@@ -653,8 +653,8 @@ internal class SupabaseOfflineClientImpl(
                 withTimeoutOrNull(closeWait) { releaseOnceIdle() } != null
             }
         if (releasedInTime || released.isCompleted) return
-        // Every close() that gives up marks it before returning; only the first warns and schedules
-        // the release
+        // Each close() that gives up marks the database before it returns; only the first also
+        // warns and schedules the release
         onStillClosing { operationGate.inFlight }
         if (!reportedStillClosing.compareAndSet(false, true)) return
         sdkLogger.warning {

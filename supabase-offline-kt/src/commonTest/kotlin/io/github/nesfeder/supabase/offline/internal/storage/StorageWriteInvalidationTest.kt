@@ -125,8 +125,7 @@ class StorageWriteInvalidationTest {
             )
         for ((name, touched, write) in writes) {
             // Given — the old bytes cached at every path the write touches, and the write on the
-            // wire,
-            // held at the server
+            // wire, held at the server
             server.objects["$BUCKET/$PATH"] = OLD.encodeToByteArray()
             server.objects["$BUCKET/$OTHER_PATH"] = OLD.encodeToByteArray()
             touched.forEach { path -> bucket().downloadAuthenticated(path) {} }
@@ -148,8 +147,8 @@ class StorageWriteInvalidationTest {
                 withTimeout(5.seconds) { server.requestArrived.await() }
             }
 
-            // When — the client closes, as its close() does: the gate refuses, the client's scope
-            // ends
+            // When — the client closes as its close() does: the gate refuses, then the client's
+            // scope ends
             gate.close()
             clientScope.cancel()
             val outcome =

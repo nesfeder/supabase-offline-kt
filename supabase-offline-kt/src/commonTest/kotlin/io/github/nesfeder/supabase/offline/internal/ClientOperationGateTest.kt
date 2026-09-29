@@ -109,8 +109,7 @@ class ClientOperationGateTest {
     @Test
     fun closing_ends_a_collection_waiting_for_its_next_value_with_the_closed_error() = runTest {
         // Close and the collection's own end race, so run it enough times to see either order.
-        // Unconfined
-        // ends the upstream inside close() itself, before anything else close() does
+        // Unconfined ends the upstream inside close() itself, before anything else close() does
         repeat(ORDERINGS) { attempt ->
             // Given — a collector waiting for a value that never comes
             val gate = ClientOperationGate()
@@ -146,12 +145,10 @@ class ClientOperationGateTest {
     @Test
     fun an_upstream_that_offers_a_value_after_close_never_throws_into_the_apps_scope() = runTest {
         // Given — a collection read through produceIn in the app's scope, whose upstream is between
-        // two
-        // values when close() runs (so close() runs the collection's handler itself). It offers the
-        // second before its cancellation reaches it, into a channel close() has already ended, as
-        // an
-        // upstream caught between two statements does; here it waits, deaf to cancellation, to be
-        // sure
+        // two values when close() runs (so close() runs the collection's handler itself). It offers
+        // the second before its cancellation reaches it, into a channel close() has already ended,
+        // as an upstream caught between two statements does; here it waits, deaf to cancellation,
+        // to be sure
         val gate = ClientOperationGate()
         val uncaught = MutableStateFlow<List<Throwable>>(emptyList())
         val appScope =
@@ -193,8 +190,8 @@ class ClientOperationGateTest {
 
     @Test
     fun a_value_and_then_an_upstream_failure_reach_the_collector_in_that_order() = runTest {
-        // The failure and the collector's taking of the value race, so run it enough times to see
-        // both orders
+        // The failure races the collector's taking of the value, so run it enough times to see
+        // both orders of the two
         repeat(FAILURE_ORDERINGS) { attempt ->
             // Given — an upstream that fails right after a value
             val gate = ClientOperationGate()
@@ -232,8 +229,8 @@ class ClientOperationGateTest {
 
     @Test
     fun an_upstream_cancellation_reaches_the_collector_as_a_cancellation() = runTest {
-        // Given — upstreams that give up with a cancellation of their own, after a value and at
-        // once
+        // Given — upstreams that give up with a cancellation of their own, one after a value and
+        // one at once
         val gate = ClientOperationGate()
         val values = mutableListOf<Int>()
         val caught = mutableListOf<Throwable>()
@@ -267,8 +264,8 @@ class ClientOperationGateTest {
                     .exceptionOrNull()
             }
 
-        // Then — the collector sees the cancellation, after the value before it, and never a
-        // completion
+        // Then — the collector sees the cancellation, after the value before it, and never sees
+        // the read complete
         assertEquals(listOf(1), values)
         assertIs<CancellationException>(
             afterAValue,
@@ -309,8 +306,8 @@ class ClientOperationGateTest {
             }
         }
 
-        // Then — the collector went from the first snapshot straight to the latest, as it would
-        // bare
+        // Then — the collector went from the first snapshot straight to the latest, as it does
+        // without the gate
         assertEquals(listOf(0, LAST_SNAPSHOT), seen)
     }
 
@@ -344,8 +341,7 @@ class ClientOperationGateTest {
                 }
 
             // Then — the gate emptied while the collector was still inside its body, and the
-            // collection
-            // ended with the closed error
+            // collection ended with the closed error
             assertTrue(
                 emptied.await(),
                 "the gate did not empty while its collector was inside its body",

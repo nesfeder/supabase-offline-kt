@@ -390,8 +390,8 @@ class CacheFirstWithParallelRefreshTest {
 
     @Test
     fun a_cache_that_fails_right_after_a_value_delivers_the_value_then_the_failure() = runTest {
-        // The failure and the collector's taking of the value race, so run it enough times to see
-        // both orders
+        // The failure races the collector's taking of the value, so run it enough times to see
+        // both orders of the two
         repeat(FAILURE_ORDERINGS) { attempt ->
             // Given: a cache that fails right after its first value, and a refresh that is done
             val values = mutableListOf<String>()

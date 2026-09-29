@@ -117,8 +117,8 @@ internal class ClientOperationGate {
                         if (failure is CancellationException && !isActive) throw failure
                     }
                 }
-            // The closed error first: once cancelled, the upstream ends the channel with its
-            // cancellation
+            // The closed error first, or the upstream, once cancelled, would end the channel with
+            // its own cancellation
             val onClose = closing.invokeOnCompletion {
                 values.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
                 upstream.cancel()

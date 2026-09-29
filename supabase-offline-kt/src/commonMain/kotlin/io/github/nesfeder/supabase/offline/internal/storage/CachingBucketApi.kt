@@ -261,9 +261,8 @@ internal class CachingBucketApi(
                 is StreamedDownload.CacheRefused,
                 StreamedDownload.Uncacheable -> {
                     // The disk refused the copy (logged when it did), or the variant could not be
-                    // told:
-                    // fetch again straight into the caller's channel rather than fail a good
-                    // download.
+                    // told: rather than fail a good download, fetch it again straight into the
+                    // caller's channel.
                     fetch(channel, options)
                     return
                 }
@@ -531,8 +530,8 @@ internal class CachingBucketApi(
             },
         )
 
-    // The copy's bytes are not on the device; the destination's cached copy, if any, is stale
-    // either way
+    // The copy's bytes are not on the device, and a cached copy of the destination is stale
+    // whether the copy went through or not
     override suspend fun copy(from: String, to: String, destinationBucket: String?): Unit =
         storageWrite(
             write = { delegate.copy(from, to, destinationBucket) },

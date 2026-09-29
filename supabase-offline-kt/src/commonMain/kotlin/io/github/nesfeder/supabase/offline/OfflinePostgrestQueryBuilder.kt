@@ -378,8 +378,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> {
-        // Every strategy one way: counted while collected, refused in band once closed, ended by
-        // close()
+        // Every strategy one way: counted while collected, refused in band once closed, and ended
+        // by close() however its collector is stuck
         return operationGate.callCollecting(
             selectResolver.selectAsFlow(columns, readStrategy, request)
         )
