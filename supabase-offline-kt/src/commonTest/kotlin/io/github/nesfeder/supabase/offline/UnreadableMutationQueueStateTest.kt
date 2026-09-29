@@ -6,6 +6,8 @@ import io.github.nesfeder.supabase.offline.internal.db.MUTATION_OWNERS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
+import io.github.nesfeder.supabase.offline.internal.db.SYNCED_MUTATION_COVERAGE_SIGNATURE
+import io.github.nesfeder.supabase.offline.internal.db.UNCONFIRMED_SENDS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -26,10 +28,10 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
- * The mutation queue's own bookkeeping — who owns which write, and the rejected list — lives in
- * reserved cache rows. If one cannot be read (corruption, or a later build's format after a
- * downgrade), the engine degrades instead of turning the app's writes into internal exceptions or
- * wedging the queue.
+ * The mutation queue's own bookkeeping — who owns which write, the rejected list, the unconfirmed
+ * sends and the synced-mutation coverage — lives in reserved cache rows. If one cannot be read
+ * (corruption, or a later build's format after a downgrade), the engine degrades instead of turning
+ * the app's writes into internal exceptions or wedging the queue, and keeps the payload aside once.
  */
 class UnreadableMutationQueueStateTest {
 
@@ -125,6 +127,37 @@ class UnreadableMutationQueueStateTest {
         assertEquals(1, store.mutationQueueState.rejections().size)
         assertTrue(objectDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
     }
+
+    @Test
+    fun an_unreadable_unconfirmed_sends_record_is_kept_aside_once() = runTest {
+        // Given
+        objectDao.seedPayload(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE, "{not json")
+
+        // When — two launches in turn read it
+        listOf(1_000L, 2_000L).forEach { launchedAt ->
+            newTestOfflineStore(objectDao = objectDao, nowMillis = { launchedAt }).hasUnconfirmedSend(1)
+        }
+
+        // Then — the first kept it aside and wrote a readable record in its place
+        assertEquals(1, keptAsideCopiesOf(UNCONFIRMED_SENDS_SIGNATURE))
+    }
+
+    @Test
+    fun an_unreadable_coverage_record_is_kept_aside_once() = runTest {
+        // Given
+        objectDao.seedPayload(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE, "{not json")
+
+        // When
+        listOf(1_000L, 2_000L).forEach { launchedAt ->
+            newTestOfflineStore(objectDao = objectDao, nowMillis = { launchedAt }).mutationQueueState.syncedMutationCoverage()
+        }
+
+        // Then
+        assertEquals(1, keptAsideCopiesOf(SYNCED_MUTATION_COVERAGE_SIGNATURE))
+    }
+
+    private fun keptAsideCopiesOf(signature: String): Int =
+        objectDao.rowsOf(RESERVED_TABLE_NAME).count { row -> row.signature.startsWith("$signature.unreadable.") }
 
     private fun byId(id: String): FilterDescriptor =
         FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))

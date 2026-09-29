@@ -70,6 +70,16 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      */
     var failUpsertOf: ((ObjectRow) -> Boolean)? = null
 
+    /** Makes the next [upsert] of a row that [match] accepts fail, once, as a full disk would. */
+    fun failNextUpsertOf(match: (ObjectRow) -> Boolean) {
+        var failed = false
+        failUpsertOf = { row ->
+            val fails = !failed && match(row)
+            if (fails) failed = true
+            fails
+        }
+    }
+
     /**
      * Seed a cached payload without bumping the [writes] counter or notifying observers.
      * [updatedAt] controls the row's age so eviction tests can assert oldest-first ordering; it
