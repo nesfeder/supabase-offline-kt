@@ -2,12 +2,12 @@
 #
 # Runs ./gradlew with the flags this runner needs, then the given arguments.
 #
-# On the maintainer's Mac (IOS_RUNNER=local) the build must leave nothing running and share
-# nothing with the owner's own builds: no Gradle daemon, the Kotlin compiler in-process, no build
+# On the self-hosted runner (IOS_RUNNER=local) the build must leave nothing running and share
+# nothing with other builds on the machine: no Gradle daemon, the Kotlin compiler in-process, no build
 # cache or configuration cache, the job's own Kotlin/Native directory, and every simulator test
 # on the simulator this job created. The Gradle User Home is already the job's own.
 #
-# Portable: bash 3.2 (the Mac's /bin/bash) or later.
+# Portable: bash 3.2 (macOS's /bin/bash) or later.
 
 set -euo pipefail
 

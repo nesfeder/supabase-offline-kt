@@ -30,7 +30,7 @@ DUE: dict[str, Callable[[Plan], bool]] = {
     "docs": lambda plan: bool(plan["docs"]),
 }
 BOOLEAN_OUTPUTS = ("kotlin", "docs", "workflows", "formatting", "ios-allowed", "ios-held")
-RUNNER_NAMES = {"local": "the maintainer's Mac (self-hosted, offline-kt)",
+RUNNER_NAMES = {"local": "the self-hosted runner (label offline-kt)",
                 "hosted": "GitHub's macos-26 runner"}
 
 
@@ -162,7 +162,7 @@ CASES: list[tuple[str, dict, bool]] = [
     ("docs-only change: tests skipped", needs_of(DOCS_ONLY, static_checks="skipped",
      jvm_tests="skipped", ios_tests="skipped"), True),
     ("iOS held on a draft, skipped", needs_of(HELD, ios_tests="skipped"), True),
-    ("iOS on the Mac, green", needs_of(outputs(**{"ios-runner": "local"})), True),
+    ("iOS on the self-hosted runner, green", needs_of(outputs(**{"ios-runner": "local"})), True),
     ("iOS due but skipped", needs_of(outputs(), ios_tests="skipped"), False),
     ("iOS held but ran", needs_of(HELD), False),
     ("a test job failed", needs_of(outputs(), jvm_tests="failure"), False),

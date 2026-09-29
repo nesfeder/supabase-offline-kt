@@ -95,6 +95,8 @@ jobs:
             cat <<'MARKDOWN'
           <!-- dependabot-triage -->
           This pull request moves a held dependency. A passing build is necessary but not sufficient; check these before merging.
+
+          While the repository is private, CI holds this pull request's iOS tests, and its check reads `Final status (iOS tests held)`. To run them, read the push, then add the `full-ci` label: that event runs everything. After Dependabot pushes again, remove the label and add it again.
           MARKDOWN
             if [[ "$held_minor_or_major" == true ]]; then
               cat <<'MARKDOWN'
@@ -120,7 +122,7 @@ jobs:
 
           - [ ] The new Kotlin version does not force consumers onto a newer Kotlin than the pinned supabase-kt release needs, or that is deliberate. A Kotlin `x.y.20` release is a tooling release, not a bug fix, although semver calls it a patch.
           - [ ] The Android Gradle plugin version is inside the Kotlin Gradle plugin's supported range.
-          - [ ] SKIE supports the new Kotlin version. The iOS framework link fails if it does not, but while the repository is private CI runs it on a Dependabot pull request only after a maintainer adds the `full-ci` label; until then the check reads `Final status (iOS tests held)`.
+          - [ ] SKIE supports the new Kotlin version. The iOS framework link fails if it does not; it runs in the full CI run described above.
           MARKDOWN
             fi
             if [[ "$persistence" == true ]]; then

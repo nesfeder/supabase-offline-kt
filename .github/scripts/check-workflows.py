@@ -6,13 +6,18 @@ Usage (from the repository root; needs mikefarah yq on the PATH to read YAML):
   check-workflows.py --self-test  prove the check catches each kind of violation
 
 It fails when:
-  1. a workflow triggers on pull_request_target or workflow_run;
+  1. a workflow triggers on pull_request_target or workflow_run, or ci.yml's triggers differ from
+     the set below;
   2. a workflow triggers on push without a literal branch or tag filter, so Dependabot's own
-     branches would start it;
-  3. any job but ci.yml's ios-tests names the self-hosted runner, or runs on anything but a
-     literal GitHub-hosted label; ios-tests must fall back to a hosted label;
-  4. ci.yml's final-status does not need every other job, or does not run with always();
+     branches would start it, or filters on a Dependabot branch or on every tag;
+  3. any job but ci.yml's ios-tests names the self-hosted runner, anywhere in the job, or runs on
+     anything but a literal GitHub-hosted label; a job calls a reusable workflow other than one of
+     this repository's at the same commit (`$/`); or ios-tests' routing differs from the one below;
+  4. ci.yml's final-status does not need every other job, or its condition differs from the one
+     below;
   5. a `uses: $/...` reference names an action or workflow that does not exist.
+
+The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
 
 from __future__ import annotations
@@ -24,10 +29,21 @@ import sys
 import tempfile
 from pathlib import Path
 
-LOCAL_RUNNER_LABEL = re.compile(r"(?<![A-Za-z0-9_-])(offline-kt|self-hosted)(?![A-Za-z0-9_-])")
-HOSTED_LABEL = re.compile(r"(ubuntu|macos|windows)-[A-Za-z0-9.-]+")
+SELF_HOSTED = re.compile(r"(?<![A-Za-z0-9_-])(offline-kt|self-hosted)(?![A-Za-z0-9_-])",
+                         re.IGNORECASE)
+HOSTED_LABEL = re.compile(
+    r"ubuntu-latest|ubuntu-slim|ubuntu-\d+\.\d+(-arm)?"
+    r"|macos-latest|macos-\d+(-intel|-large|-xlarge)?"
+    r"|windows-latest|windows-\d+(-arm)?"
+)
 ROUTED_JOB = ("ci.yml", "ios-tests")
+ROUTED_RUNS_ON = ("${{ needs.changes.outputs.ios-runner == 'local' && fromJSON('[\"self-hosted\","
+                  " \"macOS\", \"ARM64\", \"offline-kt\"]') || 'macos-26' }}")
 FAN_IN = ("ci.yml", "final-status")
+FAN_IN_IF = ("always() && (github.event.action != 'labeled'"
+             " || github.event.label.name == 'full-ci')")
+CI_TRIGGERS = {"pull_request", "push", "merge_group", "schedule", "workflow_dispatch"}
+CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
 
 
 def load_yaml(path: Path) -> object:
@@ -47,34 +63,44 @@ def trigger_problems(name: str, triggers: object) -> list[str]:
         return [f"{name}: `on` is not a string, list or mapping"]
     problems = [f"{name}: triggers on {event}" for event in ("pull_request_target", "workflow_run")
                 if event in triggers]
+    if name == "ci.yml":
+        if set(triggers) != CI_TRIGGERS:
+            problems.append(f"ci.yml: triggers {sorted(triggers)}, not {sorted(CI_TRIGGERS)}")
+        pull_request = triggers.get("pull_request")
+        types = pull_request.get("types") if isinstance(pull_request, dict) else None
+        if types != CI_PULL_REQUEST_TYPES:
+            problems.append(f"ci.yml: pull_request types {types}, not {CI_PULL_REQUEST_TYPES}")
     if "push" in triggers:
         push = triggers["push"]
         branches = push.get("branches") if isinstance(push, dict) else None
         tags = push.get("tags") if isinstance(push, dict) else None
         literal = isinstance(branches, list) and branches and all(
-            isinstance(branch, str) and not re.search(r"[*?\[!]", branch) for branch in branches)
+            isinstance(branch, str) and not re.search(r"[*?\[!]", branch)
+            and not branch.startswith("dependabot/") for branch in branches)
+        tagged = branches is None and isinstance(tags, list) and tags and all(
+            isinstance(tag, str) and re.match(r"[A-Za-z0-9]", tag) for tag in tags)
         if isinstance(push, dict) and "branches-ignore" in push:
             problems.append(f"{name}: push uses branches-ignore")
-        elif not literal and not (branches is None and tags):
+        elif not literal and not tagged:
             problems.append(f"{name}: push is not filtered to literal branches or to tags")
     return problems
 
 
 def runner_problems(name: str, job_id: str, job: dict) -> list[str]:
     """Rule 3."""
-    if "uses" in job:
-        return []
-    runs_on = job.get("runs-on")
     if (name, job_id) == ROUTED_JOB:
-        if not (isinstance(runs_on, str)
-                and "needs.changes.outputs.ios-runner == 'local'" in runs_on
-                and re.search(r"\|\|\s*'(macos-[A-Za-z0-9.-]+)'\s*}}\s*$", runs_on)):
-            return [f"{name}: {job_id} must route to the Mac only when ios-runner is local, and"
-                    " fall back to a hosted macOS label"]
+        if job.get("runs-on") != ROUTED_RUNS_ON:
+            return [f"{name}: {job_id} runs on {job.get('runs-on')!r}, not the reviewed routing"]
         return []
     problems = []
-    if LOCAL_RUNNER_LABEL.search(json.dumps(job)):
+    if SELF_HOSTED.search(json.dumps(job)):
         problems.append(f"{name}: job {job_id} names the self-hosted runner")
+    if "uses" in job:
+        if not str(job["uses"]).startswith("$/"):
+            problems.append(f"{name}: job {job_id} calls {job['uses']}, not a workflow of this"
+                            " commit")
+        return problems
+    runs_on = job.get("runs-on")
     if not (isinstance(runs_on, str) and HOSTED_LABEL.fullmatch(runs_on)):
         problems.append(f"{name}: job {job_id} runs on {runs_on!r}, not a literal hosted label")
     return problems
@@ -94,11 +120,8 @@ def fan_in_problems(name: str, jobs: dict) -> list[str]:
     if set(needs) != others:
         problems.append(f"{name}: {FAN_IN[1]} needs {sorted(needs)}, not every other job"
                         f" {sorted(others)}")
-    condition = str(fan_in.get("if", "")).strip()
-    if condition.startswith("${{"):
-        condition = condition[3:].strip()
-    if not condition.startswith("always()"):
-        problems.append(f"{name}: {FAN_IN[1]} does not run with always()")
+    if fan_in.get("if") != FAN_IN_IF:
+        problems.append(f"{name}: {FAN_IN[1]} runs if {fan_in.get('if')!r}, not {FAN_IN_IF!r}")
     return problems
 
 
@@ -149,32 +172,36 @@ def check_tree(root: Path) -> list[str]:
     for path in sorted((root / ".github" / "actions").glob("*/action.y*ml")):
         name = str(path.relative_to(root))
         document = load_yaml(path)
-        if LOCAL_RUNNER_LABEL.search(json.dumps(document)):
-            problems.append(f"{name}: names the self-hosted runner")
+        runs = document.get("runs") if isinstance(document, dict) else None
+        if SELF_HOSTED.search(json.dumps(runs)):
+            problems.append(f"{name}: names the self-hosted runner in what it runs")
         problems += self_reference_problems(root, name, document)
     return problems
 
 
-COMPLIANT_CI = """\
+COMPLIANT_CI = f"""\
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   push:
     branches: [main]
   merge_group:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
 jobs:
-  changes: {runs-on: ubuntu-slim, steps: [{uses: $/.github/actions/setup}]}
+  changes: {{runs-on: ubuntu-slim, steps: [{{uses: $/.github/actions/setup}}]}}
   ios-tests:
     needs: changes
     runs-on: >-
-      ${{ needs.changes.outputs.ios-runner == 'local'
-      && fromJSON('["self-hosted", "offline-kt"]') || 'macos-26' }}
-    steps: [{run: echo}]
-  docs: {needs: changes, uses: $/.github/workflows/docs-check.yml}
+      {ROUTED_RUNS_ON}
+    steps: [{{run: echo}}]
+  docs: {{needs: changes, uses: $/.github/workflows/docs-check.yml}}
   final-status:
-    if: always() && github.event.action != 'labeled'
+    if: {FAN_IN_IF}
     needs: [changes, ios-tests, docs]
     runs-on: ubuntu-slim
-    steps: [{run: echo}]
+    steps: [{{run: echo}}]
 """
 COMPLIANT_DOCS = """\
 on:
@@ -185,9 +212,10 @@ jobs:
   check: {runs-on: ubuntu-latest, steps: [{run: echo supabase-offline-kt}]}
 """
 COMPLIANT_ACTION = "runs: {using: composite, steps: [{run: echo, shell: bash}]}\n"
+ROUTING_LINE = "      ${{ needs.changes.outputs.ios-runner == 'local'"
 
 # Each case: what it proves, the file it replaces or adds, its content, and a phrase the report
-# must contain.
+# must contain. The later ones are the second review's counter-examples.
 CASES: list[tuple[str, str, str, str]] = [
     ("pull_request_target", "extra.yml",
      "on: pull_request_target\njobs: {a: {runs-on: ubuntu-latest}}\n", "pull_request_target"),
@@ -202,28 +230,69 @@ CASES: list[tuple[str, str, str, str]] = [
     ("push with branches-ignore", "extra.yml",
      "on: {push: {branches-ignore: [main]}}\njobs: {a: {runs-on: ubuntu-latest}}\n",
      "branches-ignore"),
-    ("another workflow on the Mac", "extra.yml",
+    ("another workflow on the self-hosted runner", "extra.yml",
      "on: workflow_dispatch\njobs: {a: {runs-on: [self-hosted, macOS, offline-kt]}}\n",
      "names the self-hosted runner"),
     ("docs job on an expression", "docs-check.yml",
      "on: workflow_call\njobs: {check: {runs-on: '${{ vars.RUNNER }}'}}\n",
      "not a literal hosted label"),
-    ("another ci.yml job on the Mac", "ci.yml",
+    ("another ci.yml job on the self-hosted runner", "ci.yml",
      COMPLIANT_CI.replace("changes: {runs-on: ubuntu-slim",
                           "changes: {runs-on: [self-hosted, offline-kt]"),
      "job changes names the self-hosted runner"),
     ("ios-tests with no hosted fallback", "ci.yml",
-     COMPLIANT_CI.replace(" || 'macos-26' }}", " }}"), "fall back to a hosted macOS label"),
+     COMPLIANT_CI.replace(" || 'macos-26' }}", " }}"), "not the reviewed routing"),
     ("fan-in missing a job", "ci.yml",
      COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]", "needs: [changes, docs]"),
      "not every other job"),
     ("fan-in without always()", "ci.yml",
-     COMPLIANT_CI.replace("if: always() && ", "if: "), "does not run with always()"),
+     COMPLIANT_CI.replace("if: always() && ", "if: "), "final-status runs if"),
     ("misspelled $/ action", "ci.yml",
      COMPLIANT_CI.replace("$/.github/actions/setup", "$/.github/actions/setpu"),
      "names nothing in the repository"),
     ("misspelled $/ workflow", "ci.yml",
      COMPLIANT_CI.replace("docs-check.yml", "docs-chek.yml"), "names nothing in the repository"),
+    ("remote reusable workflow passes the label as an input", "extra.yml",
+     "on: {pull_request: {}}\njobs:\n  a:\n    uses: someone/else/.github/workflows/w.yml@0123456"
+     "789abcdef0123456789abcdef01234567\n    with: {runner: '[\"self-hosted\",\"offline-kt\"]'}\n",
+     "names the self-hosted runner"),
+    ("this repository's reusable workflow at another ref", "extra.yml",
+     "on: {pull_request: {}}\njobs:\n  a:\n    uses: nesfeder/supabase-offline-kt/.github/"
+     "workflows/evil.yml@some-branch\n    with: {runner: ubuntu-latest}\n",
+     "not a workflow of this commit"),
+    ("label in a matrix, upper case", "extra.yml",
+     "on: workflow_dispatch\njobs:\n  a:\n    strategy: {matrix: {os: [OFFLINE-KT]}}\n"
+     "    runs-on: ${{ matrix.os }}\n    steps: [{run: echo}]\n",
+     "names the self-hosted runner"),
+    ("ios-tests routing widened but still ending in a hosted label", "ci.yml",
+     COMPLIANT_CI.replace("${{ needs.changes.outputs.ios-runner == 'local'",
+                          "${{ (needs.changes.outputs.ios-runner == 'local' || true)"),
+     "not the reviewed routing"),
+    ("a hosted-looking label the runner could be given", "extra.yml",
+     "on: workflow_dispatch\njobs:\n  a:\n    runs-on: macos-offline-kt\n"
+     "    steps: [{run: echo}]\n", "not a literal hosted label"),
+    ("fan-in if: always() && false", "ci.yml",
+     COMPLIANT_CI.replace("if: always() && (", "if: always() && false && ("),
+     "final-status runs if"),
+    ("ci.yml gains a create trigger", "ci.yml",
+     COMPLIANT_CI.replace("  merge_group:\n", "  merge_group:\n  create:\n"), "ci.yml: triggers"),
+    ("ci.yml gains issue_comment", "ci.yml",
+     COMPLIANT_CI.replace("  merge_group:\n", "  merge_group:\n  issue_comment:\n"),
+     "ci.yml: triggers"),
+    ("ci.yml pull_request gains a type", "ci.yml",
+     COMPLIANT_CI.replace("ready_for_review, labeled]", "ready_for_review, labeled, edited]"),
+     "pull_request types"),
+    ("push filtered to a literal dependabot branch", "extra.yml",
+     "on: {push: {branches: ['dependabot/gradle/x']}}\njobs: {a: {runs-on: ubuntu-latest}}\n",
+     "push is not filtered"),
+    ("push with a tags glob only", "extra.yml",
+     "on: {push: {tags: ['**']}}\njobs: {a: {runs-on: ubuntu-latest}}\n", "push is not filtered"),
+    ("fan-in renamed", "ci.yml", COMPLIANT_CI.replace("  final-status:\n", "  fan-in:\n"),
+     "no final-status job"),
+    (".yaml file carrying ios-tests", "ci.yaml",
+     "on: {pull_request: {}}\njobs:\n  ios-tests:\n    runs-on: ${{ needs.changes.outputs.ios-runner"
+     " == 'local' && fromJSON('[\"offline-kt\"]') || 'macos-26' }}\n    steps: [{run: echo}]\n",
+     "names the self-hosted runner"),
 ]
 
 

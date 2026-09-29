@@ -22,14 +22,17 @@ name: CI
 # job, and a pull request that changes nothing the build reads starts neither test job.
 #
 # Where the iOS tests run (the rule is in .github/scripts/decide-ios-tests.py):
-# - On the maintainer's Mac (self-hosted, label offline-kt) while the repository is private and
-#   the repository variable IOS_LOCAL_RUNNER is exactly `on`: every pull request event, drafts
-#   included, pushes to main and manual runs. Never for Dependabot (by author, actor, triggering
-#   actor or `dependabot/` branch) unless a maintainer has added the `full-ci` label, and never
-#   for the weekly run.
+# - On the self-hosted runner (label offline-kt) while the repository is private and the
+#   repository variable IOS_LOCAL_RUNNER is exactly `on`: every pull request event, drafts
+#   included, pushes to main and manual runs. Never for the merge queue or the weekly run.
 # - Otherwise on GitHub's macos-26. While private they run there only on a pull request that is
-#   ready for review (a Dependabot one only with `full-ci`), a manual run, the merge queue and the
-#   weekly run; not on drafts or pushes to main. Once public, on every run.
+#   ready for review, a manual run, the merge queue and the weekly run; not on drafts or pushes to
+#   main. Once public, on every run.
+# - Dependabot's pull requests: a run Dependabot pushed or started (as actor or triggering actor)
+#   never runs the iOS tests while private, and never on the self-hosted runner. To run them, a
+#   maintainer reads the push and adds the `full-ci` label: that labeled event, and only that
+#   event, runs the full graph. After Dependabot pushes again, the check reads held until a
+#   maintainer removes the label and adds it again.
 #
 # When the iOS tests were due and held by that rule, the fan-in is named
 # `Final status (iOS tests held)`, so it can never satisfy the required `Final status`: that name
@@ -47,7 +50,7 @@ on:
     branches: [main]
   merge_group:
   # Weekly, on main: the full graph on GitHub's macOS runner, whatever IOS_LOCAL_RUNNER says, so
-  # the hosted image stays proven while the Mac does the day-to-day runs.
+  # the hosted image stays proven while the self-hosted runner does the day-to-day runs.
   schedule:
     - cron: '23 5 * * 1'
   workflow_dispatch:
@@ -156,9 +159,13 @@ jobs:
             kotlin=true; docs=true; workflows=true
           fi
 
-          # Indented, so a file name can never start a line the runner reads as a command.
+          # Between stop-commands markers with a random token, so no file name is read as a
+          # workflow command: the runner trims leading spaces, so indenting would not do.
           echo "Changed files ($(wc -l < "$changed_files" | tr -d ' ')):"
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::$token"
           sed 's/^/  /' "$changed_files"
+          echo "::$token::"
           echo "  kotlin=$kotlin docs=$docs workflows=$workflows everything=$everything"
           {
             echo "kotlin=$kotlin"
@@ -181,11 +188,12 @@ jobs:
         id: ios
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_LABEL: ${{ github.event.label.name }}
           REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
           IOS_LOCAL_RUNNER: ${{ vars.IOS_LOCAL_RUNNER }}
           PULL_REQUEST_DRAFT: ${{ github.event.pull_request.draft }}
           PULL_REQUEST_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PULL_REQUEST_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           ACTOR: ${{ github.actor }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
@@ -240,7 +248,7 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSL -o "$cache/ktfmt-$KTFMT_VERSION.jar" \
             "https://repo1.maven.org/maven2/com/facebook/ktfmt/$KTFMT_VERSION/ktfmt-$KTFMT_VERSION-with-dependencies.jar"
           echo "$KTFMT_SHA256  $cache/ktfmt-$KTFMT_VERSION.jar" | sha256sum --check --strict
-          chmod a-w "$cache"
+          chmod a-w "$cache/ktfmt-$KTFMT_VERSION.jar" "$cache"
           echo "KEMPT_CACHE_DIR=$cache" >> "$GITHUB_ENV"
 
       - name: Download the formatters
@@ -274,7 +282,7 @@ jobs:
 
       # The scripts CI itself depends on, each proved by its own self-test, then the structure
       # of the workflows: the fan-in needs every job, `$/` references exist, only ios-tests may
-      # use the maintainer's Mac, and nothing Dependabot can trigger reaches it.
+      # use the self-hosted runner, and nothing Dependabot can trigger reaches it.
       - name: Check the CI scripts and the workflow structure
         if: needs.changes.outputs.workflows == 'true'
         run: |
@@ -338,7 +346,7 @@ jobs:
     if: >-
       ${{ !cancelled() && !failure()
       && needs.changes.outputs.kotlin == 'true' && needs.changes.outputs.ios-allowed == 'true' }}
-    # The maintainer's Mac only when changes decided `local`; anything else is GitHub's macos-26,
+    # The self-hosted runner only when changes decided `local`; anything else is GitHub's macos-26,
     # the image macos-latest resolved to when this workflow was written.
     runs-on: >-
       ${{ needs.changes.outputs.ios-runner == 'local'
@@ -347,26 +355,44 @@ jobs:
     env:
       IOS_RUNNER: ${{ needs.changes.outputs.ios-runner }}
       XCODE_VERSION: '26.6'
-      # Xcode for this job's processes only: no sudo, and nothing changes for anyone else on a
-      # shared machine. The Mac has 26.6 as Xcode.app; the hosted image names it by version.
+      # Xcode for this job's processes only: no sudo, and nothing changes for anything else on the
+      # machine. The self-hosted runner has 26.6 as Xcode.app; the hosted image names it by version.
       DEVELOPER_DIR: >-
         ${{ needs.changes.outputs.ios-runner == 'local'
         && '/Applications/Xcode.app/Contents/Developer'
         || '/Applications/Xcode_26.6.app/Contents/Developer' }}
     steps:
+      # On a self-hosted runner, before anything else: a record of the home directory's first two
+      # levels, which the last step compares against. The job must leave the home as it found it.
+      - name: Record the home directory
+        if: env.IOS_RUNNER == 'local'
+        uses: $/.github/actions/home-snapshot
+        with:
+          mode: record
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # On the maintainer's Mac the build gets directories of its own under RUNNER_TEMP, never the
-      # owner's ~/.gradle or ~/.konan, and clean-up-local-runner.sh removes them at the end.
+      # On a self-hosted runner the build gets a home and directories of its own under RUNNER_TEMP,
+      # set before any setup step: Java's user.home and temporary directory, the XDG and Android
+      # user directories, the Gradle User Home, the Kotlin/Native data directory and TMPDIR (which
+      # the JVM ignores on macOS, hence java.io.tmpdir). clean-up-local-runner.sh removes them all.
       - name: Give the build directories of its own
         if: env.IOS_RUNNER == 'local'
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/offline-kt-ci"
-          mkdir -p "$root/gradle-home" "$root/konan" "$root/tmp"
+          home="$root/home"
+          mkdir -p "$home/.config" "$home/.cache" "$home/.local/share" "$home/.local/state" \
+            "$home/.android" "$root/gradle-home" "$root/konan" "$root/tmp"
           {
+            echo "JAVA_TOOL_OPTIONS=-Duser.home=$home -Djava.io.tmpdir=$root/tmp"
+            echo "XDG_CONFIG_HOME=$home/.config"
+            echo "XDG_CACHE_HOME=$home/.cache"
+            echo "XDG_DATA_HOME=$home/.local/share"
+            echo "XDG_STATE_HOME=$home/.local/state"
+            echo "ANDROID_USER_HOME=$home/.android"
             echo "GRADLE_USER_HOME=$root/gradle-home"
             echo "KONAN_DATA_DIR=$root/konan"
             echo "TMPDIR=$root/tmp"
@@ -379,11 +405,11 @@ jobs:
           output=$(xcodebuild -version)
           version="${output%%$'\n'*}"
           if [[ "$IOS_RUNNER" == local ]]; then
-            where="the maintainer's Mac (self-hosted, offline-kt)"
+            where="the self-hosted runner (label offline-kt)"
           else
             where="GitHub's macos-26 runner"
           fi
-          echo "  $version from $DEVELOPER_DIR on $where"
+          echo "  $version on $where"
           echo "iOS tests ran on $where, $version." >> "$GITHUB_STEP_SUMMARY"
           if [[ "$version" != "Xcode $XCODE_VERSION" ]]; then
             echo "::error::Expected Xcode $XCODE_VERSION, found $version"
@@ -393,6 +419,7 @@ jobs:
       - uses: $/.github/actions/setup-project
         with:
           gradle-cache: ${{ env.IOS_RUNNER != 'local' }}
+          job-home: ${{ env.IOS_RUNNER == 'local' && format('{0}/offline-kt-ci/home', runner.temp) || '' }}
 
       - name: Read the Kotlin version
         id: kotlin
@@ -416,7 +443,7 @@ jobs:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ runner.arch }}-xcode${{ env.XCODE_VERSION }}-kotlin${{ steps.kotlin.outputs.version }}
 
-      # On the maintainer's Mac, a simulator of the job's own, never one another session uses.
+      # On a self-hosted runner, a simulator of the job's own, never one another session uses.
       - name: Create a simulator for this job
         if: env.IOS_RUNNER == 'local'
         run: bash .github/scripts/create-simulator.sh
@@ -473,10 +500,17 @@ jobs:
 
       # Whatever happened above: delete the simulator, stop anything still running from the job's
       # directories, remove those directories and the JDK setup-java installed, list what went,
-      # and fail if anything outside the workspace is left.
-      - name: Leave nothing behind on the maintainer's Mac
+      # and fail if anything is left.
+      - name: Leave nothing behind on the self-hosted runner
         if: always() && env.IOS_RUNNER == 'local'
         run: bash .github/scripts/clean-up-local-runner.sh
+
+      # Then the home directory must match the record the first step made.
+      - name: Compare the home directory with its record
+        if: always() && env.IOS_RUNNER == 'local'
+        uses: $/.github/actions/home-snapshot
+        with:
+          mode: compare
 
   docs:
     name: Docs

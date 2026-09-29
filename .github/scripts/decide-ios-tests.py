@@ -6,13 +6,12 @@ Usage:
                                    $GITHUB_OUTPUT (ios-runner, ios-allowed, ios-hold, ios-held)
   decide-ios-tests.py --self-test  check the decision against its truth table and print it
 
-Anything unexpected routes to GitHub's hosted runner, never to the maintainer's Mac.
+Anything unexpected routes to GitHub's hosted runner, never to the self-hosted one.
 """
 
 from __future__ import annotations
 
 import itertools
-import json
 import os
 import sys
 from dataclasses import dataclass, replace
@@ -26,11 +25,12 @@ class Run:
     """What the decision reads about a run: the event, the repository and who started it."""
 
     event: str
+    action: str = ""
+    label: str = ""
     private: str = "true"
     local_runner_variable: str = ""
     draft: str = ""
     author: str = ""
-    labels: tuple[str, ...] = ()
     actor: str = "maintainer"
     triggering_actor: str = "maintainer"
     head_ref: str = "feature"
@@ -47,25 +47,37 @@ class Decision:
     held: bool
 
 
-def is_dependabot(run: Run) -> bool:
-    """True when Dependabot opened, pushed, re-ran or named the branch of this run."""
+def started_by_dependabot(run: Run) -> bool:
+    """True when Dependabot pushed the commit or started the run; no label overrides this."""
+    return run.actor == DEPENDABOT or run.triggering_actor == DEPENDABOT
+
+
+def changes_dependabot_made(run: Run) -> bool:
+    """True when the pull request or branch is Dependabot's, whoever started this run."""
+    return run.author == DEPENDABOT or run.head_ref.startswith("dependabot/")
+
+
+def approved_by_label(run: Run) -> bool:
+    """True only on the event of a person adding the full-ci label: that person read this push."""
     return (
-        run.author == DEPENDABOT
-        or run.actor == DEPENDABOT
-        or run.triggering_actor == DEPENDABOT
-        or run.head_ref.startswith("dependabot/")
+        run.event == "pull_request"
+        and run.action == "labeled"
+        and run.label == FULL_CI_LABEL
+        and not started_by_dependabot(run)
     )
 
 
 def decide(run: Run) -> Decision:
     """Applies the routing rule and, on the hosted runner, the private-repository rationing rule."""
-    has_full_ci = FULL_CI_LABEL in run.labels
-    dependabot = is_dependabot(run)
+    dependabot_started = started_by_dependabot(run)
+    dependabot_changes = dependabot_started or changes_dependabot_made(run)
+    approved = approved_by_label(run)
     local = (
         run.private == "true"
         and run.local_runner_variable == "on"
-        and run.event != "schedule"
-        and (not dependabot or has_full_ci)
+        and run.event not in ("schedule", "merge_group")
+        and not dependabot_started
+        and (not dependabot_changes or approved)
     )
 
     hold = ""
@@ -73,8 +85,12 @@ def decide(run: Run) -> Decision:
         if run.event == "pull_request":
             if run.draft != "false":
                 hold = "draft pull request"
-            elif dependabot and not has_full_ci:
-                hold = f"Dependabot pull request without the {FULL_CI_LABEL} label"
+            elif dependabot_started:
+                hold = (f"Dependabot pushed or started this run; a maintainer adds the"
+                        f" {FULL_CI_LABEL} label after reading the push")
+            elif dependabot_changes and not approved:
+                hold = (f"Dependabot pull request; a maintainer adds the {FULL_CI_LABEL} label"
+                        f" after reading the push")
         elif run.event == "push":
             hold = "push to main"
         elif run.event not in ("workflow_dispatch", "schedule", "merge_group"):
@@ -92,16 +108,14 @@ def decide(run: Run) -> Decision:
 def run_from_environment() -> Run:
     """Reads the run from the variables the changes job passes in."""
     environment = os.environ
-    labels = json.loads(environment.get("PULL_REQUEST_LABELS", "") or "null") or []
-    if not isinstance(labels, list) or not all(isinstance(label, str) for label in labels):
-        raise SystemExit("PULL_REQUEST_LABELS must be a JSON array of strings")
     return Run(
         event=environment.get("EVENT_NAME", ""),
+        action=environment.get("EVENT_ACTION", ""),
+        label=environment.get("EVENT_LABEL", ""),
         private=environment.get("REPOSITORY_PRIVATE", ""),
         local_runner_variable=environment.get("IOS_LOCAL_RUNNER", ""),
         draft=environment.get("PULL_REQUEST_DRAFT", ""),
         author=environment.get("PULL_REQUEST_AUTHOR", ""),
-        labels=tuple(labels),
         actor=environment.get("ACTOR", ""),
         triggering_actor=environment.get("TRIGGERING_ACTOR", ""),
         head_ref=environment.get("HEAD_REF", ""),
@@ -109,8 +123,20 @@ def run_from_environment() -> Run:
     )
 
 
+QUEUED_NOTE = """\
+The iOS tests go to the self-hosted runner. If the iOS job stays queued ("Waiting for a runner to
+pick up this job"), that runner is offline: start it, or send the iOS tests to GitHub's runner and
+re-run all jobs:
+
+    gh variable set IOS_LOCAL_RUNNER --body off --repo {repository}
+
+While the repository is private, a run with the iOS tests on GitHub's runner costs about 70
+billable minutes, 60 of them for macOS.
+"""
+
+
 def write_outputs(decision: Decision) -> None:
-    """Writes the decision to the step's outputs and a one-line account to the log."""
+    """Writes the decision to the step's outputs, a line to the log and a note to the summary."""
     print(
         f"  iOS tests: runner={decision.runner} allowed={str(decision.allowed).lower()}"
         f" held={str(decision.held).lower()}" + (f" ({decision.hold})" if decision.hold else "")
@@ -120,123 +146,157 @@ def write_outputs(decision: Decision) -> None:
         outputs.write(f"ios-allowed={str(decision.allowed).lower()}\n")
         outputs.write(f"ios-hold={decision.hold}\n")
         outputs.write(f"ios-held={str(decision.held).lower()}\n")
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path and decision.runner == "local" and decision.allowed:
+        with open(summary_path, "a", encoding="utf-8") as summary:
+            summary.write(QUEUED_NOTE.format(repository=os.environ.get("GITHUB_REPOSITORY", "")))
 
 
 # Each row: a run, then the runner, whether the iOS tests may run, and the hold reason expected.
-PRIVATE_ON = Run(event="pull_request", private="true", local_runner_variable="on", draft="true")
+PRIVATE_ON = Run(event="pull_request", action="synchronize", private="true",
+                 local_runner_variable="on", draft="true")
 PRIVATE_OFF = replace(PRIVATE_ON, local_runner_variable="")
-DEPENDABOT_PULL_REQUEST = dict(
-    author=DEPENDABOT, actor=DEPENDABOT, triggering_actor=DEPENDABOT, head_ref="dependabot/gradle/x"
-)
+DEPENDABOT_PUSH = dict(author=DEPENDABOT, actor=DEPENDABOT, triggering_actor=DEPENDABOT,
+                       head_ref="dependabot/gradle/x", draft="false")
+LABEL_ADDED = dict(action="labeled", label=FULL_CI_LABEL, author=DEPENDABOT,
+                   head_ref="dependabot/gradle/x", draft="false")
+HELD_DRAFT = "draft pull request"
+HELD_STARTED = ("Dependabot pushed or started this run; a maintainer adds the full-ci label after"
+                " reading the push")
+HELD_CHANGES = "Dependabot pull request; a maintainer adds the full-ci label after reading the push"
 TRUTH_TABLE: list[tuple[str, Run, str, bool, str]] = [
     ("variable on: draft", PRIVATE_ON, "local", True, ""),
     ("variable on: ready", replace(PRIVATE_ON, draft="false"), "local", True, ""),
-    ("variable on: push to main", replace(PRIVATE_ON, event="push", draft=""), "local", True, ""),
-    ("variable on: manual run", replace(PRIVATE_ON, event="workflow_dispatch", draft=""),
+    ("variable on: push to main", replace(PRIVATE_ON, event="push", action="", draft=""),
      "local", True, ""),
-    ("variable on: merge queue", replace(PRIVATE_ON, event="merge_group", draft=""),
-     "local", True, ""),
-    ("variable on: weekly schedule", replace(PRIVATE_ON, event="schedule", draft=""),
+    ("variable on: manual run", replace(PRIVATE_ON, event="workflow_dispatch", action="",
+     draft=""), "local", True, ""),
+    ("variable on: merge queue", replace(PRIVATE_ON, event="merge_group", action="",
+     draft=""), "hosted", True, ""),
+    ("variable on: Dependabot pull request in the merge queue", replace(PRIVATE_ON,
+     event="merge_group", action="", draft="", head_ref="gh-readonly-queue/main/pr-21-x"),
      "hosted", True, ""),
-    ("variable on: Dependabot pull request", replace(PRIVATE_ON, draft="false",
-     **DEPENDABOT_PULL_REQUEST), "hosted", False,
-     "Dependabot pull request without the full-ci label"),
-    ("variable on: Dependabot pull request, full-ci", replace(PRIVATE_ON, draft="false",
-     labels=("dependencies", "full-ci"), **DEPENDABOT_PULL_REQUEST), "local", True, ""),
-    ("variable on: Dependabot author only", replace(PRIVATE_ON, draft="false",
-     author=DEPENDABOT), "hosted", False, "Dependabot pull request without the full-ci label"),
-    ("variable on: Dependabot actor only (pull request)", replace(PRIVATE_ON, draft="false",
-     actor=DEPENDABOT), "hosted", False, "Dependabot pull request without the full-ci label"),
-    ("variable on: Dependabot triggering actor only", replace(PRIVATE_ON, draft="false",
-     triggering_actor=DEPENDABOT), "hosted", False,
-     "Dependabot pull request without the full-ci label"),
+    ("variable on: weekly schedule", replace(PRIVATE_ON, event="schedule", action="",
+     draft=""), "hosted", True, ""),
+    ("variable on: Dependabot opens or pushes", replace(PRIVATE_ON, **DEPENDABOT_PUSH),
+     "hosted", False, HELD_STARTED),
+    ("variable on: a maintainer adds full-ci", replace(PRIVATE_ON, **LABEL_ADDED),
+     "local", True, ""),
+    ("variable on: Dependabot pushes after full-ci", replace(PRIVATE_ON, **DEPENDABOT_PUSH),
+     "hosted", False, HELD_STARTED),
+    ("variable on: Dependabot adds full-ci itself", replace(PRIVATE_ON, **LABEL_ADDED,
+     actor=DEPENDABOT, triggering_actor=DEPENDABOT), "hosted", False, HELD_STARTED),
+    ("variable on: a maintainer re-runs the full-ci run", replace(PRIVATE_ON, **LABEL_ADDED,
+     triggering_actor="another-maintainer"), "local", True, ""),
+    ("variable on: a maintainer re-runs Dependabot's run", replace(PRIVATE_ON,
+     **{**DEPENDABOT_PUSH, "triggering_actor": "maintainer"}), "hosted", False, HELD_STARTED),
+    ("variable on: Dependabot re-runs a maintainer's run", replace(PRIVATE_ON, draft="false",
+     triggering_actor=DEPENDABOT), "hosted", False, HELD_STARTED),
+    ("variable on: a maintainer pushes to a Dependabot branch", replace(PRIVATE_ON,
+     draft="false", author=DEPENDABOT, head_ref="dependabot/gradle/x"), "hosted", False,
+     HELD_CHANGES),
+    ("variable on: another label on a Dependabot pull request", replace(PRIVATE_ON,
+     **{**LABEL_ADDED, "label": "dependencies"}), "hosted", False, HELD_CHANGES),
     ("variable on: dependabot/ head ref only", replace(PRIVATE_ON, draft="false",
-     head_ref="dependabot/github_actions/y"), "hosted", False,
-     "Dependabot pull request without the full-ci label"),
+     head_ref="dependabot/github_actions/y"), "hosted", False, HELD_CHANGES),
     ("variable on: manual run on a Dependabot branch", replace(PRIVATE_ON,
-     event="workflow_dispatch", draft="", head_ref="dependabot/gradle/x"), "hosted", True, ""),
-    ("variable on: Dependabot push to its branch", replace(PRIVATE_ON, event="push", draft="",
-     actor=DEPENDABOT, head_ref="dependabot/gradle/x"), "hosted", False, "push to main"),
-    ("variable off: draft", PRIVATE_OFF, "hosted", False, "draft pull request"),
+     event="workflow_dispatch", action="", draft="", head_ref="dependabot/gradle/x"),
+     "hosted", True, ""),
+    ("variable off: draft", PRIVATE_OFF, "hosted", False, HELD_DRAFT),
     ("variable off: ready", replace(PRIVATE_OFF, draft="false"), "hosted", True, ""),
-    ("variable off: push to main", replace(PRIVATE_OFF, event="push", draft=""),
+    ("variable off: push to main", replace(PRIVATE_OFF, event="push", action="", draft=""),
      "hosted", False, "push to main"),
-    ("variable off: manual run", replace(PRIVATE_OFF, event="workflow_dispatch", draft=""),
+    ("variable off: manual run", replace(PRIVATE_OFF, event="workflow_dispatch", action="",
+     draft=""), "hosted", True, ""),
+    ("variable off: weekly schedule", replace(PRIVATE_OFF, event="schedule", action="",
+     draft=""), "hosted", True, ""),
+    ("variable off: merge queue", replace(PRIVATE_OFF, event="merge_group", action="",
+     draft=""), "hosted", True, ""),
+    ("variable off: Dependabot opens or pushes", replace(PRIVATE_OFF, **DEPENDABOT_PUSH),
+     "hosted", False, HELD_STARTED),
+    ("variable off: a maintainer adds full-ci", replace(PRIVATE_OFF, **LABEL_ADDED),
      "hosted", True, ""),
-    ("variable off: weekly schedule", replace(PRIVATE_OFF, event="schedule", draft=""),
-     "hosted", True, ""),
-    ("variable off: merge queue", replace(PRIVATE_OFF, event="merge_group", draft=""),
-     "hosted", True, ""),
-    ("variable off: Dependabot pull request", replace(PRIVATE_OFF, draft="false",
-     **DEPENDABOT_PULL_REQUEST), "hosted", False,
-     "Dependabot pull request without the full-ci label"),
-    ("variable off: Dependabot pull request, full-ci", replace(PRIVATE_OFF, draft="false",
-     labels=("full-ci",), **DEPENDABOT_PULL_REQUEST), "hosted", True, ""),
+    ("variable off: Dependabot pushes after full-ci", replace(PRIVATE_OFF, **DEPENDABOT_PUSH),
+     "hosted", False, HELD_STARTED),
     ("variable 'On' (not exactly on): ready", replace(PRIVATE_ON, local_runner_variable="On",
      draft="false"), "hosted", True, ""),
     ("variable 'true': draft", replace(PRIVATE_ON, local_runner_variable="true"),
-     "hosted", False, "draft pull request"),
+     "hosted", False, HELD_DRAFT),
     ("private field missing, variable on: draft", replace(PRIVATE_ON, private=""),
-     "hosted", False, "draft pull request"),
+     "hosted", False, HELD_DRAFT),
     ("private field missing, variable on: push", replace(PRIVATE_ON, private="", event="push",
-     draft=""), "hosted", False, "push to main"),
+     action="", draft=""), "hosted", False, "push to main"),
     ("public, variable on: draft", replace(PRIVATE_ON, private="false"), "hosted", True, ""),
-    ("public: push to main", replace(PRIVATE_OFF, private="false", event="push", draft=""),
-     "hosted", True, ""),
-    ("public: Dependabot pull request", replace(PRIVATE_OFF, private="false", draft="false",
-     **DEPENDABOT_PULL_REQUEST), "hosted", True, ""),
+    ("public: push to main", replace(PRIVATE_OFF, private="false", event="push", action="",
+     draft=""), "hosted", True, ""),
+    ("public: Dependabot opens or pushes", replace(PRIVATE_OFF, private="false",
+     **DEPENDABOT_PUSH), "hosted", True, ""),
     ("draft field missing on a pull request", replace(PRIVATE_OFF, draft=""),
-     "hosted", False, "draft pull request"),
-    ("unknown event, variable off", replace(PRIVATE_OFF, event="repository_dispatch", draft=""),
-     "hosted", False, "repository_dispatch event"),
+     "hosted", False, HELD_DRAFT),
+    ("unknown event, variable off", replace(PRIVATE_OFF, event="repository_dispatch", action="",
+     draft=""), "hosted", False, "repository_dispatch event"),
 ]
 
 
+def violations(run: Run, decision: Decision, dependabot_key: str) -> list[str]:
+    """The rule's invariants, checked against one decision."""
+    problems = []
+    started = dependabot_key in ("actor", "triggering_actor")
+    label_event = (run.event == "pull_request" and run.action == "labeled"
+                   and run.label == FULL_CI_LABEL)
+    if decision.runner == "local" and not (
+        run.private == "true" and run.local_runner_variable == "on"
+        and run.event not in ("schedule", "merge_group") and not started
+        and (dependabot_key == "none" or label_event)
+    ):
+        problems.append("routed to the self-hosted runner outside the rule")
+    if decision.runner == "local" and not decision.allowed:
+        problems.append("routed to the self-hosted runner but held")
+    if run.event in ("schedule", "merge_group") and (decision.runner, decision.allowed) != (
+            "hosted", True):
+        problems.append(f"{run.event} must run the iOS tests on GitHub's runner")
+    if run.private == "false" and (decision.runner, decision.allowed) != ("hosted", True):
+        problems.append("a public repository must run the iOS tests on GitHub's runner")
+    if run.private != "false" and run.event == "pull_request" and started and decision.allowed:
+        problems.append("a run Dependabot pushed or started ran the held jobs")
+    if decision.allowed == bool(decision.hold):
+        problems.append("allowed and hold disagree")
+    if decision.held != (run.kotlin == "true" and not decision.allowed):
+        problems.append("held is not 'due and not allowed'")
+    return problems
+
+
 def self_test() -> None:
-    """Checks every truth-table row, then invariants over every combination of the inputs."""
+    """Checks every truth-table row, then the invariants over every combination of the inputs."""
     failures = 0
-    print(f"{'case':<52} {'runner':<7} {'iOS':<5} hold")
+    print(f"{'case':<58} {'runner':<7} {'iOS':<5} hold")
     for name, run, runner, allowed, hold in TRUTH_TABLE:
         decision = decide(run)
         ok = (decision.runner, decision.allowed, decision.hold) == (runner, allowed, hold)
         mark = "" if ok else f"   FAIL: expected {runner} {allowed} {hold!r}"
-        print(f"{name:<52} {decision.runner:<7} {'runs' if decision.allowed else 'held':<5}"
+        print(f"{name:<58} {decision.runner:<7} {'runs' if decision.allowed else 'held':<5}"
               f" {decision.hold}{mark}")
         failures += not ok
 
     combinations = 0
-    for event, private, variable, draft, dependabot_key, labelled, kotlin in itertools.product(
-        ["pull_request", "push", "workflow_dispatch", "schedule", "merge_group", "other"],
-        ["true", "false", ""],
-        ["on", "", "off", "ON"],
-        ["true", "false", ""],
-        ["none", "author", "actor", "triggering_actor", "head_ref"],
-        [False, True],
-        ["true", "false", ""],
-    ):
+    keys = {"none": {}, "author": {"author": DEPENDABOT}, "actor": {"actor": DEPENDABOT},
+            "triggering_actor": {"triggering_actor": DEPENDABOT},
+            "head_ref": {"head_ref": "dependabot/npm/z"}}
+    for event, action, label, private, variable, draft, dependabot_key, kotlin in (
+            itertools.product(
+                ["pull_request", "push", "workflow_dispatch", "schedule", "merge_group", "other"],
+                ["", "labeled", "synchronize"],
+                ["", FULL_CI_LABEL, "dependencies"],
+                ["true", "false", ""],
+                ["on", "", "off", "ON"],
+                ["true", "false", ""],
+                list(keys),
+                ["true", "false", ""])):
         combinations += 1
-        fields = {"none": {}, "author": {"author": DEPENDABOT}, "actor": {"actor": DEPENDABOT},
-                  "triggering_actor": {"triggering_actor": DEPENDABOT},
-                  "head_ref": {"head_ref": "dependabot/npm/z"}}[dependabot_key]
-        run = Run(event=event, private=private, local_runner_variable=variable, draft=draft,
-                  labels=("full-ci",) if labelled else (), kotlin=kotlin, **fields)
-        decision = decide(run)
-        problems = []
-        if decision.runner == "local" and not (
-            private == "true" and variable == "on" and event != "schedule"
-            and (dependabot_key == "none" or labelled)
-        ):
-            problems.append("routed to the Mac outside the rule")
-        if decision.runner == "local" and not decision.allowed:
-            problems.append("routed to the Mac but held")
-        if event == "schedule" and (decision.runner, decision.allowed) != ("hosted", True):
-            problems.append("the weekly run must run on GitHub's runner")
-        if private == "false" and (decision.runner, decision.allowed) != ("hosted", True):
-            problems.append("a public repository must run the iOS tests on GitHub's runner")
-        if decision.allowed == bool(decision.hold):
-            problems.append("allowed and hold disagree")
-        if decision.held != (kotlin == "true" and not decision.allowed):
-            problems.append("held is not 'due and not allowed'")
+        run = Run(event=event, action=action, label=label, private=private,
+                  local_runner_variable=variable, draft=draft, kotlin=kotlin,
+                  **keys[dependabot_key])
+        problems = violations(run, decide(run), dependabot_key)
         if problems:
             failures += 1
             print(f"FAIL {run}: {'; '.join(problems)}")

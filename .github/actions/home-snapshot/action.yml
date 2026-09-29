@@ -1,0 +1,20 @@
+name: Home directory snapshot
+description: >-
+  Records the first two levels of the home directory (names, sizes and modification times, never
+  contents), or compares the home directory with that record and fails on any difference.
+
+inputs:
+  mode:
+    description: "'record' before the job's first step, 'compare' after its clean-up."
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Snapshot the home directory
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        # The job's own temporary directory is gone by the time of the compare.
+        TMPDIR: ${{ runner.temp }}
+      run: bash "$GITHUB_ACTION_PATH/home-snapshot.sh" "$MODE" "$RUNNER_TEMP/home-snapshot.tsv"

@@ -1,13 +1,21 @@
 name: Set up the build
-description: JDK 17 and Gradle, with wrapper validation and the Gradle User Home cache.
+description: JDK 17 and Gradle wrapper validation, with setup-gradle's cache on GitHub's runners.
 
 inputs:
   gradle-cache:
     description: >-
-      'true' to restore setup-gradle's cache (written from main only). 'false' on a machine that
-      outlives the job, where the Gradle User Home is the job's own and nothing is restored.
+      'true' to restore setup-gradle's cache (written from main only) on a GitHub-hosted runner.
+      Ignored when job-home is set.
     required: false
     default: 'true'
+  job-home:
+    description: >-
+      A directory the job owns, standing in for the home directory on a self-hosted runner, which
+      outlives the job. setup-java writes Maven's settings.xml and toolchains.xml under it instead of
+      ~/.m2, and setup-gradle does not run: it would write init scripts and toolchains outside the
+      job. The wrapper is validated on its own.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -17,12 +25,18 @@ runs:
       with:
         distribution: temurin
         java-version: '17'
+        settings-path: ${{ inputs.job-home != '' && format('{0}/.m2', inputs.job-home) || '' }}
 
     # Validates every gradle-wrapper.jar in the repository. The cache is written from main only;
     # other branches read it. `basic` is gradle/actions' open-source (MIT) cache provider; the
     # default provider is proprietary and a time-limited free preview for private repositories.
     - name: Set up Gradle
+      if: inputs.job-home == ''
       uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       with:
         cache-provider: basic
         cache-disabled: ${{ inputs.gradle-cache != 'true' }}
+
+    - name: Validate the Gradle wrapper
+      if: inputs.job-home != ''
+      uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
