@@ -49,11 +49,20 @@ internal class MutationOverlay(
     /**
      * [mutations], oldest first, overlaid onto [payload]. [payload] comes back unchanged when it is
      * not a JSON array, and when there is nothing to overlay.
+     *
+     * @param knownRows rows of the table the engine knows from elsewhere; see [overlayRows]. Those
+     *   [payload] holds already are left out.
      */
-    fun overlay(payload: String, mutations: List<MutationRow>): String {
+    fun overlay(
+        payload: String,
+        mutations: List<MutationRow>,
+        knownRows: List<JsonObject> = emptyList(),
+    ): String {
         if (mutations.isEmpty()) return payload
         val rows = payloadRowsOf(json, payload) ?: return payload
-        return encode(overlayRows(rows, mutations).visible)
+        val keyColumns = primaryKeys.of(mutations.first().table)
+        val elsewhere = knownRows.filter { known -> indexOfKey(rows, known, keyColumns) == null }
+        return encode(overlayRows(rows, mutations, elsewhere).visible)
     }
 
     /**

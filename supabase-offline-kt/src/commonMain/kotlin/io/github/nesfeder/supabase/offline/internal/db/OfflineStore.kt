@@ -1400,6 +1400,7 @@ internal class OfflineStore(
             pending,
             admissionOf(table, signature, shape),
             mutationQueueState.unconfirmedSends(),
+            sameSelectRowsFor(table, signature, shape, pending),
         )
     }
 
@@ -1431,7 +1432,8 @@ internal class OfflineStore(
         if (all.isEmpty()) return cachedJson
 
         val admission = signature?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
-        return overlayFor(admission, mutationQueueState.unconfirmedSends()).overlay(cachedJson, all)
+        return overlayFor(admission, mutationQueueState.unconfirmedSends())
+            .overlay(cachedJson, all, sameSelectRowsFor(table, signature, shape, all))
     }
 
     /** [overlayCachedPayload] for a payload whose signature is not known. */
@@ -1508,29 +1510,16 @@ internal class OfflineStore(
             visibleTo(identityProvider(), owners, allMutations).filter { mutation ->
                 belongsOnPayload(mutation, signature, coverage)
             }
-        val unconfirmed = mutationQueueState.unconfirmedSends()
-        return when {
-            cachedJson != null ->
-                if (mutations.isEmpty()) cachedJson
-                else
-                    overlayMutations(
-                        cachedJson,
-                        mutations,
-                        admissionOf(table, signature, shape),
-                        unconfirmed,
-                    )
-
-            mutations.isNotEmpty() ->
-                overlayMutations(
-                        EMPTY_JSON_ARRAY,
-                        mutations,
-                        admissionOf(table, signature, shape),
-                        unconfirmed,
-                    )
-                    .takeUnless { overlaid -> isEmptyJsonArrayPayload(overlaid) }
-
-            else -> null
-        }
+        if (mutations.isEmpty()) return cachedJson
+        val overlaid =
+            overlayMutations(
+                cachedJson ?: EMPTY_JSON_ARRAY,
+                mutations,
+                admissionOf(table, signature, shape),
+                mutationQueueState.unconfirmedSends(),
+                sameSelectRowsFor(table, signature, shape, mutations),
+            )
+        return if (cachedJson == null && isEmptyJsonArrayPayload(overlaid)) null else overlaid
     }
 
     /**
@@ -1539,13 +1528,59 @@ internal class OfflineStore(
      *
      * @param unconfirmedSends mutations whose send may have reached the server; see
      *   [isSyncedOrUnconfirmed].
+     * @param knownRows rows the table's other queries hold, read with the same columns: those a
+     *   mutation makes start matching join.
      */
     private fun overlayMutations(
         serverJson: String,
         mutations: List<MutationRow>,
         admission: QueryAdmission,
         unconfirmedSends: Set<Long>,
-    ): String = overlayFor(admission, unconfirmedSends).overlay(serverJson, mutations)
+        knownRows: List<JsonObject> = emptyList(),
+    ): String = overlayFor(admission, unconfirmedSends).overlay(serverJson, mutations, knownRows)
+
+    /**
+     * The rows the table's other cached queries hold, read with the same columns as the query
+     * cached under [signature], when one of [mutations] may bring such a row into it: an UPDATE
+     * setting a column its filter names, or an UPSERT. Empty otherwise, and when the query's shape
+     * is unknown.
+     */
+    private suspend fun sameSelectRowsFor(
+        table: String,
+        signature: String?,
+        shape: QueryShape?,
+        mutations: List<MutationRow>,
+    ): List<JsonObject> {
+        if (signature == null) return emptyList()
+        val known = shape ?: queryShapes.shapeOf(table, signature) ?: return emptyList()
+        if (mutations.none { mutation -> mayBringRowsIn(mutation, known) }) return emptyList()
+        val select = selectListOf(known)
+        val shapes = queryShapes.shapesOf(table)
+        val sameSelect =
+            objectDao.allForTable(table).filter { row ->
+                row.signature != signature && shapes[row.signature]?.let(::selectListOf) == select
+            }
+        if (sameSelect.isEmpty()) return emptyList()
+        val parsed = sameSelect.map { row -> row to payloadRowsOf(json, row.payload) }
+        return KnownRows(parsed, shapes, primaryKeys.of(table))
+            .targetFor(signature, known, rows = emptyList())
+            .sameSelectRows
+    }
+
+    /**
+     * Whether [mutation] may bring a row another query holds into a query of [shape]: an UPSERT, or
+     * an UPDATE whose body names a column the query's filter does, read without parsing it.
+     */
+    private fun mayBringRowsIn(mutation: MutationRow, shape: QueryShape): Boolean =
+        when (mutation.operation) {
+            MutationOperation.UPSERT -> true
+            MutationOperation.UPDATE ->
+                shape.hasOtherFilters ||
+                    shape.conditions.any { condition ->
+                        "\"${condition.column}\"" in mutation.bodyJson
+                    }
+            else -> false
+        }
 
     /**
      * The admission of the query cached under [signature]: [shape]'s, or the recorded one's, or
