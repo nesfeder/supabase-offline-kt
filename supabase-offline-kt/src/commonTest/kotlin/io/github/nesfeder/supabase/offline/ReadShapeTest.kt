@@ -50,8 +50,9 @@ class ReadShapeTest {
                 accept.startsWith(OBJECT) && noRowForOne ->
                     postgrestError(HttpStatusCode.NotAcceptable, code = "PGRST116", message = "no rows")
                 accept.startsWith(OBJECT) -> okJson(ONE_ROW)
-                accept == CSV -> respond(CSV_BODY, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, CSV))
-                accept == GEOJSON -> okJson(GEOJSON_BODY)
+                // The client adds its own media types after the one the read asks for
+                accept.startsWith(CSV) -> respond(CSV_BODY, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, CSV))
+                accept.startsWith(GEOJSON) -> okJson(GEOJSON_BODY)
                 accept.contains("nulls=stripped") -> okJson(STRIPPED_ROWS)
                 accept.startsWith(PLAN) -> respond(PLAN_BODY, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, ContentType.Text.Plain.toString()))
                 request.prefer.orEmpty().contains("count=") -> okJson(ROWS, mapOf("Content-Range" to "0-1/2"))

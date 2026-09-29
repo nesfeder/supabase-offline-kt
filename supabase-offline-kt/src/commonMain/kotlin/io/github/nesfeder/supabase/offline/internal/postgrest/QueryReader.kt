@@ -84,14 +84,22 @@ internal class QueryReader(
     private val accelerator: Flow<Unit> = emptyFlow(),
 ) {
 
-    /** A one-shot SELECT answered from the network, the cache, or both, as [readStrategy] says. */
+    /**
+     * A one-shot SELECT answered from the network, the cache, or both, as [readStrategy] says. A read
+     * whose response is not a row list goes to the network as it is, whatever the strategy.
+     */
     suspend fun select(
         columns: Columns,
         readStrategy: ReadStrategy,
         request: SelectRequestBuilder.() -> Unit
     ): PostgrestResult {
+        val shape = delegate.shapeOf(columns, request)
         val slot = cacheSlotOf(columns, request)
         val table = slot.table
+        if (shape is ReadShape.Uncacheable) {
+            sdkLogger.debug { "SELECT $table asks for ${shape.kind}; bypassing the cache" }
+            return delegate.select(columns, request)
+        }
         sdkLogger.debug { "SELECT $table via ${readStrategy::class.simpleName}" }
         return when (readStrategy) {
             is ReadStrategy.NetworkFirst -> {
@@ -189,9 +197,25 @@ internal class QueryReader(
 
     /**
      * A reactive read of the query as [OfflineReadResult]s. Every collection registers the query as
-     * live while it runs; `CacheFirstThenNetwork` collections of one query share one refresh.
+     * live while it runs; `CacheFirstThenNetwork` collections of one query share one refresh. A read
+     * whose response is not a row list emits the network's answer once and completes.
      */
     fun selectAsFlow(
+        columns: Columns,
+        readStrategy: FlowReadStrategy,
+        request: SelectRequestBuilder.() -> Unit
+    ): Flow<OfflineReadResult> = flow {
+        val shape = delegate.shapeOf(columns, request)
+        if (shape is ReadShape.Uncacheable) {
+            sdkLogger.debug { "SELECT ${delegate.table} asks for ${shape.kind}; bypassing the cache" }
+            emit(OfflineReadResult(result = delegate.select(columns, request), refresh = RefreshState.Idle))
+        } else {
+            emitAll(cachedReadFlow(columns, readStrategy, request))
+        }
+    }
+
+    /** A reactive read of a row list, from the cache and the network as [readStrategy] says. */
+    private fun cachedReadFlow(
         columns: Columns,
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit

@@ -2,6 +2,7 @@ package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.internal.postgrest.ReadShape
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
@@ -103,6 +104,9 @@ internal class FakePostgrestQueryBuilderWrapper(
         false -> DryRunVerdict.NotDryRun
         null -> DryRunVerdict.Unavailable
     }
+
+    /** Every read is a row list: a scripted handle builds no HTTP request whose shape could be read. */
+    override suspend fun shapeOf(columns: Columns, request: SelectRequestBuilder.() -> Unit): ReadShape = ReadShape.RowList
 }
 
 /**

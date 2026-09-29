@@ -22,6 +22,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
+import io.github.nesfeder.supabase.offline.internal.postgrest.installReadShapeCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.childEngineScope
@@ -425,6 +426,7 @@ internal class SupabaseOfflineClientImpl(
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
         // and not added while requests may be walking it.
         supabase.installDryRunCheck()
+        supabase.installReadShapeCheck()
         supabase.installTransportFailureCapture()
         replayWhenTheSessionSettles()
     }

@@ -64,6 +64,11 @@ public interface OfflinePostgrestQueryBuilder {
     /**
      * One-shot read that consults the network and the offline cache according to [readStrategy].
      *
+     * Only a list of rows is cached. A read that asks for another shape — `single()`,
+     * `maybeSingle()`, `head`, a `count`, `csv()`, `geojson()`, `stripNulls()` or `explain()` — goes to
+     * the network whatever [readStrategy] says, is not stored, and offline fails as
+     * [ReadStrategy.NetworkOnly] does.
+     *
      * @param columns Columns to select.
      * @param readStrategy How the network and the cache are combined; defaults to
      *   [ReadStrategy.NetworkFirst], which falls back to the cache on a connectivity failure.
@@ -89,6 +94,9 @@ public interface OfflinePostgrestQueryBuilder {
      *
      * Every strategy ends the same way when the client closes: a collection live at
      * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one made after it.
+     *
+     * A read of a shape the cache does not hold (see [select]) emits the network's answer once, with
+     * [RefreshState.Idle], and completes; offline, it fails.
      *
      * @param columns Columns to select.
      * @param readStrategy Flow read strategy.
