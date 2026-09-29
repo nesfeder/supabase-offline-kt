@@ -13,7 +13,7 @@ ksp = "2.3.11"
 # CONTRIBUTING.md, "Formatting", before changing it.
 ktfmt = "0.64"
 ktor = "3.5.1"
-okio = "3.17.0"
+okio = "3.18.2"
 robolectric = "4.17"
 room = "2.8.4"
 skie = "0.10.15"
