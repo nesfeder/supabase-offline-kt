@@ -141,7 +141,7 @@ internal class RefreshCoordinator(
 
     /**
      * Signatures of [table] that currently have at least one live collector. Consumed by
-     * `applyLocalMutationToCache` to decide which cache-less signatures to materialize a
+     * `patchCachedQueries` to decide which cache-less signatures to materialize a
      * server-successful mutation into.
      *
      * @param table Table to look up.

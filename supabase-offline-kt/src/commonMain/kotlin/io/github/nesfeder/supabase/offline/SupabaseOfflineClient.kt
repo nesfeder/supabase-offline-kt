@@ -391,7 +391,7 @@ internal class SupabaseOfflineClientImpl(
     /**
      * Client-scoped coordinator shared by every builder this client creates: single-flight refresh
      * sharing per `(table, signature)` plus the live-signature registry that backs
-     * materialize-on-write in [OfflineStore.applyLocalMutationToCache].
+     * materialize-on-write in [OfflineStore.patchCachedQueries].
      */
     private val refreshCoordinator = RefreshCoordinator(clientScope)
 
@@ -557,7 +557,7 @@ internal class SupabaseOfflineClientImpl(
             }
             return@call
         }
-        store.applyLocalMutationToCache(
+        store.patchCachedQueries(
             table = table,
             operation = MutationOperation.UPSERT,
             bodyJson = JsonArray(listOf(record)).toString(),
@@ -579,7 +579,7 @@ internal class SupabaseOfflineClientImpl(
             }
             return@call
         }
-        store.applyLocalMutationToCache(
+        store.patchCachedQueries(
             table = table,
             operation = MutationOperation.DELETE,
             bodyJson = "{}",

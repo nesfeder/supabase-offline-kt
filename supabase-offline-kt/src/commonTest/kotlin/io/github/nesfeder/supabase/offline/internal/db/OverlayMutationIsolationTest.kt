@@ -96,7 +96,7 @@ class OverlayMutationIsolationTest {
         mutationDao.insert(mutation(id = 0, operation = MutationOperation.INSERT, body = "not json $PRIVATE_VALUE"))
 
         // When
-        store.applyAllMutationsForOfflineFallback("todos", "[]")
+        store.overlayCachedPayload("todos", "[]")
 
         // Then
         val warning = logger.entriesAt(OfflineLogLevel.WARNING).single().message
@@ -114,7 +114,7 @@ class OverlayMutationIsolationTest {
         mutationDao.insert(mutation(id = 0, operation = MutationOperation.INSERT, body = "not json"))
 
         // When — the overlay is recomputed three times
-        repeat(3) { store.applyAllMutationsForOfflineFallback("todos", "[]") }
+        repeat(3) { store.overlayCachedPayload("todos", "[]") }
 
         // Then
         assertEquals(1, logger.entriesAt(OfflineLogLevel.WARNING).size)

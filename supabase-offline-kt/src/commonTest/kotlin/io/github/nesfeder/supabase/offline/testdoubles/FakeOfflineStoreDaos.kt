@@ -55,7 +55,7 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * Optional suspension point inside [allForTable], invoked with the table name **after** the
      * snapshot the call will return has been taken and **before** it is returned.
      *
-     * `OfflineStore.applyLocalMutationToCache` is a read-modify-write — snapshot every cached
+     * `OfflineStore.patchCachedQueries` is a read-modify-write — snapshot every cached
      * payload for the table, patch each, write each back — and this is the seam between its read
      * and its write. A test parks one writer here (`CompletableDeferred.await()`) so a second
      * writer can run to completion against the *same* pre-write snapshot: the exact interleaving

@@ -24,7 +24,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /**
  * Part B substrate + materialize-on-write semantics that replace the old fabricated empty-array
- * cache seed. Covers: the in-memory overlay substrate ([OfflineStore.cachePayloadWithOverlayFlow])
+ * cache seed. Covers: the in-memory overlay substrate ([OfflineStore.overlaidPayloadFlow])
  * making a queued-offline INSERT visible without a Room write; materialize-on-write making an
  * online-success mutation visible to a live cache-less subscriber (the fix for the "save then
  * stale UI" bug, re-expressed without the seed); and the self-GC guarantee that nothing is
@@ -38,7 +38,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         val store = buildStore(FakeObjectDao(), FakeMutationDao())
 
         // When — the overlay substrate is observed
-        val emitted = store.cachePayloadWithOverlayFlow("projects", "sig-A").first()
+        val emitted = store.overlaidPayloadFlow("projects", "sig-A").first()
 
         // Then — it reports the typed no-data state (null), never a fabricated empty array
         assertNull(emitted, "cache-less, mutation-less signature is no-data, not empty []")
@@ -57,7 +57,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         val writesBefore = objectDao.writes
 
         // When — the overlay substrate is observed
-        val emitted = store.cachePayloadWithOverlayFlow("projects", "sig-A").first()
+        val emitted = store.overlaidPayloadFlow("projects", "sig-A").first()
 
         // Then — the optimistic row surfaces from the in-memory `[]` substrate, and nothing was
         // persisted to Room for the signature
@@ -74,14 +74,14 @@ class OfflineStoreEmptyCacheReactivityTest {
         val store = buildStore(objectDao, FakeMutationDao())
         val table = "note_projects"
         val signature = "sig-A"
-        val cacheFlow = store.cachePayloadWithOverlayFlow(table, signature)
+        val cacheFlow = store.overlaidPayloadFlow(table, signature)
         val firstRealRow = async {
             withTimeoutOrNull(timeMillis = 500) { cacheFlow.first { it != null && it.contains("project-1") } }
         }
 
         // When — an online-success upsert fires while the subscriber is live but cache-less; the
         // client passes the live signature so materialize-on-write can create the row
-        store.applyLocalMutationToCache(
+        store.patchCachedQueries(
             table = table,
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"note_id":"log-1","project_id":"project-1","user_id":"u-1"}]""",
@@ -106,7 +106,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         val store = buildStore(objectDao, FakeMutationDao())
 
         // When — an online-success upsert fires on an uncached table
-        store.applyLocalMutationToCache(
+        store.patchCachedQueries(
             table = "note_projects",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"note_id":"log-1","project_id":"project-1","user_id":"u-1"}]""",

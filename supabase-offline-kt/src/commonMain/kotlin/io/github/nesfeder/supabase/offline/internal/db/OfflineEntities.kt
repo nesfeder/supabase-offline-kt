@@ -41,7 +41,7 @@ internal interface ObjectDao {
     /**
      * All cached SELECT payloads for [table], across every signature currently observed.
      *
-     * Used by [OfflineStore.applyLocalMutationToCache] so a successful online mutation
+     * Used by [OfflineStore.patchCachedQueries] so a successful online mutation
      * can patch every live `selectAsFlow` subscription's underlying cache without requiring
      * a round-trip SELECT.
      */
@@ -51,7 +51,7 @@ internal interface ObjectDao {
     /**
      * The signature of every cached SELECT payload for [table], without loading the payloads.
      *
-     * Used by [OfflineStore.clearSyncedMutationsForTable] to decide which cached queries a synced
+     * Used by [OfflineStore.retireCoveredSyncedMutations] to decide which cached queries a synced
      * mutation's overlay still stands in for.
      *
      * @param table Table whose cached signatures are listed.

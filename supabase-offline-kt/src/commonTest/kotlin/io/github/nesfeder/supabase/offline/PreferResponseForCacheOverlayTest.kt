@@ -116,7 +116,7 @@ class PreferResponseForCacheOverlayTest {
             """[{"id":"server-log-id","user_id":"u-1","external_id":42,"notes":null}]"""
 
         // When
-        store.applyLocalMutationToCache(
+        store.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.UPSERT,
             bodyJson = preferResponseForCacheOverlay(requestBody, serverResponse, json),

@@ -386,7 +386,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 // OnlineOnly callers opted out of this — leave their cache untouched.
                 val insertBuilder = InsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(insertBuilder)
-                store.applyLocalMutationToCache(
+                store.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.INSERT,
                     bodyJson = preferResponseForCache(body, result.data),
@@ -450,7 +450,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             applyOnlineSuccessOverlay = { result, startedAtTick ->
                 val upsertBuilder = UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request)
                 val descriptor = buildDescriptorFromBuilder(upsertBuilder)
-                store.applyLocalMutationToCache(
+                store.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.UPSERT,
                     bodyJson = preferResponseForCache(body, result.data),
@@ -527,7 +527,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     conversionMethod = conversionMethod,
                     request = request
                 )
-                store.applyLocalMutationToCache(
+                store.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.UPDATE,
                     bodyJson = body.toString(),
@@ -579,7 +579,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     conversionMethod = conversionMethod,
                     request = request
                 )
-                store.applyLocalMutationToCache(
+                store.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.DELETE,
                     bodyJson = "{}",
@@ -856,7 +856,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
  * For INSERT/UPSERT the request body typically omits server-assigned columns (`id`,
  * `created_at`, `updated_at`). If a live `selectAsFlow` collector was subscribed with
  * `CacheFirstThenNetwork` and the parallel network SELECT hasn't yet written the full server
- * row, [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.applyLocalMutationToCache] will overlay
+ * row, [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.patchCachedQueries] will overlay
  * the request body onto the cache — producing a row where the assigned id is missing
  * (decodes as an empty string via @Serializable defaults). Any downstream join keyed on that
  * id (e.g., `attachmentsByNoteId[note.id]`) then silently misses, so the UI renders the row as

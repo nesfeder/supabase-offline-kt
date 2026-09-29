@@ -65,7 +65,7 @@ class ReservedRowsTest {
         assertNull(store.getPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
         assertNull(store.getPayloadWithTimestamp(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
         assertNull(store.observePayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE).first())
-        assertNull(store.cachePayloadWithOverlayFlow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE).first())
+        assertNull(store.overlaidPayloadFlow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE).first())
     }
 
     @Test
@@ -77,7 +77,7 @@ class ReservedRowsTest {
 
         // When / Then — every write path refuses the reserved table
         assertFailsWith<IllegalArgumentException> {
-            store.applyLocalMutationToCache(RESERVED_TABLE_NAME, MutationOperation.DELETE, "{}", filterJson = null)
+            store.patchCachedQueries(RESERVED_TABLE_NAME, MutationOperation.DELETE, "{}", filterJson = null)
         }
         assertFailsWith<IllegalArgumentException> {
             store.enqueueInsert(RESERVED_TABLE_NAME, Json.parseToJsonElement("[{}]") as JsonArray)

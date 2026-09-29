@@ -119,7 +119,7 @@ class OfflineStoreQueueAndCacheTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
 
         // When
-        val overlaid = store.applyPendingMutations(TABLE, SIGNATURE, "[]")
+        val overlaid = store.overlayPendingOnResponse(TABLE, SIGNATURE, "[]")
 
         // Then
         assertEquals("""[{"id":1}]""", overlaid)
@@ -132,8 +132,8 @@ class OfflineStoreQueueAndCacheTest {
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
 
         // When
-        val fresh = store.applyPendingMutations(TABLE, SIGNATURE, "[]")
-        val offlineFallback = store.applyAllMutationsForOfflineFallback(TABLE, "[]")
+        val fresh = store.overlayPendingOnResponse(TABLE, SIGNATURE, "[]")
+        val offlineFallback = store.overlayCachedPayload(TABLE, "[]")
 
         // Then — a fresh payload already reflects it; a cached one may predate it, so it is re-applied
         assertEquals("[]", fresh)
@@ -303,7 +303,7 @@ class OfflineStoreQueueAndCacheTest {
         store.markMutationSynced(id = otherTable.id, table = OTHER_TABLE)
 
         // When
-        store.clearSyncedMutationsForTable(TABLE)
+        store.retireCoveredSyncedMutations(TABLE)
 
         // Then
         assertEquals(listOf("""[{"id":2}]""", """[{"id":3}]"""), mutationDao.inserted.map { it.bodyJson })

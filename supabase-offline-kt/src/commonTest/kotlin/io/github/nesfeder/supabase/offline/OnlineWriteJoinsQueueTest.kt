@@ -68,7 +68,7 @@ class OnlineWriteJoinsQueueTest {
         // Then — the edit is queued behind A without reaching the server, and the overlay shows B
         assertEquals(MutationOutcome.Queued, outcome)
         assertEquals(requestsBefore, server.requests.size, "a write that joins the queue is not sent")
-        assertEquals("""[{"id":1,"title":"B"}]""", store.cachePayloadWithOverlayFlow(TABLE, SIGNATURE).first())
+        assertEquals("""[{"id":1,"title":"B"}]""", store.overlaidPayloadFlow(TABLE, SIGNATURE).first())
     }
 
     @Test

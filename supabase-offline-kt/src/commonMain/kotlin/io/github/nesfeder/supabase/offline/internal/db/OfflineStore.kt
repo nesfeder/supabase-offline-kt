@@ -215,7 +215,7 @@ internal class OfflineStore(
 
     /**
      * Per-table locks serializing every write to the object cache — [addPayload] and the
-     * read-modify-write overlays ([applyLocalMutationToCache], [clearTable],
+     * read-modify-write overlays ([patchCachedQueries], [clearTable],
      * [deleteTablePayload]).
      *
      * The overlay is not atomic on its own: it snapshots every cached payload for the table,
@@ -253,7 +253,7 @@ internal class OfflineStore(
 
     /**
      * Table → tick of the most recent local write that changed what the cache knows: an
-     * online-success mutation materialized by [applyLocalMutationToCache] (which also carries the
+     * online-success mutation materialized by [patchCachedQueries] (which also carries the
      * realtime `applyServerRecord` / `applyServerDelete` edges) and a queue replay confirmed by
      * [markMutationSynced]. A network SELECT whose request started before that tick describes a
      * server state that predates the write, so [addPayload] refuses it.
@@ -353,7 +353,7 @@ internal class OfflineStore(
     /**
      * Signatures of a table that currently have a live `selectAsFlow` collector. Wired by
      * [io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl] to the client-scoped
-     * [io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator] so [applyLocalMutationToCache]
+     * [io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator] so [patchCachedQueries]
      * can materialize a server-successful mutation into a real cache row for a cache-less-but-
      * observed signature (the "save then stale UI" fix), and self-GC when nothing observes the
      * table. Defaults to reporting no live signatures so direct construction in tests keeps the
@@ -1107,7 +1107,7 @@ internal class OfflineStore(
      * Overlays the current identity's pending mutations of [table] onto a fresh network [serverJson]
      * for the query [signature]. Synced ones are left out: the server already reflects them.
      */
-    suspend fun applyPendingMutations(
+    suspend fun overlayPendingOnResponse(
         table: String,
         signature: String,
         serverJson: String
@@ -1125,7 +1125,7 @@ internal class OfflineStore(
      *
      * @param signature The payload's query, or `null` when not known: every synced mutation applies.
      */
-    suspend fun applyAllMutationsForOfflineFallback(
+    suspend fun overlayCachedPayload(
         table: String,
         signature: String?,
         cachedJson: String
@@ -1147,9 +1147,9 @@ internal class OfflineStore(
         )
     }
 
-    /** [applyAllMutationsForOfflineFallback] for a payload whose signature is not known. */
-    suspend fun applyAllMutationsForOfflineFallback(table: String, cachedJson: String): String =
-        applyAllMutationsForOfflineFallback(table, signature = null, cachedJson = cachedJson)
+    /** [overlayCachedPayload] for a payload whose signature is not known. */
+    suspend fun overlayCachedPayload(table: String, cachedJson: String): String =
+        overlayCachedPayload(table, signature = null, cachedJson = cachedJson)
 
     /**
      * The cached payload of [table]/[signature] with the current identity's mutations overlaid, as it
@@ -1157,7 +1157,7 @@ internal class OfflineStore(
      * overlay onto an empty list is emitted without being stored. Inputs and output are
      * de-duplicated, so an unrelated write does not re-emit.
      */
-    fun cachePayloadWithOverlayFlow(table: String, signature: String): Flow<String?> {
+    fun overlaidPayloadFlow(table: String, signature: String): Flow<String?> {
         if (isReservedTable(table)) return flowOf(null)
         return combine(
             observePayload(table, signature).distinctUntilChanged(),
@@ -1228,7 +1228,7 @@ internal class OfflineStore(
      * [MutationOverlay.overlay] function. The only database write is
      * `objectDao.upsert(...)` on the affected SELECT payload. There is therefore no cleanup
      * lifecycle, unlike the offline path where real pending mutations get wiped by
-     * [clearSyncedMutationsForTable] after the next successful network SELECT.
+     * [retireCoveredSyncedMutations] after the next successful network SELECT.
      *
      * **Materialize-on-write.** After patching existing cached rows, for every live
      * [liveSignatures] signature of [table] that has *no* cached row, an INSERT/UPSERT creates a
@@ -1264,7 +1264,7 @@ internal class OfflineStore(
      *   for a write, before its request went out. If [clearAll] ran since, nothing is written.
      *   `null` (the default) takes the tick at the call.
      */
-    internal suspend fun applyLocalMutationToCache(
+    internal suspend fun patchCachedQueries(
         table: String,
         operation: String,
         bodyJson: String,
@@ -1519,7 +1519,7 @@ internal class OfflineStore(
      * already contains them and no live query is waiting for its first — and those older than a day.
      * Skipped when [requestStartedAtTick] predates the table's last local write.
      */
-    suspend fun clearSyncedMutationsForTable(table: String, requestStartedAtTick: Long? = null) {
+    suspend fun retireCoveredSyncedMutations(table: String, requestStartedAtTick: Long? = null) {
         if (isReservedTable(table)) return
         if (isStaleRelativeToLocalWrite(table, requestStartedAtTick)) return
         tableWriteLock(table).withLock {

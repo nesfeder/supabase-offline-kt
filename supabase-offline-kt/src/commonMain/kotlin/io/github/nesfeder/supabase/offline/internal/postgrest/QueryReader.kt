@@ -406,7 +406,7 @@ internal class QueryReader(
      * typed no-data state until data arrives.
      */
     private fun cacheOnlyWithState(signature: String, table: String): Flow<OfflineReadResult> =
-        store.cachePayloadWithOverlayFlow(table, signature).map { payload ->
+        store.overlaidPayloadFlow(table, signature).map { payload ->
             OfflineReadResult(
                 result = payload?.let { json -> buildResult(json, delegate.postgrest) },
                 refresh = RefreshState.Idle,
@@ -428,7 +428,7 @@ internal class QueryReader(
     ): Flow<OfflineReadResult> {
         val refreshState = MutableStateFlow<RefreshState>(RefreshState.InFlight)
         val forwardedPayload = cacheFirstWithParallelRefresh(
-            cache = store.cachePayloadWithOverlayFlow(table, signature),
+            cache = store.overlaidPayloadFlow(table, signature),
             refresh = { refreshFromNetwork(table, columns, request) },
             accelerator = accelerator,
             onRefreshState = { state -> refreshState.value = state },
@@ -519,7 +519,7 @@ internal class QueryReader(
         request: SelectRequestBuilder.() -> Unit,
         signature: String,
     ): Flow<OfflineReadResult> =
-        store.cachePayloadWithOverlayFlow(table, signature)
+        store.overlaidPayloadFlow(table, signature)
             .onStart {
                 // Perform network request first to bootstrap the cache. Any network errors will be
                 // thrown and terminate the flow. The result is discarded — the cache write is the
@@ -567,7 +567,7 @@ internal class QueryReader(
      * design and paced by its backoff schedule rather than by this budget.
      *
      * A refused payload — stale **or** empty — also suppresses
-     * [OfflineStore.clearSyncedMutationsForTable] for that pass. Retiring the overlay while
+     * [OfflineStore.retireCoveredSyncedMutations] for that pass. Retiring the overlay while
      * refusing the payload that was supposed to replace it would drop a replayed mutation out of
      * both the queue and the cache at once; that is just as true when the refusal is the
      * empty-clobber guard as when it is the watermark, since neither wrote the server state the
@@ -656,7 +656,7 @@ internal class QueryReader(
 
             val finalJson = if (applyOverlay) {
                 // Overlay *pending* mutations on fresh network result.
-                store.applyPendingMutations(
+                store.overlayPendingOnResponse(
                     table = table,
                     signature = signature,
                     serverJson = basePayload
@@ -671,7 +671,7 @@ internal class QueryReader(
             if (!refusedPayload) {
                 // Clear already-synced mutations for this table. The request tick goes along so a
                 // replay that completed since the payload was accepted still blocks retirement.
-                store.clearSyncedMutationsForTable(table, requestStartedAtTick)
+                store.retireCoveredSyncedMutations(table, requestStartedAtTick)
             }
 
             val result = if (finalJson == networkResult.data) {
@@ -708,7 +708,7 @@ internal class QueryReader(
         }
 
         val finalJson = if (applyOverlay) {
-            store.applyAllMutationsForOfflineFallback(
+            store.overlayCachedPayload(
                 table = table,
                 signature = signature,
                 cachedJson = payload

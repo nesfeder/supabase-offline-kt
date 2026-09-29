@@ -139,7 +139,7 @@ class PerIdentityQueueTest {
         assertEquals(1, store.pendingMutationCountFlow().first())
         assertEquals(1, store.pendingMutationCount())
         assertEquals(listOf("""[{"title":"anonymous note"}]"""), store.pendingMutationsFlow(null).first().map { it.bodyJson })
-        assertEquals("""[{"title":"anonymous note"}]""", store.cachePayloadWithOverlayFlow(TABLE, TABLE).first())
+        assertEquals("""[{"title":"anonymous note"}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

@@ -45,10 +45,10 @@ class SyncedRetirementScopeTest {
             payload = """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
             requestStartedAtTick = requestStartedAtTick,
         )
-        store.clearSyncedMutationsForTable(TABLE, requestStartedAtTick)
+        store.retireCoveredSyncedMutations(TABLE, requestStartedAtTick)
 
         // Then — list L's cached payload predates X, so its overlay still shows the user's write
-        val listL = store.cachePayloadWithOverlayFlow(TABLE, LIST_L).first()
+        val listL = store.overlaidPayloadFlow(TABLE, LIST_L).first()
         assertEquals("""[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""", listL)
     }
 
@@ -73,7 +73,7 @@ class SyncedRetirementScopeTest {
                 payload = """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
                 requestStartedAtTick = requestStartedAtTick,
             )
-            store.clearSyncedMutationsForTable(TABLE, requestStartedAtTick)
+            store.retireCoveredSyncedMutations(TABLE, requestStartedAtTick)
         }
 
         // Then — nothing needs the overlay any more

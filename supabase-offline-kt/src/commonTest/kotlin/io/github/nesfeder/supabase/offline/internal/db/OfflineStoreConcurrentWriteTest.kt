@@ -22,7 +22,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 /**
  * Tests that the object cache's read-modify-write paths are serialized per table.
  *
- * [OfflineStore.applyLocalMutationToCache] snapshots every cached payload for a table, patches
+ * [OfflineStore.patchCachedQueries] snapshots every cached payload for a table, patches
  * each in memory, and writes each back whole. Two of those running at once on the same table
  * — a batch job persists its rows from several parallel workers, and two sync
  * runs can drive that job concurrently — used to interleave freely: the second writer read the
@@ -114,7 +114,7 @@ class OfflineStoreConcurrentWriteTest {
     }
 
     private suspend fun OfflineStore.insertRating(itemId: Int) {
-        applyLocalMutationToCache(
+        patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = ratingsPayload(itemId),

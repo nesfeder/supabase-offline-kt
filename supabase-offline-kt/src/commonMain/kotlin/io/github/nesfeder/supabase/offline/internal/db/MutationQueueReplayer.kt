@@ -360,7 +360,7 @@ internal class MutationQueueReplayer(
 
         // A table nothing caches or observes has no use for its synced mutations; others keep them
         // until every cached query has refreshed past them.
-        syncedTables.forEach { syncedTable -> store.clearSyncedMutationsForTable(syncedTable) }
+        syncedTables.forEach { syncedTable -> store.retireCoveredSyncedMutations(syncedTable) }
 
         sdkLogger.info { if (table == null) "Sync complete: $syncedCount mutations synced" else "Sync complete: $syncedCount mutations synced for $table" }
         return SyncReport(

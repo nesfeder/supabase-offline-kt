@@ -75,13 +75,13 @@ class DiscardPendingMutationTest {
         // Given — a cached row renamed offline
         objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
         renameOffline(1, "renamed")
-        assertEquals("""[{"id":1,"title":"renamed"}]""", store.cachePayloadWithOverlayFlow(TABLE, SIGNATURE).first())
+        assertEquals("""[{"id":1,"title":"renamed"}]""", store.overlaidPayloadFlow(TABLE, SIGNATURE).first())
 
         // When
         syncer.discardPendingMutation(store.allPendingMutations().single().id, session)
 
         // Then
-        assertEquals("""[{"id":1,"title":"original"}]""", store.cachePayloadWithOverlayFlow(TABLE, SIGNATURE).first())
+        assertEquals("""[{"id":1,"title":"original"}]""", store.overlaidPayloadFlow(TABLE, SIGNATURE).first())
     }
 
     @Test

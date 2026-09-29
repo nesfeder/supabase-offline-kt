@@ -32,7 +32,7 @@ class OverlayPrimaryKeyTest {
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
 
         // Then
-        assertEquals("""[{"id":"x","title":"from the server"}]""", store.cachePayloadWithOverlayFlow(TABLE, TABLE).first())
+        assertEquals("""[{"id":"x","title":"from the server"}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
     }
 
     @Test
@@ -44,7 +44,7 @@ class OverlayPrimaryKeyTest {
         store.enqueueUpsert(table = TABLE, bodyJson = rows("""[{"id":"x","title":"new"}]"""))
 
         // Then
-        assertEquals("""[{"id":"x","title":"new","done":false}]""", store.cachePayloadWithOverlayFlow(TABLE, TABLE).first())
+        assertEquals("""[{"id":"x","title":"new","done":false}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
     }
 
     @Test
@@ -56,7 +56,7 @@ class OverlayPrimaryKeyTest {
         store.enqueueUpsert(table = TABLE, bodyJson = rows("""[{"id":"x","title":"new"}]"""), ignoreDuplicates = true)
 
         // Then
-        assertEquals("""[{"id":"x","title":"old"}]""", store.cachePayloadWithOverlayFlow(TABLE, TABLE).first())
+        assertEquals("""[{"id":"x","title":"old"}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
     }
 
     @Test
@@ -70,7 +70,7 @@ class OverlayPrimaryKeyTest {
         // Then — nothing on the server can be it, so it is shown
         assertEquals(
             """[{"list_id":"A","id":1,"title":"a1"},{"list_id":"B","id":1,"title":"b1"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, TABLE).first(),
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -83,7 +83,7 @@ class OverlayPrimaryKeyTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"same"}]"""))
 
         // Then
-        assertEquals("""[{"title":"same"},{"title":"same"}]""", store.cachePayloadWithOverlayFlow(TABLE, TABLE).first())
+        assertEquals("""[{"title":"same"},{"title":"same"}]""", store.overlaidPayloadFlow(TABLE, TABLE).first())
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
