@@ -10,6 +10,7 @@ import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
@@ -23,6 +24,7 @@ import io.github.jan.supabase.storage.BucketApi
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
@@ -30,6 +32,9 @@ import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.SYSTEM
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 
 /*
@@ -231,3 +236,16 @@ internal suspend fun <T> SupabaseOfflineClient.closingAfter(block: suspend (Supa
  * @return the scope.
  */
 internal fun idleCoroutineScope(): CoroutineScope = CoroutineScope(StandardTestDispatcher(TestCoroutineScheduler()))
+
+/**
+ * Asserts [failure] is the client's closed error: an [IllegalStateException] saying so, and never a
+ * cancellation, which is an [IllegalStateException] too on every platform.
+ *
+ * @param failure what a call on a closed client threw.
+ * @param context what the call was, for the failure message.
+ */
+internal fun assertClientClosedError(failure: Throwable?, context: String = "the call") {
+    assertTrue(failure !is CancellationException, "$context gave a cancellation: $failure")
+    assertIs<IllegalStateException>(failure, "$context gave $failure")
+    assertEquals(CLIENT_CLOSED_MESSAGE, failure.message, "$context gave $failure")
+}

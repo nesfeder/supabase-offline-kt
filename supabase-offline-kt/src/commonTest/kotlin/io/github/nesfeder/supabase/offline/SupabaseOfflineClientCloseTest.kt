@@ -3,6 +3,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import kotlinx.coroutines.CompletableDeferred
@@ -27,7 +28,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -77,7 +77,7 @@ class SupabaseOfflineClientCloseTest {
                 while (callerJob.children.any()) delay(5)
             }
         }
-        assertIs<IllegalStateException>(ended.await(), "the reactive read ended without saying the client closed")
+        assertClientClosedError(ended.await(), "the reactive read live at close()")
         assertTrue(callerJob.isActive, "close() cancelled the caller's scope")
         assertEquals(1, releases)
     }
@@ -95,7 +95,7 @@ class SupabaseOfflineClientCloseTest {
         }
 
         // Then
-        assertIs<IllegalStateException>(outcome.exceptionOrNull(), "completed with ${outcome.getOrNull()?.size} emissions")
+        assertClientClosedError(outcome.exceptionOrNull(), "a reactive read started after close(), which gave ${outcome.getOrNull()?.size} emissions,")
     }
 
     @Test
@@ -171,7 +171,7 @@ class SupabaseOfflineClientCloseTest {
         val outcome = withContext(Dispatchers.Default) { withTimeout(5.seconds) { replay.await() } }
 
         // Then — the replay stopped with the closed error and sent nothing more
-        assertIs<IllegalStateException>(outcome.exceptionOrNull())
+        assertClientClosedError(outcome.exceptionOrNull(), "the replay in flight at close()")
         assertEquals(1, sent.load(), "the replay kept sending after close()")
     }
 

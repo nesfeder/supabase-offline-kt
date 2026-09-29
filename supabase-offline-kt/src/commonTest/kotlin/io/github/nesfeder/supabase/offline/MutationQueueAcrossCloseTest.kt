@@ -11,6 +11,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestSe
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -38,7 +39,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -146,7 +146,7 @@ class MutationQueueAcrossCloseTest {
 
         // Then — A's pass was stopped; the reopened client sent the rest; each row is on the server
         // once, and nothing was refused as a duplicate of itself
-        assertIs<IllegalStateException>(passOutcome.exceptionOrNull(), "the pass in flight was not stopped by close()")
+        assertClientClosedError(passOutcome.exceptionOrNull(), "the pass in flight at close()")
         assertEquals(listOf(1, 2), server.rows(TABLE).map { row -> row.getValue("id").jsonPrimitive.int }.sorted())
         assertEquals(0, reopened.pendingMutationCount())
         assertTrue(reopened.rejectedMutationList().isEmpty(), "a mutation was rejected: ${reopened.rejectedMutationList()}")
