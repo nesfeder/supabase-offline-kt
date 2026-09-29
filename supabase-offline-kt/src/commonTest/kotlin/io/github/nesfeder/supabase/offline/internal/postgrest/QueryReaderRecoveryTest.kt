@@ -872,10 +872,10 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun one_shot_non_empty_response_while_restoring_returns_without_waiting() =
+    fun one_shot_non_empty_response_while_restoring_waits_for_the_session_like_an_empty_one() =
         runTest(UnconfinedTestDispatcher()) {
-            // Given: the session is still restoring, but the request came back with rows — the
-            // restore window only matters when it actually shapes the answer
+            // Given: the session is still restoring, and the request came back with rows — the anon
+            // key's answer, narrowed by RLS whatever its size
             val postgrest = testPostgrest()
             var networkCalls = 0
             val wrapper =
@@ -897,10 +897,11 @@ class QueryReaderRecoveryTest {
             // When: a one-shot read runs
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
-            // Then: it returns on the first attempt, with no backoff spent
+            // Then: it waits out the restore window (300, 900 and 2,400 ms), asks once more, and
+            // returns that answer uncached when the session never settles
             assertEquals(freshPayload, oneShot.data)
-            assertEquals(1, networkCalls, "a non-empty response never enters the ladder")
-            assertEquals(0L, currentTime, "and never sleeps")
+            assertEquals(2, networkCalls, "a non-empty response waits for the session too")
+            assertEquals(3_600L, currentTime)
         }
 
     @Test

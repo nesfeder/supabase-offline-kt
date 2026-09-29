@@ -136,30 +136,29 @@ class OldTrustRuleAsksAgainTest {
     }
 
     @Test
-    fun a_one_shot_read_answered_after_another_user_signed_in_asks_again_as_that_user() =
-        runTest {
-            // Given — A signed in, and A's read held on the wire
-            val sessions = MemorySessionManager()
-            val client = launchClient(newServer(), sessions, restoresStoredSession = false)
-            client.supabase.signInForTest("A")
-            runCurrent()
-            val held = CompletableDeferred<Unit>()
-            heldRead = held
-            val read = async {
-                client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly).data
-            }
-            runCurrent()
-
-            // When — B signs in, then A's answer arrives
-            client.supabase.signInForTest("B")
-            runCurrent()
-            held.complete(Unit)
-            advanceTimeBy(5.seconds)
-            runCurrent()
-
-            // Then — B's rows
-            assertEquals(rowsOf("B"), read.await())
+    fun a_one_shot_read_answered_after_another_user_signed_in_asks_again_as_that_user() = runTest {
+        // Given — A signed in, and A's read held on the wire
+        val sessions = MemorySessionManager()
+        val client = launchClient(newServer(), sessions, restoresStoredSession = false)
+        client.supabase.signInForTest("A")
+        runCurrent()
+        val held = CompletableDeferred<Unit>()
+        heldRead = held
+        val read = async {
+            client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly).data
         }
+        runCurrent()
+
+        // When — B signs in, then A's answer arrives
+        client.supabase.signInForTest("B")
+        runCurrent()
+        held.complete(Unit)
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        // Then — B's rows
+        assertEquals(rowsOf("B"), read.await())
+    }
 
     private companion object {
         const val TABLE = "notes"
@@ -167,8 +166,7 @@ class OldTrustRuleAsksAgainTest {
         const val OLD_ROWS = """[{"id":"public"},{"id":"a0"}]"""
 
         /** The public row, and the one row [user] can read. */
-        fun rowsOf(user: String): String =
-            """[{"id":"public"},{"id":"${user.lowercase()}1"}]"""
+        fun rowsOf(user: String): String = """[{"id":"public"},{"id":"${user.lowercase()}1"}]"""
 
         fun storedSessionOf(user: String): UserSession =
             UserSession(
