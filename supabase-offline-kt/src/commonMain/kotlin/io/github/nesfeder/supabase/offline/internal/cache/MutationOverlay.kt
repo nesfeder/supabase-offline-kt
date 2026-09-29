@@ -50,34 +50,68 @@ internal class MutationOverlay(
     }
 
     /**
-     * [mutations] overlaid onto [rows], each on its own copy so one that throws leaves nothing behind.
+     * [mutations] overlaid onto [rows], in order; one that throws is undone, so it leaves nothing behind.
      *
      * @param knownRows rows the query does not show that the engine knows from elsewhere, such as
      *   the table's other cached queries. A mutation brings one into the query only when it makes the
      *   row start matching: one the query admitted already is outside its window, not missing.
      */
     fun overlayRows(rows: List<JsonElement>, mutations: List<MutationRow>, knownRows: List<JsonObject> = emptyList()): OverlaidRows {
-        var state = OverlaidRows(visible = rows, held = knownRows, written = emptyList())
+        val working = Working(OverlaidRows(visible = rows, held = knownRows, written = emptyList()))
         mutations.forEach { mutation ->
             try {
-                state = Working(state).also { working -> working.overlay(mutation) }.snapshot()
+                working.overlay(mutation)
+                working.keep()
             } catch (failure: Exception) {
+                working.undo()
                 onMutationFailure(mutation, failure)
             }
         }
-        return state
+        return working.snapshot()
     }
 
     /** [rows] as a payload. */
     fun encode(rows: List<JsonElement>): String = json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
 
-    /** One mutation's changes, made on copies of the rows so a failure half-way changes nothing. */
+    /**
+     * The rows as the mutations change them. Each change is journalled until [keep] or [undo], so a
+     * mutation that fails half-way is taken back without copying every row for every mutation.
+     */
     private inner class Working(start: OverlaidRows) {
         private val visible = start.visible.toMutableList()
         private val held = start.held.toMutableList()
         private val written = start.written.toMutableList()
 
+        /** How to take back each change of the current mutation, in the order made. */
+        private val journal = mutableListOf<() -> Unit>()
+
         fun snapshot(): OverlaidRows = OverlaidRows(visible = visible, held = held, written = written)
+
+        /** Keeps the current mutation's changes. */
+        fun keep() {
+            journal.clear()
+        }
+
+        /** Takes back the current mutation's changes, newest first. */
+        fun undo() {
+            journal.asReversed().forEach { change -> change() }
+            journal.clear()
+        }
+
+        private fun <T> MutableList<T>.append(element: T) {
+            add(element)
+            journal += { removeAt(lastIndex) }
+        }
+
+        private fun <T> MutableList<T>.replace(index: Int, element: T) {
+            val old = set(index, element)
+            journal += { set(index, old) }
+        }
+
+        private fun <T> MutableList<T>.removeWithUndo(index: Int) {
+            val old = removeAt(index)
+            journal += { add(index, old) }
+        }
 
         fun overlay(mutation: MutationRow) {
             when (mutation.operation) {
@@ -94,7 +128,7 @@ internal class MutationOverlay(
             bodyRowsOf(mutation).forEach { element ->
                 val row = element as? JsonObject
                 if (row == null) {
-                    visible += element
+                    visible.append(element)
                     return@forEach
                 }
                 if (dedupe && indexOfKey(visible, row, keyColumns) != null) return@forEach
@@ -108,7 +142,7 @@ internal class MutationOverlay(
             bodyRowsOf(mutation).forEach { element ->
                 val row = element as? JsonObject
                 if (row == null) {
-                    visible += element
+                    visible.append(element)
                     return@forEach
                 }
                 if (primaryKeyOf(row, keyColumns) == null) {
@@ -142,35 +176,40 @@ internal class MutationOverlay(
 
         private fun delete(mutation: MutationRow) {
             val filter = filterOf(mutation) ?: return
-            visible.removeAll { element -> element is JsonObject && rowMatch(element, filter) == RowMatch.MATCHES }
-            held.removeAll { row -> rowMatch(row, filter) == RowMatch.MATCHES }
+            visible.indices.reversed().forEach { index ->
+                val row = visible[index]
+                if (row is JsonObject && rowMatch(row, filter) == RowMatch.MATCHES) visible.removeWithUndo(index)
+            }
+            held.indices.reversed().forEach { index ->
+                if (rowMatch(held[index], filter) == RowMatch.MATCHES) held.removeWithUndo(index)
+            }
         }
 
         /** Adds a row the mutation wrote: shown when the query admits it, held otherwise. */
         private fun place(row: JsonObject) {
-            written += row
-            if (admission.admits(row)) visible += row else held += row
+            written.append(row)
+            if (admission.admits(row)) visible.append(row) else held.append(row)
         }
 
         /** Replaces the shown row at [index] with [row], moving it aside when the query no longer admits it. */
         private fun replaceShown(index: Int, row: JsonObject) {
-            written += row
+            written.append(row)
             if (admission.admits(row)) {
-                visible[index] = row
+                visible.replace(index, row)
             } else {
-                visible.removeAt(index)
-                held += row
+                visible.removeWithUndo(index)
+                held.append(row)
             }
         }
 
         /** Replaces the held row at [index] with [row], bringing it in when the change makes it start matching. */
         private fun replaceHeld(index: Int, row: JsonObject) {
-            written += row
+            written.append(row)
             if (!admission.admits(held[index]) && admission.admits(row)) {
-                held.removeAt(index)
-                visible += row
+                held.removeWithUndo(index)
+                visible.append(row)
             } else {
-                held[index] = row
+                held.replace(index, row)
             }
         }
     }
