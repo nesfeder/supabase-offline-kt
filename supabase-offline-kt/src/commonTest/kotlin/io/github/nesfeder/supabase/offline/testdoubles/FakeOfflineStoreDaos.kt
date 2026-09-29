@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
@@ -14,9 +16,9 @@ import io.github.nesfeder.supabase.offline.internal.testing.InMemoryObjectDao
  * `InMemoryMutationDao` under `internal/testing`, the same substrate the testing artifact's
  * in-memory client runs on. They mirror Room's per-table invalidation: any write on a table fans
  * out to every observer of that table, so inserts under a signature a collector is already
- * observing do surface downstream. The classes here only add what a test needs to observe or
- * steer: write counters, seeding, failure scripting and interleaving hooks. A test with no such
- * need uses the in-memory DAO directly (storage tests use `InMemoryStorageDao` as-is).
+ * observing do surface downstream. The classes here only add what a test needs to observe or steer:
+ * write counters, seeding, failure scripting and interleaving hooks. A test with no such need uses
+ * the in-memory DAO directly (storage tests use `InMemoryStorageDao` as-is).
  *
  * Build a store over them with [newTestOfflineStore].
  */
@@ -24,7 +26,9 @@ import io.github.nesfeder.supabase.offline.internal.testing.InMemoryObjectDao
 /** [InMemoryObjectDao] with write counters, silent seeding, and eviction and interleaving hooks. */
 internal class FakeObjectDao : InMemoryObjectDao() {
 
-    /** Number of `upsert` writes that have occurred — exposed for write-amplification assertions. */
+    /**
+     * Number of `upsert` writes that have occurred — exposed for write-amplification assertions.
+     */
     var writes: Int = 0
         private set
 
@@ -32,22 +36,24 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     var evictedRows: Int = 0
         private set
 
-    /** Number of times [deleteOldestPayloadRows] has been invoked — for iteration-cap assertions. */
+    /**
+     * Number of times [deleteOldestPayloadRows] has been invoked — for iteration-cap assertions.
+     */
     var deleteCallCount: Int = 0
         private set
 
     /**
-     * When non-null, [totalPayloadBytes] returns this fixed value instead of summing the live
-     * rows. Lets eviction tests reproduce the pathological "measured size never drops below the
-     * limit" condition that the eviction loop's progress guard and iteration cap defend against.
+     * When non-null, [totalPayloadBytes] returns this fixed value instead of summing the live rows.
+     * Lets eviction tests reproduce the pathological "measured size never drops below the limit"
+     * condition that the eviction loop's progress guard and iteration cap defend against.
      */
     var fixedTotalPayloadBytes: Long? = null
 
     /**
-     * When non-null, [deleteOldestPayloadRows] reports this many deleted rows without touching
-     * the backing map. Combined with [fixedTotalPayloadBytes], this holds the measured size
-     * pinned above the limit while every delete claims progress, exercising the hard
-     * iteration-cap backstop.
+     * When non-null, [deleteOldestPayloadRows] reports this many deleted rows without touching the
+     * backing map. Combined with [fixedTotalPayloadBytes], this holds the measured size pinned
+     * above the limit while every delete claims progress, exercising the hard iteration-cap
+     * backstop.
      */
     var forcedDeleteCount: Int? = null
 
@@ -59,8 +65,8 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * payload for the table, patch each, write each back — and this is the seam between its read
      * and its write. A test parks one writer here (`CompletableDeferred.await()`) so a second
      * writer can run to completion against the *same* pre-write snapshot: the exact interleaving
-     * behind a lost update, reproduced deterministically instead of by timing. `null` (the
-     * default) makes [allForTable] return immediately, as Room would.
+     * behind a lost update, reproduced deterministically instead of by timing. `null` (the default)
+     * makes [allForTable] return immediately, as Room would.
      */
     var onAllForTableSnapshot: (suspend (table: String) -> Unit)? = null
 
@@ -73,7 +79,8 @@ internal class FakeObjectDao : InMemoryObjectDao() {
 
     /**
      * When it returns `true` for a row, [upsert] of that row fails with an [IllegalStateException]
-     * instead of writing it, as a full disk or a corrupt page would. `null` (the default) never fails.
+     * instead of writing it, as a full disk or a corrupt page would. `null` (the default) never
+     * fails.
      */
     var failUpsertOf: ((ObjectRow) -> Boolean)? = null
 
@@ -93,12 +100,13 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * defaults to `0L` for callers that don't care about age.
      */
     fun seedPayload(table: String, signature: String, payload: String, updatedAt: Long = 0L) {
-        rows[table to signature] = ObjectRow(
-            table = table,
-            signature = signature,
-            payload = payload,
-            updatedAt = updatedAt,
-        )
+        rows[table to signature] =
+            ObjectRow(
+                table = table,
+                signature = signature,
+                payload = payload,
+                updatedAt = updatedAt,
+            )
     }
 
     /** Look up a row without going through the suspend contract. */
@@ -125,7 +133,8 @@ internal class FakeObjectDao : InMemoryObjectDao() {
         super.upsert(row)
     }
 
-    override suspend fun totalPayloadBytes(): Long = fixedTotalPayloadBytes ?: super.totalPayloadBytes()
+    override suspend fun totalPayloadBytes(): Long =
+        fixedTotalPayloadBytes ?: super.totalPayloadBytes()
 
     override suspend fun deleteOldestPayloadRows(limit: Int): Int {
         deleteCallCount++
@@ -142,14 +151,15 @@ internal class FakeObjectDao : InMemoryObjectDao() {
 /**
  * [InMemoryMutationDao] that exposes the queue for assertions. The in-memory DAO already mirrors
  * Room's mutation-queue semantics: an auto-incrementing id on insert (like `autoGenerate`), rows
- * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and reactive per-table
- * flows that re-emit on every queue change. Syncer tests drive a real `OfflineStore` over it and
- * observe replay, mark-synced, drop and dead-letter transitions.
+ * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and reactive
+ * per-table flows that re-emit on every queue change. Syncer tests drive a real `OfflineStore` over
+ * it and observe replay, mark-synced, drop and dead-letter transitions.
  */
 internal class FakeMutationDao : InMemoryMutationDao() {
 
     /** Snapshot of the queued rows (all rows, pending + synced), for queue assertions. */
-    internal val inserted: List<MutationRow> get() = mutations.value
+    internal val inserted: List<MutationRow>
+        get() = mutations.value
 
     /** How many times a query read every pending row of the queue or of a table. */
     var pendingListReads: Int = 0
@@ -189,8 +199,8 @@ internal class FakeMutationDao : InMemoryMutationDao() {
 }
 
 /**
- * A real [MutationDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can check
- * that a clear which fails part-way changes nothing on disk.
+ * A real [MutationDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can
+ * check that a clear which fails part-way changes nothing on disk.
  */
 internal class FakeDeleteAllFailingMutationDao(real: MutationDao) : MutationDao by real {
     override suspend fun deleteAll() {

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
@@ -33,10 +35,12 @@ internal class ClientOperationGate {
     private val closing = CompletableDeferred<Unit>()
 
     /** Whether [close] has run. */
-    val isClosed: Boolean get() = state.value.closed
+    val isClosed: Boolean
+        get() = state.value.closed
 
     /** How many calls are in flight. */
-    val inFlight: Int get() = state.value.inFlight
+    val inFlight: Int
+        get() = state.value.inFlight
 
     /** Throws the client's closed error once [close] has run. */
     fun ensureOpen() {
@@ -58,10 +62,17 @@ internal class ClientOperationGate {
 
     /**
      * Runs [block] as a call that cancelling [scope] stops: a child of [scope] on the caller's
-     * dispatcher. Stopped that way after [close], its caller gets the closed error, not a cancellation.
+     * dispatcher. Stopped that way after [close], its caller gets the closed error, not a
+     * cancellation.
      */
     suspend fun <T> cancellableCall(scope: CoroutineScope, block: suspend () -> T): T = call {
-        val work = scope.async(currentCoroutineContext().minusKey(Job), start = CoroutineStart.UNDISPATCHED) { block() }
+        val work =
+            scope.async(
+                currentCoroutineContext().minusKey(Job),
+                start = CoroutineStart.UNDISPATCHED,
+            ) {
+                block()
+            }
         try {
             work.await()
         } catch (cancellation: CancellationException) {
@@ -76,33 +87,38 @@ internal class ClientOperationGate {
     }
 
     /**
-     * [flow] as a call while collected, run apart from its collector one value at a time. At [close] the
-     * channel ends with the closed error, then the upstream is cancelled; the collector reads that error
-     * next, however stuck. What the upstream throws (a cancellation, a send the closed channel refused)
-     * ends the channel after its values; only the collector's cancellation propagates, into nobody else's scope.
+     * [flow] as a call while collected, run apart from its collector one value at a time. At
+     * [close] the channel ends with the closed error, then the upstream is cancelled; the collector
+     * reads that error next, however stuck. What the upstream throws (a cancellation, a send the
+     * closed channel refused) ends the channel after its values; only the collector's cancellation
+     * propagates, into nobody else's scope.
      */
     fun <T> callCollecting(flow: Flow<T>): Flow<T> = flow {
         coroutineScope {
             val values = Channel<T>(Channel.RENDEZVOUS)
             // One permit per value the collector has finished with: the upstream never runs ahead
             val taken = Channel<Unit>(Channel.CONFLATED)
-            val upstream = launch(start = CoroutineStart.UNDISPATCHED) {
-                try {
-                    call {
-                        flow.collect { value ->
-                            values.send(value)
-                            taken.receive()
+            val upstream =
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        call {
+                            flow.collect { value ->
+                                values.send(value)
+                                taken.receive()
+                            }
                         }
+                        values.close()
+                    } catch (failure: Throwable) {
+                        // Refused, stopped, or the upstream's own failure: the channel ends with it
+                        // after the values
+                        values.close(failure)
+                        // Only ours (the collector's or close()'s) rethrows, so the upstream's
+                        // never cancels the collector
+                        if (failure is CancellationException && !isActive) throw failure
                     }
-                    values.close()
-                } catch (failure: Throwable) {
-                    // Refused, stopped, or the upstream's own failure: the channel ends with it after the values
-                    values.close(failure)
-                    // Only ours (the collector's or close()'s) rethrows, so the upstream's never cancels the collector
-                    if (failure is CancellationException && !isActive) throw failure
                 }
-            }
-            // The closed error first: once cancelled, the upstream ends the channel with its cancellation
+            // The closed error first: once cancelled, the upstream ends the channel with its
+            // cancellation
             val onClose = closing.invokeOnCompletion {
                 values.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
                 upstream.cancel()

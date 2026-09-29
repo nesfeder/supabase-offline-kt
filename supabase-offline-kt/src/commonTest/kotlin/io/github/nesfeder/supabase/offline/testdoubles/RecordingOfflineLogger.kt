@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.testdoubles
@@ -9,8 +11,8 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
- * [OfflineLogger] that records every message it receives, in order, for assertions on what the
- * SDK logged and at which level. Safe to log to from several threads at once.
+ * [OfflineLogger] that records every message it receives, in order, for assertions on what the SDK
+ * logged and at which level. Safe to log to from several threads at once.
  */
 internal class RecordingOfflineLogger : OfflineLogger {
 
@@ -20,7 +22,8 @@ internal class RecordingOfflineLogger : OfflineLogger {
     private val recorded = AtomicReference<List<Entry>>(emptyList())
 
     /** Every message received so far, in call order. */
-    val entries: List<Entry> get() = recorded.load()
+    val entries: List<Entry>
+        get() = recorded.load()
 
     override fun log(level: OfflineLogLevel, message: String) {
         val entry = Entry(level, message)

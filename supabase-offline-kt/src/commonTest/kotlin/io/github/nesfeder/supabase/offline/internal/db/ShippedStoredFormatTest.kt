@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.OfflineJson

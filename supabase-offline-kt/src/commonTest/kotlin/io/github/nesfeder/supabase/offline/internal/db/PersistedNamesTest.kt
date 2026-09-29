@@ -1,20 +1,22 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * Every name and key the mutation queue writes to disk, as exact literals. Once an app has written
- * them they are frozen: a later build reads them back from devices that ran this one. A rename of
- * a constant or a property must fail here rather than pass as a refactor.
+ * them they are frozen: a later build reads them back from devices that ran this one. A rename of a
+ * constant or a property must fail here rather than pass as a refactor.
  */
 class PersistedNamesTest {
 
@@ -39,7 +41,12 @@ class PersistedNamesTest {
     fun the_stored_operation_names_are_these() {
         assertEquals(
             listOf("INSERT", "UPSERT", "UPDATE", "DELETE"),
-            listOf(MutationOperation.INSERT, MutationOperation.UPSERT, MutationOperation.UPDATE, MutationOperation.DELETE),
+            listOf(
+                MutationOperation.INSERT,
+                MutationOperation.UPSERT,
+                MutationOperation.UPDATE,
+                MutationOperation.DELETE,
+            ),
         )
     }
 
@@ -61,9 +68,16 @@ class PersistedNamesTest {
                 owner = "user:user-a",
                 rejectedAtMs = 2,
                 message = "refused",
-                serverError = StoredServerError(status = 409, code = "23505", message = "duplicate", details = "x", hint = "y"),
+                serverError =
+                    StoredServerError(
+                        status = 409,
+                        code = "23505",
+                        message = "duplicate",
+                        details = "x",
+                        hint = "y",
+                    ),
                 bodyOmittedChars = 5,
-            ),
+            )
         )
 
         // Then
@@ -73,7 +87,8 @@ class PersistedNamesTest {
                 """"ignoreDuplicates":true,"deltaJson":"d","owner":"user:user-a","rejectedAtMs":2,""" +
                 """"message":"refused","serverError":{"status":409,"code":"23505","message":"duplicate",""" +
                 """"details":"x","hint":"y"},"bodyOmittedChars":5}]}""",
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)).payload,
+            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+                .payload,
         )
     }
 
@@ -82,20 +97,34 @@ class PersistedNamesTest {
         // Given / When — one more rejection than the list keeps
         repeat(MAX_REJECTED_MUTATIONS + 1) { index ->
             store.mutationQueueState.addRejection(
-                StoredRejection(id = index + 1L, table = "t", operation = "INSERT", bodyJson = "[]", createdAtMs = 0, rejectedAtMs = 0, message = "m"),
+                StoredRejection(
+                    id = index + 1L,
+                    table = "t",
+                    operation = "INSERT",
+                    bodyJson = "[]",
+                    createdAtMs = 0,
+                    rejectedAtMs = 0,
+                    message = "m",
+                )
             )
         }
 
         // Then
-        val payload = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)).payload
+        val payload =
+            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+                .payload
         assertTrue(payload.endsWith("""],"droppedCount":1}"""), payload.takeLast(40))
     }
 
     @Test
     fun the_owner_records_are_written_with_these_keys_and_values() = runTest {
         // Given / When — one write by a user, one by nobody signed in
-        store.enqueueOwnedBy(QueueIdentity.User("user-a").storedValue) { enqueueDelete(table = "todos", filter = null) }
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) { enqueueDelete(table = "todos", filter = null) }
+        store.enqueueOwnedBy(QueueIdentity.User("user-a").storedValue) {
+            enqueueDelete(table = "todos", filter = null)
+        }
+        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+            enqueueDelete(table = "todos", filter = null)
+        }
 
         // Then
         assertEquals(
@@ -107,23 +136,36 @@ class PersistedNamesTest {
     @Test
     fun synced_mutation_coverage_is_written_with_these_keys() = runTest {
         // Given — a replayed mutation, then a network response for a cached query of its table
-        store.enqueueUpdate(table = "todos", body = Json.parseToJsonElement("""{"title":"x"}"""), filter = null)
+        store.enqueueUpdate(
+            table = "todos",
+            body = Json.parseToJsonElement("""{"title":"x"}"""),
+            filter = null,
+        )
         store.markMutationSynced(id = 1, table = "todos")
 
         // When
-        store.addPayload("todos", "todos?id=eq.1", """[{"id":1}]""", requestStartedAtTick = store.monotonicTickNow())
+        store.addPayload(
+            "todos",
+            "todos?id=eq.1",
+            """[{"id":1}]""",
+            requestStartedAtTick = store.monotonicTickNow(),
+        )
 
         // Then
         assertEquals(
             """{"version":1,"coveredSignatures":{"1":["todos?id=eq.1"]}}""",
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE)).payload,
+            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE))
+                .payload,
         )
     }
 
     @Test
     fun unconfirmed_sends_are_written_with_these_keys() = runTest {
         // Given — a keyed INSERT whose send is starting
-        store.enqueueInsert(table = "todos", body = Json.parseToJsonElement("""[{"id":"t1"}]""") as JsonArray)
+        store.enqueueInsert(
+            table = "todos",
+            body = Json.parseToJsonElement("""[{"id":"t1"}]""") as JsonArray,
+        )
 
         // When
         store.markSendUnconfirmed(1)
@@ -131,7 +173,8 @@ class PersistedNamesTest {
         // Then
         assertEquals(
             """{"version":1,"mutationIds":[1]}""",
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)).payload,
+            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE))
+                .payload,
         )
     }
 
@@ -144,7 +187,10 @@ class PersistedNamesTest {
         store.mutationQueueState.rejections()
 
         // Then
-        assertEquals("not a list", objectDao.getRow(RESERVED_TABLE_NAME, "rejected_mutations.unreadable.$NOW")?.payload)
+        assertEquals(
+            "not a list",
+            objectDao.getRow(RESERVED_TABLE_NAME, "rejected_mutations.unreadable.$NOW")?.payload,
+        )
     }
 
     private companion object {

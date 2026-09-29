@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.OfflineReadResult
@@ -28,21 +30,21 @@ import kotlinx.coroutines.withContext
 internal const val CLIENT_CLOSED_MESSAGE: String = "This SupabaseOfflineClient is closed"
 
 /**
- * The client's single-flight refresh per `(table, signature)`: overlapping `selectAsFlow` collectors
- * share one upstream and one refresh loop, torn down when the last leaves. It also tracks the live
- * signatures, so the store can materialize a write into a query that is observed but not cached.
+ * The client's single-flight refresh per `(table, signature)`: overlapping `selectAsFlow`
+ * collectors share one upstream and one refresh loop, torn down when the last leaves. It also
+ * tracks the live signatures, so the store can materialize a write into a query that is observed
+ * but not cached.
  *
  * @param scope hosts the shared upstreams: the client's own scope, which its close ends.
  */
-internal class RefreshCoordinator(
-    private val scope: CoroutineScope,
-) {
+internal class RefreshCoordinator(private val scope: CoroutineScope) {
 
     private data class Key(val table: String, val signature: String)
 
     /** What the shared upstream hands its collectors: a value, or the failure that ended it. */
     private sealed interface Emission {
         class Value(val result: OfflineReadResult) : Emission
+
         class Failure(val cause: Throwable) : Emission
     }
 
@@ -61,9 +63,10 @@ internal class RefreshCoordinator(
     private val liveSignatures = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
 
     /**
-     * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A joining
-     * collector gets the latest value; the upstream's failure reaches every collector in band; the last
-     * to leave ends the entry; once [scope] ends every collection fails with the client's closed error.
+     * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A
+     * joining collector gets the latest value; the upstream's failure reaches every collector in
+     * band; the last to leave ends the entry; once [scope] ends every collection fails with the
+     * client's closed error.
      */
     fun sharedReadFlow(
         table: String,
@@ -80,39 +83,52 @@ internal class RefreshCoordinator(
             this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
         }
         try {
-            entry.flow.takeWhile { emission ->
-                when (emission) {
-                    is Emission.Value -> {
-                        send(emission.result)
-                        true
-                    }
-                    is Emission.Failure -> {
-                        // Closed, not thrown: a throw cancels the collector, which can drop the value just sent
-                        this@channelFlow.close(emission.cause)
-                        false
+            entry.flow
+                .takeWhile { emission ->
+                    when (emission) {
+                        is Emission.Value -> {
+                            send(emission.result)
+                            true
+                        }
+                        is Emission.Failure -> {
+                            // Closed, not thrown: a throw cancels the collector, which can drop the
+                            // value just sent
+                            this@channelFlow.close(emission.cause)
+                            false
+                        }
                     }
                 }
-            }.collect()
+                .collect()
         } finally {
             closedWatcher.cancel()
             withContext(NonCancellable) { release(key, entry) }
         }
-    }.buffer(Channel.RENDEZVOUS)
+    }
+        .buffer(Channel.RENDEZVOUS)
 
     private suspend fun acquire(key: Key, upstream: () -> Flow<OfflineReadResult>): SharedEntry =
         sharedFlowsMutex.withLock {
-            val entry = sharedFlows.getOrPut(key) {
-                val entryScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
-                val shared = upstream()
-                    .map<OfflineReadResult, Emission> { result -> Emission.Value(result) }
-                    .catch { failure -> emit(Emission.Failure(failure)) }
-                    .shareIn(
-                        scope = entryScope,
-                        started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 0, replayExpirationMillis = 0),
-                        replay = 1,
-                    )
-                SharedEntry(entryScope, shared)
-            }
+            val entry =
+                sharedFlows.getOrPut(key) {
+                    val entryScope =
+                        CoroutineScope(
+                            scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job])
+                        )
+                    val shared =
+                        upstream()
+                            .map<OfflineReadResult, Emission> { result -> Emission.Value(result) }
+                            .catch { failure -> emit(Emission.Failure(failure)) }
+                            .shareIn(
+                                scope = entryScope,
+                                started =
+                                    SharingStarted.WhileSubscribed(
+                                        stopTimeoutMillis = 0,
+                                        replayExpirationMillis = 0,
+                                    ),
+                                replay = 1,
+                            )
+                    SharedEntry(entryScope, shared)
+                }
             entry.collectors++
             entry
         }
@@ -166,7 +182,8 @@ internal class RefreshCoordinator(
     ): Map<String, Map<String, Int>> {
         val perTable = this[table].orEmpty()
         val nextCount = (perTable[signature] ?: 0) + delta
-        val nextPerTable = if (nextCount <= 0) perTable - signature else perTable + (signature to nextCount)
+        val nextPerTable =
+            if (nextCount <= 0) perTable - signature else perTable + (signature to nextCount)
         return if (nextPerTable.isEmpty()) this - table else this + (table to nextPerTable)
     }
 }

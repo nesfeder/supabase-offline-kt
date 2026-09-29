@@ -1,35 +1,37 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor.Condition
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor.Condition
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
- * The filter engine's encode/decode round trip, its offline row matching ([FilterEngine.matchesRow])
- * and its replay onto a request builder ([FilterEngine.applyTo]), plus the lenient descriptor
- * capture used for the online overlay.
+ * The filter engine's encode/decode round trip, its offline row matching
+ * ([FilterEngine.matchesRow]) and its replay onto a request builder ([FilterEngine.applyTo]), plus
+ * the lenient descriptor capture used for the online overlay.
  */
 class OfflineFilterTest {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * A concrete request builder. `PostgrestRequestBuilder` is abstract since supabase-kt 3.6;
-     * the engine replays onto a `SelectRequestBuilder` the same way.
+     * A concrete request builder. `PostgrestRequestBuilder` is abstract since supabase-kt 3.6; the
+     * engine replays onto a `SelectRequestBuilder` the same way.
      */
     private fun requestBuilder(): SelectRequestBuilder =
         SelectRequestBuilder(SCHEMA, PropertyConversionMethod.CAMEL_CASE_TO_SNAKE_CASE)
@@ -37,12 +39,11 @@ class OfflineFilterTest {
     @Test
     fun encodeDecode_roundTrip() {
         // Given
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                Condition(column = "id", operatorId = "eq", value = "1")
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions = listOf(Condition(column = "id", operatorId = "eq", value = "1")),
             )
-        )
 
         // When
         val encoded = FilterEngine.encode(descriptor, json)
@@ -75,15 +76,17 @@ class OfflineFilterTest {
             put("flag", true)
         }
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                Condition("id", "eq", "123"),
-                Condition("count", "gt", "5"),
-                Condition("name", "ilike", "%pump%"),
-                Condition("flag", "is", "true")
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        Condition("id", "eq", "123"),
+                        Condition("count", "gt", "5"),
+                        Condition("name", "ilike", "%pump%"),
+                        Condition("flag", "is", "true"),
+                    ),
             )
-        )
 
         // When
         val matches = FilterEngine.matchesRow(row, descriptor)
@@ -99,13 +102,15 @@ class OfflineFilterTest {
             put("status", "active")
         }
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.OR,
-            conditions = listOf(
-                Condition("status", "eq", "inactive"),
-                Condition("status", "eq", "active")
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.OR,
+                conditions =
+                    listOf(
+                        Condition("status", "eq", "inactive"),
+                        Condition("status", "eq", "active"),
+                    ),
             )
-        )
 
         // When
         val matches = FilterEngine.matchesRow(row, descriptor)
@@ -121,12 +126,11 @@ class OfflineFilterTest {
             put("id", "b")
         }
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                Condition("id", "in", "(a,b,c)")
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions = listOf(Condition("id", "in", "(a,b,c)")),
             )
-        )
 
         // When
         val matches = FilterEngine.matchesRow(row, descriptor)
@@ -142,12 +146,14 @@ class OfflineFilterTest {
             put("payload", "anything")
         }
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                Condition("payload", "cs", "[1,2,3]") // containment not supported offline
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        Condition("payload", "cs", "[1,2,3]") // containment not supported offline
+                    ),
             )
-        )
 
         // When
         val matches = FilterEngine.matchesRow(row, descriptor)
@@ -169,13 +175,11 @@ class OfflineFilterTest {
                     else -> put(col, rowVal.toString())
                 }
             }
-            val descriptor = FilterDescriptor(
-                conditions = listOf(Condition(col, op, filterVal))
-            )
+            val descriptor = FilterDescriptor(conditions = listOf(Condition(col, op, filterVal)))
             assertEquals(
                 expected,
                 FilterEngine.matchesRow(row, descriptor),
-                "Failed for op=$op, val=$rowVal, filter=$filterVal"
+                "Failed for op=$op, val=$rowVal, filter=$filterVal",
             )
         }
 
@@ -228,10 +232,21 @@ class OfflineFilterTest {
         check("in", "c", "baz", "(foo,bar)", false)
 
         // Unsupported - all return false
-        val unsupported = listOf(
-            "cs", "cd", "sl", "sr", "nxl", "nxr", "adj", "ov",
-            "fts", "plfts", "phfts", "wfts"
-        )
+        val unsupported =
+            listOf(
+                "cs",
+                "cd",
+                "sl",
+                "sr",
+                "nxl",
+                "nxr",
+                "adj",
+                "ov",
+                "fts",
+                "plfts",
+                "phfts",
+                "wfts",
+            )
         unsupported.forEach { op ->
             check(op, "c", "whatever", "whatever", false)
         }
@@ -245,13 +260,15 @@ class OfflineFilterTest {
     fun applyTo_andMode_appliesConditionsToParams() {
         // Given
         val builder = requestBuilder()
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = listOf(
-                Condition("id", FilterOperator.EQ.identifier, "123"),
-                Condition("name", FilterOperator.ILIKE.identifier, "%pump%")
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions =
+                    listOf(
+                        Condition("id", FilterOperator.EQ.identifier, "123"),
+                        Condition("name", FilterOperator.ILIKE.identifier, "%pump%"),
+                    ),
             )
-        )
 
         // When
         FilterEngine.applyTo(builder, descriptor)
@@ -276,13 +293,15 @@ class OfflineFilterTest {
     fun applyTo_orMode_wrapsConditionsInOrBlock() {
         // Given
         val builder = requestBuilder()
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.OR,
-            conditions = listOf(
-                Condition("status", FilterOperator.EQ.identifier, "active"),
-                Condition("status", FilterOperator.EQ.identifier, "inactive"),
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.OR,
+                conditions =
+                    listOf(
+                        Condition("status", FilterOperator.EQ.identifier, "active"),
+                        Condition("status", FilterOperator.EQ.identifier, "inactive"),
+                    ),
             )
-        )
 
         // When
         FilterEngine.applyTo(builder, descriptor)
@@ -293,7 +312,7 @@ class OfflineFilterTest {
         assertTrue(params.isNotEmpty())
         assertTrue(
             "or" in params.keys,
-            "Expected an 'or' query param when using OR mode, but got keys=${params.keys}"
+            "Expected an 'or' query param when using OR mode, but got keys=${params.keys}",
         )
     }
 
@@ -302,54 +321,56 @@ class OfflineFilterTest {
         // Given
         val builder = requestBuilder()
 
-        val conditions = listOf(
-            // Basic comparisons
-            Condition("col_eq", FilterOperator.EQ.identifier, "1"),
-            Condition("col_neq", FilterOperator.NEQ.identifier, "1"),
-            Condition("col_gt", FilterOperator.GT.identifier, "10"),
-            Condition("col_gte", FilterOperator.GTE.identifier, "10"),
-            Condition("col_lt", FilterOperator.LT.identifier, "10"),
-            Condition("col_lte", FilterOperator.LTE.identifier, "10"),
+        val conditions =
+            listOf(
+                // Basic comparisons
+                Condition("col_eq", FilterOperator.EQ.identifier, "1"),
+                Condition("col_neq", FilterOperator.NEQ.identifier, "1"),
+                Condition("col_gt", FilterOperator.GT.identifier, "10"),
+                Condition("col_gte", FilterOperator.GTE.identifier, "10"),
+                Condition("col_lt", FilterOperator.LT.identifier, "10"),
+                Condition("col_lte", FilterOperator.LTE.identifier, "10"),
 
-            // Pattern / text
-            Condition("col_like", FilterOperator.LIKE.identifier, "%foo%"),
-            Condition("col_ilike", FilterOperator.ILIKE.identifier, "%foo%"),
-            Condition("col_match", FilterOperator.MATCH.identifier, "%foo%"),
-            Condition("col_imatch", FilterOperator.IMATCH.identifier, "%foo%"),
+                // Pattern / text
+                Condition("col_like", FilterOperator.LIKE.identifier, "%foo%"),
+                Condition("col_ilike", FilterOperator.ILIKE.identifier, "%foo%"),
+                Condition("col_match", FilterOperator.MATCH.identifier, "%foo%"),
+                Condition("col_imatch", FilterOperator.IMATCH.identifier, "%foo%"),
 
-            // IS
-            Condition("col_is_true", FilterOperator.IS.identifier, "true"),
-            Condition("col_is_null", FilterOperator.IS.identifier, "null"),
+                // IS
+                Condition("col_is_true", FilterOperator.IS.identifier, "true"),
+                Condition("col_is_null", FilterOperator.IS.identifier, "null"),
 
-            // Array-like / set operators
-            // JSON array form
-            Condition("col_in", FilterOperator.IN.identifier, """["a","b"]"""),
-            Condition("col_cs", FilterOperator.CS.identifier, """["a","b"]"""),
-            Condition("col_cd", FilterOperator.CD.identifier, """["a","b"]"""),
-            Condition("col_ov", FilterOperator.OV.identifier, """["a","b"]"""),
-            // Comma-separated form (to hit parseArray's second branch)
-            Condition("col_in_csv", FilterOperator.IN.identifier, "a,b"),
+                // Array-like / set operators
+                // JSON array form
+                Condition("col_in", FilterOperator.IN.identifier, """["a","b"]"""),
+                Condition("col_cs", FilterOperator.CS.identifier, """["a","b"]"""),
+                Condition("col_cd", FilterOperator.CD.identifier, """["a","b"]"""),
+                Condition("col_ov", FilterOperator.OV.identifier, """["a","b"]"""),
+                // Comma-separated form (to hit parseArray's second branch)
+                Condition("col_in_csv", FilterOperator.IN.identifier, "a,b"),
 
-            // Range operators - JSON array form
-            Condition("col_sl", FilterOperator.SL.identifier, """["1","2"]"""),
-            Condition("col_sr", FilterOperator.SR.identifier, """["1","2"]"""),
-            Condition("col_nxl", FilterOperator.NXL.identifier, """["1","2"]"""),
-            Condition("col_nxr", FilterOperator.NXR.identifier, """["1","2"]"""),
-            Condition("col_adj", FilterOperator.ADJ.identifier, """["1","2"]"""),
-            // Comma-separated form (second branch of parseRange)
-            Condition("col_sr_csv", FilterOperator.SR.identifier, "1,2"),
+                // Range operators - JSON array form
+                Condition("col_sl", FilterOperator.SL.identifier, """["1","2"]"""),
+                Condition("col_sr", FilterOperator.SR.identifier, """["1","2"]"""),
+                Condition("col_nxl", FilterOperator.NXL.identifier, """["1","2"]"""),
+                Condition("col_nxr", FilterOperator.NXR.identifier, """["1","2"]"""),
+                Condition("col_adj", FilterOperator.ADJ.identifier, """["1","2"]"""),
+                // Comma-separated form (second branch of parseRange)
+                Condition("col_sr_csv", FilterOperator.SR.identifier, "1,2"),
 
-            // Full-text search
-            Condition("col_fts", FilterOperator.FTS.identifier, "term"),
-            Condition("col_plfts", FilterOperator.PLFTS.identifier, "term"),
-            Condition("col_phfts", FilterOperator.PHFTS.identifier, "term"),
-            Condition("col_wfts", FilterOperator.WFTS.identifier, "term"),
-        )
+                // Full-text search
+                Condition("col_fts", FilterOperator.FTS.identifier, "term"),
+                Condition("col_plfts", FilterOperator.PLFTS.identifier, "term"),
+                Condition("col_phfts", FilterOperator.PHFTS.identifier, "term"),
+                Condition("col_wfts", FilterOperator.WFTS.identifier, "term"),
+            )
 
-        val descriptor = FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions = conditions
-        )
+        val descriptor =
+            FilterDescriptor(
+                mode = FilterDescriptor.Mode.AND,
+                conditions = conditions,
+            )
 
         // When
         FilterEngine.applyTo(builder, descriptor)
@@ -361,40 +382,41 @@ class OfflineFilterTest {
         // We don't need to assert exact operator encodings; just that each
         // column we configured produced *some* param entry, which implies
         // the appropriate branch in applyCondition ran.
-        val expectedColumns = listOf(
-            "col_eq",
-            "col_neq",
-            "col_gt",
-            "col_gte",
-            "col_lt",
-            "col_lte",
-            "col_like",
-            "col_ilike",
-            "col_match",
-            "col_imatch",
-            "col_is_true",
-            "col_is_null",
-            "col_in",
-            "col_cs",
-            "col_cd",
-            "col_ov",
-            "col_in_csv",
-            "col_sl",
-            "col_sr",
-            "col_nxl",
-            "col_nxr",
-            "col_adj",
-            "col_sr_csv",
-            "col_fts",
-            "col_plfts",
-            "col_phfts",
-            "col_wfts",
-        )
+        val expectedColumns =
+            listOf(
+                "col_eq",
+                "col_neq",
+                "col_gt",
+                "col_gte",
+                "col_lt",
+                "col_lte",
+                "col_like",
+                "col_ilike",
+                "col_match",
+                "col_imatch",
+                "col_is_true",
+                "col_is_null",
+                "col_in",
+                "col_cs",
+                "col_cd",
+                "col_ov",
+                "col_in_csv",
+                "col_sl",
+                "col_sr",
+                "col_nxl",
+                "col_nxr",
+                "col_adj",
+                "col_sr_csv",
+                "col_fts",
+                "col_plfts",
+                "col_phfts",
+                "col_wfts",
+            )
 
         expectedColumns.forEach { col ->
             assertTrue(
                 col in params.keys,
-                "Expected params to contain key for column '$col', but keys=${params.keys}"
+                "Expected params to contain key for column '$col', but keys=${params.keys}",
             )
         }
     }
@@ -448,11 +470,11 @@ class OfflineFilterTest {
         // Given
         val builder =
             requestBuilder().apply {
-            // Manually inject a param with quotes to simulate eq."123"
-            params["id"] = mutableListOf("eq.\"123\"")
-            // Single quotes too
-            params["title"] = mutableListOf("ilike.'foo%'")
-        }
+                // Manually inject a param with quotes to simulate eq."123"
+                params["id"] = mutableListOf("eq.\"123\"")
+                // Single quotes too
+                params["title"] = mutableListOf("ilike.'foo%'")
+            }
 
         // When
         val descriptor = buildDescriptorFromBuilder(builder)
@@ -474,8 +496,10 @@ class OfflineFilterTest {
     @Test
     fun applyTo_inOperator_appliesEmptyListAsMatchNothing() {
         // Given — an empty `in` list, stored exactly as supabase-kt encodes it
-        val emptyList = FilterDescriptor(conditions = listOf(Condition("id", operatorId = "in", value = "()")))
-        val notAList = FilterDescriptor(conditions = listOf(Condition("id", operatorId = "in", value = "")))
+        val emptyList =
+            FilterDescriptor(conditions = listOf(Condition("id", operatorId = "in", value = "()")))
+        val notAList =
+            FilterDescriptor(conditions = listOf(Condition("id", operatorId = "in", value = "")))
         val emptyListBuilder = requestBuilder()
         val notAListBuilder = requestBuilder()
 

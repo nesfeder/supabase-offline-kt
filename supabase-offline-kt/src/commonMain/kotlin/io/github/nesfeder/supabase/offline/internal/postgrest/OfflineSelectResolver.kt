@@ -1,7 +1,14 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class, ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.jan.supabase.annotations.SupabaseExperimental
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineReadResult
@@ -13,13 +20,11 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
-import io.github.jan.supabase.annotations.SupabaseExperimental
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.query.Columns
-import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.ktor.http.Headers
 import io.ktor.http.HeadersBuilder
+import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,10 +39,6 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withTimeoutOrNull
 
-import kotlin.time.Clock
-import kotlin.time.Duration
-import kotlin.time.ExperimentalTime
-
 /**
  * Thrown by the parallel-refresh side of [OfflineSelectResolver.selectAsFlow] when a network SELECT
  * comes back empty from a request that did **not** carry the user's JWT (see
@@ -49,9 +50,9 @@ import kotlin.time.ExperimentalTime
  *
  * Without this signal a 200-with-empty response is "success" from the SDK's perspective and the
  * retry loop never fires. The cache-write guard in
- * [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.addPayload] still refuses to persist the empty, so
- * nothing is corrupted — but the subscription would sit at "no data" until it is recreated.
- * Throwing here recovers within seconds instead.
+ * [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.addPayload] still refuses to
+ * persist the empty, so nothing is corrupted — but the subscription would sit at "no data" until it
+ * is recreated. Throwing here recovers within seconds instead.
  */
 internal class TransientEmptyResponseException(table: String) :
     RuntimeException("Empty SELECT response for $table while auth session not ready; will retry")
@@ -69,9 +70,9 @@ internal class TransientEmptyResponseException(table: String) :
  * the anon key instead, and a user-scoped table under RLS then matches no rows — so PostgREST
  * answers `200 OK` with body `[]` for data that plainly exists. Written to the cache, that response
  * makes reactive observers re-emit an empty list (a loading placeholder that never resolves, or a
- * list screen that goes blank); returned to a one-shot caller, it renders "no
- * data" on a screen that has data. Neither is distinguishable on the wire from a genuinely empty
- * table — only the session state at request time tells them apart, which is what this enum carries.
+ * list screen that goes blank); returned to a one-shot caller, it renders "no data" on a screen
+ * that has data. Neither is distinguishable on the wire from a genuinely empty table — only the
+ * session state at request time tells them apart, which is what this enum carries.
  */
 internal enum class AuthSessionState {
     /**
@@ -85,9 +86,9 @@ internal enum class AuthSessionState {
     RESTORING,
 
     /**
-     * The request carried the user's JWT, so an empty response is the server's authoritative
-     * answer and may replace non-empty cached rows — how a delete performed on another device
-     * converges here.
+     * The request carried the user's JWT, so an empty response is the server's authoritative answer
+     * and may replace non-empty cached rows — how a delete performed on another device converges
+     * here.
      */
     AUTHENTICATED,
 
@@ -141,12 +142,13 @@ private data class NetworkSelectResponse(
      * bounded one-shot ladder, "anything but [AuthSessionState.AUTHENTICATED]" for the unbounded
      * flow-path loop).
      */
-    val emptyServerResponse: Boolean get() = isEmptyJsonArrayPayload(rawServerPayload)
+    val emptyServerResponse: Boolean
+        get() = isEmptyJsonArrayPayload(rawServerPayload)
 }
 
 /**
- * Resolves [ReadStrategy] during select operations by deciding whether to
- * fetch from network, cache, or both, while respecting [ReadStrategy] options.
+ * Resolves [ReadStrategy] during select operations by deciding whether to fetch from network,
+ * cache, or both, while respecting [ReadStrategy] options.
  *
  * Supports both suspend (one-shot) and Flow (reactive) APIs.
  */
@@ -156,16 +158,16 @@ internal class OfflineSelectResolver(
     private val sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     /**
-     * Snapshot of the auth session, read once before each network SELECT. Drives whether an
-     * empty response replaces cached rows ([AuthSessionState.AUTHENTICATED]), is retried as
-     * the cold-start artifact ([AuthSessionState.RESTORING]), or is simply kept out of the
-     * cache ([AuthSessionState.UNAUTHENTICATED]). Defaults to always-`AUTHENTICATED` so
-     * callers (and tests) that don't wire this in treat every response as the server's
-     * final answer and never enter the restore-window retry.
+     * Snapshot of the auth session, read once before each network SELECT. Drives whether an empty
+     * response replaces cached rows ([AuthSessionState.AUTHENTICATED]), is retried as the
+     * cold-start artifact ([AuthSessionState.RESTORING]), or is simply kept out of the cache
+     * ([AuthSessionState.UNAUTHENTICATED]). Defaults to always-`AUTHENTICATED` so callers (and
+     * tests) that don't wire this in treat every response as the server's final answer and never
+     * enter the restore-window retry.
      *
-     * The intended wiring is [io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl]'s mapping of
-     * `supabase.auth.sessionStatus.value` — `Initializing` → `RESTORING`, `Authenticated` →
-     * `AUTHENTICATED`, everything else → `UNAUTHENTICATED`.
+     * The intended wiring is [io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl]'s
+     * mapping of `supabase.auth.sessionStatus.value` — `Initializing` → `RESTORING`,
+     * `Authenticated` → `AUTHENTICATED`, everything else → `UNAUTHENTICATED`.
      */
     private val authSessionState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
     /**
@@ -187,7 +189,7 @@ internal class OfflineSelectResolver(
     suspend fun select(
         columns: Columns,
         readStrategy: ReadStrategy,
-        request: SelectRequestBuilder.() -> Unit
+        request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult {
         val table = delegate.table
         sdkLogger.debug { "SELECT $table via ${readStrategy::class.simpleName}" }
@@ -197,7 +199,8 @@ internal class OfflineSelectResolver(
                     performNetworkSelectWithRestoreRetry(table, columns, request)
                 } catch (exception: Exception) {
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
-                    val cached = performCacheSelect(table, columns, request, readStrategy.cacheDuration)
+                    val cached =
+                        performCacheSelect(table, columns, request, readStrategy.cacheDuration)
                     if (cached != null) {
                         sdkLogger.warning { "SELECT $table network failed, falling back to cache" }
                         cached
@@ -275,11 +278,11 @@ internal class OfflineSelectResolver(
      * cannot poison a cache slot.
      *
      * It can still cost a render, though, and the cost is worst exactly where it is least
-     * necessary: a `NetworkFirst` read whose ladder exhausts returns the empty even when a perfectly
-     * good cached payload is sitting right there, because only a *thrown* connectivity failure
-     * routes into that strategy's cache fallback. Falling back to cache on exhaustion the way a
-     * network failure does would be strictly better for the caller; it is deliberately not done
-     * here, since it changes what a `NetworkFirst` read means beyond the scope of this guard.
+     * necessary: a `NetworkFirst` read whose ladder exhausts returns the empty even when a
+     * perfectly good cached payload is sitting right there, because only a *thrown* connectivity
+     * failure routes into that strategy's cache fallback. Falling back to cache on exhaustion the
+     * way a network failure does would be strictly better for the caller; it is deliberately not
+     * done here, since it changes what a `NetworkFirst` read means beyond the scope of this guard.
      *
      * ### Not covered
      * Reads built with `.single()` / `.maybeSingle()` never see a `200 []` — PostgREST answers a
@@ -295,7 +298,8 @@ internal class OfflineSelectResolver(
      * @param table Table being selected from.
      * @param columns Columns projection for the request.
      * @param request PostgREST request builder for the query.
-     * @return The first response that is not a restore-window empty, or the last attempt's response.
+     * @return The first response that is not a restore-window empty, or the last attempt's
+     *   response.
      */
     private suspend fun performNetworkSelectWithRestoreRetry(
         table: String,
@@ -308,19 +312,21 @@ internal class OfflineSelectResolver(
         var stepsTaken = 0
 
         while (true) {
-            val response = performNetworkSelect(
-                table = table,
-                columns = columns,
-                request = request,
-                authStateAtRequest = authStateAtRequest,
-            )
+            val response =
+                performNetworkSelect(
+                    table = table,
+                    columns = columns,
+                    request = request,
+                    authStateAtRequest = authStateAtRequest,
+                )
 
             // A teardown refusal answers with a synthesized empty, not the server's. Retrying it
             // is the one thing the teardown contract forbids.
             if (response.cacheCleared) return response.result
 
             val restoreWindowEmpty =
-                response.authStateAtRequest == AuthSessionState.RESTORING && response.emptyServerResponse
+                response.authStateAtRequest == AuthSessionState.RESTORING &&
+                    response.emptyServerResponse
             if (!restoreWindowEmpty) return response.result
 
             if (stepsTaken == RESTORE_WINDOW_RETRY_WAITS) {
@@ -345,7 +351,7 @@ internal class OfflineSelectResolver(
                 authStateAtRequest = authSessionState()
             } while (
                 authStateAtRequest == AuthSessionState.RESTORING &&
-                stepsTaken < RESTORE_WINDOW_RETRY_WAITS
+                    stepsTaken < RESTORE_WINDOW_RETRY_WAITS
             )
         }
     }
@@ -379,22 +385,24 @@ internal class OfflineSelectResolver(
     fun selectAsFlow(
         columns: Columns,
         readStrategy: FlowReadStrategy,
-        request: SelectRequestBuilder.() -> Unit
+        request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> {
         val table = delegate.table
         val signature = getSignature(table, columns, request)
-        val base = when (readStrategy) {
-            FlowReadStrategy.CacheFirstThenNetwork -> flow {
-                emitAll(
-                    refreshCoordinator.sharedReadFlow(table, signature) {
-                        cacheFirstThenNetworkWithState(table, columns, request, signature)
-                    },
-                )
+        val base =
+            when (readStrategy) {
+                FlowReadStrategy.CacheFirstThenNetwork ->
+                    flow {
+                        emitAll(
+                            refreshCoordinator.sharedReadFlow(table, signature) {
+                                cacheFirstThenNetworkWithState(table, columns, request, signature)
+                            }
+                        )
+                    }
+                FlowReadStrategy.CacheOnly -> cacheOnlyWithState(signature, table)
+                FlowReadStrategy.NetworkFirstThenCache ->
+                    networkFirstThenCacheWithState(table, columns, request, signature)
             }
-            FlowReadStrategy.CacheOnly -> cacheOnlyWithState(signature, table)
-            FlowReadStrategy.NetworkFirstThenCache ->
-                networkFirstThenCacheWithState(table, columns, request, signature)
-        }
         return base
             .onStart { refreshCoordinator.registerLiveSignature(table, signature) }
             .onCompletion { refreshCoordinator.unregisterLiveSignature(table, signature) }
@@ -416,9 +424,10 @@ internal class OfflineSelectResolver(
     /**
      * Emit cached values immediately while a self-healing network refresh runs in parallel, and
      * surface the refresh lifecycle as [OfflineReadResult]. Delegates to
-     * [cacheFirstWithParallelRefresh] for the channelFlow mechanics so the parallel-emit-and-refresh
-     * semantic can be unit-tested in isolation without a real [OfflineStore]. This is the
-     * per-signature upstream shared for single-flight by the coordinator.
+     * [cacheFirstWithParallelRefresh] for the channelFlow mechanics so the
+     * parallel-emit-and-refresh semantic can be unit-tested in isolation without a real
+     * [OfflineStore]. This is the per-signature upstream shared for single-flight by the
+     * coordinator.
      */
     private fun cacheFirstThenNetworkWithState(
         table: String,
@@ -427,12 +436,13 @@ internal class OfflineSelectResolver(
         signature: String,
     ): Flow<OfflineReadResult> {
         val refreshState = MutableStateFlow<RefreshState>(RefreshState.InFlight)
-        val forwardedPayload = cacheFirstWithParallelRefresh(
-            cache = store.cachePayloadWithOverlayFlow(table, signature),
-            refresh = { refreshFromNetwork(table, columns, request) },
-            accelerator = accelerator,
-            onRefreshState = { state -> refreshState.value = state },
-        )
+        val forwardedPayload =
+            cacheFirstWithParallelRefresh(
+                cache = store.cachePayloadWithOverlayFlow(table, signature),
+                refresh = { refreshFromNetwork(table, columns, request) },
+                accelerator = accelerator,
+                onRefreshState = { state -> refreshState.value = state },
+            )
 
         // Build the PostgrestResult once per *distinct* payload, not once per emission: a
         // refresh-state transition (InFlight -> Idle, the retry ladder) must reach consumers,
@@ -440,9 +450,10 @@ internal class OfflineSelectResolver(
         // Repositories that dedupe on the result before decoding therefore see a stable value;
         // the payload-level distinctUntilChanged is belt-and-suspenders on top of the store's
         // own dedup, guarding this seam against future upstream changes.
-        val results = forwardedPayload
-            .distinctUntilChanged()
-            .map { payload -> payload?.let { json -> buildResult(json, delegate.postgrest) } }
+        val results =
+            forwardedPayload.distinctUntilChanged().map { payload ->
+                payload?.let { json -> buildResult(json, delegate.postgrest) }
+            }
 
         return combine(results, refreshState) { result, state ->
             OfflineReadResult(
@@ -484,15 +495,19 @@ internal class OfflineSelectResolver(
     ) {
         // Snapshot the session state *before* the request so a session that finishes restoring
         // mid-flight doesn't spuriously suppress a legit-empty response.
-        val response = performNetworkSelect(
-            table = table,
-            columns = columns,
-            request = request,
-            applyOverlay = false,
-            authStateAtRequest = authSessionState(),
-        )
+        val response =
+            performNetworkSelect(
+                table = table,
+                columns = columns,
+                request = request,
+                applyOverlay = false,
+                authStateAtRequest = authSessionState(),
+            )
         if (response.cacheCleared) return
-        if (response.authStateAtRequest != AuthSessionState.AUTHENTICATED && response.emptyServerResponse) {
+        if (
+            response.authStateAtRequest != AuthSessionState.AUTHENTICATED &&
+                response.emptyServerResponse
+        ) {
             sdkLogger.warning {
                 "SELECT $table empty response while auth session not ready; will retry"
             }
@@ -519,7 +534,8 @@ internal class OfflineSelectResolver(
         request: SelectRequestBuilder.() -> Unit,
         signature: String,
     ): Flow<OfflineReadResult> =
-        store.cachePayloadWithOverlayFlow(table, signature)
+        store
+            .cachePayloadWithOverlayFlow(table, signature)
             .onStart {
                 // Perform network request first to bootstrap the cache. Any network errors will be
                 // thrown and terminate the flow. The result is discarded — the cache write is the
@@ -540,24 +556,24 @@ internal class OfflineSelectResolver(
     /**
      * Runs the network SELECT and writes its payload through to the cache.
      *
-     * An empty response is marked authoritative (allowed to replace a non-empty cached
-     * payload) only when the session is [AuthSessionState.AUTHENTICATED] on **both sides** of
-     * the round-trip: [authStateAtRequest] before, and a fresh read after the response.
-     * supabase-kt attaches the user JWT *inside* the select call — after the pre-request
-     * snapshot — so a sign-out or refresh-failure landing in that gap sends the request out
-     * on the anon key and RLS shapes an empty; the post-response read catches exactly that
-     * transition. Empties from a restoring or unauthenticated session are RLS-shaped
-     * artifacts and stay blocked by the store's clobber guard.
+     * An empty response is marked authoritative (allowed to replace a non-empty cached payload)
+     * only when the session is [AuthSessionState.AUTHENTICATED] on **both sides** of the
+     * round-trip: [authStateAtRequest] before, and a fresh read after the response. supabase-kt
+     * attaches the user JWT *inside* the select call — after the pre-request snapshot — so a
+     * sign-out or refresh-failure landing in that gap sends the request out on the anon key and RLS
+     * shapes an empty; the post-response read catches exactly that transition. Empties from a
+     * restoring or unauthenticated session are RLS-shaped artifacts and stay blocked by the store's
+     * clobber guard.
      *
      * ### Stale-response re-fetch
      * The tick read immediately before each request is handed to [OfflineStore.addPayload], which
-     * refuses a response that left before the table's last local write. On that refusal this
-     * issues **one** follow-up request and no more: the follow-up starts after the write that
-     * disqualified the first, so it clears the same watermark by construction and cannot loop.
-     * Should a second write land inside that window too, the attempt budget is spent and the cache
-     * simply keeps local truth — the caller is served the cached payload and the next natural
-     * refresh converges. A bounded budget per call is the whole storm guard: however fast mutations
-     * arrive, **one invocation of this function** issues at most two requests.
+     * refuses a response that left before the table's last local write. On that refusal this issues
+     * **one** follow-up request and no more: the follow-up starts after the write that disqualified
+     * the first, so it clears the same watermark by construction and cannot loop. Should a second
+     * write land inside that window too, the attempt budget is spent and the cache simply keeps
+     * local truth — the caller is served the cached payload and the next natural refresh converges.
+     * A bounded budget per call is the whole storm guard: however fast mutations arrive, **one
+     * invocation of this function** issues at most two requests.
      *
      * That is a per-invocation bound, not a per-operation one. A caller that retries this function
      * — the restore-window ladder in [performNetworkSelectWithRestoreRetry], or the flow path's
@@ -582,11 +598,11 @@ internal class OfflineSelectResolver(
      * caller is answered with an empty result, which is what the emptied cache now holds, and
      * [NetworkSelectResponse.cacheCleared] tells retrying callers not to try again either.
      *
-     * @param authStateAtRequest The pre-request auth-session snapshot — taken at call entry
-     *   (the default) or passed in by a caller that already snapshotted it for its own retry
-     *   decision, so both decisions see the same value. A follow-up request after a stale drop
-     *   takes its own fresh snapshot, since it is a genuinely new round-trip; that effective
-     *   snapshot is what [NetworkSelectResponse.authStateAtRequest] reports back.
+     * @param authStateAtRequest The pre-request auth-session snapshot — taken at call entry (the
+     *   default) or passed in by a caller that already snapshotted it for its own retry decision,
+     *   so both decisions see the same value. A follow-up request after a stale drop takes its own
+     *   fresh snapshot, since it is a genuinely new round-trip; that effective snapshot is what
+     *   [NetworkSelectResponse.authStateAtRequest] reports back.
      * @return The served result plus the raw round-trip facts a retrying caller needs to classify
      *   it — see [NetworkSelectResponse].
      */
@@ -606,14 +622,16 @@ internal class OfflineSelectResolver(
             val networkResult = delegate.select(columns, request)
             sdkLogger.debug { "SELECT $table network response: ${networkResult.data}" }
 
-            val outcome = store.addPayload(
-                table = table,
-                signature = signature,
-                payload = networkResult.data,
-                authoritativeEmpty = authState == AuthSessionState.AUTHENTICATED &&
-                    authSessionState() == AuthSessionState.AUTHENTICATED,
-                requestStartedAtTick = requestStartedAtTick,
-            )
+            val outcome =
+                store.addPayload(
+                    table = table,
+                    signature = signature,
+                    payload = networkResult.data,
+                    authoritativeEmpty =
+                        authState == AuthSessionState.AUTHENTICATED &&
+                            authSessionState() == AuthSessionState.AUTHENTICATED,
+                    requestStartedAtTick = requestStartedAtTick,
+                )
 
             if (outcome == AddPayloadOutcome.DROPPED_CACHE_CLEARED) {
                 sdkLogger.info {
@@ -648,22 +666,24 @@ internal class OfflineSelectResolver(
 
             // A refused stale response says nothing current; serve what the cache knows instead
             // (it already carries the local write that disqualified the response).
-            val basePayload = if (staleDrop) {
-                store.getPayload(table, signature) ?: networkResult.data
-            } else {
-                networkResult.data
-            }
+            val basePayload =
+                if (staleDrop) {
+                    store.getPayload(table, signature) ?: networkResult.data
+                } else {
+                    networkResult.data
+                }
 
-            val finalJson = if (applyOverlay) {
-                // Overlay *pending* mutations on fresh network result.
-                store.applyPendingMutations(
-                    table = table,
-                    signature = signature,
-                    serverJson = basePayload
-                )
-            } else {
-                basePayload
-            }
+            val finalJson =
+                if (applyOverlay) {
+                    // Overlay *pending* mutations on fresh network result.
+                    store.applyPendingMutations(
+                        table = table,
+                        signature = signature,
+                        serverJson = basePayload,
+                    )
+                } else {
+                    basePayload
+                }
 
             // A payload the cache refused — stale or unattributed-empty — did not replace the
             // server state the overlay was standing in for, so the overlay must survive it.
@@ -674,11 +694,12 @@ internal class OfflineSelectResolver(
                 store.clearSyncedMutationsForTable(table, requestStartedAtTick)
             }
 
-            val result = if (finalJson == networkResult.data) {
-                networkResult
-            } else {
-                buildResult(finalJson, delegate.postgrest)
-            }
+            val result =
+                if (finalJson == networkResult.data) {
+                    networkResult
+                } else {
+                    buildResult(finalJson, delegate.postgrest)
+                }
             return NetworkSelectResponse(
                 result = result,
                 rawServerPayload = networkResult.data,
@@ -693,7 +714,7 @@ internal class OfflineSelectResolver(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
         cacheDuration: Duration?,
-        applyOverlay: Boolean = true
+        applyOverlay: Boolean = true,
     ): PostgrestResult? {
         val signature = getSignature(table, columns, request)
         val cached = store.getPayloadWithTimestamp(table, signature) ?: return null
@@ -707,30 +728,34 @@ internal class OfflineSelectResolver(
             }
         }
 
-        val finalJson = if (applyOverlay) {
-            store.applyAllMutationsForOfflineFallback(
-                table = table,
-                signature = signature,
-                cachedJson = payload
-            )
-        } else {
-            payload
-        }
+        val finalJson =
+            if (applyOverlay) {
+                store.applyAllMutationsForOfflineFallback(
+                    table = table,
+                    signature = signature,
+                    cachedJson = payload,
+                )
+            } else {
+                payload
+            }
         return buildResult(finalJson, delegate.postgrest)
     }
 
     private fun getSignature(
         table: String,
         columns: Columns,
-        request: SelectRequestBuilder.() -> Unit
+        request: SelectRequestBuilder.() -> Unit,
     ): String {
         return SignatureBuilder.build(
             table = table,
             columns = columns,
             builderFactory = {
-                SelectRequestBuilder(delegate.schema, delegate.postgrest.config.propertyConversionMethod)
+                SelectRequestBuilder(
+                    delegate.schema,
+                    delegate.postgrest.config.propertyConversionMethod,
+                )
             },
-            request = request
+            request = request,
         )
     }
 
@@ -741,10 +766,10 @@ internal class OfflineSelectResolver(
 
     private companion object {
         /**
-         * Follow-up network requests a single [performNetworkSelect] call may issue after the
-         * store refuses a response as predating a local write. One is enough to converge — the
-         * follow-up starts after that write — and a fixed budget makes a mutation burst cost a
-         * bounded number of requests instead of a retry storm.
+         * Follow-up network requests a single [performNetworkSelect] call may issue after the store
+         * refuses a response as predating a local write. One is enough to converge — the follow-up
+         * starts after that write — and a fixed budget makes a mutation burst cost a bounded number
+         * of requests instead of a retry storm.
          */
         const val STALE_RESPONSE_REFETCH_BUDGET = 1
 

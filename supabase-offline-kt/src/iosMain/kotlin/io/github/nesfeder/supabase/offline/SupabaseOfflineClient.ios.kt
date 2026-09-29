@@ -1,16 +1,9 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:Suppress("unused")
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.DEFAULT_CACHE_SIZE_BYTES
-import io.github.nesfeder.supabase.offline.internal.db.BackupExclusionCallback
-import io.github.nesfeder.supabase.offline.internal.db.IosDbPathProvider
-import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.getDatabaseBuilder
-import io.github.nesfeder.supabase.offline.internal.db.getRoomDatabase
-import io.github.nesfeder.supabase.offline.internal.openOfflineClient
-import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
-import io.github.nesfeder.supabase.offline.internal.storage.excludeFromBackup
 import io.github.jan.supabase.AccessTokenProvider
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
@@ -25,6 +18,15 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.Storage
+import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.DEFAULT_CACHE_SIZE_BYTES
+import io.github.nesfeder.supabase.offline.internal.db.BackupExclusionCallback
+import io.github.nesfeder.supabase.offline.internal.db.IosDbPathProvider
+import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAME
+import io.github.nesfeder.supabase.offline.internal.db.getDatabaseBuilder
+import io.github.nesfeder.supabase.offline.internal.db.getRoomDatabase
+import io.github.nesfeder.supabase.offline.internal.openOfflineClient
+import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
+import io.github.nesfeder.supabase.offline.internal.storage.excludeFromBackup
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -39,11 +41,12 @@ import okio.Path
 import okio.SYSTEM
 
 /**
- * Factory for creating a Supabase client preconfigured with PostgREST
- * and wrapped in an **offline-aware** client that transparently caches
- * successful SELECT payloads and falls back to them on network errors.
+ * Factory for creating a Supabase client preconfigured with PostgREST and wrapped in an
+ * **offline-aware** client that transparently caches successful SELECT payloads and falls back to
+ * them on network errors.
  *
  * ### Swift usage (build the offline client)
+ *
  * ```swift
  * let url = AppSecrets.supabaseURL
  * let anon = AppSecrets.supabaseAnonKey
@@ -56,14 +59,14 @@ import okio.SYSTEM
 public object SupabaseFactory {
 
     /**
-     * Create a **new** Supabase client (installing PostgREST) and wrap it with
-     * an offline-aware client that uses KMP Room for local storage.
+     * Create a **new** Supabase client (installing PostgREST) and wrap it with an offline-aware
+     * client that uses KMP Room for local storage.
      *
-     * @param supabaseUrl  Your Supabase URL (e.g. "https://abc.supabase.co")
-     * @param supabaseAnonKey  Anon/API key
+     * @param supabaseUrl Your Supabase URL (e.g. "https://abc.supabase.co")
+     * @param supabaseAnonKey Anon/API key
      * @param accessTokenProvider Optional provider for access tokens
-     * @throws IllegalStateException when another open client already uses the same database or
-     *   data directory; other failures to open it (a full disk, an unreadable file) are thrown too.
+     * @throws IllegalStateException when another open client already uses the same database or data
+     *   directory; other failures to open it (a full disk, an unreadable file) are thrown too.
      *   Swift receives each as a thrown error.
      */
     @Throws(Exception::class)
@@ -74,24 +77,26 @@ public object SupabaseFactory {
         offlineStoragePath: Path? = null,
         cacheSizeBytes: Long? = null,
         logger: OfflineLogger? = null,
-        minLogLevel: OfflineLogLevel = OfflineLogLevel.INFO
+        minLogLevel: OfflineLogLevel = OfflineLogLevel.INFO,
     ): SupabaseOfflineClient {
-        val supabase = createSupabaseClient(
-            supabaseUrl = supabaseUrl,
-            supabaseKey = supabaseAnonKey
-        ) {
-            accessToken = accessTokenProvider
-            install(Postgrest)
-            install(Storage)
-        }
+        val supabase =
+            createSupabaseClient(
+                supabaseUrl = supabaseUrl,
+                supabaseKey = supabaseAnonKey,
+            ) {
+                accessToken = accessTokenProvider
+                install(Postgrest)
+                install(Storage)
+            }
         return createSupabaseOfflineClient(
             supabase = supabase,
-            config = SupabaseOfflineConfig(
-                cacheSizeBytes ?: DEFAULT_CACHE_SIZE_BYTES,
-                offlineStoragePath = offlineStoragePath,
-                logger = logger,
-                minLogLevel = minLogLevel
-            )
+            config =
+                SupabaseOfflineConfig(
+                    cacheSizeBytes ?: DEFAULT_CACHE_SIZE_BYTES,
+                    offlineStoragePath = offlineStoragePath,
+                    logger = logger,
+                    minLogLevel = minLogLevel,
+                ),
         )
     }
 }
@@ -114,6 +119,7 @@ public object SupabaseFactory {
  * - SELECT that caches server payloads under stable signatures & falls back when offline
  *
  * ### Swift usage (pull assets)
+ *
  * ```swift
  * // Build once (e.g. in App start)
  * let offline = SupabaseFactory.shared.offlineClient(
@@ -163,10 +169,14 @@ public fun createSupabaseOfflineClient(
     return openOfflineClient(
         supabase = supabase,
         config = config,
-        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
+        databasePath =
+            configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
         dataDirectory = dataDirectory,
         openDatabase = { databasePath ->
-            getRoomDatabase(getDatabaseBuilder(databasePath.toString()).addCallback(BackupExclusionCallback(databasePath)))
+            getRoomDatabase(
+                getDatabaseBuilder(databasePath.toString())
+                    .addCallback(BackupExclusionCallback(databasePath))
+            )
         },
         defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
     )
@@ -176,9 +186,7 @@ public fun createSupabaseOfflineClient(
 /*  Swift-friendly JSON helpers (Swift struct → JSON string / JsonArray / JsonEl) */
 /* ────────────────────────────────────────────────────────────────────────────── */
 
-/**
- * Global JSON configured for Swift↔Kotlin bridging.
- */
+/** Global JSON configured for Swift↔Kotlin bridging. */
 public val SwiftJson: Json = Json {
     prettyPrint = false
     ignoreUnknownKeys = true
@@ -190,17 +198,18 @@ public val SwiftJson: Json = Json {
  * Encode any bridged Swift value to a JSON string using kotlinx.serialization.
  *
  * ### Swift
+ *
  * ```swift
  * let json = SupabaseOffline.encodeToJsonString(value: mySwiftStruct)
  * ```
  */
-public inline fun <reified T> encodeToJsonString(value: T): String =
-    SwiftJson.encodeToString(value)
+public inline fun <reified T> encodeToJsonString(value: T): String = SwiftJson.encodeToString(value)
 
 /**
  * Encode any bridged Swift value to a JsonElement (for updateJson, etc).
  *
  * ### Swift
+ *
  * ```swift
  * let elem = SupabaseOffline.encodeToJsonElement(value: mySwiftStruct)
  * _ = try await qb.updateJson(body: elem)
@@ -213,6 +222,7 @@ public inline fun <reified T> encodeToJsonElement(value: T): JsonElement =
  * Encode a Swift List/Array to a JSON array string (for insert/upsert).
  *
  * ### Swift
+ *
  * ```swift
  * let jsonArray = SupabaseOffline.encodeListToJsonString(list: [asset1, asset2])
  * _ = try await qb.insertJsonString(jsonArray: jsonArray,
@@ -226,6 +236,7 @@ public inline fun <reified T> encodeListToJsonString(list: List<T>): String =
  * Encode a Swift List/Array to a JsonArray (for insertJson/upsertJson).
  *
  * ### Swift
+ *
  * ```swift
  * let arr = SupabaseOffline.encodeListToJsonArray(list: [asset])
  * _ = try await qb.upsertJson(body: arr, onConflict: "serial_number")
@@ -240,6 +251,7 @@ public inline fun <reified T> encodeListToJsonArray(list: List<T>): JsonArray {
  * Convenience: build a one-element JsonArray from a single JsonElement.
  *
  * ### Swift
+ *
  * ```swift
  * let one = SupabaseOffline.singleElementArray(element: elem)
  * _ = try await qb.insertJson(body: one)
@@ -265,10 +277,20 @@ public suspend fun OfflinePostgrestQueryBuilder.selectAllKt(
     limit: Int? = null,
     offset: Int? = null,
     count: Count? = null,
-    filter: (PostgrestFilterBuilder.() -> Unit)? = null
-): PostgrestResult = select(columns = Columns.ALL, readStrategy = readStrategy) {
-    applySwiftOptions(orderBy, ascending, nullsFirst, referencedTable, limit, offset, count, filter)
-}
+    filter: (PostgrestFilterBuilder.() -> Unit)? = null,
+): PostgrestResult =
+    select(columns = Columns.ALL, readStrategy = readStrategy) {
+        applySwiftOptions(
+            orderBy,
+            ascending,
+            nullsFirst,
+            referencedTable,
+            limit,
+            offset,
+            count,
+            filter,
+        )
+    }
 
 /**
  * Swift-friendly SELECT with a raw comma-separated column list (e.g., "id,name,status").
@@ -287,10 +309,20 @@ public suspend fun OfflinePostgrestQueryBuilder.selectRawKt(
     limit: Int? = null,
     offset: Int? = null,
     count: Count? = null,
-    filter: (PostgrestFilterBuilder.() -> Unit)? = null
-): PostgrestResult = select(columns = Columns.raw(columns), readStrategy = readStrategy) {
-    applySwiftOptions(orderBy, ascending, nullsFirst, referencedTable, limit, offset, count, filter)
-}
+    filter: (PostgrestFilterBuilder.() -> Unit)? = null,
+): PostgrestResult =
+    select(columns = Columns.raw(columns), readStrategy = readStrategy) {
+        applySwiftOptions(
+            orderBy,
+            ascending,
+            nullsFirst,
+            referencedTable,
+            limit,
+            offset,
+            count,
+            filter,
+        )
+    }
 
 /**
  * Swift-friendly SELECT with a list of column names.
@@ -309,19 +341,20 @@ public suspend fun OfflinePostgrestQueryBuilder.selectColumnsKt(
     limit: Int? = null,
     offset: Int? = null,
     count: Count? = null,
-    filter: (PostgrestFilterBuilder.() -> Unit)? = null
-): PostgrestResult = selectRawKt(
-    columns = columns.joinToString(","),
-    readStrategy = readStrategy,
-    orderBy = orderBy,
-    ascending = ascending,
-    nullsFirst = nullsFirst,
-    referencedTable = referencedTable,
-    limit = limit,
-    offset = offset,
-    count = count,
-    filter = filter
-)
+    filter: (PostgrestFilterBuilder.() -> Unit)? = null,
+): PostgrestResult =
+    selectRawKt(
+        columns = columns.joinToString(","),
+        readStrategy = readStrategy,
+        orderBy = orderBy,
+        ascending = ascending,
+        nullsFirst = nullsFirst,
+        referencedTable = referencedTable,
+        limit = limit,
+        offset = offset,
+        count = count,
+        filter = filter,
+    )
 
 /* ── INSERT ─────────────────────────────────────────────────────────────────── */
 
@@ -329,6 +362,7 @@ public suspend fun OfflinePostgrestQueryBuilder.selectColumnsKt(
  * Swift-friendly INSERT with a JSON **array** payload string.
  *
  * - `returningColumns` = null for Minimal; or pass "id,name" to return representation.
+ *
  * @param count Optional count algorithm (e.g. Count.EXACT).
  */
 @Throws(Exception::class)
@@ -337,7 +371,7 @@ public suspend fun OfflinePostgrestQueryBuilder.insertJsonStringKt(
     returningColumns: String? = null,
     count: Count? = null,
     defaultToNull: Boolean? = null,
-    mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline
+    mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
 ): MutationOutcome {
     val arr = SwiftJson.parseToJsonElement(jsonArray) as JsonArray
     return insertJsonKt(arr, returningColumns, count, defaultToNull, mutationStrategy)
@@ -354,14 +388,13 @@ public suspend fun OfflinePostgrestQueryBuilder.insertJsonKt(
     returningColumns: String? = null,
     count: Count? = null,
     defaultToNull: Boolean? = null,
-    mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline
-): MutationOutcome = insertJson(body, mutationStrategy) {
-    applySwiftOptions(returningColumns, count, defaultToNull)
-}
+    mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+): MutationOutcome =
+    insertJson(body, mutationStrategy) {
+        applySwiftOptions(returningColumns, count, defaultToNull)
+    }
 
-/**
- * Swift-friendly INSERT for a **single** Swift struct (Encodable bridged).
- */
+/** Swift-friendly INSERT for a **single** Swift struct (Encodable bridged). */
 @Throws(Exception::class)
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insertOneKt(
     value: T,
@@ -369,7 +402,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insertO
     count: Count? = null,
     defaultToNull: Boolean? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    crossinline request: InsertRequestBuilder.() -> Unit = {}
+    crossinline request: InsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome {
     val elem = SwiftJson.encodeToJsonElement(value)
     val arr = buildJsonArray { add(elem) }
@@ -379,9 +412,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insertO
     }
 }
 
-/**
- * Swift-friendly INSERT for a **list** of Swift structs.
- */
+/** Swift-friendly INSERT for a **list** of Swift structs. */
 @Throws(Exception::class)
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insertManyKt(
     values: List<T>,
@@ -389,7 +420,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insertM
     count: Count? = null,
     defaultToNull: Boolean? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    crossinline request: InsertRequestBuilder.() -> Unit = {}
+    crossinline request: InsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome {
     val body = SwiftJson.encodeToJsonElement(ListSerializer(serializer()), values).jsonArray
     return insertJson(body, mutationStrategy) {
@@ -413,7 +444,7 @@ public suspend fun OfflinePostgrestQueryBuilder.upsertJsonStringKt(
     returningColumns: String? = null,
     count: Count? = null,
     defaultToNull: Boolean? = null,
-    mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline
+    mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
 ): MutationOutcome {
     val arr = SwiftJson.parseToJsonElement(jsonArray) as JsonArray
     return upsertJsonKt(
@@ -423,13 +454,11 @@ public suspend fun OfflinePostgrestQueryBuilder.upsertJsonStringKt(
         returningColumns,
         count,
         defaultToNull,
-        mutationStrategy
+        mutationStrategy,
     )
 }
 
-/**
- * Swift-friendly UPSERT with a prebuilt [JsonArray].
- */
+/** Swift-friendly UPSERT with a prebuilt [JsonArray]. */
 @Throws(Exception::class)
 public suspend fun OfflinePostgrestQueryBuilder.upsertJsonKt(
     body: JsonArray,
@@ -438,14 +467,13 @@ public suspend fun OfflinePostgrestQueryBuilder.upsertJsonKt(
     returningColumns: String? = null,
     count: Count? = null,
     defaultToNull: Boolean? = null,
-    mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline
-): MutationOutcome = upsertJson(body, mutationStrategy) {
-    applySwiftOptions(onConflict, ignoreDuplicates, returningColumns, count, defaultToNull)
-}
+    mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+): MutationOutcome =
+    upsertJson(body, mutationStrategy) {
+        applySwiftOptions(onConflict, ignoreDuplicates, returningColumns, count, defaultToNull)
+    }
 
-/**
- * Swift-friendly UPSERT for a single Swift struct.
- */
+/** Swift-friendly UPSERT for a single Swift struct. */
 @Throws(Exception::class)
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsertOneKt(
     value: T,
@@ -455,7 +483,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsertO
     count: Count? = null,
     defaultToNull: Boolean? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    crossinline request: UpsertRequestBuilder.() -> Unit = {}
+    crossinline request: UpsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome {
     val elem = SwiftJson.encodeToJsonElement(value)
     val arr = buildJsonArray { add(elem) }
@@ -465,9 +493,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsertO
     }
 }
 
-/**
- * Swift-friendly UPSERT for a list of Swift structs.
- */
+/** Swift-friendly UPSERT for a list of Swift structs. */
 @Throws(Exception::class)
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsertManyKt(
     values: List<T>,
@@ -477,7 +503,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsertM
     count: Count? = null,
     defaultToNull: Boolean? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    crossinline request: UpsertRequestBuilder.() -> Unit = {}
+    crossinline request: UpsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome {
     val body = SwiftJson.encodeToJsonElement(ListSerializer(serializer()), values).jsonArray
     return upsertJson(body, mutationStrategy) {
@@ -499,36 +525,33 @@ public suspend fun OfflinePostgrestQueryBuilder.updateJsonStringKt(
     returningColumns: String? = null,
     count: Count? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    filter: (PostgrestFilterBuilder.() -> Unit)? = null
+    filter: (PostgrestFilterBuilder.() -> Unit)? = null,
 ): MutationOutcome {
     val body = SwiftJson.parseToJsonElement(jsonObject)
     return updateJsonKt(body, returningColumns, count, mutationStrategy, filter)
 }
 
-/**
- * Swift-friendly UPDATE with a [JsonElement] body.
- */
+/** Swift-friendly UPDATE with a [JsonElement] body. */
 @Throws(Exception::class)
 public suspend fun OfflinePostgrestQueryBuilder.updateJsonKt(
     body: JsonElement,
     returningColumns: String? = null,
     count: Count? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    filter: (PostgrestFilterBuilder.() -> Unit)? = null
-): MutationOutcome = updateJson(body, mutationStrategy) {
-    applySwiftOptions(returningColumns, count, filter)
-}
+    filter: (PostgrestFilterBuilder.() -> Unit)? = null,
+): MutationOutcome =
+    updateJson(body, mutationStrategy) {
+        applySwiftOptions(returningColumns, count, filter)
+    }
 
-/**
- * Swift-friendly UPDATE for a single Swift struct.
- */
+/** Swift-friendly UPDATE for a single Swift struct. */
 @Throws(Exception::class)
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.updateOneKt(
     value: T,
     returningColumns: String? = null,
     count: Count? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    crossinline request: PostgrestRequestBuilder.() -> Unit = {}
+    crossinline request: PostgrestRequestBuilder.() -> Unit = {},
 ): MutationOutcome {
     val elem = SwiftJson.encodeToJsonElement(value)
     return updateJson(elem, mutationStrategy) {
@@ -539,18 +562,17 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.updateO
 
 /* ── DELETE ─────────────────────────────────────────────────────────────────── */
 
-/**
- * Swift-friendly DELETE with optional PostgREST filters.
- */
+/** Swift-friendly DELETE with optional PostgREST filters. */
 @Throws(Exception::class)
 public suspend fun OfflinePostgrestQueryBuilder.deleteWhereKt(
     returningColumns: String? = null,
     count: Count? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    filter: (PostgrestFilterBuilder.() -> Unit)? = null
-): MutationOutcome = delete(mutationStrategy) {
-    applySwiftOptions(returningColumns, count, filter)
-}
+    filter: (PostgrestFilterBuilder.() -> Unit)? = null,
+): MutationOutcome =
+    delete(mutationStrategy) {
+        applySwiftOptions(returningColumns, count, filter)
+    }
 
 /* ────────────────────────────────────────────────────────────────────────────── */
 /*  SHIM HELPER IMPLEMENTATIONS (correct builder calls & imports)                */
@@ -567,7 +589,7 @@ public suspend fun OfflinePostgrestQueryBuilder.deleteWhereKt(
 public fun InsertRequestBuilder.applySwiftOptions(
     returningColumns: String?,
     count: Count?,
-    defaultToNull: Boolean?
+    defaultToNull: Boolean?,
 ) {
     if (!returningColumns.isNullOrEmpty()) select(Columns.raw(returningColumns))
     if (count != null) count(count)
@@ -589,7 +611,7 @@ public fun UpsertRequestBuilder.applySwiftOptions(
     ignoreDuplicates: Boolean,
     returningColumns: String?,
     count: Count?,
-    defaultToNull: Boolean?
+    defaultToNull: Boolean?,
 ) {
     if (onConflict != null) this.onConflict = onConflict
     this.ignoreDuplicates = ignoreDuplicates
@@ -608,7 +630,7 @@ public fun UpsertRequestBuilder.applySwiftOptions(
 public fun PostgrestRequestBuilder.applySwiftOptions(
     returningColumns: String?,
     count: Count?,
-    filter: (PostgrestFilterBuilder.() -> Unit)?
+    filter: (PostgrestFilterBuilder.() -> Unit)?,
 ) {
     if (!returningColumns.isNullOrEmpty()) select(Columns.raw(returningColumns))
     if (count != null) count(count)
@@ -625,7 +647,7 @@ private fun SelectRequestBuilder.applySwiftOptions(
     limit: Int?,
     offset: Int?,
     count: Count?,
-    filter: (PostgrestFilterBuilder.() -> Unit)?
+    filter: (PostgrestFilterBuilder.() -> Unit)?,
 ) {
     if (count != null) {
         count(count)
@@ -635,7 +657,7 @@ private fun SelectRequestBuilder.applySwiftOptions(
             column = orderBy,
             order = if (ascending) Order.ASCENDING else Order.DESCENDING,
             nullsFirst = nullsFirst,
-            referencedTable = referencedTable
+            referencedTable = referencedTable,
         )
     }
     if (limit != null || offset != null) {

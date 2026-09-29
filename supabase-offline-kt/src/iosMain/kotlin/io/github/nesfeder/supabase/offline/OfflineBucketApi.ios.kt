@@ -1,11 +1,13 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.storage.BucketApi
 import platform.Foundation.NSURL
 
 /**
- * The absolute path of the cached copy of [objectPath], downloading it first when none is cached.
- * A thin convenience over [OfflineBucketApi.ensureCachedFile]; see there for what it throws.
+ * The absolute path of the cached copy of [objectPath], downloading it first when none is cached. A
+ * thin convenience over [OfflineBucketApi.ensureCachedFile]; see there for what it throws.
  *
  * @param objectPath the object path within this bucket.
  * @param isPublic whether to download through the public URL rather than the authenticated one.

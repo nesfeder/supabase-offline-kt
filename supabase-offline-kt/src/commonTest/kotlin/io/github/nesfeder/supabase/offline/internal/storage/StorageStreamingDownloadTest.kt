@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
@@ -10,6 +12,15 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
+import kotlin.random.Random
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -26,15 +37,6 @@ import kotlinx.io.readByteArray
 import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
-import kotlin.random.Random
-import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
-import kotlin.test.Test
-import kotlin.test.assertContentEquals
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Channel downloads stream through a file on disk instead of being held in memory whole, and a
@@ -49,7 +51,9 @@ class StorageStreamingDownloadTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-streaming-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-streaming-${Random.nextLong().toULong()}"
         store = newTestOfflineStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
         delegate.channelChunkSize = 4
@@ -60,13 +64,20 @@ class StorageStreamingDownloadTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun bucket(fileSystem: FileSystem = FileSystem.SYSTEM) = newTestBucketApi(
-        delegate = delegate,
-        baseDirectory = dataDirectory,
-        store = store,
-        sdkLogger = logger.asSdkLogger(),
-        cache = newTestFileCache(baseDirectory = dataDirectory, store = store, sdkLogger = logger.asSdkLogger(), fileSystem = fileSystem),
-    )
+    private fun bucket(fileSystem: FileSystem = FileSystem.SYSTEM) =
+        newTestBucketApi(
+            delegate = delegate,
+            baseDirectory = dataDirectory,
+            store = store,
+            sdkLogger = logger.asSdkLogger(),
+            cache =
+                newTestFileCache(
+                    baseDirectory = dataDirectory,
+                    store = store,
+                    sdkLogger = logger.asSdkLogger(),
+                    fileSystem = fileSystem,
+                ),
+        )
 
     @Test
     fun a_channel_download_streams_from_the_network_through_the_cache_to_the_caller() = runTest {
@@ -76,7 +87,7 @@ class StorageStreamingDownloadTest {
 
         // When
         val received = async { channel.readRemaining().readByteArray() }
-        bucket().downloadAuthenticated(PATH, channel) { }
+        bucket().downloadAuthenticated(PATH, channel) {}
 
         // Then — the network was read as a stream (never as one byte array), the caller got every
         // byte and its channel was closed as supabase-kt closes it, and the object is cached
@@ -100,7 +111,7 @@ class StorageStreamingDownloadTest {
         var caught: Throwable? = null
         val job = launch {
             try {
-                bucket().downloadAuthenticated(PATH, ByteChannel()) { }
+                bucket().downloadAuthenticated(PATH, ByteChannel()) {}
             } catch (failure: Throwable) {
                 caught = failure
             }
@@ -120,14 +131,16 @@ class StorageStreamingDownloadTest {
     fun a_download_that_fails_part_way_serves_the_cached_copy_and_keeps_it_whole() = runTest {
         // Given — an old copy is cached; the new download breaks after a few bytes
         delegate.onDownload = { OLD }
-        bucket().downloadAuthenticated(PATH) { }
+        bucket().downloadAuthenticated(PATH) {}
         delegate.onDownload = { LARGE }
-        delegate.onChannelChunk = { written -> if (written >= 8) throw IOException("connection reset") }
+        delegate.onChannelChunk = { written ->
+            if (written >= 8) throw IOException("connection reset")
+        }
         val channel = ByteChannel()
 
         // When
         val received = async { channel.readRemaining().readByteArray() }
-        bucket().downloadAuthenticated(PATH, channel) { }
+        bucket().downloadAuthenticated(PATH, channel) {}
 
         // Then — the caller got the old copy, never a mix; the cache still holds it, nothing else
         assertContentEquals(OLD, received.await())
@@ -145,7 +158,7 @@ class StorageStreamingDownloadTest {
 
         // When
         val received = async { channel.readRemaining().readByteArray() }
-        bucket(fileSystem).downloadAuthenticated(PATH, channel) { }
+        bucket(fileSystem).downloadAuthenticated(PATH, channel) {}
 
         // Then — the caller got the whole object; nothing partial was kept; the refusal was logged
         assertContentEquals(LARGE, received.await())
@@ -153,7 +166,8 @@ class StorageStreamingDownloadTest {
         assertTrue(logger.entriesAt(OfflineLogLevel.WARNING).isNotEmpty())
     }
 
-    private fun cachedFile(): Path = objectFilePathOrNull(dataDirectory, BUCKET, PATH) ?: error("uncacheable fixture path")
+    private fun cachedFile(): Path =
+        objectFilePathOrNull(dataDirectory, BUCKET, PATH) ?: error("uncacheable fixture path")
 
     private suspend fun awaitAFileUnder(directory: Path) {
         withContext(Dispatchers.Default) {
@@ -167,7 +181,9 @@ class StorageStreamingDownloadTest {
         if (!FileSystem.SYSTEM.exists(directory)) {
             emptyList()
         } else {
-            FileSystem.SYSTEM.listRecursively(directory).filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.toList()
+            FileSystem.SYSTEM.listRecursively(directory)
+                .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
+                .toList()
         }
 
     private companion object {

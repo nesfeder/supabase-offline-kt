@@ -1,14 +1,16 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import okio.FileSystem
 import okio.IOException
 import okio.Path
 import okio.SYSTEM
-import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.AtomicReference
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * The offline database's file name, on every platform and in every configuration. Installs keep
@@ -31,7 +33,8 @@ internal object OpenDatabaseRegistry {
      * @param databasePath the database file.
      * @param dataDirectory the directory the client's file cache lives under.
      * @return the claim; release it when the client closes.
-     * @throws IllegalStateException when another client already holds either, open or still closing.
+     * @throws IllegalStateException when another client already holds either, open or still
+     *   closing.
      */
     fun register(databasePath: Path, dataDirectory: Path? = null): Registration {
         val keys = buildSet {
@@ -43,7 +46,8 @@ internal object OpenDatabaseRegistry {
             val current = openPaths.load()
             val holder = keys.firstNotNullOfOrNull { key -> current[key] }
             check(holder == null) { holder?.conflictMessage(databasePath).orEmpty() }
-            if (openPaths.compareAndSet(current, current + keys.associateWith { registration })) return registration
+            if (openPaths.compareAndSet(current, current + keys.associateWith { registration }))
+                return registration
         }
     }
 
@@ -63,10 +67,11 @@ internal object OpenDatabaseRegistry {
 
         /** Why another client cannot have [databasePath] while this claim holds it. */
         fun conflictMessage(databasePath: Path): String {
-            val callsInFlight = stillClosing.load()
-                ?: return "A SupabaseOfflineClient is already open on $databasePath or its data directory. Reuse that " +
-                    "client, or close() it before creating another: two clients on one database would each " +
-                    "replay the same queued writes."
+            val callsInFlight =
+                stillClosing.load()
+                    ?: return "A SupabaseOfflineClient is already open on $databasePath or its data directory. Reuse that " +
+                        "client, or close() it before creating another: two clients on one database would each " +
+                        "replay the same queued writes."
             val stillRunning = callsInFlight()
             if (stillRunning == 0) {
                 return "The SupabaseOfflineClient on $databasePath or its data directory is still closing: its last " +
@@ -104,7 +109,9 @@ internal fun Path.resolvedOrNormalized(fileSystem: FileSystem = FileSystem.SYSTE
         existing = existing.parent ?: return normalized()
     }
     return try {
-        missing.asReversed().fold(fileSystem.canonicalize(existing)) { directory, name -> directory / name }
+        missing.asReversed().fold(fileSystem.canonicalize(existing)) { directory, name ->
+            directory / name
+        }
     } catch (_: IOException) {
         normalized()
     }

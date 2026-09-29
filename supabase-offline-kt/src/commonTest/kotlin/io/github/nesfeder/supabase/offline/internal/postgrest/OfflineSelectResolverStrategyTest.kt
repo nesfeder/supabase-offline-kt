@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.jan.supabase.postgrest.Postgrest
@@ -17,21 +19,21 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.ktor.client.plugins.HttpRequestTimeoutException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.mapNotNull
-import kotlinx.coroutines.flow.take
-import kotlinx.coroutines.async
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * Read-strategy semantics of [OfflineSelectResolver], one strategy and one failure class at a time:
@@ -47,10 +49,17 @@ class OfflineSelectResolverStrategyTest {
 
     private var currentTime: Long = 1_000_000L
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(objectDao = FakeObjectDao(), mutationDao = mutationDao, nowMillis = { currentTime })
+    private val store =
+        newTestOfflineStore(
+            objectDao = FakeObjectDao(),
+            mutationDao = mutationDao,
+            nowMillis = { currentTime },
+        )
 
     /** What the scripted network SELECT answers; defaults to a failure so a test opts in. */
-    private var networkAnswer: suspend () -> PostgrestResult = { error("network SELECT not scripted") }
+    private var networkAnswer: suspend () -> PostgrestResult = {
+        error("network SELECT not scripted")
+    }
 
     /** Completed by a test to release a network SELECT it wants held in flight. */
     private var networkGate: CompletableDeferred<Unit>? = null
@@ -58,17 +67,21 @@ class OfflineSelectResolverStrategyTest {
     /** Number of network SELECTs issued. */
     private var networkCalls = 0
 
-    private val wrapper = FakePostgrestQueryBuilderWrapper(
-        table = TABLE,
-        postgrest = postgrest,
-        onSelect = {
-            networkCalls++
-            networkGate?.await()
-            networkAnswer()
-        },
-    )
+    private val wrapper =
+        FakePostgrestQueryBuilderWrapper(
+            table = TABLE,
+            postgrest = postgrest,
+            onSelect = {
+                networkCalls++
+                networkGate?.await()
+                networkAnswer()
+            },
+        )
 
-    private fun resolver(scope: CoroutineScope, logger: RecordingOfflineLogger? = null): OfflineSelectResolver =
+    private fun resolver(
+        scope: CoroutineScope,
+        logger: RecordingOfflineLogger? = null,
+    ): OfflineSelectResolver =
         OfflineSelectResolver(
             delegate = wrapper,
             store = store,
@@ -78,12 +91,15 @@ class OfflineSelectResolverStrategyTest {
         )
 
     /** The cache key the resolver uses for an unfiltered `SELECT *` on [TABLE]. */
-    private fun signature(): String = SignatureBuilder.build(
-        table = TABLE,
-        columns = Columns.ALL,
-        builderFactory = { SelectRequestBuilder(wrapper.schema, postgrest.config.propertyConversionMethod) },
-        request = {},
-    )
+    private fun signature(): String =
+        SignatureBuilder.build(
+            table = TABLE,
+            columns = Columns.ALL,
+            builderFactory = {
+                SelectRequestBuilder(wrapper.schema, postgrest.config.propertyConversionMethod)
+            },
+            request = {},
+        )
 
     private fun answerWith(payload: String) {
         networkAnswer = { postgrestResultOf(payload, postgrest) }
@@ -134,7 +150,10 @@ class OfflineSelectResolverStrategyTest {
 
         // Then — the pending row is overlaid, the synced one is left to the server, and retired
         assertEquals("""[{"id":1,"name":"network"},{"id":2,"name":"pending"}]""", result.data)
-        assertEquals(listOf("""[{"id":2,"name":"pending"}]"""), mutationDao.inserted.map { it.bodyJson })
+        assertEquals(
+            listOf("""[{"id":2,"name":"pending"}]"""),
+            mutationDao.inserted.map { it.bodyJson },
+        )
     }
 
     @Test
@@ -239,7 +258,11 @@ class OfflineSelectResolverStrategyTest {
         answerWith(NETWORK_DATA)
 
         // When
-        val result = resolver(backgroundScope).select(Columns.ALL, ReadStrategy.CacheFirst(cacheDuration = 1.hours)) {}
+        val result =
+            resolver(backgroundScope).select(
+                Columns.ALL,
+                ReadStrategy.CacheFirst(cacheDuration = 1.hours),
+            ) {}
 
         // Then
         assertEquals(NETWORK_DATA, result.data)
@@ -280,9 +303,10 @@ class OfflineSelectResolverStrategyTest {
         answerWith(NETWORK_DATA)
 
         // When
-        val first = resolver(backgroundScope)
-            .selectAsFlow(Columns.ALL, FlowReadStrategy.NetworkFirstThenCache) {}
-            .first()
+        val first =
+            resolver(backgroundScope)
+                .selectAsFlow(Columns.ALL, FlowReadStrategy.NetworkFirstThenCache) {}
+                .first()
 
         // Then
         assertEquals(NETWORK_DATA, first.result?.data)
@@ -293,7 +317,11 @@ class OfflineSelectResolverStrategyTest {
         // Given — cached data exists, but this strategy bootstraps from the network first
         store.addPayload(TABLE, signature(), CACHED_DATA)
         failNetwork()
-        val flow = resolver(backgroundScope).selectAsFlow(Columns.ALL, FlowReadStrategy.NetworkFirstThenCache) {}
+        val flow =
+            resolver(backgroundScope).selectAsFlow(
+                Columns.ALL,
+                FlowReadStrategy.NetworkFirstThenCache,
+            ) {}
 
         // When / Then
         assertFailsWith<HttpRequestTimeoutException> {
@@ -340,9 +368,10 @@ class OfflineSelectResolverStrategyTest {
         store.addPayload(TABLE, signature(), CACHED_DATA)
 
         // When
-        val first = resolver(backgroundScope)
-            .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheOnly) {}
-            .first()
+        val first =
+            resolver(backgroundScope)
+                .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheOnly) {}
+                .first()
 
         // Then
         assertEquals(CACHED_DATA, first.result?.data)
@@ -355,9 +384,10 @@ class OfflineSelectResolverStrategyTest {
         networkAnswer = { throw AssertionError("Network should not be called") }
 
         // When
-        val first = resolver(backgroundScope)
-            .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheOnly) {}
-            .first()
+        val first =
+            resolver(backgroundScope)
+                .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheOnly) {}
+                .first()
 
         // Then
         assertEquals(CACHED_DATA, first.result?.data)
@@ -394,11 +424,14 @@ class OfflineSelectResolverStrategyTest {
         val debugEntries = recorder.entriesAt(OfflineLogLevel.DEBUG)
         assertTrue(
             debugEntries.any {
-                it.message.contains("SELECT items network response:") && it.message.contains(networkData)
-            },
+                it.message.contains("SELECT items network response:") &&
+                    it.message.contains(networkData)
+            }
         )
         assertTrue(
-            recorder.entries.filter { it.level != OfflineLogLevel.DEBUG }.none { it.message.contains(networkData) },
+            recorder.entries
+                .filter { it.level != OfflineLogLevel.DEBUG }
+                .none { it.message.contains(networkData) },
             "a response body must never be logged above DEBUG",
         )
     }
@@ -416,7 +449,9 @@ class OfflineSelectResolverStrategyTest {
         // Then
         val warnings = recorder.entriesAt(OfflineLogLevel.WARNING)
         assertEquals(1, warnings.size)
-        assertTrue(warnings[0].message.contains("SELECT items network failed, falling back to cache"))
+        assertTrue(
+            warnings[0].message.contains("SELECT items network failed, falling back to cache")
+        )
     }
 
     @Test

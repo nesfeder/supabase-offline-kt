@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testing
 
 import io.github.jan.supabase.SupabaseClient
@@ -30,8 +32,9 @@ public fun buildInMemorySupabaseOfflineClient(
     supabase: SupabaseClient,
     coordinatorScope: CoroutineScope,
     nowMillis: () -> Long = { 0L },
-): SupabaseOfflineClient = createInMemorySupabaseOfflineClient(
-    supabase = supabase,
-    coordinatorScope = coordinatorScope,
-    nowMillis = nowMillis,
-)
+): SupabaseOfflineClient =
+    createInMemorySupabaseOfflineClient(
+        supabase = supabase,
+        coordinatorScope = coordinatorScope,
+        nowMillis = nowMillis,
+    )

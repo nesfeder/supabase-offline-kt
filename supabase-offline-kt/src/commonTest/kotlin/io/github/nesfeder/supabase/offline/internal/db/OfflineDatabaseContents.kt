@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 /**
@@ -26,14 +28,15 @@ internal suspend fun OfflineDatabase.readShippedFixtureContents(): OfflineDataba
     )
 
 /** What [readShippedFixtureContents] must return for an intact shipped database. */
-internal val SHIPPED_FIXTURE_CONTENTS: OfflineDatabaseContents = OfflineDatabaseContents(
-    objectRows = ShippedDatabaseFixture.OBJECT_ROWS.sortedBy { it.updatedAt },
-    storageRow = ShippedDatabaseFixture.STORAGE_ROW,
-    pendingMutations = ShippedDatabaseFixture.MUTATION_ROWS
-        .filter { it.syncedAtMs == null }
-        .sortedBy { it.createdAtMs },
-    mutationCount = ShippedDatabaseFixture.MUTATION_ROWS.size,
-)
+internal val SHIPPED_FIXTURE_CONTENTS: OfflineDatabaseContents =
+    OfflineDatabaseContents(
+        objectRows = ShippedDatabaseFixture.OBJECT_ROWS.sortedBy { it.updatedAt },
+        storageRow = ShippedDatabaseFixture.STORAGE_ROW,
+        pendingMutations =
+            ShippedDatabaseFixture.MUTATION_ROWS.filter { it.syncedAtMs == null }
+                .sortedBy { it.createdAtMs },
+        mutationCount = ShippedDatabaseFixture.MUTATION_ROWS.size,
+    )
 
 /**
  * What [readShippedFixtureContents] must return once a schema version 1 install has migrated: the
@@ -41,5 +44,6 @@ internal val SHIPPED_FIXTURE_CONTENTS: OfflineDatabaseContents = OfflineDatabase
  */
 internal val SHIPPED_VERSION_1_FIXTURE_CONTENTS_AFTER_MIGRATION: OfflineDatabaseContents =
     SHIPPED_FIXTURE_CONTENTS.copy(
-        pendingMutations = SHIPPED_FIXTURE_CONTENTS.pendingMutations.map { row -> row.copy(deltaJson = null) },
+        pendingMutations =
+            SHIPPED_FIXTURE_CONTENTS.pendingMutations.map { row -> row.copy(deltaJson = null) }
     )

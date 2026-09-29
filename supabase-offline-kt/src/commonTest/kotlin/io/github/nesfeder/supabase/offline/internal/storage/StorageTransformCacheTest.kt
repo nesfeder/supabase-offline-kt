@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.storage.Storage
@@ -8,12 +10,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.IOException
-import okio.Path
-import okio.Path.Companion.toPath
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -21,6 +17,12 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.IOException
+import okio.Path
+import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /**
  * An image transform changes the bytes a download returns, so a transformed download and the
@@ -38,7 +40,9 @@ class StorageTransformCacheTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-transform-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-transform-${Random.nextLong().toULong()}"
         store = newTestOfflineStore()
         server = RecordingStorageServer()
         server.objects["$BUCKET/$PATH"] = ORIGINAL.encodeToByteArray()
@@ -49,23 +53,26 @@ class StorageTransformCacheTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun bucket() = newTestBucketApi(
-        delegate = server.supabaseClient().storage.from(BUCKET),
-        baseDirectory = dataDirectory,
-        store = store,
-    )
+    private fun bucket() =
+        newTestBucketApi(
+            delegate = server.supabaseClient().storage.from(BUCKET),
+            baseDirectory = dataDirectory,
+            store = store,
+        )
 
     @Test
     fun a_thumbnail_and_the_full_image_are_cached_separately() = runTest {
         // Given — the list fetches a thumbnail, the profile screen the full image
         val bucket = bucket()
-        val thumbnail = bucket.downloadAuthenticated(PATH) { transform { size(64, 64) } }.decodeToString()
-        val full = bucket.downloadAuthenticated(PATH) { }.decodeToString()
+        val thumbnail =
+            bucket.downloadAuthenticated(PATH) { transform { size(64, 64) } }.decodeToString()
+        val full = bucket.downloadAuthenticated(PATH) {}.decodeToString()
 
         // When — both are read again offline
         server.online = false
-        val offlineThumbnail = bucket.downloadAuthenticated(PATH) { transform { size(64, 64) } }.decodeToString()
-        val offlineFull = bucket.downloadAuthenticated(PATH) { }.decodeToString()
+        val offlineThumbnail =
+            bucket.downloadAuthenticated(PATH) { transform { size(64, 64) } }.decodeToString()
+        val offlineFull = bucket.downloadAuthenticated(PATH) {}.decodeToString()
 
         // Then — each read gets its own variant back
         assertEquals("render?height=64&width=64:$ORIGINAL", thumbnail)
@@ -78,12 +85,12 @@ class StorageTransformCacheTest {
     fun the_full_image_fetched_first_is_not_replaced_by_a_later_thumbnail() = runTest {
         // Given
         val bucket = bucket()
-        bucket.downloadPublic(PATH) { }
+        bucket.downloadPublic(PATH) {}
         bucket.downloadPublic(PATH) { transform { size(32, 32) } }
 
         // When
         server.online = false
-        val offlineFull = bucket.downloadPublic(PATH) { }.decodeToString()
+        val offlineFull = bucket.downloadPublic(PATH) {}.decodeToString()
 
         // Then
         assertEquals(ORIGINAL, offlineFull)
@@ -93,15 +100,23 @@ class StorageTransformCacheTest {
     fun two_transforms_of_one_object_are_cached_separately() = runTest {
         // Given
         val bucket = bucket()
-        val small = bucket.downloadAuthenticated(PATH) { transform { size(32, 32) } }.decodeToString()
-        val large = bucket.downloadAuthenticated(PATH) { transform { size(256, 256) } }.decodeToString()
+        val small =
+            bucket.downloadAuthenticated(PATH) { transform { size(32, 32) } }.decodeToString()
+        val large =
+            bucket.downloadAuthenticated(PATH) { transform { size(256, 256) } }.decodeToString()
 
         // When
         server.online = false
 
         // Then
-        assertEquals(small, bucket.downloadAuthenticated(PATH) { transform { size(32, 32) } }.decodeToString())
-        assertEquals(large, bucket.downloadAuthenticated(PATH) { transform { size(256, 256) } }.decodeToString())
+        assertEquals(
+            small,
+            bucket.downloadAuthenticated(PATH) { transform { size(32, 32) } }.decodeToString(),
+        )
+        assertEquals(
+            large,
+            bucket.downloadAuthenticated(PATH) { transform { size(256, 256) } }.decodeToString(),
+        )
     }
 
     @Test
@@ -111,14 +126,18 @@ class StorageTransformCacheTest {
 
         // When
         bucket.downloadAuthenticated(PATH) { transform { size(64, 64) } }
-        bucket.downloadAuthenticated(PATH) { }
+        bucket.downloadAuthenticated(PATH) {}
 
-        // Then — the row is keyed "$bucket::$path" and the file sits at <data>/storage/<bucket>/<path>,
+        // Then — the row is keyed "$bucket::$path" and the file sits at
+        // <data>/storage/<bucket>/<path>,
         // exactly where installs of earlier versions keep theirs
         val row = assertNotNull(store.getStorageByKey(BUCKET, PATH))
         assertEquals("$BUCKET::$PATH", row.key)
         assertEquals(PATH, row.path)
-        assertEquals((dataDirectory / "storage" / BUCKET / "u-1" / "me.png").toString(), row.localPath)
+        assertEquals(
+            (dataDirectory / "storage" / BUCKET / "u-1" / "me.png").toString(),
+            row.localPath,
+        )
         assertEquals(ORIGINAL, FileSystem.SYSTEM.read(row.localPath.toPath()) { readUtf8() })
     }
 
@@ -128,10 +147,13 @@ class StorageTransformCacheTest {
         server.objects["$BUCKET/render/image/cat.png"] = ORIGINAL.encodeToByteArray()
 
         // When
-        bucket().downloadAuthenticated("render/image/cat.png") { }
+        bucket().downloadAuthenticated("render/image/cat.png") {}
 
         // Then
-        assertNotNull(bucket().cachedFile("render/image/cat.png"), "cached as a transformed variant, not as the original")
+        assertNotNull(
+            bucket().cachedFile("render/image/cat.png"),
+            "cached as a transformed variant, not as the original",
+        )
     }
 
     @Test
@@ -139,16 +161,23 @@ class StorageTransformCacheTest {
         // Given — cached online, then read through a client whose access-token provider fails
         // offline, as a third-party auth provider's refresh does; supabase-kt throws before it
         // builds the request, so the variant the caller asked for is never observed
-        bucket().downloadAuthenticated(PATH) { }
-        val tokenFails = newTestSupabaseClient(engine = server.engine) {
-            accessToken = { throw IOException("token refresh failed: offline") }
-            install(Storage) { resumable { cache = MemoryResumableCache() } }
-        }
-        val offline = newTestBucketApi(delegate = tokenFails.storage.from(BUCKET), baseDirectory = dataDirectory, store = store)
+        bucket().downloadAuthenticated(PATH) {}
+        val tokenFails =
+            newTestSupabaseClient(engine = server.engine) {
+                accessToken = { throw IOException("token refresh failed: offline") }
+                install(Storage) { resumable { cache = MemoryResumableCache() } }
+            }
+        val offline =
+            newTestBucketApi(
+                delegate = tokenFails.storage.from(BUCKET),
+                baseDirectory = dataDirectory,
+                store = store,
+            )
 
         // When
-        val original = offline.downloadAuthenticated(PATH) { }.decodeToString()
-        val asThumbnail = offline.downloadAuthenticated(PATH) { transform { size(64, 64) } }.decodeToString()
+        val original = offline.downloadAuthenticated(PATH) {}.decodeToString()
+        val asThumbnail =
+            offline.downloadAuthenticated(PATH) { transform { size(64, 64) } }.decodeToString()
 
         // Then — the original, for both: a full image in place of a thumbnail is what earlier
         // versions served, and a thumbnail is never served in place of the full image
@@ -160,14 +189,20 @@ class StorageTransformCacheTest {
     fun a_transformed_variant_is_never_served_when_the_request_could_not_be_built() = runTest {
         // Given — only a thumbnail is cached
         bucket().downloadAuthenticated(PATH) { transform { size(64, 64) } }
-        val tokenFails = newTestSupabaseClient(engine = server.engine) {
-            accessToken = { throw IOException("token refresh failed: offline") }
-            install(Storage) { resumable { cache = MemoryResumableCache() } }
-        }
-        val offline = newTestBucketApi(delegate = tokenFails.storage.from(BUCKET), baseDirectory = dataDirectory, store = store)
+        val tokenFails =
+            newTestSupabaseClient(engine = server.engine) {
+                accessToken = { throw IOException("token refresh failed: offline") }
+                install(Storage) { resumable { cache = MemoryResumableCache() } }
+            }
+        val offline =
+            newTestBucketApi(
+                delegate = tokenFails.storage.from(BUCKET),
+                baseDirectory = dataDirectory,
+                store = store,
+            )
 
         // When / Then — the full image was asked for; the thumbnail must not stand in for it
-        assertFailsWith<IOException> { offline.downloadAuthenticated(PATH) { } }
+        assertFailsWith<IOException> { offline.downloadAuthenticated(PATH) {} }
     }
 
     private companion object {

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.util
 
 import io.github.jan.supabase.auth.status.RefreshFailureCause
@@ -12,10 +14,10 @@ import kotlin.test.assertTrue
  *
  * The invariant: a replay may only proceed once the session has settled into an identity the
  * requests will really go out as — signed in (the user JWT, which supabase-kt attaches **only**
- * while `Authenticated`) or signed out (the anon key). The queue is kept per identity, so a
- * settled session replays only its own writes. `Initializing` and `RefreshFailure` send the anon
- * key whoever made the writes, so the gate waits them out. `RefreshFailure` is the case that bites
- * in practice: the queue is non-empty precisely because the device was offline, which is also what
+ * while `Authenticated`) or signed out (the anon key). The queue is kept per identity, so a settled
+ * session replays only its own writes. `Initializing` and `RefreshFailure` send the anon key
+ * whoever made the writes, so the gate waits them out. `RefreshFailure` is the case that bites in
+ * practice: the queue is non-empty precisely because the device was offline, which is also what
  * leaves the token expired and the refresh unlanded on the reconnect edge.
  */
 class AuthSessionSettlingTest {
@@ -23,15 +25,17 @@ class AuthSessionSettlingTest {
     @Test
     fun authenticated_is_replay_safe() {
         // Given — a live session; the only status whose requests carry the user JWT
-        val status = SessionStatus.Authenticated(
-            session = UserSession(
-                accessToken = "header.payload.sig",
-                refreshToken = "refresh-token",
-                expiresIn = 3600,
-                tokenType = "bearer",
-                user = null,
-            ),
-        )
+        val status =
+            SessionStatus.Authenticated(
+                session =
+                    UserSession(
+                        accessToken = "header.payload.sig",
+                        refreshToken = "refresh-token",
+                        expiresIn = 3600,
+                        tokenType = "bearer",
+                        user = null,
+                    )
+            )
 
         // When / Then
         assertTrue(isReplaySafeSessionStatus(status))
@@ -50,9 +54,10 @@ class AuthSessionSettlingTest {
     fun refresh_failure_is_not_replay_safe() {
         // Given — the post-offline reconnect state: token expired, refresh not yet landed
         @Suppress("DEPRECATION")
-        val status = SessionStatus.RefreshFailure(
-            RefreshFailureCause.NetworkError(Exception("connect failed: airplane mode")),
-        )
+        val status =
+            SessionStatus.RefreshFailure(
+                RefreshFailureCause.NetworkError(Exception("connect failed: airplane mode"))
+            )
 
         // When / Then — currentSessionOrNull() is null here too; deferring keeps the queue
         assertFalse(isReplaySafeSessionStatus(status))

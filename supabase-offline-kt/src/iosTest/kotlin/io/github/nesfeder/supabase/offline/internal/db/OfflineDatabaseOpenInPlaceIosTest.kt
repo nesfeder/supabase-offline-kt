@@ -1,13 +1,15 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingRoomCallback
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.SYSTEM
 
 /**
  * Persistence continuity on iOS: a `supabase_offline.db` written by an install of the engine's
@@ -16,12 +18,14 @@ import kotlin.test.assertEquals
  *
  * Opening also proves the identity hash compiled into this build equals the shipped one: Room
  * checks `room_master_table` against its generated hash on open and refuses a mismatch. A schema
- * version 1 file must likewise migrate in place, through `MIGRATION_1_2`, keeping its queued writes.
+ * version 1 file must likewise migrate in place, through `MIGRATION_1_2`, keeping its queued
+ * writes.
  */
 class OfflineDatabaseOpenInPlaceIosTest {
 
-    private val directory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
-        "supabase-offline-open-in-place-${Random.nextLong()}"
+    private val directory =
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "supabase-offline-open-in-place-${Random.nextLong()}"
 
     @AfterTest
     fun tearDown() {
@@ -38,19 +42,26 @@ class OfflineDatabaseOpenInPlaceIosTest {
 
         // When — opened the way createSupabaseOfflineClient opens it
         val database = getRoomDatabase(getDatabaseBuilder(dbPath).addCallback(callback))
-        val contents = try {
-            database.readShippedFixtureContents()
-        } finally {
-            database.close()
-        }
+        val contents =
+            try {
+                database.readShippedFixtureContents()
+            } finally {
+                database.close()
+            }
 
         // Then — every row reads back; Room neither created nor recreated the file
         assertEquals(SHIPPED_FIXTURE_CONTENTS, contents)
         assertEquals(0, callback.creates, "the existing database must not be created again")
         assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
         assertEquals(1, callback.opens)
-        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath, defaultSQLiteDriver()))
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath, defaultSQLiteDriver()))
+        assertEquals(
+            ShippedDatabaseFixture.VERSION,
+            ShippedDatabaseFixture.readUserVersion(dbPath, defaultSQLiteDriver()),
+        )
+        assertEquals(
+            ShippedDatabaseFixture.IDENTITY_HASH,
+            ShippedDatabaseFixture.readIdentityHash(dbPath, defaultSQLiteDriver()),
+        )
     }
 
     @Test
@@ -63,19 +74,26 @@ class OfflineDatabaseOpenInPlaceIosTest {
 
         // When — opened the way createSupabaseOfflineClient opens it
         val database = getRoomDatabase(getDatabaseBuilder(dbPath).addCallback(callback))
-        val contents = try {
-            database.readShippedFixtureContents()
-        } finally {
-            database.close()
-        }
+        val contents =
+            try {
+                database.readShippedFixtureContents()
+            } finally {
+                database.close()
+            }
 
         // Then — MIGRATION_1_2 carried every queued write across; nothing was recreated
         assertEquals(SHIPPED_VERSION_1_FIXTURE_CONTENTS_AFTER_MIGRATION, contents)
         assertEquals(0, callback.creates, "the existing database must not be created again")
         assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
         assertEquals(1, callback.opens)
-        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(dbPath, defaultSQLiteDriver()))
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, ShippedDatabaseFixture.readIdentityHash(dbPath, defaultSQLiteDriver()))
+        assertEquals(
+            ShippedDatabaseFixture.VERSION,
+            ShippedDatabaseFixture.readUserVersion(dbPath, defaultSQLiteDriver()),
+        )
+        assertEquals(
+            ShippedDatabaseFixture.IDENTITY_HASH,
+            ShippedDatabaseFixture.readIdentityHash(dbPath, defaultSQLiteDriver()),
+        )
     }
 
     @Test
@@ -88,11 +106,12 @@ class OfflineDatabaseOpenInPlaceIosTest {
         val server = shippedQueueServer()
 
         // When — the queue replays through a real store over the database's DAOs
-        val (synced, pendingAfter) = try {
-            database.replayShippedQueue(server) to database.mutationDao().pendingAll()
-        } finally {
-            database.close()
-        }
+        val (synced, pendingAfter) =
+            try {
+                database.replayShippedQueue(server) to database.mutationDao().pendingAll()
+            } finally {
+                database.close()
+            }
 
         // Then — each queued write reaches the server with its filter and options intact
         assertEquals(4, synced)

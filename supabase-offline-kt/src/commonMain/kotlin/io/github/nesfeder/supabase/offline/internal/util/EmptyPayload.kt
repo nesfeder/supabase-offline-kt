@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.util
 
 /**
@@ -21,11 +23,11 @@ internal const val EMPTY_JSON_ARRAY: String = "[]"
  *
  * This is the single definition shared by the two seams that both have to agree on "is this
  * response empty": the cache-write guard in
- * [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.addPayload], which never persists an empty that
- * wasn't attributed to an authenticated session, and the restore-window retries in
- * [io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResolver], which re-issue a SELECT whose
- * emptiness may be a cold-start auth artifact. They were byte-identical private copies; a
- * divergence between them would let one seam retry a body the other happily cached.
+ * [io.github.nesfeder.supabase.offline.internal.db.OfflineStore.addPayload], which never persists
+ * an empty that wasn't attributed to an authenticated session, and the restore-window retries in
+ * [io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResolver], which re-issue a
+ * SELECT whose emptiness may be a cold-start auth artifact. They were byte-identical private
+ * copies; a divergence between them would let one seam retry a body the other happily cached.
  *
  * **Not every blank body means "no rows".** A `head = true` / count-only SELECT legitimately
  * answers with an empty body and its row count in the `Content-Range` header, and this predicate

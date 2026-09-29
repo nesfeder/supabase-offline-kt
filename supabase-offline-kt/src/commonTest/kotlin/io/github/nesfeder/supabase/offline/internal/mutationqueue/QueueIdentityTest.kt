@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.jan.supabase.auth.status.RefreshFailureCause
@@ -5,11 +7,11 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserInfo
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlinx.coroutines.test.runTest
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlinx.coroutines.test.runTest
 
 /**
  * Whose writes the queue holds: the signed-in user, the same user while their session restores or
@@ -45,7 +47,8 @@ class QueueIdentityTest {
     fun a_refreshing_session_is_still_its_stored_user() = runTest {
         // Given — offline with an expired token: the usual state when writes are queued
         @Suppress("DEPRECATION")
-        val status = SessionStatus.RefreshFailure(RefreshFailureCause.NetworkError(Exception("offline")))
+        val status =
+            SessionStatus.RefreshFailure(RefreshFailureCause.NetworkError(Exception("offline")))
 
         // When
         val identity = queueIdentityFor(status) { session(userId = "user-a") }
@@ -75,7 +78,10 @@ class QueueIdentityTest {
     @Test
     fun signed_out_is_anonymous() = runTest {
         // Given / When
-        val identity = queueIdentityFor(SessionStatus.NotAuthenticated(isSignOut = true)) { error("not needed") }
+        val identity =
+            queueIdentityFor(SessionStatus.NotAuthenticated(isSignOut = true)) {
+                error("not needed")
+            }
 
         // Then
         assertEquals(QueueIdentity.Anonymous, identity)
@@ -105,13 +111,14 @@ class QueueIdentityTest {
         assertEquals("anonymous", QueueIdentity.Anonymous.storedValue)
     }
 
-    private fun session(userId: String?, subject: String? = userId): UserSession = UserSession(
-        accessToken = jwt(subject),
-        refreshToken = "refresh-token",
-        expiresIn = 3600,
-        tokenType = "bearer",
-        user = userId?.let { id -> UserInfo(aud = "authenticated", id = id) },
-    )
+    private fun session(userId: String?, subject: String? = userId): UserSession =
+        UserSession(
+            accessToken = jwt(subject),
+            refreshToken = "refresh-token",
+            expiresIn = 3600,
+            tokenType = "bearer",
+            user = userId?.let { id -> UserInfo(aud = "authenticated", id = id) },
+        )
 
     private fun jwt(subject: String?): String {
         val encoder = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.HttpRequestException
@@ -11,14 +13,14 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * The queue-or-rethrow decision each mutation verb makes when its request fails.
@@ -38,13 +40,15 @@ class OfflineMutationQueueDecisionTest {
     private val server = RecordingPostgrestServer()
     private val mutationDao = FakeMutationDao()
     private val logger = RecordingOfflineLogger()
-    private val builder = OfflinePostgrestQueryBuilderImpl(
-        delegate = server.supabaseClient().postgrest.from(TABLE),
-        store = newTestOfflineStore(mutationDao = mutationDao),
-        sdkLogger = logger.asSdkLogger(),
-    )
+    private val builder =
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = newTestOfflineStore(mutationDao = mutationDao),
+            sdkLogger = logger.asSdkLogger(),
+        )
 
-    private suspend fun insert(strategy: MutationStrategy): MutationOutcome = builder.insertJson(ROWS, strategy)
+    private suspend fun insert(strategy: MutationStrategy): MutationOutcome =
+        builder.insertJson(ROWS, strategy)
 
     private suspend fun upsert(strategy: MutationStrategy): MutationOutcome =
         builder.upsertJson(ROWS, strategy) { onConflict = "id" }
@@ -302,8 +306,8 @@ class OfflineMutationQueueDecisionTest {
     /**
      * Inverted: an UPDATE with no filter used to be queued and then refused and dropped at replay,
      * so the caller was told "queued" for a write that would never be sent. It is now refused at
-     * enqueue, like any other write the queue cannot replay faithfully, and the original failure
-     * is rethrown.
+     * enqueue, like any other write the queue cannot replay faithfully, and the original failure is
+     * rethrown.
      */
     @Test
     fun an_unfiltered_update_is_refused_for_queueing_and_rethrows() = runTest {
@@ -311,7 +315,9 @@ class OfflineMutationQueueDecisionTest {
         failWithConnectivity()
 
         // When / Then
-        assertFailsWith<HttpRequestException> { builder.updateJson(PATCH, MutationStrategy.QueueIfOffline) }
+        assertFailsWith<HttpRequestException> {
+            builder.updateJson(PATCH, MutationStrategy.QueueIfOffline)
+        }
         assertTrue(mutationDao.inserted.isEmpty())
     }
 
@@ -357,9 +363,15 @@ class OfflineMutationQueueDecisionTest {
         insert(MutationStrategy.QueueIfOffline)
 
         // Then — the queue is reported at INFO, the row data only at DEBUG
-        assertTrue(logger.entriesAt(OfflineLogLevel.INFO).any { it.message == "INSERT $TABLE queued offline (network unavailable)" })
         assertTrue(
-            logger.entries.filter { it.level != OfflineLogLevel.DEBUG }.none { it.message.contains(SECRET_VALUE) },
+            logger.entriesAt(OfflineLogLevel.INFO).any {
+                it.message == "INSERT $TABLE queued offline (network unavailable)"
+            }
+        )
+        assertTrue(
+            logger.entries
+                .filter { it.level != OfflineLogLevel.DEBUG }
+                .none { it.message.contains(SECRET_VALUE) },
             "row data must never be logged above DEBUG",
         )
     }
@@ -367,8 +379,10 @@ class OfflineMutationQueueDecisionTest {
     private companion object {
         const val TABLE = "todos"
         const val SECRET_VALUE = "private-row-value"
-        val ROWS: JsonArray = Json.parseToJsonElement("""[{"id":1,"title":"$SECRET_VALUE"}]""") as JsonArray
+        val ROWS: JsonArray =
+            Json.parseToJsonElement("""[{"id":1,"title":"$SECRET_VALUE"}]""") as JsonArray
         val PATCH = Json.parseToJsonElement("""{"title":"$SECRET_VALUE"}""")
-        const val ID_FILTER_JSON = """{"conditions":[{"column":"id","operatorId":"eq","value":"1"}]}"""
+        const val ID_FILTER_JSON =
+            """{"conditions":[{"column":"id","operatorId":"eq","value":"1"}]}"""
     }
 }

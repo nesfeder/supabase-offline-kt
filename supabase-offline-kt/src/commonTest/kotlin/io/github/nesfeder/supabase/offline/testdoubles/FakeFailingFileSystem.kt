@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import okio.Buffer
@@ -13,8 +15,8 @@ import okio.Timeout
  * The real file system, with failures a test can switch on: a disk that fills up part-way through
  * writing a file, and a rename the file system refuses. Every other operation reaches the disk.
  *
- * @property failWritesAfterBytes when set, every file sink opened from now on throws once that
- *   many bytes have been written to it.
+ * @property failWritesAfterBytes when set, every file sink opened from now on throws once that many
+ *   bytes have been written to it.
  * @property failMoves when `true`, [atomicMove] throws.
  * @property onSinkOpened runs once a file sink is open, with the file already on disk, on the
  *   thread that opened it.

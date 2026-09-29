@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
@@ -9,15 +11,15 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * The client's entry points, ported from the previous standalone engine: which plugin each one
@@ -76,13 +78,16 @@ class SupabaseOfflineClientTest {
     @Test
     fun storage_returnsOfflineBucketApi() = runTest {
         // Given
-        val client = newTestOfflineClient(
-            supabase = newTestSupabaseClient {
-                install(Postgrest)
-                // An in-memory resumable-upload cache: the default one needs a platform context.
-                install(Storage) { resumable { cache = MemoryResumableCache() } }
-            },
-        )
+        val client =
+            newTestOfflineClient(
+                supabase =
+                    newTestSupabaseClient {
+                        install(Postgrest)
+                        // An in-memory resumable-upload cache: the default one needs a platform
+                        // context.
+                        install(Storage) { resumable { cache = MemoryResumableCache() } }
+                    }
+            )
 
         // When
         val bucket = client.storage("avatars")
@@ -159,7 +164,11 @@ class SupabaseOfflineClientTest {
     fun syncPendingMutations_replays_only_that_table() = runTest {
         // Given — one write queued for each of two tables while the network is down; the second,
         // queued behind the first, would start a pass of its own, which this test keeps idle
-        val client = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = idleCoroutineScope())
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                coordinatorScope = idleCoroutineScope(),
+            )
         server.answer = { connectivityFailure() }
         client.from("todos").insertJson(ROWS)
         client.from("projects").insertJson(ROWS)
@@ -172,7 +181,10 @@ class SupabaseOfflineClientTest {
         // Then
         assertEquals(1, synced)
         assertEquals(listOf("todos"), server.requests.map { it.table })
-        assertEquals(0 to 1, client.pendingMutationCount("todos") to client.pendingMutationCount("projects"))
+        assertEquals(
+            0 to 1,
+            client.pendingMutationCount("todos") to client.pendingMutationCount("projects"),
+        )
     }
 
     private companion object {

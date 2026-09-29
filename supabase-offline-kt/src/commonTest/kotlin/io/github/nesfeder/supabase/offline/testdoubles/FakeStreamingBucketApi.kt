@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.network.HttpRequestOverride
@@ -23,10 +25,17 @@ internal class FakeStreamingBucketApi(
     private val onProgress: (Long) -> Unit = {},
 ) : BucketApi by inner {
 
-    override suspend fun downloadAuthenticated(path: String, channel: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) {
+    override suspend fun downloadAuthenticated(
+        path: String,
+        channel: ByteWriteChannel,
+        options: DownloadOptionBuilder.() -> Unit,
+    ) {
         val overrides = mutableListOf<HttpRequestOverride>()
         DownloadOptionBuilder(httpRequestOverrides = overrides).apply(options)
-        val request = HttpRequestBuilder().apply { url("$TEST_SUPABASE_URL/storage/v1/object/authenticated/$bucketId/$path") }
+        val request =
+            HttpRequestBuilder().apply {
+                url("$TEST_SUPABASE_URL/storage/v1/object/authenticated/$bucketId/$path")
+            }
         overrides.forEach { override -> request.override() }
         val chunk = ByteArray(CHUNK_BYTES) { 7 }
         var written = 0L

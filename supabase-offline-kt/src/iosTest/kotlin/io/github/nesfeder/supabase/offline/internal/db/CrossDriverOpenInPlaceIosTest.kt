@@ -1,13 +1,15 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingRoomCallback
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.SYSTEM
 
 /**
  * A database file written by the other SQLite library opens in place under this build's.
@@ -19,7 +21,8 @@ import kotlin.test.assertEquals
  */
 class CrossDriverOpenInPlaceIosTest {
 
-    private val directory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-cross-driver-${Random.nextLong()}"
+    private val directory =
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-cross-driver-${Random.nextLong()}"
     private val databaseFile = directory / "supabase_offline.db"
 
     @AfterTest
@@ -37,17 +40,22 @@ class CrossDriverOpenInPlaceIosTest {
         // Given — the other library's file; its header says which SQLite last wrote it
         writeOtherDriversFile()
         val header = FileSystem.SYSTEM.read(databaseFile) { readByteArray(100) }
-        val lastWriter = (96 until 100).fold(0) { number, index -> (number shl 8) or (header[index].toInt() and 0xff) }
+        val lastWriter =
+            (96 until 100).fold(0) { number, index ->
+                (number shl 8) or (header[index].toInt() and 0xff)
+            }
         assertEquals(SqliteVariant.otherDriverDatabase.sqliteVersionNumber, lastWriter)
         val callback = RecordingRoomCallback()
 
         // When — opened the way createSupabaseOfflineClient opens it, with this build's SQLite
-        val database = getRoomDatabase(getDatabaseBuilder(databaseFile.toString()).addCallback(callback))
-        val contents = try {
-            database.readShippedFixtureContents()
-        } finally {
-            database.close()
-        }
+        val database =
+            getRoomDatabase(getDatabaseBuilder(databaseFile.toString()).addCallback(callback))
+        val contents =
+            try {
+                database.readShippedFixtureContents()
+            } finally {
+                database.close()
+            }
 
         // Then — every row, nothing recreated
         assertEquals(CROSS_DRIVER_CONTENTS, contents)
@@ -64,11 +72,12 @@ class CrossDriverOpenInPlaceIosTest {
         val server = shippedQueueServer()
 
         // When
-        val (synced, pendingAfter) = try {
-            database.replayShippedQueue(server) to database.mutationDao().pendingAll()
-        } finally {
-            database.close()
-        }
+        val (synced, pendingAfter) =
+            try {
+                database.replayShippedQueue(server) to database.mutationDao().pendingAll()
+            } finally {
+                database.close()
+            }
 
         // Then
         assertEquals(4, synced)

@@ -1,8 +1,10 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 /**
- * What the iOS tests expect of the build they run in: this is the bundled-SQLite build, the
- * default and the one every published artifact is made from.
+ * What the iOS tests expect of the build they run in: this is the bundled-SQLite build, the default
+ * and the one every published artifact is made from.
  */
 internal object SqliteVariant {
 
@@ -19,5 +21,6 @@ internal object SqliteVariant {
      * @param compileOptions what `PRAGMA compile_options` lists.
      * @return `true` for the bundled SQLite.
      */
-    fun isExpectedLibrary(compileOptions: Set<String>): Boolean = "OMIT_LOAD_EXTENSION" !in compileOptions
+    fun isExpectedLibrary(compileOptions: Set<String>): Boolean =
+        "OMIT_LOAD_EXTENSION" !in compileOptions
 }

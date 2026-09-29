@@ -1,6 +1,8 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
-import java.util.Properties
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -38,7 +40,8 @@ kotlin {
     // runs on the bundled SQLite as well; only a build without the bundled library reaches the
     // system one. The system variant exists to run the iOS engine suite on the system SQLite
     // (`-Psupabase.offline.iosSqlite=system`) for the Swift package, which is to link it.
-    // Run it with: ./gradlew :supabase-offline-kt:iosSimulatorArm64Test -Psupabase.offline.iosSqlite=system
+    // Run it with: ./gradlew :supabase-offline-kt:iosSimulatorArm64Test
+    // -Psupabase.offline.iosSqlite=system
     val iosSqlite = providers.gradleProperty("supabase.offline.iosSqlite").getOrElse("bundled")
     check(iosSqlite == "bundled" || iosSqlite == "system") {
         "supabase.offline.iosSqlite must be \"bundled\" or \"system\", was \"$iosSqlite\""
@@ -47,29 +50,31 @@ kotlin {
 
     val xcFramework = XCFramework("SupabaseOffline")
     listOf(
-        iosArm64(),
-        iosSimulatorArm64(),
-    ).forEach { iosTarget ->
-        iosTarget.binaries.framework {
-            baseName = "SupabaseOffline"
-            isStatic = true
+            iosArm64(),
+            iosSimulatorArm64(),
+        )
+        .forEach { iosTarget ->
+            iosTarget.binaries.framework {
+                baseName = "SupabaseOffline"
+                isStatic = true
 
-            // Export dependencies that appear in public API surface
-            export(libs.supabase.postgrest.kt)
-            export(libs.supabase.storage.kt)
-            export(libs.kotlinx.serialization.json)
+                // Export dependencies that appear in public API surface
+                export(libs.supabase.postgrest.kt)
+                export(libs.supabase.storage.kt)
+                export(libs.kotlinx.serialization.json)
 
-            xcFramework.add(this)
-        }
-        if (iosUsesSystemSqlite) {
-            iosTarget.binaries.all {
-                linkerOpts("-lsqlite3")
-                // Room 2.8.4 was built against androidx.sqlite 2.6; this variant links 2.7.1. Any
-                // ABI gap between them has to fail the link, not surface as a crash at runtime.
-                freeCompilerArgs += "-Xpartial-linkage-loglevel=ERROR"
+                xcFramework.add(this)
+            }
+            if (iosUsesSystemSqlite) {
+                iosTarget.binaries.all {
+                    linkerOpts("-lsqlite3")
+                    // Room 2.8.4 was built against androidx.sqlite 2.6; this variant links 2.7.1.
+                    // Any
+                    // ABI gap between them has to fail the link, not surface as a crash at runtime.
+                    freeCompilerArgs += "-Xpartial-linkage-loglevel=ERROR"
+                }
             }
         }
-    }
 
     // Suppress Beta warning for expect/actual classes for all Kotlin targets in this module
     // See: https://youtrack.jetbrains.com/issue/KT-61573
@@ -96,9 +101,13 @@ kotlin {
         }
 
         iosMain {
-            kotlin.srcDir(if (iosUsesSystemSqlite) "src/iosSystemSqliteMain/kotlin" else "src/iosBundledSqliteMain/kotlin")
+            kotlin.srcDir(
+                if (iosUsesSystemSqlite) "src/iosSystemSqliteMain/kotlin"
+                else "src/iosBundledSqliteMain/kotlin"
+            )
             dependencies {
-                // The system variant needs androidx.sqlite 2.7: in 2.6.x the native driver refers to
+                // The system variant needs androidx.sqlite 2.7: in 2.6.x the native driver refers
+                // to
                 // sqlite3_load_extension, which the iOS libsqlite3 does not export, and every open
                 // fails enabling extension loading (SQLITE_MISUSE). Resolving 2.7 also lifts the
                 // variant's androidx.sqlite core to 2.7; the bundled build is untouched.
@@ -106,9 +115,12 @@ kotlin {
                     // Strictly: a newer androidx.sqlite arriving through Room must fail resolution
                     // rather than silently change the SQLite layer this variant was verified on.
                     val systemSqlite = libs.versions.sqlite.system.get()
-                    listOf(libs.androidx.sqlite.framework.system, libs.androidx.sqlite.system).forEach { library ->
-                        implementation(library.get().module.toString()) { version { strictly(systemSqlite) } }
-                    }
+                    listOf(libs.androidx.sqlite.framework.system, libs.androidx.sqlite.system)
+                        .forEach { library ->
+                            implementation(library.get().module.toString()) {
+                                version { strictly(systemSqlite) }
+                            }
+                        }
                 } else {
                     implementation(libs.androidx.sqlite.bundled)
                 }
@@ -122,7 +134,10 @@ kotlin {
         }
 
         iosTest {
-            kotlin.srcDir(if (iosUsesSystemSqlite) "src/iosSystemSqliteTest/kotlin" else "src/iosBundledSqliteTest/kotlin")
+            kotlin.srcDir(
+                if (iosUsesSystemSqlite) "src/iosSystemSqliteTest/kotlin"
+                else "src/iosBundledSqliteTest/kotlin"
+            )
         }
 
         getByName("androidHostTest").dependencies {
@@ -141,7 +156,7 @@ if (providers.gradleProperty("supabase.offline.iosSqlite").orNull == "system") {
         doFirst {
             throw GradleException(
                 "Publishing is disabled with -Psupabase.offline.iosSqlite=system: that build is for the Swift " +
-                    "package and the system-SQLite test run only. Publish from a build without the property.",
+                    "package and the system-SQLite test run only. Publish from a build without the property."
             )
         }
     }
@@ -171,8 +186,11 @@ fun hostSqliteNativeEntry(): String {
     val arch = System.getProperty("os.arch").lowercase()
     val arm = arch == "aarch64" || arch == "arm64"
     return when {
-        "mac" in os -> if (arm) "natives/osx_arm64/libsqliteJni.dylib" else "natives/osx_x64/libsqliteJni.dylib"
-        "linux" in os -> if (arm) "natives/linux_arm64/libsqliteJni.so" else "natives/linux_x64/libsqliteJni.so"
+        "mac" in os ->
+            if (arm) "natives/osx_arm64/libsqliteJni.dylib"
+            else "natives/osx_x64/libsqliteJni.dylib"
+        "linux" in os ->
+            if (arm) "natives/linux_arm64/libsqliteJni.so" else "natives/linux_x64/libsqliteJni.so"
         "windows" in os -> "natives/windows_x64/sqliteJni.dll"
         else -> error("No host SQLite binary for $os/$arch")
     }
@@ -184,17 +202,13 @@ abstract class ExtractHostSqliteNative : DefaultTask() {
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val driverJar: ConfigurableFileCollection
 
-    @get:Input
-    abstract val nativeEntry: Property<String>
+    @get:Input abstract val nativeEntry: Property<String>
 
-    @get:OutputDirectory
-    abstract val outputDirectory: DirectoryProperty
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
 
-    @get:Inject
-    abstract val archives: ArchiveOperations
+    @get:Inject abstract val archives: ArchiveOperations
 
-    @get:Inject
-    abstract val fileSystem: FileSystemOperations
+    @get:Inject abstract val fileSystem: FileSystemOperations
 
     @TaskAction
     fun extract() {
@@ -210,43 +224,48 @@ abstract class ExtractHostSqliteNative : DefaultTask() {
 
 /** Points the Android driver's native loader at the extracted host binary. */
 class HostSqliteNativeArguments(
-    @get:InputDirectory
-    @get:PathSensitive(PathSensitivity.NONE)
-    val directory: Provider<Directory>,
-    @get:Input
-    val libraryName: String,
+    @get:InputDirectory @get:PathSensitive(PathSensitivity.NONE) val directory: Provider<Directory>,
+    @get:Input val libraryName: String,
 ) : CommandLineArgumentProvider {
-    override fun asArguments(): Iterable<String> = listOf(
-        "-Dandroidx.sqlite.driver.bundled.path=${directory.get().asFile.absolutePath}",
-        "-Dandroidx.sqlite.driver.bundled.name=$libraryName",
-    )
+    override fun asArguments(): Iterable<String> =
+        listOf(
+            "-Dandroidx.sqlite.driver.bundled.path=${directory.get().asFile.absolutePath}",
+            "-Dandroidx.sqlite.driver.bundled.name=$libraryName",
+        )
 }
 
-val extractHostSqliteNative = tasks.register<ExtractHostSqliteNative>("extractHostSqliteNative") {
-    driverJar.from(hostSqliteNative)
-    nativeEntry.set(hostSqliteNativeEntry())
-    outputDirectory.set(layout.buildDirectory.dir("host-sqlite-native"))
-}
+val extractHostSqliteNative =
+    tasks.register<ExtractHostSqliteNative>("extractHostSqliteNative") {
+        driverJar.from(hostSqliteNative)
+        nativeEntry.set(hostSqliteNativeEntry())
+        outputDirectory.set(layout.buildDirectory.dir("host-sqlite-native"))
+    }
 
-/** Tells the schema-continuity test where the checked-in Room schemas are, whatever the working directory. */
+/**
+ * Tells the schema-continuity test where the checked-in Room schemas are, whatever the working
+ * directory.
+ */
 class SchemaDirectoryArgument(
-    @get:InputDirectory
-    @get:PathSensitive(PathSensitivity.RELATIVE)
-    val directory: File,
+    @get:InputDirectory @get:PathSensitive(PathSensitivity.RELATIVE) val directory: File
 ) : CommandLineArgumentProvider {
     override fun asArguments(): Iterable<String> =
         listOf("-Dsupabase.offline.schemaDirectory=${directory.absolutePath}")
 }
 
-tasks.withType<Test>().matching { it.name == "testAndroidHostTest" }.configureEach {
-    jvmArgumentProviders.add(
-        HostSqliteNativeArguments(
-            directory = extractHostSqliteNative.flatMap { it.outputDirectory },
-            libraryName = hostSqliteNativeEntry().substringAfterLast('/'),
-        ),
-    )
-    jvmArgumentProviders.add(SchemaDirectoryArgument(layout.projectDirectory.dir("schemas").asFile))
-}
+tasks
+    .withType<Test>()
+    .matching { it.name == "testAndroidHostTest" }
+    .configureEach {
+        jvmArgumentProviders.add(
+            HostSqliteNativeArguments(
+                directory = extractHostSqliteNative.flatMap { it.outputDirectory },
+                libraryName = hostSqliteNativeEntry().substringAfterLast('/'),
+            )
+        )
+        jvmArgumentProviders.add(
+            SchemaDirectoryArgument(layout.projectDirectory.dir("schemas").asFile)
+        )
+    }
 
 room {
     schemaDirectory("$projectDir/schemas")
@@ -262,10 +281,11 @@ kover {
                     "*.*_Impl*",
                     "*.*Database*",
                     "*.*Entities*",
-                    // Exclude synthetic/default interface implementation wrappers generated by Kotlin
+                    // Exclude synthetic/default interface implementation wrappers generated by
+                    // Kotlin
                     "*.*DefaultImpls*",
                     // Exclude the interface-level bridge class that only contains delegation stubs
-                    "io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder"
+                    "io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder",
                 )
             }
         }
@@ -273,16 +293,21 @@ kover {
 }
 
 group = "io.github.nesfeder.supabase-offline-kt"
+
 version = "1.0.0"
 
 val githubProps = runCatching {
     Properties().apply {
         load(rootProject.file("github.properties").inputStream())
     }
-}.onFailure {
-    println("Warning: Could not load github.properties for publishing: ${it.message}. " +
-            "Make sure to place the file in the root project directory with 'username' and 'token' properties.")
-}.getOrNull()
+}
+    .onFailure {
+        println(
+            "Warning: Could not load github.properties for publishing: ${it.message}. " +
+                "Make sure to place the file in the root project directory with 'username' and 'token' properties."
+        )
+    }
+    .getOrNull()
 
 if (githubProps != null) {
     publishing {

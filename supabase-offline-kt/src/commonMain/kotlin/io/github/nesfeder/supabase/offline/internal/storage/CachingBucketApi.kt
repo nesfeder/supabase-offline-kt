@@ -1,12 +1,14 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.DownloadOptionBuilder
-import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.jan.supabase.storage.FileObject
 import io.github.jan.supabase.storage.FileObjectV2
+import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.jan.supabase.storage.PurgeCacheOptions
 import io.github.jan.supabase.storage.SignedUrl
 import io.github.jan.supabase.storage.SignedUrlBuilder
@@ -27,6 +29,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
+import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -39,7 +42,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okio.IOException
-import kotlin.time.Duration
 
 /** HTTP status returned by the server for an object that no longer exists. */
 private const val HTTP_NOT_FOUND = 404
@@ -48,9 +50,10 @@ private const val HTTP_NOT_FOUND = 404
 private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
 
 /**
- * The offline client's [OfflineBucketApi]: supabase-kt's bucket, with downloads cached in the client's
- * [StorageFileCache]. Every member that can change the server's copy of a path is overridden, its
- * convenience overloads included, so stale copies are dropped; every member passes the client's gate.
+ * The offline client's [OfflineBucketApi]: supabase-kt's bucket, with downloads cached in the
+ * client's [StorageFileCache]. Every member that can change the server's copy of a path is
+ * overridden, its convenience overloads included, so stale copies are dropped; every member passes
+ * the client's gate.
  *
  * @param sdkLogger messages at INFO and above name the bucket, never the object path.
  * @param backgroundScope the client's own scope, which closing the client cancels.
@@ -65,7 +68,14 @@ internal class CachingBucketApi(
 ) : OfflineBucketApi, BucketApi by delegate {
 
     override fun setHeader(name: String, value: String): OfflineBucketApi =
-        CachingBucketApi(delegate.setHeader(name, value), cache, sdkLogger, backgroundScope, operationGate, renderImagePath)
+        CachingBucketApi(
+            delegate.setHeader(name, value),
+            cache,
+            sdkLogger,
+            backgroundScope,
+            operationGate,
+            renderImagePath,
+        )
 
     override val resumable: ResumableClient by lazy {
         InvalidatingResumableClient(
@@ -87,48 +97,73 @@ internal class CachingBucketApi(
 
     /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
     private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
-        val entry = cache.entryFor(bucketId, path)
-            ?: throw IllegalArgumentException(
-                "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
-                    "or '..' segment, a '\\' or a control character",
-            )
-        cache.lookup(entry)?.let { return it }
+        val entry =
+            cache.entryFor(bucketId, path)
+                ?: throw IllegalArgumentException(
+                    "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
+                        "or '..' segment, a '\\' or a control character"
+                )
+        cache.lookup(entry)?.let {
+            return it
+        }
         val generation = cache.currentGeneration()
         val file = OwnedTemporaryFile()
         try {
-            val download = try {
-                downloadToTemporaryFile(file, entryProvider = { entry }) { target ->
-                    if (isPublic) delegate.downloadPublic(path, target) { } else delegate.downloadAuthenticated(path, target) { }
+            val download =
+                try {
+                    downloadToTemporaryFile(file, entryProvider = { entry }) { target ->
+                        if (isPublic) delegate.downloadPublic(path, target) {}
+                        else delegate.downloadAuthenticated(path, target) {}
+                    }
+                } catch (failure: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    if (failure.indicatesServerObjectMissing())
+                        cache.invalidateObject(bucketId, path)
+                    throw failure
                 }
-            } catch (failure: Exception) {
-                currentCoroutineContext().ensureActive()
-                if (failure.indicatesServerObjectMissing()) cache.invalidateObject(bucketId, path)
-                throw failure
-            }
-            val temporary = when (download) {
-                is StreamedDownload.Written -> download.temporary
-                is StreamedDownload.CacheRefused -> throw IOException("The file cache could not store the download", download.cause)
-                StreamedDownload.Uncacheable -> error("A known cache entry was reported uncacheable")
-            }
+            val temporary =
+                when (download) {
+                    is StreamedDownload.Written -> download.temporary
+                    is StreamedDownload.CacheRefused ->
+                        throw IOException(
+                            "The file cache could not store the download",
+                            download.cause,
+                        )
+                    StreamedDownload.Uncacheable ->
+                        error("A known cache entry was reported uncacheable")
+                }
             when (cache.commit(temporary, generation)) {
                 CommitOutcome.COMMITTED -> file.temporary = null
-                CommitOutcome.CLEARED -> throw IllegalStateException("Local data was cleared while this file was downloading")
-                CommitOutcome.FAILED -> throw IOException("The file cache could not store the download")
+                CommitOutcome.CLEARED ->
+                    throw IllegalStateException(
+                        "Local data was cleared while this file was downloading"
+                    )
+                CommitOutcome.FAILED ->
+                    throw IOException("The file cache could not store the download")
             }
         } finally {
             file.discard()
         }
-        return cache.lookup(entry) ?: throw IOException("The downloaded file left the cache before it could be returned")
+        return cache.lookup(entry)
+            ?: throw IOException("The downloaded file left the cache before it could be returned")
     }
 
     // ───────────────────────────────── Downloads ─────────────────────────────────
 
-    override suspend fun downloadAuthenticated(path: String, options: DownloadOptionBuilder.() -> Unit): ByteArray =
+    override suspend fun downloadAuthenticated(
+        path: String,
+        options: DownloadOptionBuilder.() -> Unit,
+    ): ByteArray =
         operationGate.cancellableCall(backgroundScope) {
-            downloadBytes(path) { wrapped -> delegate.downloadAuthenticated(path, wrapped(options)) }
+            downloadBytes(path) { wrapped ->
+                delegate.downloadAuthenticated(path, wrapped(options))
+            }
         }
 
-    override suspend fun downloadPublic(path: String, options: DownloadOptionBuilder.() -> Unit): ByteArray =
+    override suspend fun downloadPublic(
+        path: String,
+        options: DownloadOptionBuilder.() -> Unit,
+    ): ByteArray =
         operationGate.cancellableCall(backgroundScope) {
             downloadBytes(path) { wrapped -> delegate.downloadPublic(path, wrapped(options)) }
         }
@@ -137,53 +172,63 @@ internal class CachingBucketApi(
         path: String,
         channel: ByteWriteChannel,
         options: DownloadOptionBuilder.() -> Unit,
-    ): Unit = operationGate.cancellableCall(backgroundScope) {
-        downloadToChannel(path, channel, options) { target, wrappedOptions ->
-            delegate.downloadAuthenticated(path, target, wrappedOptions)
+    ): Unit =
+        operationGate.cancellableCall(backgroundScope) {
+            downloadToChannel(path, channel, options) { target, wrappedOptions ->
+                delegate.downloadAuthenticated(path, target, wrappedOptions)
+            }
         }
-    }
 
     override suspend fun downloadPublic(
         path: String,
         channel: ByteWriteChannel,
         options: DownloadOptionBuilder.() -> Unit,
-    ): Unit = operationGate.cancellableCall(backgroundScope) {
-        downloadToChannel(path, channel, options) { target, wrappedOptions ->
-            delegate.downloadPublic(path, target, wrappedOptions)
+    ): Unit =
+        operationGate.cancellableCall(backgroundScope) {
+            downloadToChannel(path, channel, options) { target, wrappedOptions ->
+                delegate.downloadPublic(path, target, wrappedOptions)
+            }
         }
-    }
 
     /**
-     * A download returning its bytes. They are in memory anyway — that is what the caller asked
-     * for — so the cache copy is written from them after the download, and a failure to write it
-     * is logged, never thrown.
+     * A download returning its bytes. They are in memory anyway — that is what the caller asked for
+     * — so the cache copy is written from them after the download, and a failure to write it is
+     * logged, never thrown.
      */
     private suspend fun downloadBytes(
         path: String,
-        fetch: suspend (wrap: (DownloadOptionBuilder.() -> Unit) -> (DownloadOptionBuilder.() -> Unit)) -> ByteArray,
+        fetch:
+            suspend (
+                wrap: (DownloadOptionBuilder.() -> Unit) -> (DownloadOptionBuilder.() -> Unit)
+            ) -> ByteArray,
     ): ByteArray {
         sdkLogger.debug { "Storage download $bucketId/$path attempting network" }
         val probe = DownloadRequestProbe(renderImagePath)
         val generation = cache.currentGeneration()
-        val bytes = try {
-            fetch(probe::wrap)
-        } catch (failure: Exception) {
-            currentCoroutineContext().ensureActive()
-            return recover(path, probe, failure) { entry -> cache.readBytes(entry) }
+        val bytes =
+            try {
+                fetch(probe::wrap)
+            } catch (failure: Exception) {
+                currentCoroutineContext().ensureActive()
+                return recover(path, probe, failure) { entry -> cache.readBytes(entry) }
+            }
+        probe.entryToStore(cache, bucketId, path)?.let { entry ->
+            cache.write(entry, bytes, generation)
         }
-        probe.entryToStore(cache, bucketId, path)?.let { entry -> cache.write(entry, bytes, generation) }
         return bytes
     }
 
     /**
-     * A download into the caller's channel, streamed through a temporary file so it is never held in
-     * memory. [channel] gets nothing until the download is complete, then is closed, as supabase-kt does.
+     * A download into the caller's channel, streamed through a temporary file so it is never held
+     * in memory. [channel] gets nothing until the download is complete, then is closed, as
+     * supabase-kt does.
      */
     private suspend fun downloadToChannel(
         path: String,
         channel: ByteWriteChannel,
         options: DownloadOptionBuilder.() -> Unit,
-        fetch: suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit,
+        fetch:
+            suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit,
     ) {
         sdkLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!isCacheableObjectPath(path) || !isCacheableBucketId(bucketId)) {
@@ -194,21 +239,31 @@ internal class CachingBucketApi(
         val generation = cache.currentGeneration()
         val file = OwnedTemporaryFile()
         try {
-            val download = try {
-                downloadToTemporaryFile(file, entryProvider = { probe.entryToStore(cache, bucketId, path) }) { target ->
-                    fetch(target, probe.wrap(options))
+            val download =
+                try {
+                    downloadToTemporaryFile(
+                        file,
+                        entryProvider = { probe.entryToStore(cache, bucketId, path) },
+                    ) { target ->
+                        fetch(target, probe.wrap(options))
+                    }
+                } catch (failure: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    recover(path, probe, failure) { entry ->
+                        if (cache.copyTo(entry, channel)) Unit else null
+                    }
+                    channel.flushAndClose()
+                    return
                 }
-            } catch (failure: Exception) {
-                currentCoroutineContext().ensureActive()
-                recover(path, probe, failure) { entry -> if (cache.copyTo(entry, channel)) Unit else null }
-                channel.flushAndClose()
-                return
-            }
             when (download) {
-                is StreamedDownload.Written -> deliver(file, download.temporary, generation, channel)
-                is StreamedDownload.CacheRefused, StreamedDownload.Uncacheable -> {
-                    // The disk refused the copy (logged when it did), or the variant could not be told:
-                    // fetch again straight into the caller's channel rather than fail a good download.
+                is StreamedDownload.Written ->
+                    deliver(file, download.temporary, generation, channel)
+                is StreamedDownload.CacheRefused,
+                StreamedDownload.Uncacheable -> {
+                    // The disk refused the copy (logged when it did), or the variant could not be
+                    // told:
+                    // fetch again straight into the caller's channel rather than fail a good
+                    // download.
                     fetch(channel, options)
                     return
                 }
@@ -220,7 +275,12 @@ internal class CachingBucketApi(
     }
 
     /** Commits a finished download, then streams the cache's copy (or the uncommitted file) out. */
-    private suspend fun deliver(file: OwnedTemporaryFile, temporary: TemporaryDownload, generation: Long, channel: ByteWriteChannel) {
+    private suspend fun deliver(
+        file: OwnedTemporaryFile,
+        temporary: TemporaryDownload,
+        generation: Long,
+        channel: ByteWriteChannel,
+    ) {
         when (cache.commit(temporary, generation)) {
             CommitOutcome.COMMITTED -> {
                 file.temporary = null
@@ -229,14 +289,15 @@ internal class CachingBucketApi(
                 }
             }
             // The call's own clean-up discards the file once it has been read
-            CommitOutcome.CLEARED, CommitOutcome.FAILED -> cache.copyFile(temporary.path, channel)
+            CommitOutcome.CLEARED,
+            CommitOutcome.FAILED -> cache.copyFile(temporary.path, channel)
         }
     }
 
     /**
-     * What a failed download returns instead of its failure. When the server says the object is gone,
-     * nothing: its copies are dropped and the failure rethrown. Otherwise the cached copy of the
-     * variant asked for, or of the original when the request was never built.
+     * What a failed download returns instead of its failure. When the server says the object is
+     * gone, nothing: its copies are dropped and the failure rethrown. Otherwise the cached copy of
+     * the variant asked for, or of the original when the request was never built.
      */
     private suspend fun <T : Any> recover(
         path: String,
@@ -246,7 +307,9 @@ internal class CachingBucketApi(
     ): T {
         if (failure.indicatesServerObjectMissing()) {
             cache.invalidateObject(bucketId, path)
-            sdkLogger.warning { "Storage object in $bucketId no longer exists; dropped its cached copy" }
+            sdkLogger.warning {
+                "Storage object in $bucketId no longer exists; dropped its cached copy"
+            }
             throw failure
         }
         val cached = probe.entryToServe(cache, bucketId, path)?.let { entry -> readCached(entry) }
@@ -271,9 +334,9 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Streams [fetch] into a temporary file for the entry [entryProvider] names once bytes arrive and
-     * the variant is known. A failed download deletes the file and rethrows; a disk that refuses it
-     * cancels the download and reports [StreamedDownload.CacheRefused].
+     * Streams [fetch] into a temporary file for the entry [entryProvider] names once bytes arrive
+     * and the variant is known. A failed download deletes the file and rethrows; a disk that
+     * refuses it cancels the download and reports [StreamedDownload.CacheRefused].
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
@@ -297,24 +360,44 @@ internal class CachingBucketApi(
                 val read = readOrRethrow(pipe, buffer) { producer.await() }
                 if (read < 0) break
                 if (read == 0) continue
-                val target = file.temporary ?: file.open(entryProvider())
-                    ?: return@coroutineScope abandon(producer, pipe, cause = null, uncacheable = entryProvider() == null)
+                val target =
+                    file.temporary
+                        ?: file.open(entryProvider())
+                        ?: return@coroutineScope abandon(
+                            producer,
+                            pipe,
+                            cause = null,
+                            uncacheable = entryProvider() == null,
+                        )
                 try {
                     withContext(Dispatchers.IO) { target.sink.write(buffer, 0, read) }
                 } catch (failure: IOException) {
-                    sdkLogger.warning { "Storage cache could not write a download (${failure::class.simpleName}); not caching" }
-                    return@coroutineScope abandon(producer, pipe, cause = failure, uncacheable = false)
+                    sdkLogger.warning {
+                        "Storage cache could not write a download (${failure::class.simpleName}); not caching"
+                    }
+                    return@coroutineScope abandon(
+                        producer,
+                        pipe,
+                        cause = failure,
+                        uncacheable = false,
+                    )
                 }
             }
             producer.await()
-            val target = file.temporary ?: file.open(entryProvider())
-                ?: return@coroutineScope if (entryProvider() == null) StreamedDownload.Uncacheable else StreamedDownload.CacheRefused(null)
+            val target =
+                file.temporary
+                    ?: file.open(entryProvider())
+                    ?: return@coroutineScope if (entryProvider() == null)
+                        StreamedDownload.Uncacheable
+                    else StreamedDownload.CacheRefused(null)
             // The sink buffers; a full disk can surface only here. Past this point the temporary
             // file holds every byte, so it can be served even if the rename that follows fails.
             try {
                 withContext(Dispatchers.IO) { target.sink.flush() }
             } catch (failure: IOException) {
-                sdkLogger.warning { "Storage cache could not write a download (${failure::class.simpleName}); not caching" }
+                sdkLogger.warning {
+                    "Storage cache could not write a download (${failure::class.simpleName}); not caching"
+                }
                 return@coroutineScope StreamedDownload.CacheRefused(failure)
             }
             completed = true
@@ -326,12 +409,16 @@ internal class CachingBucketApi(
 
     /**
      * The temporary file one download writes. The call that opened it discards it on its way out,
-     * however it ends, unless the cache has committed it; a cancellation can land anywhere in between.
+     * however it ends, unless the cache has committed it; a cancellation can land anywhere in
+     * between.
      */
     private inner class OwnedTemporaryFile {
         var temporary: TemporaryDownload? = null
 
-        /** Opens the file for [entry] and holds it; the cache hands it back even to a cancelled caller. */
+        /**
+         * Opens the file for [entry] and holds it; the cache hands it back even to a cancelled
+         * caller.
+         */
         suspend fun open(entry: StorageCacheEntry?): TemporaryDownload? =
             entry?.let { cache.openTemporaryDownload(it) }?.also { opened -> temporary = opened }
 
@@ -351,103 +438,150 @@ internal class CachingBucketApi(
     ): StreamedDownload {
         producer.cancel()
         pipe.cancel(null)
-        return if (uncacheable) StreamedDownload.Uncacheable else StreamedDownload.CacheRefused(cause)
+        return if (uncacheable) StreamedDownload.Uncacheable
+        else StreamedDownload.CacheRefused(cause)
     }
 
     /**
-     * Reads the next chunk of [pipe]. When the producer failed, the pipe fails too; this rethrows the
-     * producer's own failure rather than the pipe's wrapper, so callers see what supabase-kt threw.
+     * Reads the next chunk of [pipe]. When the producer failed, the pipe fails too; this rethrows
+     * the producer's own failure rather than the pipe's wrapper, so callers see what supabase-kt
+     * threw.
      */
     private suspend fun readOrRethrow(
         pipe: ByteReadChannel,
         buffer: ByteArray,
         producerFailure: suspend () -> Unit,
-    ): Int = try {
-        pipe.readAvailable(buffer, 0, buffer.size)
-    } catch (failure: CancellationException) {
-        throw failure
-    } catch (failure: Throwable) {
-        producerFailure()
-        throw failure
-    }
+    ): Int =
+        try {
+            pipe.readAvailable(buffer, 0, buffer.size)
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            producerFailure()
+            throw failure
+        }
 
     // ─────────── Writes: online-only, invalidating, and stopped by close() ───────────
 
-    override suspend fun upload(path: String, data: UploadData, options: UploadOptionBuilder.() -> Unit): FileUploadResponse =
-        invalidatingAfter(path) { delegate.upload(path, data, options) }
+    override suspend fun upload(
+        path: String,
+        data: UploadData,
+        options: UploadOptionBuilder.() -> Unit,
+    ): FileUploadResponse = invalidatingAfter(path) { delegate.upload(path, data, options) }
 
-    override suspend fun upload(path: String, data: ByteArray, options: UploadOptionBuilder.() -> Unit): FileUploadResponse =
-        invalidatingAfter(path) { delegate.upload(path, data, options) }
+    override suspend fun upload(
+        path: String,
+        data: ByteArray,
+        options: UploadOptionBuilder.() -> Unit,
+    ): FileUploadResponse = invalidatingAfter(path) { delegate.upload(path, data, options) }
 
-    override suspend fun update(path: String, data: UploadData, options: UploadOptionBuilder.() -> Unit): FileUploadResponse =
-        invalidatingAfter(path) { delegate.update(path, data, options) }
+    override suspend fun update(
+        path: String,
+        data: UploadData,
+        options: UploadOptionBuilder.() -> Unit,
+    ): FileUploadResponse = invalidatingAfter(path) { delegate.update(path, data, options) }
 
-    override suspend fun update(path: String, data: ByteArray, options: UploadOptionBuilder.() -> Unit): FileUploadResponse =
-        invalidatingAfter(path) { delegate.update(path, data, options) }
+    override suspend fun update(
+        path: String,
+        data: ByteArray,
+        options: UploadOptionBuilder.() -> Unit,
+    ): FileUploadResponse = invalidatingAfter(path) { delegate.update(path, data, options) }
 
     override suspend fun uploadToSignedUrl(
         path: String,
         token: String,
         data: UploadData,
         options: UploadOptionBuilder.() -> Unit,
-    ): FileUploadResponse = invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
+    ): FileUploadResponse =
+        invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
 
     override suspend fun uploadToSignedUrl(
         path: String,
         token: String,
         data: ByteArray,
         options: UploadOptionBuilder.() -> Unit,
-    ): FileUploadResponse = invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
+    ): FileUploadResponse =
+        invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
 
-    override suspend fun delete(paths: Collection<String>): Unit = storageWrite(
-        write = { delegate.delete(paths) },
-        applied = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
-        uncertain = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
-    )
+    override suspend fun delete(paths: Collection<String>): Unit =
+        storageWrite(
+            write = { delegate.delete(paths) },
+            applied = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
+            uncertain = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
+        )
 
     override suspend fun delete(vararg paths: String) {
         delete(paths.toList())
     }
 
-    override suspend fun move(from: String, to: String, destinationBucket: String?): Unit = storageWrite(
-        write = { delegate.move(from, to, destinationBucket) },
-        applied = { cache.moveObject(fromBucket = bucketId, from = from, toBucket = destinationBucket ?: bucketId, to = to) },
-        uncertain = {
-            cache.invalidateObject(bucketId, from)
-            cache.invalidateObject(destinationBucket ?: bucketId, to)
-        },
-    )
+    override suspend fun move(from: String, to: String, destinationBucket: String?): Unit =
+        storageWrite(
+            write = { delegate.move(from, to, destinationBucket) },
+            applied = {
+                cache.moveObject(
+                    fromBucket = bucketId,
+                    from = from,
+                    toBucket = destinationBucket ?: bucketId,
+                    to = to,
+                )
+            },
+            uncertain = {
+                cache.invalidateObject(bucketId, from)
+                cache.invalidateObject(destinationBucket ?: bucketId, to)
+            },
+        )
 
-    // The copy's bytes are not on the device; the destination's cached copy, if any, is stale either way
-    override suspend fun copy(from: String, to: String, destinationBucket: String?): Unit = storageWrite(
-        write = { delegate.copy(from, to, destinationBucket) },
-        applied = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
-        uncertain = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
-    )
+    // The copy's bytes are not on the device; the destination's cached copy, if any, is stale
+    // either way
+    override suspend fun copy(from: String, to: String, destinationBucket: String?): Unit =
+        storageWrite(
+            write = { delegate.copy(from, to, destinationBucket) },
+            applied = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
+            uncertain = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
+        )
 
     // ─────────────── Passed through: refused once closed, and stopped by close() ───────────────
 
     override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
-        operationGate.cancellableCall(backgroundScope) { delegate.createSignedUploadUrl(path, upsert) }
+        operationGate.cancellableCall(backgroundScope) {
+            delegate.createSignedUploadUrl(path, upsert)
+        }
 
-    override suspend fun createSignedUrl(path: String, expiresIn: Duration, builder: SignedUrlBuilder.() -> Unit): String =
-        operationGate.cancellableCall(backgroundScope) { delegate.createSignedUrl(path, expiresIn, builder) }
+    override suspend fun createSignedUrl(
+        path: String,
+        expiresIn: Duration,
+        builder: SignedUrlBuilder.() -> Unit,
+    ): String =
+        operationGate.cancellableCall(backgroundScope) {
+            delegate.createSignedUrl(path, expiresIn, builder)
+        }
 
     override suspend fun createSignedUrls(
         expiresIn: Duration,
         paths: Collection<String>,
         builder: SignedUrlsBuilder.() -> Unit,
-    ): List<SignedUrl> = operationGate.cancellableCall(backgroundScope) { delegate.createSignedUrls(expiresIn, paths, builder) }
+    ): List<SignedUrl> =
+        operationGate.cancellableCall(backgroundScope) {
+            delegate.createSignedUrls(expiresIn, paths, builder)
+        }
 
-    override suspend fun createSignedUrls(expiresIn: Duration, vararg paths: String, builder: SignedUrlsBuilder.() -> Unit): List<SignedUrl> =
-        createSignedUrls(expiresIn, paths.toList(), builder)
+    override suspend fun createSignedUrls(
+        expiresIn: Duration,
+        vararg paths: String,
+        builder: SignedUrlsBuilder.() -> Unit,
+    ): List<SignedUrl> = createSignedUrls(expiresIn, paths.toList(), builder)
 
-    override suspend fun list(prefix: String, filter: StorageListFilter.Files.() -> Unit): List<FileObject> =
+    override suspend fun list(
+        prefix: String,
+        filter: StorageListFilter.Files.() -> Unit,
+    ): List<FileObject> =
         operationGate.cancellableCall(backgroundScope) { delegate.list(prefix, filter) }
 
-    override suspend fun info(path: String): FileObjectV2 = operationGate.cancellableCall(backgroundScope) { delegate.info(path) }
+    override suspend fun info(path: String): FileObjectV2 =
+        operationGate.cancellableCall(backgroundScope) { delegate.info(path) }
 
-    override suspend fun exists(path: String): Boolean = operationGate.cancellableCall(backgroundScope) { delegate.exists(path) }
+    override suspend fun exists(path: String): Boolean =
+        operationGate.cancellableCall(backgroundScope) { delegate.exists(path) }
 
     override suspend fun changePublicStatusTo(public: Boolean): Unit =
         operationGate.cancellableCall(backgroundScope) { delegate.changePublicStatusTo(public) }
@@ -456,36 +590,42 @@ internal class CachingBucketApi(
         operationGate.cancellableCall(backgroundScope) { delegate.purgeCache(path, options) }
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
-    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T = storageWrite(
-        write = write,
-        applied = { cache.invalidateObject(bucketId, path) },
-        uncertain = { cache.invalidateObject(bucketId, path) },
-    )
+    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T =
+        storageWrite(
+            write = write,
+            applied = { cache.invalidateObject(bucketId, path) },
+            uncertain = { cache.invalidateObject(bucketId, path) },
+        )
 
     /**
-     * Runs a Storage write that close() may stop; [applied] then brings the cache in line with it. One
-     * that timed out or was stopped may have been stored anyway, so [uncertain] drops what it touched;
-     * any other failure left the server, and the cache, as they were. Storage writes are never queued.
+     * Runs a Storage write that close() may stop; [applied] then brings the cache in line with it.
+     * One that timed out or was stopped may have been stored anyway, so [uncertain] drops what it
+     * touched; any other failure left the server, and the cache, as they were. Storage writes are
+     * never queued.
      */
     private suspend fun <T> storageWrite(
         write: suspend () -> T,
         applied: suspend () -> Unit,
         uncertain: suspend () -> Unit,
-    ): T = operationGate.cancellableCall(backgroundScope) {
-        val result = try {
-            write()
-        } catch (failure: Exception) {
-            if (failure is CancellationException || failure.mayHaveReachedTheServer()) withContext(NonCancellable) { uncertain() }
-            throw failure
+    ): T =
+        operationGate.cancellableCall(backgroundScope) {
+            val result =
+                try {
+                    write()
+                } catch (failure: Exception) {
+                    if (failure is CancellationException || failure.mayHaveReachedTheServer())
+                        withContext(NonCancellable) { uncertain() }
+                    throw failure
+                }
+            withContext(NonCancellable) { applied() }
+            result
         }
-        withContext(NonCancellable) { applied() }
-        result
-    }
 
     private fun Throwable.mayHaveReachedTheServer(): Boolean {
         var current: Throwable? = this
         while (current != null) {
-            if (current is HttpRequestTimeoutException || current is SocketTimeoutException) return true
+            if (current is HttpRequestTimeoutException || current is SocketTimeoutException)
+                return true
             current = current.cause
         }
         return false

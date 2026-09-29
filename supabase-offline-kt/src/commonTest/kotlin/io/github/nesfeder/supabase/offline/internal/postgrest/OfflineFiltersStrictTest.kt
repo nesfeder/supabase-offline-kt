@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(SupabaseExperimental::class)
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
@@ -12,9 +14,9 @@ import kotlin.test.assertNull
 
 /**
  * Pins [buildDescriptorStrict] / [buildDescriptorStrictFromRequest]: the strict capture used on the
- * offline-queue (replay) path must throw [UnsupportedOfflineFilterException] on any filter it cannot
- * represent faithfully — `not.`-negated operators, `or` / `and` logical groups, and foreign-table
- * dotted keys — rather than silently dropping the condition. The lenient
+ * offline-queue (replay) path must throw [UnsupportedOfflineFilterException] on any filter it
+ * cannot represent faithfully — `not.`-negated operators, `or` / `and` logical groups, and
+ * foreign-table dotted keys — rather than silently dropping the condition. The lenient
  * [buildDescriptorFromRequest] is asserted unchanged for the same inputs to document exactly the
  * over-broad-replay behavior the strict path exists to prevent.
  */
@@ -30,9 +32,10 @@ class OfflineFiltersStrictTest {
     @Test
     fun `strict builder captures a simple eq filter faithfully`() {
         // Given / When
-        val descriptor = buildDescriptorStrictFromRequest(schema, conversion) {
-            filter { eq("status", "active") }
-        }
+        val descriptor =
+            buildDescriptorStrictFromRequest(schema, conversion) {
+                filter { eq("status", "active") }
+            }
 
         // Then
         val condition = descriptor?.conditions?.single()
@@ -90,9 +93,10 @@ class OfflineFiltersStrictTest {
     fun `lenient builder silently drops the not-prefixed operator producing a null descriptor`() {
         // Given the same negated filter the strict path rejects
         // When the lenient path runs
-        val descriptor = buildDescriptorFromRequest(schema, conversion) {
-            filter { filterNot("status", FilterOperator.EQ, "archived") }
-        }
+        val descriptor =
+            buildDescriptorFromRequest(schema, conversion) {
+                filter { filterNot("status", FilterOperator.EQ, "archived") }
+            }
 
         // Then it drops the condition entirely — a null descriptor that would replay unfiltered.
         // This is the exact lossy behavior the strict path exists to prevent on the replay path.
@@ -102,9 +106,10 @@ class OfflineFiltersStrictTest {
     @Test
     fun `lenient builder still captures a simple eq filter unchanged`() {
         // Given / When
-        val descriptor = buildDescriptorFromRequest(schema, conversion) {
-            filter { eq("status", "active") }
-        }
+        val descriptor =
+            buildDescriptorFromRequest(schema, conversion) {
+                filter { eq("status", "active") }
+            }
 
         // Then
         val condition = descriptor?.conditions?.single()
@@ -120,10 +125,11 @@ class OfflineFiltersStrictTest {
         // the queue branch turns a refusal into a rethrow of the original network failure, an
         // ordinary `update { filter { … }; select() }` made offline failed instead of queuing.
         // When
-        val descriptor = buildDescriptorStrictFromRequest(schema, conversion) {
-            filter { eq("id", "project-1") }
-            select()
-        }
+        val descriptor =
+            buildDescriptorStrictFromRequest(schema, conversion) {
+                filter { eq("id", "project-1") }
+                select()
+            }
 
         // Then — the projection is skipped and the real filter is captured in full, so the
         // mutation queues and replays scoped to exactly the row the caller targeted
@@ -141,14 +147,15 @@ class OfflineFiltersStrictTest {
         // queue and every offline edit would fail outright again, silently. This is the case that
         // notices.
         // When
-        val descriptor = buildDescriptorStrictFromRequest(schema, conversion) {
-            filter {
-                eq("id", "project-1")
-                eq("user_id", "user-1")
+        val descriptor =
+            buildDescriptorStrictFromRequest(schema, conversion) {
+                filter {
+                    eq("id", "project-1")
+                    eq("user_id", "user-1")
+                }
+                select()
+                single()
             }
-            select()
-            single()
-        }
 
         // Then — both scoping conditions survive, and nothing else joins them
         assertEquals(

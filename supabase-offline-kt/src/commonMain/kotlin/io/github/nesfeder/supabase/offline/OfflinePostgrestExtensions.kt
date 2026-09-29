@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
@@ -7,9 +9,9 @@ import kotlinx.serialization.serializer
 
 /**
  * Insert a list of [values], reporting whether the INSERT executed on the server
- * ([MutationOutcome.Applied]) or was queued for offline replay ([MutationOutcome.Queued]).
- * A caller reading the row back can construct the domain object from [values] on
- * [MutationOutcome.Queued] instead of decoding a placeholder.
+ * ([MutationOutcome.Applied]) or was queued for offline replay ([MutationOutcome.Queued]). A caller
+ * reading the row back can construct the domain object from [values] on [MutationOutcome.Queued]
+ * instead of decoding a placeholder.
  *
  * @param values rows to insert.
  * @param mutationStrategy offline strategy; defaults to [MutationStrategy.QueueIfOffline].
@@ -19,7 +21,7 @@ import kotlinx.serialization.serializer
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insert(
     values: List<T>,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    noinline request: InsertRequestBuilder.() -> Unit = {}
+    noinline request: InsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome = insertWith(serializer<T>(), values, mutationStrategy, request)
 
 /**
@@ -33,7 +35,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insert(
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insert(
     value: T,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    noinline request: InsertRequestBuilder.() -> Unit = {}
+    noinline request: InsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome = insertWith(serializer(), value, mutationStrategy, request)
 
 /**
@@ -47,7 +49,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insert(
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsert(
     values: List<T>,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    noinline request: UpsertRequestBuilder.() -> Unit = {}
+    noinline request: UpsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome = upsertWith(serializer<T>(), values, mutationStrategy, request)
 
 /**
@@ -61,7 +63,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsert(
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsert(
     value: T,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    noinline request: UpsertRequestBuilder.() -> Unit = {}
+    noinline request: UpsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome = upsertWith(serializer(), value, mutationStrategy, request)
 
 /**
@@ -78,5 +80,5 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.update(
     value: T,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
     deltaColumns: List<NumericDeltaColumn> = emptyList(),
-    noinline request: PostgrestRequestBuilder.() -> Unit = {}
+    noinline request: PostgrestRequestBuilder.() -> Unit = {},
 ): MutationOutcome = updateWith(serializer(), value, mutationStrategy, deltaColumns, request)

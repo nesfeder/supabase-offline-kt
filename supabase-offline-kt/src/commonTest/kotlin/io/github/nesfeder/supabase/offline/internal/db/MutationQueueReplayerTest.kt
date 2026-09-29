@@ -1,14 +1,17 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.util.awaitReplaySafeSession
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.postgrest
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondError
@@ -17,18 +20,16 @@ import io.ktor.client.plugins.ResponseException
 import io.ktor.client.request.get
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpStatusCode
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import kotlin.time.ExperimentalTime
 
 /**
  * Behavioural pins for [MutationQueueReplayer] — the replay path that pushes queued offline
@@ -55,11 +56,12 @@ class MutationQueueReplayerTest {
         dao.insert(insertRow("""[{"n":"c"}]"""))
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = { postgrestResultOf("[]", client.postgrest) },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -82,11 +84,12 @@ class MutationQueueReplayerTest {
         dao.insert(insertRow("""[{"n":"b"}]"""))
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = { throw ConnectTimeoutException("connect timed out", null) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = { throw ConnectTimeoutException("connect timed out", null) },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -112,14 +115,15 @@ class MutationQueueReplayerTest {
         val client = testClient()
         val forbidden = responseExceptionWithStatus(HttpStatusCode.Forbidden)
         var call = 0
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = {
-                call++
-                if (call == 1) throw forbidden else postgrestResultOf("[]", client.postgrest)
-            },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = {
+                    call++
+                    if (call == 1) throw forbidden else postgrestResultOf("[]", client.postgrest)
+                },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -130,7 +134,10 @@ class MutationQueueReplayerTest {
         assertEquals(1, synced)
         assertEquals(2, wrapper.recordedInsertBodies.size, "both mutations were attempted")
         assertEquals(0, store.pendingMutationCount())
-        assertEquals(listOf(403), store.mutationQueueState.rejections().map { it.serverError?.status })
+        assertEquals(
+            listOf(403),
+            store.mutationQueueState.rejections().map { it.serverError?.status },
+        )
     }
 
     @Test
@@ -141,11 +148,12 @@ class MutationQueueReplayerTest {
         val store = buildStore(dao)
         val client = testClient()
         val unauthorized = responseExceptionWithStatus(HttpStatusCode.Unauthorized)
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = { throw unauthorized },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = { throw unauthorized },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When: 401 is transient, so it is rethrown (not permanent) — and NOT dropped
@@ -165,11 +173,12 @@ class MutationQueueReplayerTest {
         val store = buildStore(dao)
         val client = testClient()
         val unauthorized = responseExceptionWithStatus(HttpStatusCode.Unauthorized)
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = { throw unauthorized },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = { throw unauthorized },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When: far more than MAX_REPLAY_FAILURES (5) consecutive 401 replays occur, each rethrows
@@ -184,9 +193,9 @@ class MutationQueueReplayerTest {
     }
 
     /**
-     * Inverted: a write that kept failing with a 500 used to be dead-lettered (deleted) on its fifth
-     * replay in a process. A server error is transient, so it is now kept for as long as it takes —
-     * the entry point still reports each failure to its caller.
+     * Inverted: a write that kept failing with a 500 used to be dead-lettered (deleted) on its
+     * fifth replay in a process. A server error is transient, so it is now kept for as long as it
+     * takes — the entry point still reports each failure to its caller.
      */
     @Test
     fun unknown_error_rethrows_on_every_replay_and_never_dead_letters() = runTest {
@@ -196,11 +205,12 @@ class MutationQueueReplayerTest {
         val store = buildStore(dao)
         val client = testClient()
         val serverError = responseExceptionWithStatus(HttpStatusCode.InternalServerError)
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = { throw serverError },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = { throw serverError },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When: far more replays than the old five-strike budget
@@ -225,23 +235,24 @@ class MutationQueueReplayerTest {
             val reachedInsert = CompletableDeferred<Unit>()
             val releaseInsert = CompletableDeferred<Unit>()
             var insertCalls = 0
-            val wrapper = FakePostgrestQueryBuilderWrapper(
-                table = table,
-                postgrest = client.postgrest,
-                onInsert = {
-                    insertCalls++
-                    if (!reachedInsert.isCompleted) reachedInsert.complete(Unit)
-                    releaseInsert.await()
-                    postgrestResultOf("[]", client.postgrest)
-                },
-            )
+            val wrapper =
+                FakePostgrestQueryBuilderWrapper(
+                    table = table,
+                    postgrest = client.postgrest,
+                    onInsert = {
+                        insertCalls++
+                        if (!reachedInsert.isCompleted) reachedInsert.complete(Unit)
+                        releaseInsert.await()
+                        postgrestResultOf("[]", client.postgrest)
+                    },
+                )
             val syncer = syncer(store, client, wrapper)
 
             // When: two syncAllTables run concurrently
             val first = launch { syncer.syncAllTables() }
             val second = launch { syncer.syncAllTables() }
-            reachedInsert.await()          // first holds the lock, parked in insert()
-            releaseInsert.complete(Unit)   // let it finish
+            reachedInsert.await() // first holds the lock, parked in insert()
+            releaseInsert.complete(Unit) // let it finish
             advanceUntilIdle()
             first.join()
             second.join()
@@ -259,19 +270,21 @@ class MutationQueueReplayerTest {
         val store = buildStore(dao)
         val client = testClient()
         var factoryCalls = 0
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = { postgrestResultOf("[]", client.postgrest) },
-        )
-        val syncer = MutationQueueReplayer(
-            store = store,
-            supabase = client,
-            postgrestFactory = { _, _ ->
-                factoryCalls++
-                wrapper
-            },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = { postgrestResultOf("[]", client.postgrest) },
+            )
+        val syncer =
+            MutationQueueReplayer(
+                store = store,
+                supabase = client,
+                postgrestFactory = { _, _ ->
+                    factoryCalls++
+                    wrapper
+                },
+            )
 
         // When
         val synced = syncer.syncAllTables()
@@ -294,15 +307,18 @@ class MutationQueueReplayerTest {
                 filterJson = null,
                 createdAtMs = createdAtCounter++,
                 syncedAtMs = null,
-            ),
+            )
         )
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onDelete = { postgrestResultOf("[]", client.postgrest) }, // would succeed if ever called
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onDelete = {
+                    postgrestResultOf("[]", client.postgrest)
+                }, // would succeed if ever called
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -327,15 +343,16 @@ class MutationQueueReplayerTest {
                 filterJson = null,
                 createdAtMs = createdAtCounter++,
                 syncedAtMs = null,
-            ),
+            )
         )
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onUpdate = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onUpdate = { postgrestResultOf("[]", client.postgrest) },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -360,15 +377,16 @@ class MutationQueueReplayerTest {
                 filterJson = LOSSY_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
                 syncedAtMs = null,
-            ),
+            )
         )
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onUpdate = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onUpdate = { postgrestResultOf("[]", client.postgrest) },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -396,15 +414,16 @@ class MutationQueueReplayerTest {
                 filterJson = LOSSY_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
                 syncedAtMs = null,
-            ),
+            )
         )
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onDelete = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onDelete = { postgrestResultOf("[]", client.postgrest) },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -433,15 +452,16 @@ class MutationQueueReplayerTest {
                 filterJson = EMPTY_CONDITIONS_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
                 syncedAtMs = null,
-            ),
+            )
         )
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onDelete = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onDelete = { postgrestResultOf("[]", client.postgrest) },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -471,15 +491,16 @@ class MutationQueueReplayerTest {
                 filterJson = REPLAYABLE_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
                 syncedAtMs = null,
-            ),
+            )
         )
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onUpdate = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onUpdate = { postgrestResultOf("[]", client.postgrest) },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -504,15 +525,16 @@ class MutationQueueReplayerTest {
                 filterJson = REPLAYABLE_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
                 syncedAtMs = null,
-            ),
+            )
         )
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onDelete = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onDelete = { postgrestResultOf("[]", client.postgrest) },
+            )
         val syncer = syncer(store, client, wrapper)
 
         // When
@@ -526,14 +548,15 @@ class MutationQueueReplayerTest {
 
     // ── Test helpers ──────────────────────────────────────────────────────────────
 
-    private fun insertRow(body: String): MutationRow = MutationRow(
-        table = table,
-        operation = MutationOperation.INSERT,
-        bodyJson = body,
-        filterJson = null,
-        createdAtMs = createdAtCounter++,
-        syncedAtMs = null,
-    )
+    private fun insertRow(body: String): MutationRow =
+        MutationRow(
+            table = table,
+            operation = MutationOperation.INSERT,
+            bodyJson = body,
+            filterJson = null,
+            createdAtMs = createdAtCounter++,
+            syncedAtMs = null,
+        )
 
     @Test
     fun replay_is_deferred_while_the_auth_session_is_still_restoring() = runTest {
@@ -542,11 +565,12 @@ class MutationQueueReplayerTest {
         dao.insert(insertRow("""[{"n":"a"}]"""))
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = { postgrestResultOf("[]", client.postgrest) },
+            )
         val syncer = syncer(store, client, wrapper, awaitSessionSettled = { false })
 
         // When both public entry points fire
@@ -568,11 +592,12 @@ class MutationQueueReplayerTest {
         dao.insert(insertRow("""[{"n":"a"}]"""))
         val store = buildStore(dao)
         val client = testClient()
-        val wrapper = FakePostgrestQueryBuilderWrapper(
-            table = table,
-            postgrest = client.postgrest,
-            onInsert = { postgrestResultOf("[]", client.postgrest) },
-        )
+        val wrapper =
+            FakePostgrestQueryBuilderWrapper(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = { postgrestResultOf("[]", client.postgrest) },
+            )
         var settled = false
         val syncer = syncer(store, client, wrapper, awaitSessionSettled = { settled })
 
@@ -601,32 +626,35 @@ class MutationQueueReplayerTest {
         client: SupabaseClient,
         wrapper: FakePostgrestQueryBuilderWrapper,
         awaitSessionSettled: (suspend () -> Boolean)? = null,
-    ): MutationQueueReplayer = MutationQueueReplayer(
-        store = store,
-        supabase = client,
-        postgrestFactory = { _, _ -> wrapper },
-        awaitSessionSettled = awaitSessionSettled ?: { client.awaitReplaySafeSession() },
-    )
+    ): MutationQueueReplayer =
+        MutationQueueReplayer(
+            store = store,
+            supabase = client,
+            postgrestFactory = { _, _ -> wrapper },
+            awaitSessionSettled = awaitSessionSettled ?: { client.awaitReplaySafeSession() },
+        )
 
     private fun testClient(): SupabaseClient = newTestSupabaseClient()
 
-    private fun buildStore(mutationDao: FakeMutationDao): OfflineStore = newTestOfflineStore(
-        mutationDao = mutationDao,
-    )
+    private fun buildStore(mutationDao: FakeMutationDao): OfflineStore =
+        newTestOfflineStore(mutationDao = mutationDao)
 
     /**
      * Builds a real [ResponseException] carrying [status] by letting a `MockEngine`-backed client
      * fail an `expectSuccess` request — the only reliable way to produce the HTTP-status-bearing
-     * exception type that [io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull] inspects.
+     * exception type that [io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull]
+     * inspects.
      */
     private suspend fun responseExceptionWithStatus(status: HttpStatusCode): ResponseException {
-        val client = HttpClient(MockEngine) {
-            engine { addHandler { respondError(status) } }
-            expectSuccess = true
-        }
-        val thrown = assertFailsWith<ResponseException> {
-            client.get("https://example.com/rest/v1/$table")
-        }
+        val client =
+            HttpClient(MockEngine) {
+                engine { addHandler { respondError(status) } }
+                expectSuccess = true
+            }
+        val thrown =
+            assertFailsWith<ResponseException> {
+                client.get("https://example.com/rest/v1/$table")
+            }
         val response: HttpResponse = thrown.response
         check(response.status == status)
         return thrown
@@ -635,8 +663,8 @@ class MutationQueueReplayerTest {
     private companion object {
         /**
          * A stored descriptor whose `in` condition carries the bracket shape. It is not decodable
-         * JSON, so replay drops it and the request would go out scoped by `eq(user_id)` alone —
-         * the broadening this guard exists to refuse.
+         * JSON, so replay drops it and the request would go out scoped by `eq(user_id)` alone — the
+         * broadening this guard exists to refuse.
          */
         const val LOSSY_FILTER_JSON =
             """{"mode":"AND","conditions":[""" +
@@ -644,8 +672,8 @@ class MutationQueueReplayerTest {
                 """{"column":"status","operatorId":"in","value":"[a,b]"}]}"""
 
         /**
-         * A descriptor that decodes to a non-null value carrying nothing — non-null, so the
-         * legacy null-filter guard does not catch it, yet it replays with no filter at all.
+         * A descriptor that decodes to a non-null value carrying nothing — non-null, so the legacy
+         * null-filter guard does not catch it, yet it replays with no filter at all.
          */
         const val EMPTY_CONDITIONS_FILTER_JSON = """{"mode":"AND","conditions":[]}"""
 

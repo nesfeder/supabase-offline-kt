@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -8,20 +10,21 @@ import platform.Foundation.NSFileManager
 import platform.Foundation.NSUserDomainMask
 
 /**
- * iOS implementation of [DbPathProvider] that resolves to the same
- * database file path used by the Room builder.
+ * iOS implementation of [DbPathProvider] that resolves to the same database file path used by the
+ * Room builder.
  */
 internal class IosDbPathProvider : DbPathProvider {
 
     @OptIn(ExperimentalForeignApi::class)
     override fun dbPath(): Path {
-        val url = NSFileManager.defaultManager.URLForDirectory(
-            directory = NSDocumentDirectory,
-            inDomain = NSUserDomainMask,
-            appropriateForURL = null,
-            create = false,
-            error = null,
-        )
+        val url =
+            NSFileManager.defaultManager.URLForDirectory(
+                directory = NSDocumentDirectory,
+                inDomain = NSUserDomainMask,
+                appropriateForURL = null,
+                create = false,
+                error = null,
+            )
         val basePath = requireNotNull(url?.path) { "Could not resolve Documents directory path" }
         return ("$basePath/$OFFLINE_DATABASE_FILE_NAME").toPath()
     }

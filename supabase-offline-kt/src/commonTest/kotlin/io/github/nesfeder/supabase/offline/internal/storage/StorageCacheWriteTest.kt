@@ -1,16 +1,14 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import kotlinx.coroutines.test.runTest
-import okio.FileSystem
-import okio.Path
-import okio.SYSTEM
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -19,6 +17,10 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import okio.FileSystem
+import okio.Path
+import okio.SYSTEM
 
 /**
  * A download that reached the server is the caller's, whatever happens to the cache copy: a cache
@@ -33,7 +35,9 @@ class StorageCacheWriteTest {
 
     @BeforeTest
     fun setUp() {
-        dataDirectory = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "supabase-offline-cache-write-${Random.nextLong().toULong()}"
+        dataDirectory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "supabase-offline-cache-write-${Random.nextLong().toULong()}"
         store = newTestOfflineStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
@@ -43,12 +47,13 @@ class StorageCacheWriteTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun bucket() = newTestBucketApi(
-        delegate = delegate,
-        baseDirectory = dataDirectory,
-        store = store,
-        sdkLogger = logger.asSdkLogger(),
-    )
+    private fun bucket() =
+        newTestBucketApi(
+            delegate = delegate,
+            baseDirectory = dataDirectory,
+            store = store,
+            sdkLogger = logger.asSdkLogger(),
+        )
 
     /** Makes every cache write fail: the bucket's cache directory is a plain file. */
     private fun breakTheCacheDirectory() {
@@ -63,14 +68,18 @@ class StorageCacheWriteTest {
         delegate.onDownload = { BYTES }
 
         // When
-        val downloaded = bucket().downloadAuthenticated(PATH) { }
+        val downloaded = bucket().downloadAuthenticated(PATH) {}
 
-        // Then — the caller gets the bytes; nothing is tracked; the failure is logged, without the path
+        // Then — the caller gets the bytes; nothing is tracked; the failure is logged, without the
+        // path
         assertContentEquals(BYTES, downloaded)
         assertNull(store.getStorageByKey(BUCKET, PATH))
         val warnings = logger.entriesAt(OfflineLogLevel.WARNING).map { it.message }
         assertEquals(1, warnings.size, "expected one warning, got $warnings")
-        assertTrue(warnings.none { PATH in it }, "the object path must not reach a warning: $warnings")
+        assertTrue(
+            warnings.none { PATH in it },
+            "the object path must not reach a warning: $warnings",
+        )
     }
 
     @Test
@@ -80,7 +89,7 @@ class StorageCacheWriteTest {
         delegate.onDownload = { BYTES }
 
         // When
-        val downloaded = bucket().downloadPublic(PATH) { }
+        val downloaded = bucket().downloadPublic(PATH) {}
 
         // Then
         assertContentEquals(BYTES, downloaded)
@@ -96,21 +105,26 @@ class StorageCacheWriteTest {
         delegate.onDownload = { BYTES }
 
         // When
-        val downloaded = newTestBucketApi(
-            delegate = delegate,
-            baseDirectory = dataDirectory,
-            store = failingStore,
-            sdkLogger = logger.asSdkLogger(),
-        ).downloadAuthenticated(PATH) { }
+        val downloaded =
+            newTestBucketApi(
+                    delegate = delegate,
+                    baseDirectory = dataDirectory,
+                    store = failingStore,
+                    sdkLogger = logger.asSdkLogger(),
+                )
+                .downloadAuthenticated(PATH) {}
 
         // Then — the caller gets its bytes, and no untracked file is left behind
         assertContentEquals(BYTES, downloaded)
         assertEquals(emptyList(), dao.all())
-        val files = if (FileSystem.SYSTEM.exists(dataDirectory)) {
-            FileSystem.SYSTEM.listRecursively(dataDirectory).filter { FileSystem.SYSTEM.metadata(it).isRegularFile }.toList()
-        } else {
-            emptyList()
-        }
+        val files =
+            if (FileSystem.SYSTEM.exists(dataDirectory)) {
+                FileSystem.SYSTEM.listRecursively(dataDirectory)
+                    .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
+                    .toList()
+            } else {
+                emptyList()
+            }
         assertEquals(emptyList(), files)
     }
 

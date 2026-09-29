@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline
@@ -9,6 +11,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
+import kotlin.coroutines.ContinuationInterceptor
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -18,15 +24,11 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
-import kotlin.coroutines.ContinuationInterceptor
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
  * Passes the engine starts on its own are coalesced — at most one runs and one waits — and back off
- * after a pass that stopped on a failure, so a burst of writes queued behind a write the server keeps
- * refusing does not hammer the server with one request per write.
+ * after a pass that stopped on a failure, so a burst of writes queued behind a write the server
+ * keeps refusing does not hammer the server with one request per write.
  *
  * The client's passes and the engine's requests run on the test scheduler as ordinary work, so
  * waiting until it is idle waits for every pass the burst started, and a count taken then is final.
@@ -39,19 +41,34 @@ class BackgroundPassCoalescingTest {
         // client's passes and the server's answers all run on this test's scheduler
         val testDispatcher = StandardTestDispatcher(testScheduler)
         val dispatchersSeen = mutableSetOf<ContinuationInterceptor?>()
-        val server = RecordingPostgrestServer(answer = { connectivityFailure() }, engineDispatcher = testDispatcher)
+        val server =
+            RecordingPostgrestServer(
+                answer = { connectivityFailure() },
+                engineDispatcher = testDispatcher,
+            )
         val store = newTestOfflineStore()
         val clientScope = CoroutineScope(SupervisorJob() + testDispatcher)
-        val client = newTestOfflineClient(supabase = server.supabaseClient(), store = store, coordinatorScope = clientScope)
-        client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"poison"}""")) { filter { eq("id", 0) } }
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                store = store,
+                coordinatorScope = clientScope,
+            )
+        client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"poison"}""")) {
+            filter { eq("id", 0) }
+        }
         server.answer = { request ->
             dispatchersSeen += currentCoroutineContext()[ContinuationInterceptor]
-            if (request.body.contains("poison")) postgrestError(HttpStatusCode.InternalServerError, code = "54000") else okJson("[]")
+            if (request.body.contains("poison"))
+                postgrestError(HttpStatusCode.InternalServerError, code = "54000")
+            else okJson("[]")
         }
 
         // When — twenty writes join the queue behind it, and every pass they start has run
         repeat(20) { index ->
-            client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"w$index"}""")) { filter { eq("id", index + 1) } }
+            client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"w$index"}""")) {
+                filter { eq("id", index + 1) }
+            }
         }
         advanceUntilIdle()
         clientScope.cancel()
@@ -59,7 +76,11 @@ class BackgroundPassCoalescingTest {
         // Then — the engine did retry the failing write, a couple of times at most, not twenty
         val retries = server.requests.count { it.body.contains("poison") } - 1
         assertTrue(retries in 1..2, "the failing write was retried $retries times")
-        assertEquals(setOf<ContinuationInterceptor?>(testDispatcher), dispatchersSeen, "a request left the test scheduler")
+        assertEquals(
+            setOf<ContinuationInterceptor?>(testDispatcher),
+            dispatchersSeen,
+            "a request left the test scheduler",
+        )
     }
 
     private companion object {

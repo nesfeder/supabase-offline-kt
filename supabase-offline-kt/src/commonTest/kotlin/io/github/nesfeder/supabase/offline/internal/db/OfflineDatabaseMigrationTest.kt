@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
@@ -47,8 +49,9 @@ class OfflineDatabaseMigrationTest {
 
         // Then — one additive statement. Anything that recreates or empties the table would take
         // the pending mutations with it, which is the failure the migration exists to avoid.
-        val statement = connection.statements.singleOrNull()
-            ?: error("expected exactly one statement, got ${connection.statements}")
+        val statement =
+            connection.statements.singleOrNull()
+                ?: error("expected exactly one statement, got ${connection.statements}")
         assertEquals("ALTER TABLE mutation_cache ADD COLUMN delta_json TEXT", statement)
         for (destructive in listOf("DROP", "DELETE", "TRUNCATE", "RENAME")) {
             assertFalse(destructive in statement, "migration must not $destructive")

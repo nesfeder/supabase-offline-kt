@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import okio.ByteString.Companion.toByteString
@@ -72,26 +74,31 @@ internal fun isPlainName(name: String): Boolean =
 
 /**
  * The cache file of an untransformed object: `<data>/storage/<bucket>/<object path>` for a plain
- * name, or its [hashedFilePath] for any other. A verbatim path is checked to lie inside the bucket's
- * directory.
+ * name, or its [hashedFilePath] for any other. A verbatim path is checked to lie inside the
+ * bucket's directory.
  *
  * @return the file, or `null` when the bucket or the path cannot be cached.
  */
-internal fun objectFilePathOrNull(dataDirectory: Path, bucketId: String, objectPath: String): Path? {
+internal fun objectFilePathOrNull(
+    dataDirectory: Path,
+    bucketId: String,
+    objectPath: String,
+): Path? {
     if (!isCacheableBucketId(bucketId) || !isCacheableObjectPath(objectPath)) return null
     if (!isPlainName(bucketId) || !isPlainName(objectPath)) {
         return hashedFilePath(dataDirectory, "$bucketId::$objectPath")
     }
     val bucketDirectory = dataDirectory / STORAGE_DIRECTORY_NAME / bucketId
-    val file = objectPath.split('/').fold(bucketDirectory) { directory, segment -> directory / segment }
+    val file =
+        objectPath.split('/').fold(bucketDirectory) { directory, segment -> directory / segment }
     return file.takeIf { it.isStrictlyInside(bucketDirectory) }
 }
 
 /**
  * The cache file stored under a hash of its key: `<data>/storage-hashed/<sha-256 of the key>`.
  *
- * The key is hashed as UTF-16 code units, not as UTF-8: a UTF-8 encoder writes every lone
- * surrogate as the same replacement byte, and two keys differing only there would share a file.
+ * The key is hashed as UTF-16 code units, not as UTF-8: a UTF-8 encoder writes every lone surrogate
+ * as the same replacement byte, and two keys differing only there would share a file.
  *
  * @param dataDirectory the offline data directory.
  * @param key the entry's cache key.

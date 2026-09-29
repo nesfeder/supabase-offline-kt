@@ -1,3 +1,5 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
@@ -14,6 +16,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -21,9 +26,6 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 
 /**
  * A `QueueIfOffline` write at the head of its identity's queue is sent at once, and what the server
@@ -38,14 +40,20 @@ class HeadSendTest {
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
     private var syncRequests = 0
-    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient(), currentIdentity = { session })
-    private val builder = OfflinePostgrestQueryBuilderImpl(
-        delegate = server.supabaseClient().postgrest.from(TABLE),
-        store = store,
-        queueIdentity = { session },
-        requestSync = { syncRequests++ },
-        headSender = syncer,
-    )
+    private val syncer =
+        MutationQueueReplayer(
+            store = store,
+            supabase = server.supabaseClient(),
+            currentIdentity = { session },
+        )
+    private val builder =
+        OfflinePostgrestQueryBuilderImpl(
+            delegate = server.supabaseClient().postgrest.from(TABLE),
+            store = store,
+            queueIdentity = { session },
+            requestSync = { syncRequests++ },
+            headSender = syncer,
+        )
 
     private suspend fun rename(title: String): MutationOutcome =
         builder.updateJson(patch(title)) { filter { eq("id", 1) } }
@@ -135,14 +143,16 @@ class HeadSendTest {
 
     @Test
     fun a_write_is_not_sent_at_the_head_once_the_session_is_another_identity() = runTest {
-        // Given — the write is made as user A, and the session is already user B when it would go out
-        val asUserA = OfflinePostgrestQueryBuilderImpl(
-            delegate = server.supabaseClient().postgrest.from(TABLE),
-            store = store,
-            queueIdentity = { USER_A },
-            requestSync = { syncRequests++ },
-            headSender = syncer,
-        )
+        // Given — the write is made as user A, and the session is already user B when it would go
+        // out
+        val asUserA =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from(TABLE),
+                store = store,
+                queueIdentity = { USER_A },
+                requestSync = { syncRequests++ },
+                headSender = syncer,
+            )
         session = USER_B
 
         // When
@@ -163,7 +173,8 @@ class HeadSendTest {
         server.answer = { okJson("[]") }
 
         // When
-        val outcome = builder.updateJson(patch("B"), MutationStrategy.OnlineOnly) { filter { eq("id", 1) } }
+        val outcome =
+            builder.updateJson(patch("B"), MutationStrategy.OnlineOnly) { filter { eq("id", 1) } }
 
         // Then — it went straight out, ahead of the queued write
         assertEquals(MutationOutcome.Applied::class, outcome::class)
@@ -172,27 +183,29 @@ class HeadSendTest {
     }
 
     @Test
-    fun a_write_the_queue_cannot_record_exactly_is_sent_directly_even_behind_pending_writes() = runTest {
-        // Given — a queued write
-        server.answer = { connectivityFailure() }
-        rename("A")
-        server.answer = { okJson("[]") }
+    fun a_write_the_queue_cannot_record_exactly_is_sent_directly_even_behind_pending_writes() =
+        runTest {
+            // Given — a queued write
+            server.answer = { connectivityFailure() }
+            rename("A")
+            server.answer = { okJson("[]") }
 
-        // When — an update whose filter the queue cannot record exactly
-        val outcome = builder.updateJson(patch("B")) {
-            filter {
-                or {
-                    eq("id", 1)
-                    eq("id", 2)
+            // When — an update whose filter the queue cannot record exactly
+            val outcome =
+                builder.updateJson(patch("B")) {
+                    filter {
+                        or {
+                            eq("id", 1)
+                            eq("id", 2)
+                        }
+                    }
                 }
-            }
-        }
 
-        // Then — it goes out at once, ahead of the queued write, and is never queued
-        assertEquals(MutationOutcome.Applied::class, outcome::class)
-        assertEquals("""{"title":"B"}""", server.requests.last().body)
-        assertEquals(1, store.allPendingMutations().size)
-    }
+            // Then — it goes out at once, ahead of the queued write, and is never queued
+            assertEquals(MutationOutcome.Applied::class, outcome::class)
+            assertEquals("""{"title":"B"}""", server.requests.last().body)
+            assertEquals(1, store.allPendingMutations().size)
+        }
 
     @Test
     fun a_write_whose_caller_is_cancelled_on_the_wire_stays_queued_and_asks_for_a_pass() = runTest {
@@ -286,7 +299,11 @@ class HeadSendTest {
     fun a_write_a_pass_is_sending_is_not_sent_again_at_the_head() = runTest {
         // Given — a queued write that a pass is sending, held open by the server
         session = USER_A
-        val id = (store.enqueueOwnedBy(USER_A.storedValue) { enqueueUpdate(TABLE, patch("A"), byId("1")) } as EnqueueOutcome.Queued).id
+        val id =
+            (store.enqueueOwnedBy(USER_A.storedValue) {
+                    enqueueUpdate(TABLE, patch("A"), byId("1"))
+                } as EnqueueOutcome.Queued)
+                .id
         val parked = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         server.answer = {
@@ -307,10 +324,14 @@ class HeadSendTest {
         assertEquals(1, server.requests.size)
     }
 
-    private fun patch(title: String): JsonElement = Json.parseToJsonElement("""{"title":"$title"}""")
+    private fun patch(title: String): JsonElement =
+        Json.parseToJsonElement("""{"title":"$title"}""")
 
     private fun byId(id: String): FilterDescriptor =
-        FilterDescriptor(conditions = listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id)))
+        FilterDescriptor(
+            conditions =
+                listOf(FilterDescriptor.Condition(column = "id", operatorId = "eq", value = id))
+        )
 
     private companion object {
         const val TABLE = "tasks"

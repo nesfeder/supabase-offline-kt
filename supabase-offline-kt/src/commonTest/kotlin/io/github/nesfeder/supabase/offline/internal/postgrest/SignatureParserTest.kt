@@ -1,23 +1,25 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
- * Tests for [parseSignatureFilters] and [SignatureFilters.admits] — the query-visibility gate
- * that stops the mutation overlay from appending INSERT/UPSERT rows into cached payloads whose
- * filter excludes them.
+ * Tests for [parseSignatureFilters] and [SignatureFilters.admits] — the query-visibility gate that
+ * stops the mutation overlay from appending INSERT/UPSERT rows into cached payloads whose filter
+ * excludes them.
  *
  * The contract is conservative: a signature is only [SignatureFilters.exhaustive] when its full
- * WHERE clause is captured and there is no windowing; anything we can't model faithfully falls
- * back to the legacy always-apply behavior so we never hide a row the server would return.
+ * WHERE clause is captured and there is no windowing; anything we can't model faithfully falls back
+ * to the legacy always-apply behavior so we never hide a row the server would return.
  */
 class SignatureParserTest {
 
@@ -51,10 +53,11 @@ class SignatureParserTest {
         assertEquals(
             FilterDescriptor(
                 mode = FilterDescriptor.Mode.AND,
-                conditions = listOf(
-                    FilterDescriptor.Condition("type", "eq", "OPEN"),
-                    FilterDescriptor.Condition("user_id", "eq", "user-1"),
-                ),
+                conditions =
+                    listOf(
+                        FilterDescriptor.Condition("type", "eq", "OPEN"),
+                        FilterDescriptor.Condition("user_id", "eq", "user-1"),
+                    ),
             ),
             result.descriptor,
         )

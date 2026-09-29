@@ -1,10 +1,12 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflinePostgrestQueryBuilder
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.Serializable
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.Serializable
 
 /**
  * The reified `insert` / `upsert` / `update` extensions must route onto the matching typed verb
@@ -101,5 +103,4 @@ class OfflinePostgrestExtensionsTest {
 }
 
 /** Row type for [OfflinePostgrestExtensionsTest]. */
-@Serializable
-internal data class ExtensionTestRow(val id: Int, val name: String)
+@Serializable internal data class ExtensionTestRow(val id: Int, val name: String)
