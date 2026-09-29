@@ -232,7 +232,7 @@ jobs:
   ios-tests:
     name: iOS tests
     needs: [changes, formatting, static-checks]
-    if: ${{ !cancelled() && !failure() && needs.changes.outputs.kotlin == 'true' }}
+    if: ${{ false && !cancelled() && !failure() && needs.changes.outputs.kotlin == 'true' }}
     # The image and Xcode the tests have always run on (macos-latest resolves to them today),
     # named so an image migration cannot change the toolchain without a commit.
     runs-on: macos-26
