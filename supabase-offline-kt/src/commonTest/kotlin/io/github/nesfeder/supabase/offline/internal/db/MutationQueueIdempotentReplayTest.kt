@@ -177,7 +177,7 @@ class MutationQueueIdempotentReplayTest {
         val mutationDao = FakeMutationDao()
         val beforeTheCrash = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
         val id = beforeTheCrash.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
-        beforeTheCrash.recordSendStarted(id)
+        beforeTheCrash.markSendUnconfirmed(id)
 
         // When — the next launch replays it
         val server = RecordingPostgrestServer()

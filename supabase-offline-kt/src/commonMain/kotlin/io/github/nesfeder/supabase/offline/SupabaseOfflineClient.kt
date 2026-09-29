@@ -272,10 +272,11 @@ internal class SupabaseOfflineClientImpl(
      */
     private val networkAvailability: Flow<Boolean>? = null,
     /**
-     * Scope hosting the client-scoped single-flight refresh loops. Defaults to a process-lifetime
-     * supervised scope; injectable so tests can supply a controlled scope.
+     * Scope hosting the client's refresh loops, background replay passes and session collector.
+     * Defaults to a process-lifetime supervised scope; injectable so tests can supply a controlled
+     * scope.
      */
-    coordinatorScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val coordinatorScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : SupabaseOfflineClient {
 
     constructor(
@@ -303,9 +304,6 @@ internal class SupabaseOfflineClientImpl(
     )
 
     private val mutationQueueReplayer = MutationQueueReplayer(store, supabase, sdkLogger = sdkLogger)
-
-    /** Hosts the collectors the client runs for its lifetime. */
-    private val syncScope = coordinatorScope
 
     /** Runs the replay passes the engine starts on its own, coalesced and backed off. */
     private val backgroundSync = BackgroundSyncTrigger(scope = coordinatorScope, sdkLogger = sdkLogger) {
@@ -371,7 +369,7 @@ internal class SupabaseOfflineClientImpl(
      */
     private fun replayWhenTheSessionSettles() {
         val auth = authPluginOrNull() ?: return
-        syncScope.launch {
+        coordinatorScope.launch {
             auth.sessionStatus
                 .map { status -> replayIdentityFor(status) }
                 .distinctUntilChanged()

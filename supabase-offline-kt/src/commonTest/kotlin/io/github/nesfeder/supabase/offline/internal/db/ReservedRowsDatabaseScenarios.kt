@@ -1,7 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.testdoubles.DeleteAllFailingMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.DeleteAllFailingObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingRoomCallback
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.assertEquals
@@ -186,7 +186,7 @@ internal class ReservedRowsDatabaseScenarios(
             newTestOfflineStore(
                 objectDao = database.objectDao(),
                 storageDao = database.storageDao(),
-                mutationDao = DeleteAllFailingMutationDao(database.mutationDao()),
+                mutationDao = FakeDeleteAllFailingMutationDao(database.mutationDao()),
             )
         }
     }
@@ -198,7 +198,7 @@ internal class ReservedRowsDatabaseScenarios(
     suspend fun aClearWhoseObjectCacheDeleteFailsChangesNothing(path: String) {
         aClearThatFailsPartWayChangesNothing(path) { database ->
             newTestOfflineStore(
-                objectDao = DeleteAllFailingObjectDao(database.objectDao()),
+                objectDao = FakeDeleteAllFailingObjectDao(database.objectDao()),
                 storageDao = database.storageDao(),
                 mutationDao = database.mutationDao(),
             )

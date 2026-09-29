@@ -1088,7 +1088,7 @@ internal class OfflineStore(
             serverJson = cachedJson,
             pending = all,
             keyColumns = primaryKeys.of(table),
-            appendsOnlyUnseenKeys = { mutation -> mayAlreadyHoldRows(mutation, unconfirmed) },
+            appendsOnlyUnseenKeys = { mutation -> isSyncedOrUnconfirmed(mutation, unconfirmed) },
             onMutationFailure = ::logSkippedOverlay,
         )
     }
@@ -1136,7 +1136,7 @@ internal class OfflineStore(
      * @param mutations Mutations to apply.
      * @param signature Canonical signature of the query; the seam through which the query-aware
      *   overlay scopes INSERT/UPSERT-appended rows to those this query admits.
-     * @param unconfirmedSends Mutations whose send may have reached the server; see [mayAlreadyHoldRows].
+     * @param unconfirmedSends Mutations whose send may have reached the server; see [isSyncedOrUnconfirmed].
      * @return The overlaid payload JSON.
      */
     private fun overlayMutations(
@@ -1151,7 +1151,7 @@ internal class OfflineStore(
         pending = mutations,
         targetFilters = parseSignatureFilters(signature),
         keyColumns = primaryKeys.of(table),
-        appendsOnlyUnseenKeys = { mutation -> mayAlreadyHoldRows(mutation, unconfirmedSends) },
+        appendsOnlyUnseenKeys = { mutation -> isSyncedOrUnconfirmed(mutation, unconfirmedSends) },
         onMutationFailure = ::logSkippedOverlay,
     )
 
@@ -1159,7 +1159,7 @@ internal class OfflineStore(
      * Whether the server may already hold [mutation]'s rows — it replayed, or its send may have
      * reached the server — so a payload's row with the same key may be the mutation's own.
      */
-    private fun mayAlreadyHoldRows(mutation: MutationRow, unconfirmedSends: Set<Long>): Boolean =
+    private fun isSyncedOrUnconfirmed(mutation: MutationRow, unconfirmedSends: Set<Long>): Boolean =
         mutation.syncedAtMs != null || mutation.id in unconfirmedSends
 
     /**
@@ -1418,12 +1418,12 @@ internal class OfflineStore(
      * Records, before its request goes out, that the send of mutation [id] has started — when it is
      * an INSERT whose rows all carry the table's primary key, the only kind whose replay can
      * tolerate finding its rows already on the server. It then replays as an upsert that ignores
-     * duplicates, until [recordSendNeverDelivered] or its removal clears the record.
+     * duplicates, until [clearUnconfirmedSend] or its removal clears the record.
      *
      * @return `true` when this call added the record; `false` when there was one already, or none
      *   is kept for this mutation.
      */
-    suspend fun recordSendStarted(id: Long): Boolean {
+    suspend fun markSendUnconfirmed(id: Long): Boolean {
         val mutation = mutationDao.byId(id) ?: return false
         if (mutation.operation != MutationOperation.INSERT) return false
         val body = try {
@@ -1437,12 +1437,12 @@ internal class OfflineStore(
     }
 
     /** Clears the record that the send of mutation [id] may have reached the server: it never did. */
-    suspend fun recordSendNeverDelivered(id: Long) {
+    suspend fun clearUnconfirmedSend(id: Long) {
         updateUnconfirmedSends { current -> current - id }
     }
 
     /** Whether mutation [id]'s send started and its outcome is unknown, so the server may hold its rows. */
-    suspend fun mayAlreadyBeOnServer(id: Long): Boolean = id in mutationQueueState.unconfirmedSends()
+    suspend fun hasUnconfirmedSend(id: Long): Boolean = id in mutationQueueState.unconfirmedSends()
 
     /** Applies [changes] to the unconfirmed sends. @return `true` when they changed. */
     private suspend fun updateUnconfirmedSends(changes: (Set<Long>) -> Set<Long>): Boolean = mutationQueueMutex.withLock {

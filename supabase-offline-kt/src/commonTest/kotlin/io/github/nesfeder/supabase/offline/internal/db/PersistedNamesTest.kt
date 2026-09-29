@@ -126,7 +126,7 @@ class PersistedNamesTest {
         store.enqueueInsert(table = "todos", body = Json.parseToJsonElement("""[{"id":"t1"}]""") as JsonArray)
 
         // When
-        store.recordSendStarted(1)
+        store.markSendUnconfirmed(1)
 
         // Then
         assertEquals(

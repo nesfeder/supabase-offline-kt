@@ -169,7 +169,7 @@ internal class FakeMutationDao : InMemoryMutationDao() {
  * A real [MutationDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can check
  * that a clear which fails part-way changes nothing on disk.
  */
-internal class DeleteAllFailingMutationDao(real: MutationDao) : MutationDao by real {
+internal class FakeDeleteAllFailingMutationDao(real: MutationDao) : MutationDao by real {
     override suspend fun deleteAll() {
         error("Scripted failure of the mutation delete")
     }
@@ -179,7 +179,7 @@ internal class DeleteAllFailingMutationDao(real: MutationDao) : MutationDao by r
  * A real [ObjectDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can check
  * that a clear which fails part-way changes nothing on disk.
  */
-internal class DeleteAllFailingObjectDao(real: ObjectDao) : ObjectDao by real {
+internal class FakeDeleteAllFailingObjectDao(real: ObjectDao) : ObjectDao by real {
     override suspend fun deleteAll() {
         error("Scripted failure of the object-cache delete")
     }

@@ -185,7 +185,7 @@ internal class MutationQueueReplayer(
         }
         if (!claimed) return HeadSendOutcome.NotAtHead
         try {
-            val newlyUnconfirmed = store.recordSendStarted(mutationId)
+            val newlyUnconfirmed = store.markSendUnconfirmed(mutationId)
             val result = when (val sent = sendCapturingEngineFailure(send)) {
                 is SendOutcome.Succeeded -> sent.value
                 is SendOutcome.Failed -> return sendLock.withLock {
@@ -220,9 +220,9 @@ internal class MutationQueueReplayer(
         val cause = failure.thrown
         return when {
             clearGeneration.value != generation -> HeadSendOutcome.Cleared(result = null, cause = cause)
-            cause.isNetworkOrConnectivityFailure() || cause.httpStatusOrNull() in DID_NOT_RUN_STATUSES -> {
+            cause.isNetworkOrConnectivityFailure() || cause.httpStatusOrNull() in STAYS_QUEUED_STATUSES -> {
                 if (newlyUnconfirmed && (failure.neverReachedServer || cause.httpStatusOrNull() == HTTP_SERVICE_UNAVAILABLE)) {
-                    store.recordSendNeverDelivered(mutationId)
+                    store.clearUnconfirmedSend(mutationId)
                 }
                 HeadSendOutcome.StaysQueued(cause)
             }
@@ -392,15 +392,15 @@ internal class MutationQueueReplayer(
         identity: QueueIdentity,
     ): ReplayOutcome {
         // Decided before this attempt is recorded: only an earlier attempt can have reached the server.
-        val mayAlreadyBeOnServer = store.mayAlreadyBeOnServer(mutation.id)
-        return when (val prepared = prepare(mutation, mayAlreadyBeOnServer)) {
+        val earlierSendUnconfirmed = store.hasUnconfirmedSend(mutation.id)
+        return when (val prepared = prepare(mutation, earlierSendUnconfirmed)) {
             is Prepared.Refused -> prepared.outcome
             is Prepared.Ready -> {
-                val newlyUnconfirmed = store.recordSendStarted(mutation.id)
+                val newlyUnconfirmed = store.markSendUnconfirmed(mutation.id)
                 when (val sent = sendCapturingEngineFailure { prepared.request(tableApi) }) {
                     is SendOutcome.Succeeded -> ReplayOutcome.Synced
                     is SendOutcome.Failed -> {
-                        if (newlyUnconfirmed && sent.neverReachedServer) store.recordSendNeverDelivered(mutation.id)
+                        if (newlyUnconfirmed && sent.neverReachedServer) store.clearUnconfirmedSend(mutation.id)
                         classify(mutation, sent.thrown, identity)
                     }
                 }
@@ -451,9 +451,9 @@ internal class MutationQueueReplayer(
     /**
      * The request that replays [mutation], or why it cannot be sent faithfully.
      *
-     * @param mayAlreadyBeOnServer Whether an earlier send of it may have reached the server.
+     * @param earlierSendUnconfirmed Whether an earlier send of it may have reached the server.
      */
-    private fun prepare(mutation: MutationRow, mayAlreadyBeOnServer: Boolean): Prepared {
+    private fun prepare(mutation: MutationRow, earlierSendUnconfirmed: Boolean): Prepared {
         val json = store.json
         val filter = decodeOrNull(mutation.filterJson, json)
         return when (mutation.operation) {
@@ -461,7 +461,7 @@ internal class MutationQueueReplayer(
                 val body = parseJsonArrayOrNull(json, mutation.bodyJson)
                     ?: return refuse(mutation, BODY_NO_LONGER_PARSES, "The queued body no longer parses")
                 Prepared.Ready { tableApi ->
-                    applyInsert(tableApi, mutation.table, body, mutation.defaultToNull, filter, mayAlreadyBeOnServer)
+                    applyInsert(tableApi, mutation.table, body, mutation.defaultToNull, filter, earlierSendUnconfirmed)
                 }
             }
 
@@ -550,10 +550,10 @@ internal class MutationQueueReplayer(
         body: JsonArray,
         defaultToNull: Boolean?,
         filter: FilterDescriptor?,
-        mayAlreadyBeOnServer: Boolean,
+        earlierSendUnconfirmed: Boolean,
     ) {
         val keyColumns = primaryKeys.of(table)
-        if (!mayAlreadyBeOnServer || !everyRowCarriesPrimaryKey(body, keyColumns)) {
+        if (!earlierSendUnconfirmed || !everyRowCarriesPrimaryKey(body, keyColumns)) {
             insertAsSent(tableApi, body, defaultToNull, filter)
             return
         }
@@ -665,7 +665,7 @@ internal class MutationQueueReplayer(
         const val HTTP_SERVICE_UNAVAILABLE = 503
 
         /** Statuses PostgREST answers when the write never ran: it could not reach the database. */
-        val DID_NOT_RUN_STATUSES = setOf(HTTP_SERVICE_UNAVAILABLE, 520)
+        val STAYS_QUEUED_STATUSES = setOf(HTTP_SERVICE_UNAVAILABLE, 520)
 
         /** Postgres: `ON CONFLICT` names columns with no unique or exclusion constraint. */
         const val NO_MATCHING_CONFLICT_TARGET = "42P10"
