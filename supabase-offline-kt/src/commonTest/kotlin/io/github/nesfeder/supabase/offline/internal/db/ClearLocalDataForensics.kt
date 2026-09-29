@@ -1,5 +1,6 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
+import androidx.sqlite.execSQL
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
@@ -92,7 +93,7 @@ internal suspend fun runClearLocalDataForensics(
         check((client as SupabaseOfflineClientImpl).rejectedMutationList().size == 1) { "the rejection was not recorded" }
         check(client.pendingMutationCount() == 1) { "the offline write was not queued" }
         check(containsMarker(databasePath, marker) || containsMarker(wal, marker)) { "the marker never reached the database" }
-        val reservedBefore = PreviousEngineQueries.reservedRowCount(databasePath.toString())
+        val reservedBefore = reservedRowCount(databasePath)
 
         // A screen still observing the table while it is cleared, as an app's would be: its reads
         // hold the database open while the clear rewrites it
@@ -112,7 +113,7 @@ internal suspend fun runClearLocalDataForensics(
             inWalAfterClose = containsMarker(wal, marker),
             inShmAfterClose = containsMarker(shm, marker),
             reservedRowsBeforeClear = reservedBefore,
-            reservedRowsAfterClear = PreviousEngineQueries.reservedRowCount(databasePath.toString()),
+            reservedRowsAfterClear = reservedRowCount(databasePath),
         )
     } finally {
         client.close()
@@ -123,6 +124,27 @@ internal suspend fun runClearLocalDataForensics(
 private enum class Phase { ONLINE, OFFLINE, REJECTING }
 
 private const val CACHED_PAYLOADS = 40
+
+/**
+ * Counts the mutation queue's reserved rows through a second connection, which waits out the
+ * client's own writes rather than failing on them.
+ */
+private fun reservedRowCount(databasePath: Path): Long {
+    val connection = defaultSQLiteDriver().open(databasePath.toString())
+    try {
+        connection.execSQL("PRAGMA busy_timeout = 5000")
+        val statement = connection.prepare("SELECT COUNT(*) FROM object_cache WHERE table_name = ?")
+        try {
+            statement.bindText(1, RESERVED_TABLE_NAME)
+            check(statement.step())
+            return statement.getLong(0)
+        } finally {
+            statement.close()
+        }
+    } finally {
+        connection.close()
+    }
+}
 
 private fun containsMarker(file: Path, marker: String): Boolean {
     if (!FileSystem.SYSTEM.exists(file)) return false
