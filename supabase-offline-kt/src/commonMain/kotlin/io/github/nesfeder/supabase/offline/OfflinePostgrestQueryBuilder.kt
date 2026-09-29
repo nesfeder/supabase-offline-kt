@@ -24,10 +24,12 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.postgrest.UnsupportedOfflineFilterException
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromBuilder
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorStrictFromRequest
+import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.wasRolledBack
 import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
 import io.github.jan.supabase.annotations.SupabaseExperimental
+import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
@@ -66,9 +68,14 @@ public interface OfflinePostgrestQueryBuilder {
      * One-shot read that consults the network and the offline cache according to [readStrategy].
      *
      * Only a list of rows is cached. A read that asks for another shape — `single()`,
-     * `maybeSingle()`, `head`, a `count`, `csv()`, `geojson()`, `stripNulls()` or `explain()` — goes to
-     * the network whatever [readStrategy] says, is not stored, and offline fails as
-     * [ReadStrategy.NetworkOnly] does.
+     * `maybeSingle()`, `head`, a `count` (with rows or without), `csv()`, `geojson()`, `stripNulls()` or
+     * `explain()` — goes to the network under every strategy but [ReadStrategy.CacheOnly], is not
+     * stored, and offline fails as [ReadStrategy.NetworkOnly] does. Under [ReadStrategy.CacheOnly] it
+     * sends nothing and throws [NoSuchElementException]. To read one row offline, read the list and
+     * take its first row.
+     *
+     * [request] may run several times per call, so it must have no side effects and read no clock or
+     * counter.
      *
      * @param columns Columns to select.
      * @param readStrategy How the network and the cache are combined; defaults to
@@ -97,7 +104,8 @@ public interface OfflinePostgrestQueryBuilder {
      * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one made after it.
      *
      * A read of a shape the cache does not hold (see [select]) emits the network's answer once, with
-     * [RefreshState.Idle], and completes; offline, it fails.
+     * [RefreshState.Idle], and completes; offline, it fails. Under [FlowReadStrategy.CacheOnly] it fails
+     * at once with [NoSuchElementException]. [request] may run several times, as for [select].
      *
      * @param columns Columns to select.
      * @param readStrategy Flow read strategy.
@@ -332,8 +340,9 @@ internal class OfflinePostgrestQueryBuilderImpl(
             currentIdentity = queueIdentity,
         ),
         operationGate: ClientOperationGate = ClientOperationGate(),
+        readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
     ) : this(
-        delegate = PostgrestQueryBuilderWrapperImpl(delegate),
+        delegate = PostgrestQueryBuilderWrapperImpl(delegate, readShapePostgrest),
         store = store,
         sdkLogger = sdkLogger,
         requestSession = requestSession,

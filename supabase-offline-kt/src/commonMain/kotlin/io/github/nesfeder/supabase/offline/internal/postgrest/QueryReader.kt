@@ -101,6 +101,7 @@ internal class QueryReader(
         val slot = cacheSlotOf(columns, request)
         val table = slot.table
         if (shape is ReadShape.Uncacheable) {
+            if (readStrategy is ReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
             sdkLogger.debug { "SELECT $table asks for ${shape.kind}; bypassing the cache" }
             return delegate.select(columns, request)
         }
@@ -214,6 +215,7 @@ internal class QueryReader(
     ): Flow<OfflineReadResult> = flow {
         val shape = delegate.shapeOf(columns, request)
         if (shape is ReadShape.Uncacheable) {
+            if (readStrategy == FlowReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
             sdkLogger.debug { "SELECT ${delegate.table} asks for ${shape.kind}; bypassing the cache" }
             emit(OfflineReadResult(result = delegate.select(columns, request), refresh = RefreshState.Idle))
         } else {
@@ -449,6 +451,12 @@ internal class QueryReader(
     /** A fresh SELECT builder for this table, as supabase-kt makes one. */
     private fun newRequestBuilder(): SelectRequestBuilder =
         SelectRequestBuilder(delegate.schema, delegate.postgrest.config.propertyConversionMethod)
+
+    /** What a cache-only read of [shape] fails with: the cache holds lists of rows, and it sends nothing. */
+    private fun cacheCannotAnswer(shape: ReadShape.Uncacheable): NoSuchElementException = NoSuchElementException(
+        "A cache-only read cannot answer ${shape.kind}: the cache holds lists of rows. Read the list and take " +
+            "the rows you need, or read with a strategy that may use the network.",
+    )
 
     private fun buildResult(data: String, postgrest: Postgrest): PostgrestResult =
         PostgrestResult(data, HeadersBuilder().build(), postgrest)

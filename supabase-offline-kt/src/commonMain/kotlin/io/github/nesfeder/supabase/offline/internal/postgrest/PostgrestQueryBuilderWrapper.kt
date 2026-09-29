@@ -98,9 +98,12 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
  * real [PostgrestQueryBuilder].
  *
  * @property builder The underlying [PostgrestQueryBuilder] instance.
+ * @param readShapePostgrest the instance the read-shape check builds reads through; see
+ *   [readShapePostgrestOf]. The client shares one across its handles.
  */
 internal class PostgrestQueryBuilderWrapperImpl(
-    private val builder: PostgrestQueryBuilder
+    private val builder: PostgrestQueryBuilder,
+    readShapePostgrest: Postgrest = readShapePostgrestOf(builder.postgrest),
 ) : PostgrestQueryBuilderWrapper {
 
     init {
@@ -113,7 +116,7 @@ internal class PostgrestQueryBuilderWrapperImpl(
 
     private val dryRunProbe = PreferHeaderDryRunProbe(builder.postgrest.supabaseClient)
 
-    private val readShapeProbe = PipelineReadShapeProbe(builder)
+    private val readShapeProbe = PipelineReadShapeProbe(readShapePostgrest, builder.table, builder.schema)
 
     /**
      * @see PostgrestQueryBuilderWrapper.table

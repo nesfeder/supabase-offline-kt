@@ -46,6 +46,9 @@ public sealed interface ReadStrategy {
     /**
      * Only fetch from the local cache. If the data is not in the cache, throw an error.
      *
+     * No request is ever sent. A read of a shape the cache does not hold (`single()`, `head`, a
+     * count, `csv()`, …) throws [NoSuchElementException] saying so.
+     *
      * @param cacheDuration If provided, the cached data is only used if it's
      * newer than this duration. If the cache is expired, it's treated as a cache
      * miss and an error is thrown.
@@ -104,7 +107,8 @@ public enum class FlowReadStrategy {
      * Only observe the local cache.
      *
      * No network request is performed. The Flow emits only
-     * cached data and future cache updates.
+     * cached data and future cache updates. A read of a shape the cache does not hold
+     * (`single()`, `head`, a count, `csv()`, …) fails with [NoSuchElementException] saying so.
      */
     CacheOnly
 }

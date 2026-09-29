@@ -8,7 +8,6 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.HttpRequestPipeline
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
@@ -32,7 +31,7 @@ internal sealed interface ReadShape {
      * Any other: one object, a count, a `HEAD`, CSV, GeoJSON, a query plan, or rows with nulls
      * stripped. Such a read bypasses the cache.
      *
-     * @property kind what it asks for, for logs.
+     * @property kind what it asks for, as a phrase for messages and logs.
      */
     data class Uncacheable(val kind: String) : ReadShape
 }
@@ -40,7 +39,11 @@ internal sealed interface ReadShape {
 /** Learns a SELECT's [ReadShape] before anything is sent or read from the cache. */
 internal fun interface ReadShapeProbe {
 
-    /** The shape the SELECT [request] would ask the server for. */
+    /**
+     * The shape the SELECT [request] would ask the server for.
+     *
+     * @throws Exception the builder's own error when the request cannot be built, as sending it would.
+     */
     suspend fun shapeOf(columns: Columns, request: SelectRequestBuilder.() -> Unit): ReadShape
 }
 
@@ -49,48 +52,76 @@ internal fun interface ReadShapeProbe {
  * `single()`, `csv()` and the rest only into `Accept`, `head` into the method, and a count into `Prefer`.
  */
 internal fun readShapeOf(method: HttpMethod, accept: List<String>, prefer: List<String>): ReadShape = when {
-    method == HttpMethod.Head -> ReadShape.Uncacheable("head")
+    method == HttpMethod.Head -> ReadShape.Uncacheable("a HEAD request")
     prefer.flatMap { value -> value.split(',') }.any { preference -> preference.trim().startsWith("count=") } ->
-        ReadShape.Uncacheable("count")
+        ReadShape.Uncacheable("a read with a row count")
     accept.isNotEmpty() && accept.all { value -> value == JSON_ROWS } -> ReadShape.RowList
-    accept.any { value -> value.startsWith(OBJECT) } -> ReadShape.Uncacheable("single object")
-    accept.any { value -> value.startsWith(PLAN) } -> ReadShape.Uncacheable("query plan")
-    accept.any { value -> "nulls=stripped" in value } -> ReadShape.Uncacheable("rows with nulls stripped")
-    else -> ReadShape.Uncacheable("another media type")
+    accept.any { value -> value.startsWith(OBJECT) } -> ReadShape.Uncacheable("a single object (single(), maybeSingle())")
+    accept.any { value -> value.startsWith(PLAN) } -> ReadShape.Uncacheable("a query plan (explain())")
+    accept.any { value -> "nulls=stripped" in value } -> ReadShape.Uncacheable("rows with nulls stripped (stripNulls())")
+    else -> ReadShape.Uncacheable("another media type (csv(), geojson())")
+}
+
+/**
+ * A second PostgREST plugin instance on [postgrest]'s client, configured as [postgrest] is, whose
+ * requests carry a fixed token: building one asks neither the Auth plugin nor the app's own token
+ * provider for a token, and sends nothing, since the read-shape check stops every request it builds.
+ * What it copies is pinned by `ReadShapeProbeContractTest`.
+ */
+internal fun readShapePostgrestOf(postgrest: Postgrest): Postgrest {
+    val source = postgrest.config
+    // copy() carries the constructor's settings; the settings declared outside it are copied by hand
+    val config = source.copy().also { copy ->
+        copy.customUrl = source.customUrl
+        copy.serializer = source.serializer
+        copy.logLevel = source.logLevel
+        copy.loggingFactory = source.loggingFactory
+        copy.jwtToken = READ_SHAPE_CHECK_TOKEN
+        copy.maxRetries = 0
+    }
+    return Postgrest.create(postgrest.supabaseClient, config)
 }
 
 /**
  * The [ReadShapeProbe] over supabase-kt's HTTP pipeline, as the dry-run check reads writes: the probe
- * builds the request under a [ReadRequestCapture], and the phase [installReadShapeCheck] put ahead of
- * every other records its method and headers and stops it. Building it resolves the access token.
+ * builds the read through [postgrest], an instance from [readShapePostgrestOf], under a
+ * [ReadRequestCapture]; the phase [installReadShapeCheck] put ahead of every other records its method
+ * and headers and stops it. It fails closed: a read whose request cannot be built is not taken for a list.
+ *
+ * @param table the table read.
+ * @param schema the schema it is read in.
  */
-internal class PipelineReadShapeProbe(private val builder: PostgrestQueryBuilder) : ReadShapeProbe {
+internal class PipelineReadShapeProbe(
+    private val postgrest: Postgrest,
+    private val table: String,
+    private val schema: String,
+) : ReadShapeProbe {
 
-    /** A read whose request cannot be built, as when no token resolves, is taken as a row list. */
     override suspend fun shapeOf(columns: Columns, request: SelectRequestBuilder.() -> Unit): ReadShape {
-        // Without the check the probe's request would really go out
-        if (!builder.postgrest.supabaseClient.hasReadShapeCheck()) return ReadShape.RowList
+        check(postgrest.supabaseClient.hasReadShapeCheck()) { "The read-shape check is not installed on this client" }
         val capture = ReadRequestCapture()
-        try {
+        val failure = try {
             withContext(capture) {
-                builder.select(columns) {
+                postgrest.from(schema, table).select(columns) {
                     request()
                     // The stop comes back as a failed request, which supabase-kt would retry
                     noRetry()
                 }
             }
+            null
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Exception) {
-            // The check's stop, or a request that could not be built; the capture tells them apart
+        } catch (failure: Exception) {
+            // The check's stop, or the request could not be built; the capture tells them apart
+            failure
         }
-        return capture.shape ?: ReadShape.RowList
+        return capture.shape ?: throw failure ?: IllegalStateException("The read-shape check did not see the read")
     }
 }
 
 /**
  * Carried in a coroutine context, it makes the phase [installReadShapeCheck] installs record the shape
- * of the PostgREST read sent from that coroutine, and stop it.
+ * of the request sent from that coroutine, and stop it.
  */
 internal class ReadRequestCapture : AbstractCoroutineContextElement(Key) {
 
@@ -99,6 +130,12 @@ internal class ReadRequestCapture : AbstractCoroutineContextElement(Key) {
 
     /** The shape of the read the capture saw, or `null` while it has seen none. */
     var shape: ReadShape? = null
+
+    /** The URL of the request the capture saw, or `null` while it has seen none. */
+    var url: String? = null
+
+    /** The headers of the request the capture saw, by name; empty while it has seen none. */
+    var headers: Map<String, List<String>> = emptyMap()
 }
 
 /** Thrown by the read-shape check's phase to stop a request; caught by [PipelineReadShapeProbe]. */
@@ -112,7 +149,8 @@ private val ReadShapeCheckInstallation = AttributeKey<AtomicBoolean>("io.github.
 
 /**
  * Installs the read-shape check on this client's request pipeline, ahead of every other phase, once
- * however many threads call it. It acts only on a PostgREST read sent under a [ReadRequestCapture].
+ * however many threads call it. It stops every request sent under a [ReadRequestCapture], whatever its
+ * URL, so a request built for the check never leaves, and records a read's shape.
  *
  * @return `true` when this call installed it.
  */
@@ -123,15 +161,20 @@ internal fun SupabaseClient.installReadShapeCheck(): Boolean {
     if (!installation.compareAndSet(expectedValue = false, newValue = true)) return false
     client.requestPipeline.insertPhaseBefore(HttpRequestPipeline.Before, ReadShapeCheckPhase)
     client.requestPipeline.intercept(ReadShapeCheckPhase) {
-        val capture = currentCoroutineContext()[ReadRequestCapture]
-        if (capture != null && isPostgrestRead(context)) {
-            capture.shape = readShapeOf(
-                method = context.method,
-                accept = context.headers.getAll(HttpHeaders.Accept).orEmpty(),
-                prefer = context.headers.getAll(PostgrestQueryBuilder.HEADER_PREFER).orEmpty(),
+        val capture = currentCoroutineContext()[ReadRequestCapture] ?: return@intercept
+        val request = context
+        capture.shape = if (request.method == HttpMethod.Get || request.method == HttpMethod.Head) {
+            readShapeOf(
+                method = request.method,
+                accept = request.headers.getAll(HttpHeaders.Accept).orEmpty(),
+                prefer = request.headers.getAll(PostgrestQueryBuilder.HEADER_PREFER).orEmpty(),
             )
-            throw ReadShapeCheckStop()
+        } else {
+            ReadShape.Uncacheable("a request that is not a read")
         }
+        capture.url = request.url.buildString()
+        capture.headers = request.headers.names().associateWith { name -> request.headers.getAll(name).orEmpty() }
+        throw ReadShapeCheckStop()
     }
     return true
 }
@@ -141,14 +184,8 @@ internal fun SupabaseClient.installReadShapeCheck(): Boolean {
 private fun SupabaseClient.hasReadShapeCheck(): Boolean =
     httpClient.httpClient.attributes.getOrNull(ReadShapeCheckInstallation)?.load() == true
 
-/** Whether [request] is a read of this client's PostgREST: a `GET` or `HEAD` under its URL. */
-private fun SupabaseClient.isPostgrestRead(request: HttpRequestBuilder): Boolean {
-    if (request.method != HttpMethod.Get && request.method != HttpMethod.Head) return false
-    val postgrest = pluginManager.getPluginOrNull(Postgrest) ?: return false
-    val base = postgrest.resolveUrl().trimEnd('/')
-    val url = request.url.buildString()
-    return url == base || url.startsWith("$base/") || url.startsWith("$base?")
-}
+/** The token the read-shape check's requests carry. It is no credential, and the check never sends it. */
+internal const val READ_SHAPE_CHECK_TOKEN: String = "supabase-offline-read-shape-check"
 
 /** The `Accept` value of a plain SELECT: a JSON array of rows. */
 private const val JSON_ROWS = "application/json"

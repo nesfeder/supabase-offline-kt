@@ -23,6 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installReadShapeCheck
+import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.childEngineScope
@@ -35,6 +36,7 @@ import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
@@ -375,6 +377,12 @@ internal class SupabaseOfflineClientImpl(
     /** Taken by the one [close] that reports the release is late. */
     private val reportedStillClosing = MutableStateFlow(false)
 
+    /**
+     * The PostgREST instance every handle's read-shape check builds reads through, made on first use
+     * and let go by [close]; see [readShapePostgrestOf].
+     */
+    private val readShapePostgrest = MutableStateFlow<Postgrest?>(null)
+
     /** Where [storage]'s buckets see an image transform's requests go; resolved on first use. */
     private val renderImagePath: String by lazy { renderImagePathOf(supabase) }
 
@@ -472,6 +480,9 @@ internal class SupabaseOfflineClientImpl(
         ensurePostgrestInstalled()
         require(!isReservedTable(table)) { "The table name is reserved by the offline engine" }
         val delegate = supabase.postgrest.from(schema, table)
+        val readShape = readShapePostgrest.value ?: readShapePostgrestOf(supabase.postgrest).let { created ->
+            if (readShapePostgrest.compareAndSet(null, created)) created else readShapePostgrest.value ?: created
+        }
         return OfflinePostgrestQueryBuilderImpl(
             delegate = delegate,
             store = store,
@@ -484,6 +495,7 @@ internal class SupabaseOfflineClientImpl(
             requestSync = backgroundSync::request,
             headSender = mutationQueueReplayer,
             operationGate = operationGate,
+            readShapePostgrest = readShape,
         )
     }
 
@@ -615,6 +627,7 @@ internal class SupabaseOfflineClientImpl(
      */
     override suspend fun close() {
         if (operationGate.close()) clientScope.coroutineContext.job.cancel()
+        readShapePostgrest.value = null
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
         val releasedInTime = withContext(NonCancellable + Dispatchers.Default) {
             withTimeoutOrNull(closeWait) { releaseOnceIdle() } != null
