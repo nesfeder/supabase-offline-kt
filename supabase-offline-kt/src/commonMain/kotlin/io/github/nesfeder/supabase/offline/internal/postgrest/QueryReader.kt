@@ -15,11 +15,13 @@ import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.ktor.http.HeadersBuilder
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -34,6 +36,8 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
 
 /**
@@ -103,8 +107,10 @@ internal class QueryReader(
         sdkLogger.debug { "SELECT $table via ${readStrategy::class.simpleName}" }
         return when (readStrategy) {
             is ReadStrategy.NetworkFirst -> {
+                // The cache answers a transport failure, so upstream's waits before one would only delay it
+                val retries = if (hasFreshCache(slot, readStrategy.cacheDuration)) Retries.TRANSPORT_FAILS_FAST else Retries.UPSTREAM
                 try {
-                    fetchWaitingOutRestore(slot, columns, request)
+                    fetchWaitingOutRestore(slot, columns, request, retries)
                 } catch (exception: Exception) {
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
                     val cached = readCached(slot, readStrategy.cacheDuration)
@@ -118,7 +124,7 @@ internal class QueryReader(
                 }
             }
             ReadStrategy.NetworkOnly -> {
-                fetchWaitingOutRestore(slot, columns, request)
+                fetchWaitingOutRestore(slot, columns, request, Retries.UPSTREAM)
             }
             is ReadStrategy.CacheFirst -> {
                 val cached = readCached(slot, readStrategy.cacheDuration)
@@ -126,7 +132,7 @@ internal class QueryReader(
                     sdkLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
-                    fetchWaitingOutRestore(slot, columns, request)
+                    fetchWaitingOutRestore(slot, columns, request, Retries.UPSTREAM)
                 }
             }
             is ReadStrategy.CacheOnly -> {
@@ -152,12 +158,13 @@ internal class QueryReader(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
+        retries: Retries,
     ): PostgrestResult {
         val table = slot.table
         var sessionBefore = requestSession()
         var stepsTaken = 0
         while (true) {
-            val fetched = fetchAndCache(slot, columns, request, sessionBefore)
+            val fetched = fetchAndCache(slot, columns, request, sessionBefore, retries)
             // A response refused after a clear is answered with the emptied cache, and never asked again
             if (fetched.wasRefusedAfterClear) return buildResult(EMPTY_JSON_ARRAY, delegate.postgrest)
             if (!trustPolicy.oneShotAsksAgain(fetched.sessionBefore, fetched.sessionAfter, fetched.isEmpty) ||
@@ -281,7 +288,7 @@ internal class QueryReader(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ) {
-        val fetched = fetchAndCache(slot, columns, request, requestSession())
+        val fetched = fetchAndCache(slot, columns, request, requestSession(), Retries.UPSTREAM)
         if (fetched.wasRefusedAfterClear) return
         if (trustPolicy.refreshRetries(fetched.sessionBefore, fetched.sessionAfter, fetched.isEmpty)) {
             sdkLogger.warning { "SELECT ${slot.table} answered while the session was not settled; will retry" }
@@ -299,7 +306,7 @@ internal class QueryReader(
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> =
         store.overlaidPayloadFlow(slot.table, slot.cacheKey)
-            .onStart { fetchWaitingOutRestore(slot, columns, request) }
+            .onStart { fetchWaitingOutRestore(slot, columns, request, Retries.UPSTREAM) }
             .map { payload ->
                 OfflineReadResult(
                     result = payload?.let { json -> buildResult(json, delegate.postgrest) },
@@ -318,13 +325,14 @@ internal class QueryReader(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
         sessionBeforeFirstRequest: RequestSession,
+        retries: Retries,
     ): FetchedResponse {
         val (table, cacheKey) = slot
         var sessionBefore = sessionBeforeFirstRequest
         var refetchBudget = STALE_RESPONSE_REFETCH_BUDGET
         while (true) {
             val requestStartedAtTick = store.monotonicTickNow()
-            val response = delegate.select(columns, request)
+            val response = send(columns, request, retries)
             sdkLogger.debug { "SELECT $table network response: ${response.data}" }
             val sessionAfter = requestSession()
             val isEmpty = isEmptyJsonArrayPayload(response.data)
@@ -370,28 +378,86 @@ internal class QueryReader(
         return if (overlaid == fetched.response.data) fetched.response else buildResult(overlaid, delegate.postgrest)
     }
 
+    /**
+     * Sends the SELECT. With [Retries.TRANSPORT_FAILS_FAST] a transport failure is thrown at once, and
+     * a 503 or 520 is retried here on upstream's schedule, as supabase-kt would, unless the read turned
+     * retries off.
+     */
+    private suspend fun send(columns: Columns, request: SelectRequestBuilder.() -> Unit, retries: Retries): PostgrestResult {
+        if (retries == Retries.UPSTREAM) return delegate.select(columns, request)
+        val maxRetries = if (newRequestBuilder().apply(request).retry) delegate.postgrest.config.maxRetries else 0
+        var attempt = 0
+        while (true) {
+            try {
+                return delegate.select(columns) {
+                    request()
+                    noRetry()
+                    if (attempt > 0) headers.append(RETRY_COUNT_HEADER, attempt.toString())
+                }
+            } catch (failure: PostgrestRestException) {
+                if (attempt >= maxRetries || failure.statusCode !in UPSTREAM_RETRIED_STATUSES) throw failure
+                delay(upstreamRetryDelay(attempt))
+                attempt++
+            }
+        }
+    }
+
     /** The cached payload of the query with its mutations overlaid, or `null` when none is cached or it is older than [cacheDuration]. */
     private suspend fun readCached(slot: CacheSlot, cacheDuration: Duration?): PostgrestResult? {
         val (table, cacheKey) = slot
         val (payload, updatedAt) = store.getPayloadWithTimestamp(table, cacheKey) ?: return null
-        if (cacheDuration != null && nowMillis() - updatedAt > cacheDuration.inWholeMilliseconds) return null
+        if (!isFresh(updatedAt, cacheDuration)) return null
         val overlaid = store.overlayCachedPayload(table = table, signature = cacheKey, cachedJson = payload)
         return buildResult(overlaid, delegate.postgrest)
     }
+
+    /** Whether [readCached] would answer: a payload is cached and not older than [cacheDuration]. */
+    private suspend fun hasFreshCache(slot: CacheSlot, cacheDuration: Duration?): Boolean {
+        val (_, updatedAt) = store.getPayloadWithTimestamp(slot.table, slot.cacheKey) ?: return false
+        return isFresh(updatedAt, cacheDuration)
+    }
+
+    /** Whether a payload written at [updatedAt] is within [cacheDuration]; any age is when it is `null`. */
+    private fun isFresh(updatedAt: Long, cacheDuration: Duration?): Boolean =
+        cacheDuration == null || nowMillis() - updatedAt <= cacheDuration.inWholeMilliseconds
 
     /** Where the query is cached; see [cacheSlotOf]. */
     private fun cacheSlotOf(columns: Columns, request: SelectRequestBuilder.() -> Unit): CacheSlot = cacheSlotOf(
         table = delegate.table,
         columns = columns,
         defaultSchema = delegate.postgrest.config.defaultSchema,
-        builderFactory = { SelectRequestBuilder(delegate.schema, delegate.postgrest.config.propertyConversionMethod) },
+        builderFactory = ::newRequestBuilder,
         request = request,
     )
+
+    /** A fresh SELECT builder for this table, as supabase-kt makes one. */
+    private fun newRequestBuilder(): SelectRequestBuilder =
+        SelectRequestBuilder(delegate.schema, delegate.postgrest.config.propertyConversionMethod)
 
     private fun buildResult(data: String, postgrest: Postgrest): PostgrestResult =
         PostgrestResult(data, HeadersBuilder().build(), postgrest)
 
+    /** How a network SELECT meets a failure supabase-kt would retry. */
+    private enum class Retries {
+
+        /** As supabase-kt's own configuration says. */
+        UPSTREAM,
+
+        /** A transport failure at once, for a read the cache answers then; see [send]. */
+        TRANSPORT_FAILS_FAST,
+    }
+
     private companion object {
+        /** The statuses supabase-kt retries a `GET` on: service unavailable, and Cloudflare's unknown error. */
+        val UPSTREAM_RETRIED_STATUSES = setOf(503, 520)
+
+        /** The header supabase-kt numbers a retried attempt in. */
+        const val RETRY_COUNT_HEADER = "x-retry-count"
+
+        /** supabase-kt's wait before retry [attempt] (from 0): 1 s doubling, at most 30 s. */
+        fun upstreamRetryDelay(attempt: Int): Duration =
+            minOf((1_000L shl minOf(attempt, 5)).milliseconds, 30.seconds)
+
         /**
          * Follow-up requests one [fetchAndCache] may send after the cache refuses a response as older
          * than a local write. One converges, since it starts after that write.

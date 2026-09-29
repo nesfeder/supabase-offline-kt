@@ -17,6 +17,10 @@ public sealed interface ReadStrategy {
      * Try to fetch from the network first. If the network is unavailable,
      * fall back to the local cache.
      *
+     * When the cache holds the query, a transport failure falls back at once: supabase-kt's retries
+     * of it are skipped, while a 503 or 520 is still retried on its schedule. With nothing cached, the
+     * read retries as a [NetworkOnly] read does.
+     *
      * @param cacheDuration If provided, the cached data is only used if it's
      * newer than this duration. If the cache is expired, the network error is
      * thrown instead.
