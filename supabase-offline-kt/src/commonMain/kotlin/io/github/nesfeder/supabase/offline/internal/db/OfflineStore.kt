@@ -352,62 +352,18 @@ internal class OfflineStore(
     /* ────────────────────────── Object cache (SELECT payloads) ────────────────────────── */
 
     /**
-     * Write [payload] into the object cache for [table]/[signature].
+     * Writes a network SELECT's [payload] for [table]/[signature], unless it must be refused:
+     * [AddPayloadOutcome.DROPPED_CACHE_CLEARED] when its request started before [clearAll],
+     * [AddPayloadOutcome.DROPPED_STALE] when it started before the table's last local write (it would
+     * roll that write back), and [AddPayloadOutcome.DROPPED_EMPTY] for an empty payload that is not
+     * [authoritativeEmpty]. A payload written with a start tick is recorded as containing the table's
+     * synced mutations. Runs under the table's write lock.
      *
-     * Teardown guard (checked before everything else): a payload whose producing request started
-     * before [clearAll] wiped the cache is refused as [AddPayloadOutcome.DROPPED_CACHE_CLEARED].
-     * Sign-out, account switch and account deletion all clear the cache so one identity's rows
-     * never surface under the next; a refresh still in flight at that moment answers for the
-     * *outgoing* session and would put them straight back.
-     *
-     * Stale-response guard (checked next, before anything below): a payload whose producing
-     * request started before [table]'s last local write is refused outright as
-     * [AddPayloadOutcome.DROPPED_STALE]. A network SELECT that left before a local mutation
-     * landed returns the pre-mutation server state; writing it here rolls the cache back over
-     * [applyLocalMutationToCache]'s patch, and nothing replays that patch — online-success
-     * mutations never enter the pending queue — so the row simply disappears until the next
-     * refresh. The guard sits in front of the empty-clobber logic rather than beside it because
-     * the two answer different questions: *is this response current* precedes *is this emptiness
-     * real*. An in-flight refresh's pre-insert `[]` is stale first and authoritative second, so it
-     * is dropped even when [authoritativeEmpty] is set — while an empty from a request that
-     * started *after* the last local write still replaces cached rows, exactly as before.
-     *
-     * Empty-clobber guard: **an unattributed empty never persists.** Unless [authoritativeEmpty]
-     * is set, an empty (`[]` / blank) payload is refused as [AddPayloadOutcome.DROPPED_EMPTY]
-     * whatever the slot currently holds — non-empty rows, an earlier empty, or nothing at all.
-     * The dominant cause of a *spurious* empty SELECT response is a cold-start auth race: a
-     * refresh fires before the supabase-kt session has finished restoring, the request goes out
-     * without a usable JWT, RLS filters every row, and the server returns `200 OK` with body
-     * `[]`. Over cached rows that empty erases real data and every reactive `selectAsFlow`
-     * observer re-emits an empty list — a loading placeholder that never resolves, or a list
-     * screen that goes blank, until the subscription is recreated.
-     *
-     * The cold slot is the same bug one step earlier and was the gap this rule closes: with
-     * nothing cached yet, an RLS-shaped `[]` used to be written with a fresh `updatedAt`, and
-     * every later cache-first read served that phantom empty as the user's data. An
-     * already-empty slot is refused for the same reason — rewriting it only refreshes the
-     * timestamp that keeps the phantom alive past its cache duration.
-     *
-     * [authoritativeEmpty] is how a *genuine* server empty propagates: the select resolver sets
-     * it when the request that produced [payload] went out with an authenticated session, so an
-     * empty result is the server's real answer — every row matching the query is gone (e.g.
-     * deleted from another device), or the user genuinely has no rows yet. It writes into a cold
-     * slot too, so a legitimately-empty first read still seeds the cache and collectors observe
-     * an empty list instead of waiting forever. Empties from a still-restoring or signed-out
-     * session stay blocked. Explicit local deletions still propagate through
-     * [applyLocalMutationToCache] and [clearTable] / [deleteTablePayload], all of which bypass
-     * this guard.
-     *
-     * @param table Table the SELECT payload belongs to.
-     * @param signature Canonical signature of the SELECT that produced [payload].
-     * @param payload Raw JSON payload to cache.
-     * @param authoritativeEmpty Whether an empty [payload] is the server's authoritative answer
-     *   (the producing request carried an authenticated session) and may replace a non-empty
-     *   cached payload. Has no effect on non-empty payloads.
-     * @param requestStartedAtTick [monotonicTickNow] as read immediately before the producing
-     *   request went out. `null` for writers with no request behind them, which are never
-     *   dropped as stale.
-     * @return What happened to the payload, so a network caller can re-fetch after a stale drop.
+     * @param authoritativeEmpty Whether an empty [payload] is the server's real answer (the request
+     *   went out signed in), so it may replace cached rows or seed a cold slot.
+     * @param requestStartedAtTick [monotonicTickNow] read before the request went out, or `null` for
+     *   a writer with no request behind it, which is never refused as stale.
+     * @return What happened, so a caller can re-fetch after a stale drop.
      */
     suspend fun addPayload(
         table: String,
@@ -554,18 +510,9 @@ internal class OfflineStore(
     }
 
     /**
-     * Wipes the entire offline cache — every cached SELECT payload, every cached
-     * storage-object metadata row, and every queued mutation (pending or synced).
-     *
-     * Used by identity-clearing flows (logout, account switch, account deletion) so
-     * one user's cached rows and un-synced writes never carry over to the next user
-     * or survive on disk after the account is gone.
-     *
-     * Stamps the teardown tick **before** deleting, so a network SELECT already in flight is
-     * disqualified even if its response is processed while the deletes are still running. Without
-     * it the wipe is only as durable as the slowest refresh that raced it: the response lands
-     * afterwards, [addPayload] writes the outgoing account's rows back, and the next user sees
-     * them. That is the guard's whole point, so it is recorded first and never rolled back.
+     * Wipes every cached payload, storage-object row and mutation, the mutation queue's records
+     * included, in one transaction, and marks the teardown so that no response or cache patch started
+     * before it lands afterwards. For identity changes: sign-out, account switch, deletion.
      */
     suspend fun clearAll() {
         // Under the mutation-queue lock, so a write whose operation predates this teardown cannot
@@ -1103,16 +1050,8 @@ internal class OfflineStore(
     /* ────────────────── Overlay pending mutations onto SELECT JSON ────────────────── */
 
     /**
-     * Apply client-side mutations to fresh network data for [table].
-     *
-     * For fresh data we only want to overlay *pending* (unsynced) mutations,
-     * since the server already reflects anything that has been successfully
-     * synced.
-     *
-     * @param table     Table whose pending mutations should be overlaid.
-     * @param signature Canonical signature of the SELECT that produced [serverJson]; used to gate
-     *                  INSERT/UPSERT-appended rows to those the cached query actually admits.
-     * @param serverJson Raw JSON payload the mutations are overlaid onto.
+     * Overlays the current identity's pending mutations of [table] onto a fresh network [serverJson]
+     * for the query [signature]. Synced ones are left out: the server already reflects them.
      */
     suspend fun applyPendingMutations(
         table: String,
@@ -1127,21 +1066,10 @@ internal class OfflineStore(
     }
 
     /**
-     * Apply both pending and already-synced mutations to cached data for
-     * [table].
+     * Overlays the current identity's pending mutations, and the synced ones [cachedJson] does not
+     * already contain, onto a cached payload served while offline.
      *
-     * When we fall back to cached SELECT payloads because the network is
-     * unavailable, those payloads might be older than some mutations that
-     * have since been synced. We need to re-apply both pending and synced
-     * mutations on top of the cached snapshot so the UI reflects the latest
-     * known state — but only the current identity's, and a synced mutation only when the payload
-     * was fetched before it replayed (see [belongsOnPayload]).
-     *
-     * @param table Table whose mutations are overlaid.
-     * @param signature Signature of the cached payload, or `null` when it is not known (every synced
-     *   mutation is then applied).
-     * @param cachedJson The cached payload.
-     * @return The overlaid payload.
+     * @param signature The payload's query, or `null` when not known: every synced mutation applies.
      */
     suspend fun applyAllMutationsForOfflineFallback(
         table: String,
@@ -1170,36 +1098,10 @@ internal class OfflineStore(
         applyAllMutationsForOfflineFallback(table, signature = null, cachedJson = cachedJson)
 
     /**
-     * Reactive overlay substrate for [table]/[signature], the in-memory replacement for the old
-     * fabricated empty-array cache seed.
-     *
-     * Combines the cached SELECT payload with the table's mutations and emits:
-     * - **payload present** → the payload with all mutations overlaid (today's semantics);
-     * - **payload absent, mutations present** → the mutations overlaid onto an in-memory `[]`
-     *   substrate, so a queued-offline INSERT is visible immediately — but nothing is written to
-     *   Room (queued-write visibility is preserved without persisting fabricated data). If the
-     *   overlay still yields an empty array (e.g. only an UPDATE/DELETE that matches nothing), the
-     *   flow reports `null` (no data yet) rather than a phantom empty;
-     * - **payload absent, no mutations** → `null`, the typed "no data yet" state.
-     *
-     * A `null` emission means "we know nothing for this signature yet"; a non-null `"[]"` means the
-     * server genuinely returned no rows. Callers that render an instant empty state opt in via the
-     * `WithState` read variant and map the `null`/no-data case to `emptyList()`.
-     *
-     * ### Emission dedup
-     * Every cached payload lives in one Room table (`object_cache`) and every queued mutation in
-     * another (`mutation_cache`), and Room invalidation is table-granular — so without dedup, any
-     * write for *any* feature re-emits every live observer app-wide, and each downstream repository
-     * re-decodes an identical payload just to discard it (its own `distinctUntilChanged` sits
-     * *after* the decode). Both combine inputs and the overlaid output are therefore deduped by
-     * value here: a refresh that rewrites an identical payload (fresh `updatedAt`, same JSON) and a
-     * mutation-queue write for an unrelated table both stop at this seam instead of fanning out as
-     * decode work. A genuinely-changed payload is a different string and always propagates.
-     *
-     * @param table Table whose cache and mutations are observed.
-     * @param signature Canonical signature of the cached SELECT; used to scope the mutation overlay
-     *   to the rows this query admits.
-     * @return A flow of overlaid payload JSON, or `null` when no data is available yet.
+     * The cached payload of [table]/[signature] with the current identity's mutations overlaid, as it
+     * changes; `null` while nothing is known. With no payload but mutations that produce rows, the
+     * overlay onto an empty list is emitted without being stored. Inputs and output are
+     * de-duplicated, so an unrelated write does not re-emit.
      */
     fun cachePayloadWithOverlayFlow(table: String, signature: String): Flow<String?> {
         if (isReservedTable(table)) return flowOf(null)
@@ -1491,18 +1393,9 @@ internal class OfflineStore(
     }
 
     /**
-     * Mark a mutation as synced at the current time.
-     *
-     * Also advances [table]'s stale-refresh watermark. The queue-replay path never writes the
-     * object cache itself — a queued mutation is visible through
-     * [cachePayloadWithOverlayFlow]'s overlay until [clearSyncedMutationsForTable] retires it
-     * after the next successful SELECT — so this is where a replay establishes new server truth.
-     * Without the stamp, a refresh that started before the replay could land afterwards, write the
-     * pre-replay payload, and retire the overlay in the same pass, erasing the write from both
-     * places at once.
-     *
-     * @param id Identifier of the mutation that replayed successfully.
-     * @param table Table the mutation belongs to, whose watermark this replay advances.
+     * Marks mutation [id] replayed, clears its unconfirmed send and any stale rejected entry in the same
+     * transaction, and advances [table]'s stale-refresh watermark so a refresh that started before
+     * the replay cannot land after it.
      */
     suspend fun markMutationSynced(id: Long, table: String) {
         recordLocalMutation(table)
@@ -1560,32 +1453,9 @@ internal class OfflineStore(
     }
 
     /**
-     * Retires the synced mutations of [table] that no cached query still needs.
-     *
-     * A synced mutation stays in the queue so the overlay can keep showing it on cached payloads
-     * fetched before it replayed — those payloads do not contain it. It is retired only once nothing
-     * depends on that any more: every cached payload of [table] was written by a network response
-     * whose request started after the mutation was marked synced, and no live query of [table] is
-     * waiting for its first payload (it reads the mutation through the overlay meanwhile). A refresh
-     * of one query therefore retires nothing another cached query still needs, and a table that
-     * nothing caches or observes — a write-only table — retires its synced mutations straight away.
-     *
-     * A mutation synced before this process started counts as covered by any payload a network
-     * response wrote in this process; after a restart the cached payloads count as not refreshed,
-     * which only keeps mutations longer.
-     *
-     * Also re-checks the stale-refresh watermark against [requestStartedAtTick] first, because the
-     * accepting SELECT and this retirement are not one atomic step. A queue replay can complete
-     * in the gap between them: [addPayload] sees no watermark and writes the pre-replay payload,
-     * [markMutationSynced] then stamps and flags the mutation synced, and retiring it here would
-     * erase the write from the cache and the overlay in the same pass — the exact double loss the
-     * watermark exists to prevent. Skipping the retirement leaves the mutation row in place, so
-     * [cachePayloadWithOverlayFlow] keeps showing the write until the next SELECT (which starts
-     * after the replay) brings back real server state and retires it then.
-     *
-     * @param table Table whose synced mutations are retired.
-     * @param requestStartedAtTick Tick captured before the SELECT that prompts this retirement went
-     *   out. `null` for callers with no request behind them (the end of a replay pass).
+     * Retires [table]'s synced mutations that no cached query needs any more — every cached payload
+     * already contains them and no live query is waiting for its first — and those older than a day.
+     * Skipped when [requestStartedAtTick] predates the table's last local write.
      */
     suspend fun clearSyncedMutationsForTable(table: String, requestStartedAtTick: Long? = null) {
         if (isReservedTable(table)) return

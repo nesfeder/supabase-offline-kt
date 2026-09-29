@@ -60,32 +60,15 @@ import kotlinx.serialization.json.JsonPrimitive
 internal object OfflineMutationOverlay {
 
     /**
-     * Overlay [pending] mutations for a given table onto the SELECT response
-     * [serverJson].
+     * Overlays [pending] onto the payload [serverJson], each mutation on its own copy so one that
+     * throws is skipped whole. Returns [serverJson] unchanged when it is not a JSON array.
      *
-     * @param json          The shared [Json] instance used for (de)serialization.
-     * @param serverJson    Raw JSON string returned by PostgREST `select(...)`.
-     *                      We expect a JSON array (`[...]`).
-     * @param pending       Mutations queued for the same table, in queue order.
-     * @param targetFilters Parsed filters of the cached query [serverJson] came from. When the
-     *                      signature is [SignatureFilters.exhaustive], INSERT/UPSERT-appended rows
-     *                      that the query's WHERE clause excludes are dropped instead of appended.
-     *                      `null` (the default) preserves the legacy always-append behavior, as do
-     *                      non-exhaustive signatures — we never under-apply a row the server would
-     *                      return. UPDATE/DELETE targeting is unaffected.
-     * @param keyColumns    The table's primary-key columns. An UPSERT row with no filter merges
-     *                      into the row with its key (left alone with `ignoreDuplicates`), as the
-     *                      server's upsert on the primary key does.
-     * @param appendsOnlyUnseenKeys Whether an INSERT mutation's rows are left out when the payload
-     *                      already holds their key — for a mutation the server may already hold, so
-     *                      that the payload's row is its own and is not shown twice. An INSERT that
-     *                      cannot be on the server is always shown.
-     * @param onMutationFailure Told about each mutation that was skipped because applying it threw,
-     *                      so the caller can log it. Never given the mutation's body to log.
-     *
-     * @return A JSON string representing the original payload **plus** every
-     *         local mutation that could be applied, or [serverJson] unchanged when
-     *         it is not a JSON array.
+     * @param targetFilters The cached query's filters: when exhaustive, appended rows it excludes are
+     *   dropped; `null` appends them all.
+     * @param keyColumns The table's primary key, which an unfiltered UPSERT row merges on.
+     * @param appendsOnlyUnseenKeys Whether an INSERT's rows are left out where the payload already
+     *   holds their key — for a mutation the server may already hold.
+     * @param onMutationFailure Told of each skipped mutation, for logging; never its body.
      */
     fun applyPendingMutations(
         json: Json,

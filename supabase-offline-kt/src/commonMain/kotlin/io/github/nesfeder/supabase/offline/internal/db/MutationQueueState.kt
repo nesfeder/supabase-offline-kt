@@ -164,23 +164,14 @@ internal sealed interface MutationOwners {
 }
 
 /**
- * The mutation queue's persisted state — who owns each queued write, and the rejected-mutation
- * list — kept in reserved `object_cache` rows (see [RESERVED_TABLE_NAME]) so that no schema change
- * is needed. Both are cached in memory after the first read; every change goes through this class.
+ * The mutation queue's records kept in reserved `object_cache` rows (see [RESERVED_TABLE_NAME]) so
+ * no schema change is needed: each mutation's owner, the rejected list, which cached payloads already
+ * contain each synced mutation, and which INSERTs may already be on the server. Cached in memory after
+ * the first read.
  *
- * **Callers serialize.** This class takes no lock of its own: the store calls it only while holding
- * its mutation-queue lock, and computes each new row here *before* opening a database transaction,
- * so no transaction ever waits on a coroutine lock.
- *
- * An unreadable rejected list is moved aside under its own reserved key, logged at ERROR, and a fresh
- * list started, so the queue never wedges on its bookkeeping and the old payload is kept, not
- * discarded. An unreadable owners row is kept as is and reported as [MutationOwners.Unreadable]: the
- * engine then queues nothing new and replays nothing, since it cannot tell whose writes are whose.
- *
- * @param objectDao The object-cache DAO the rows live in.
- * @param json The engine's [Json].
- * @param nowMillis The store's clock, stamped on each row.
- * @param logger The store's logger, read at each use.
+ * Callers hold the store's mutation-queue lock, and build each row here before opening a transaction,
+ * so no transaction waits on a coroutine lock. An unreadable owner row stops replay
+ * ([MutationOwners.Unreadable]); any other unreadable row is kept aside, logged, and started afresh.
  */
 internal class MutationQueueState(
     private val objectDao: ObjectDao,

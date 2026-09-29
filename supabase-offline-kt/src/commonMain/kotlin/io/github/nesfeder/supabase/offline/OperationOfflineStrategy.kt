@@ -118,27 +118,19 @@ public enum class MutationStrategy {
     OnlineOnly,
 
     /**
-     * Send the mutation through the pending queue, so it keeps its place among the signed-in
-     * identity's writes, and keep it there while the network is unavailable.
+     * Send the mutation through the mutation queue, so it keeps its place among the current
+     * identity's writes, and keep it there while it cannot run on the server.
      *
-     * The write is persisted first, then sent at once when nothing of the same identity is pending
-     * ahead of it, in any table. It reports [MutationOutcome.Applied], carrying the server response,
-     * when the server executed it. It reports [MutationOutcome.Queued] when it waits in the queue:
-     * because the network is unavailable, or because earlier writes are still pending — then it goes
-     * out after them, and a refusal from the server lands on the engine's rejected list instead of
-     * being thrown. Callers that read the written row back branch on [MutationOutcome.Applied] vs
-     * [MutationOutcome.Queued] so they can construct the domain object from the DTO they sent
-     * instead of decoding a placeholder.
-     *
-     * A write sent at the head that the server refuses, or answers with a `5xx`, is thrown and does
-     * not stay queued.
-     *
-     * Overlaying is applied automatically: the UI will immediately reflect
-     * the mutation as if it succeeded, even before it is synced.
+     * The write is saved first, then sent at once when nothing of the same identity is pending ahead
+     * of it, in any table. [MutationOutcome.Applied] carries the server's response. [MutationOutcome.Queued]
+     * means it waits: no connection (or PostgREST could not reach its database), earlier writes still
+     * pending, or a session still restoring — then it goes out in a later pass, and a refusal lands on
+     * the rejected list instead of being thrown. A write sent at once that the server refuses or fails
+     * with another `5xx` is thrown and does not stay queued. The UI shows the write immediately.
      *
      * A few writes cannot be queued faithfully and are sent directly, as with [OnlineOnly]: a
      * `dryRun()` write, an UPDATE or DELETE whose filter the queue cannot record exactly, and a write
-     * made while the session's identity cannot be told (restoring or refreshing).
+     * whose identity cannot be read from the stored session.
      */
     QueueIfOffline
 }

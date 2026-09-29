@@ -637,49 +637,16 @@ internal class OfflinePostgrestQueryBuilderImpl(
     }
 
     /**
-     * Shared body for the offline-aware mutation verbs.
+     * Sends or queues one write. `OnlineOnly` sends it and nothing else. `QueueIfOffline` saves it to
+     * the mutation queue first and sends it at once only at the head of its identity's queue: accepted,
+     * it is `Applied`; not run on the server (no connection, `503`, `520`), it stays `Queued`; refused,
+     * it leaves the queue and the failure is thrown; behind other mutations, it waits and a pass is
+     * requested. A write the queue cannot hold faithfully — a dry run, one it cannot classify, a filter
+     * it cannot record, an unknown identity — is sent directly and never queued. The request lambda
+     * runs up to three times: to capture, to classify and to send.
      *
-     * Under [MutationStrategy.OnlineOnly] the write is sent and its result returned; nothing else.
-     * It never touches the queue, so it can overtake writes still pending in it.
-     *
-     * Under [MutationStrategy.QueueIfOffline] every write goes through the queue, write-ahead:
-     * - It is persisted **first**, which fixes its place in its identity's queue, and is then sent at
-     *   once only if it is at the head — nothing earlier of the same identity pending, in any table,
-     *   and nothing sending it already. On success the cache is patched with the response and the
-     *   write leaves the queue: [MutationOutcome.Applied]. On a connectivity failure or a timeout it
-     *   stays queued: [MutationOutcome.Queued]. On any other failure — a refusal or a `5xx` — it
-     *   leaves the queue and the failure is thrown, as before.
-     * - Not at the head, it stays queued behind the earlier writes, a replay pass is requested, and
-     *   it reports [MutationOutcome.Queued]. A refusal then lands on the rejected list, not here.
-     * - A caller cancelled while its write is on the wire leaves the write queued, since whether the
-     *   server got it is not known; a pass is requested and it replays.
-     *
-     * A few writes cannot be queued faithfully, and are sent directly instead, bypassing the queue —
-     * so they can overtake pending writes, and fail rather than queue when offline:
-     * - an UPDATE or DELETE whose filter the queue cannot record exactly (see [captureFilteredWrite]);
-     * - a write whose identity cannot be told (the session restoring or refreshing);
-     * - a dry run (`dryRun()`): the queue does not carry `Prefer`, so a queued dry run would replay as
-     *   a real write. It is classified before it is persisted, and a write that cannot be classified
-     *   is treated the same way — never persisted — and reported once at ERROR;
-     * - a write started before local data was cleared, or while the queue's owner records cannot be
-     *   read.
-     *
-     * On a directly sent write, the response decides the overlay: a write PostgREST reports it rolled
-     * back (`Preference-Applied: tx=rollback`) is not overlaid, and every other one is — a dry run on
-     * a server that ignores `tx=rollback`, as PostgREST does by default, commits.
-     *
-     * The request lambda runs up to three times: to capture the write for the queue, to classify it,
-     * and to send it.
-     *
-     * @param verbLabel human-readable verb name for log lines (e.g. `"INSERT"`).
-     * @param table target table name, for log lines.
-     * @param mutationStrategy the caller's offline strategy.
-     * @param performOnline issues the live PostgREST mutation and returns its result.
-     * @param applyOnlineSuccessOverlay patches the cache with the result, given the tick the write
-     *   started at; invoked only for [MutationStrategy.QueueIfOffline].
-     * @param captureForQueue decides how the write would be queued; see [QueueCapture].
-     * @return [MutationOutcome.Applied] when the server executed the mutation, or
-     *   [MutationOutcome.Queued] when it waits in the queue.
+     * @param applyOnlineSuccessOverlay Patches the cache with the result, given the write's start tick.
+     * @param captureForQueue How the write would be queued; see [QueueCapture].
      */
     private suspend fun executeMutation(
         verbLabel: String,
