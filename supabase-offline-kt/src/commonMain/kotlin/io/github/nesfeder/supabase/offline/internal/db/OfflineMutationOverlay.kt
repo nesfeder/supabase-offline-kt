@@ -73,12 +73,13 @@ internal object OfflineMutationOverlay {
      *                      `null` (the default) preserves the legacy always-append behavior, as do
      *                      non-exhaustive signatures — we never under-apply a row the server would
      *                      return. UPDATE/DELETE targeting is unaffected.
-     * @param keyColumns    The table's primary-key columns. An INSERT row that carries the key is
-     *                      not appended when a row with the same key is already there — the server
-     *                      would not add a second one either — so a write the payload already holds
-     *                      is never shown twice. An UPSERT row with no filter merges into the row with
-     *                      its key (left alone with `ignoreDuplicates`), as the server's upsert on
-     *                      the primary key does.
+     * @param keyColumns    The table's primary-key columns. An UPSERT row with no filter merges
+     *                      into the row with its key (left alone with `ignoreDuplicates`), as the
+     *                      server's upsert on the primary key does.
+     * @param appendsOnlyUnseenKeys Whether an INSERT mutation's rows are left out when the payload
+     *                      already holds their key — for a mutation the server may already hold, so
+     *                      that the payload's row is its own and is not shown twice. An INSERT that
+     *                      cannot be on the server is always shown.
      * @param onMutationFailure Told about each mutation that was skipped because applying it threw,
      *                      so the caller can log it. Never given the mutation's body to log.
      *
@@ -92,6 +93,7 @@ internal object OfflineMutationOverlay {
         pending: List<MutationRow>,
         targetFilters: SignatureFilters? = null,
         keyColumns: List<String> = DEFAULT_PRIMARY_KEY,
+        appendsOnlyUnseenKeys: (MutationRow) -> Boolean = { true },
         onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> },
     ): String {
         if (pending.isEmpty()) return serverJson
@@ -111,7 +113,7 @@ internal object OfflineMutationOverlay {
         pending.forEach { mutation ->
             val working = rows.toMutableList()
             try {
-                applyMutation(json, working, mutation, targetFilters, keyColumns)
+                applyMutation(json, working, mutation, targetFilters, keyColumns.takeIf { appendsOnlyUnseenKeys(mutation) }, keyColumns)
                 rows = working
             } catch (failure: Exception) {
                 onMutationFailure(mutation, failure)
@@ -122,18 +124,23 @@ internal object OfflineMutationOverlay {
         return json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
     }
 
+    /**
+     * Applies one [mutation] to [rows]. [insertKeyColumns] is the key an INSERT's rows are
+     * de-duplicated by, or `null` to append them whatever the payload holds.
+     */
     private fun applyMutation(
         json: Json,
         rows: MutableList<JsonElement>,
         mutation: MutationRow,
         targetFilters: SignatureFilters?,
+        insertKeyColumns: List<String>?,
         keyColumns: List<String>,
     ) {
         val descriptor = FilterEngine.decodeOrNull(mutation.filterJson, json)
 
         when (mutation.operation) {
             MutationOperation.INSERT ->
-                applyInsertMutation(json, rows, mutation, targetFilters, keyColumns)
+                applyInsertMutation(json, rows, mutation, targetFilters, insertKeyColumns.orEmpty())
 
             MutationOperation.UPSERT ->
                 applyUpsertMutation(json, rows, mutation, descriptor, targetFilters, keyColumns)
@@ -158,9 +165,8 @@ internal object OfflineMutationOverlay {
      * - Otherwise: ignore.
      *
      * Each candidate row is gated by [appendIfAdmitted] so a row an exhaustive-filter query
-     * excludes never lands in that cached payload. A row that carries the table's primary key is
-     * not appended when the payload already holds that key — the server keeps one row per key — so
-     * a write the payload already reflects is never shown twice. Keyless rows are always appended.
+     * excludes never lands in that cached payload. A row that carries [keyColumns] is not appended
+     * when the payload already holds that key; with no key columns every row is appended.
      */
     private fun applyInsertMutation(
         json: Json,

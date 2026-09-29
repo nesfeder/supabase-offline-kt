@@ -140,8 +140,15 @@ internal open class InMemoryMutationDao : MutationDao {
     override fun pendingAllFlow(): Flow<List<MutationRow>> =
         mutations.map { all -> all.filter { it.syncedAtMs == null }.sortedBy { it.id } }
 
-    override suspend fun hasPendingBefore(id: Long): Boolean =
-        mutations.value.any { it.syncedAtMs == null && it.id < id }
+    override suspend fun pendingIdsBefore(id: Long): List<Long> =
+        mutations.value.filter { it.syncedAtMs == null && it.id < id }.sortedBy { it.id }.map { it.id }
+
+    override suspend fun isPending(id: Long): Boolean = mutations.value.any { it.id == id && it.syncedAtMs == null }
+
+    override suspend fun byId(id: Long): MutationRow? = mutations.value.firstOrNull { it.id == id }
+
+    override suspend fun syncedIdsForTable(table: String): List<Long> =
+        mutations.value.filter { it.table == table && it.syncedAtMs != null }.map { it.id }
 
     override suspend fun countAll(): Int = mutations.value.size
 

@@ -44,12 +44,12 @@ class PreferHeaderProbeContractTest {
         val body = Json.parseToJsonElement("""{"title":"x"}""")
 
         // When
-        val dryRun = handle.requestsRollback { handle.update(body) { filter { eq("id", 1) }; dryRun() } }
-        val write = handle.requestsRollback { handle.update(body) { filter { eq("id", 1) } } }
+        val dryRun = handle.classify { handle.update(body) { filter { eq("id", 1) }; dryRun() } }
+        val write = handle.classify { handle.update(body) { filter { eq("id", 1) } } }
 
         // Then — both classified, and nothing reached the server
-        assertEquals(true, dryRun)
-        assertEquals(false, write)
+        assertEquals(DryRunVerdict.DryRun, dryRun)
+        assertEquals(DryRunVerdict.NotDryRun, write)
         assertTrue(server.requests.isEmpty())
     }
 

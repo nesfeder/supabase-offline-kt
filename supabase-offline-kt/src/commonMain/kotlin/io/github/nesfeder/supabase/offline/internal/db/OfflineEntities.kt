@@ -311,14 +311,21 @@ internal interface MutationDao {
     @Query("SELECT * FROM mutation_cache WHERE synced_at_ms IS NULL ORDER BY id ASC")
     fun pendingAllFlow(): Flow<List<MutationRow>>
 
-    /**
-     * Whether any mutation queued before [id] — in any table — is still pending.
-     *
-     * @param id The mutation whose predecessors are checked.
-     * @return `true` when an earlier mutation has not replayed yet.
-     */
-    @Query("SELECT EXISTS(SELECT 1 FROM mutation_cache WHERE synced_at_ms IS NULL AND id < :id)")
-    suspend fun hasPendingBefore(id: Long): Boolean
+    /** The ids of the mutations queued before [id], in any table, that are still pending, in order. */
+    @Query("SELECT id FROM mutation_cache WHERE synced_at_ms IS NULL AND id < :id ORDER BY id ASC")
+    suspend fun pendingIdsBefore(id: Long): List<Long>
+
+    /** Whether the mutation [id] is queued and not yet synced. */
+    @Query("SELECT EXISTS(SELECT 1 FROM mutation_cache WHERE id = :id AND synced_at_ms IS NULL)")
+    suspend fun isPending(id: Long): Boolean
+
+    /** The mutation [id], pending or synced, or `null` when it is not queued. */
+    @Query("SELECT * FROM mutation_cache WHERE id = :id")
+    suspend fun byId(id: Long): MutationRow?
+
+    /** The ids of [table]'s synced mutations still retained for the overlay. */
+    @Query("SELECT id FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NOT NULL")
+    suspend fun syncedIdsForTable(table: String): List<Long>
 
     @Query("SELECT COUNT(*) FROM mutation_cache")
     suspend fun countAll(): Int

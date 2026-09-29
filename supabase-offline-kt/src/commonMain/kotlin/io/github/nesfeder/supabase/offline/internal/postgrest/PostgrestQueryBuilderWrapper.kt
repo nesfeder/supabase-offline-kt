@@ -104,9 +104,10 @@ internal class PostgrestQueryBuilderWrapperImpl(
 ) : PostgrestQueryBuilderWrapper {
 
     init {
-        // The offline client installs it when it is built; a handle made directly installs it here.
-        // Either way it is installed once per client.
+        // The offline client installs these when it is built; a handle made directly installs them
+        // here. Either way each is installed once per client.
         builder.postgrest.supabaseClient.installPreferHeaderProbe()
+        builder.postgrest.supabaseClient.installTransportFailureCapture()
     }
 
     private val dryRunProbe = PreferHeaderDryRunProbe(builder.postgrest.supabaseClient)
@@ -178,10 +179,6 @@ internal class PostgrestQueryBuilderWrapperImpl(
         return builder.delete(request)
     }
 
-    /**
-     * @see DryRunProbe.requestsRollback
-     * @see PreferHeaderDryRunProbe
-     */
-    override suspend fun requestsRollback(write: suspend () -> PostgrestResult): Boolean? =
-        dryRunProbe.requestsRollback(write)
+    /** @see PreferHeaderDryRunProbe */
+    override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict = dryRunProbe.classify(write)
 }

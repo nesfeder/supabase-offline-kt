@@ -1,5 +1,6 @@
 package io.github.nesfeder.supabase.offline.testdoubles
 
+import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Columns
@@ -96,8 +97,12 @@ internal class FakePostgrestQueryBuilderWrapper(
         return onDelete?.invoke() ?: unsupported("delete")
     }
 
-    /** Answers [dryRunVerdict] without running [write]. */
-    override suspend fun requestsRollback(write: suspend () -> PostgrestResult): Boolean? = dryRunVerdict
+    /** Answers [dryRunVerdict] without running [write]: `null` for a check that cannot tell. */
+    override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict = when (dryRunVerdict) {
+        true -> DryRunVerdict.DryRun
+        false -> DryRunVerdict.NotDryRun
+        null -> DryRunVerdict.Unavailable
+    }
 }
 
 /**

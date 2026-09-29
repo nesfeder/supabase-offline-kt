@@ -14,6 +14,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutatio
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
@@ -21,10 +22,12 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
 import io.github.nesfeder.supabase.offline.internal.postgrest.installPreferHeaderProbe
+import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
 import io.github.nesfeder.supabase.offline.internal.storage.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.deleteRecursivelyIfExists
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
+import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.postgrest
@@ -34,8 +37,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -298,6 +304,9 @@ internal class SupabaseOfflineClientImpl(
 
     private val mutationSyncer = OfflineMutationSyncer(store, supabase, sdkLogger = sdkLogger)
 
+    /** Hosts the collectors the client runs for its lifetime. */
+    private val syncScope = coordinatorScope
+
     /** Runs the replay passes the engine starts on its own, coalesced and backed off. */
     private val backgroundSync = BackgroundSyncTrigger(scope = coordinatorScope, sdkLogger = sdkLogger) {
         mutationSyncer.sync()
@@ -319,24 +328,59 @@ internal class SupabaseOfflineClientImpl(
      */
     private val refreshAccelerator: Flow<Unit> = buildRefreshAccelerator(supabase, networkAvailability)
 
+    /** The identity the overlay and counts are for, read once per session status. */
+    private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
+
     init {
         // Let the store see which signatures are live so a server-successful mutation materializes
         // into a real cache row for a cache-less-but-observed subscription.
         store.liveSignatureProvider = refreshCoordinator::liveSignaturesFor
         store.sdkLogger = sdkLogger
         // Overlays and counts show the current session's queued writes only.
-        store.identityProvider = { supabase.currentQueueIdentity()?.storedValue }
+        store.identityProvider = ::overlayIdentityValue
         store.identityChanges = sessionChanges()
-        // Before the app sends anything through this client, so the dry-run probe is on the
-        // pipeline once, and not added while requests may be walking it.
+        store.ownerlessMutationsAreAnonymous = authPluginOrNull() == null
+        // Before the app sends anything through this client, so the hooks are on the pipeline once,
+        // and not added while requests may be walking it.
         supabase.installPreferHeaderProbe()
+        supabase.installTransportFailureCapture()
+        replayWhenTheSessionSettles()
     }
 
+    private fun authPluginOrNull(): Auth? = supabase.pluginManager.getPluginOrNull(Auth)
+
     /** Emits whenever the session status changes; once, without the Auth plugin. */
-    private fun sessionChanges(): Flow<Any?> = try {
-        supabase.auth.sessionStatus
-    } catch (_: IllegalStateException) {
-        flowOf(Unit)
+    private fun sessionChanges(): Flow<Any?> = authPluginOrNull()?.sessionStatus ?: flowOf(Unit)
+
+    /**
+     * The stored identity value for the current session status, computed once per status: while the
+     * session restores or refreshes, telling it reads the stored session.
+     */
+    private suspend fun overlayIdentityValue(): String? {
+        val status = authPluginOrNull()?.sessionStatus?.value
+        overlayIdentity.value?.let { (cachedStatus, identity) -> if (cachedStatus == status) return identity }
+        val identity = supabase.currentQueueIdentity()?.storedValue
+        overlayIdentity.value = status to identity
+        return identity
+    }
+
+    /**
+     * Starts a pass whenever the session settles into an identity with mutations queued — a sign-in,
+     * or a restore or refresh finishing — so writes queued while it was unsettled are sent however
+     * long settling took.
+     */
+    private fun replayWhenTheSessionSettles() {
+        val auth = authPluginOrNull() ?: return
+        syncScope.launch {
+            auth.sessionStatus
+                .map { status -> replayIdentityFor(status) }
+                .distinctUntilChanged()
+                .collect { identity ->
+                    if (identity != null && store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) {
+                        backgroundSync.request()
+                    }
+                }
+        }
     }
 
     override fun from(table: String): OfflinePostgrestQueryBuilder =

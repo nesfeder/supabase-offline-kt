@@ -51,8 +51,8 @@ class OfflineMutationReplayWireTest {
             listOf(
                 write(
                     method = "POST",
-                    query = mapOf("on_conflict" to "id", "columns" to "id,title"),
-                    prefer = "resolution=ignore-duplicates,return=minimal",
+                    query = mapOf("columns" to "id,title"),
+                    prefer = "return=minimal",
                     body = """[{"id":1,"title":"Buy milk"}]""",
                 ),
             ),
@@ -68,9 +68,8 @@ class OfflineMutationReplayWireTest {
         // When
         syncer.syncTable(table = TABLE)
 
-        // Then — missing columns take their database default, as the caller asked (the key it
-        // carries makes the replay an upsert that ignores duplicates)
-        assertEquals("resolution=ignore-duplicates,missing=default,return=minimal", server.requests.single().prefer)
+        // Then — missing columns take their database default, as the caller asked
+        assertEquals("missing=default,return=minimal", server.requests.single().prefer)
     }
 
     @Test
@@ -189,7 +188,7 @@ class OfflineMutationReplayWireTest {
         // so none of them is kept once synced (inverted: they used to stay until a later read).
         assertEquals(4, synced)
         assertEquals(listOf("POST", "POST", "PATCH", "DELETE"), server.requests.map { it.method })
-        assertEquals("resolution=ignore-duplicates,missing=default,return=minimal", server.requests[0].prefer)
+        assertEquals("missing=default,return=minimal", server.requests[0].prefer)
         assertEquals("id", server.requests[1].query["on_conflict"])
         assertEquals("resolution=ignore-duplicates,missing=default,return=minimal", server.requests[1].prefer)
         assertEquals(mapOf("id" to "eq.2", "user_id" to "eq.u-1"), server.requests[2].query)

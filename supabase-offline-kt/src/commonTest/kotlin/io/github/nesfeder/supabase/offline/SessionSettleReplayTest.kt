@@ -8,9 +8,11 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -30,15 +32,16 @@ class SessionSettleReplayTest {
 
     @Test
     fun a_users_queued_mutations_go_out_when_that_user_signs_in_again() = runTest {
-        // Given — user A's edit queued offline, then A signs out and the network returns
+        // Given — user A's edit queued offline, then A signs out and the network returns; the
+        // client's background work runs on real threads
+        val clientScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val supabase = newTestSupabaseClientWithAuth(server.engine)
-        val client = newTestOfflineClient(supabase = supabase, store = store, coordinatorScope = backgroundScope)
+        val client = newTestOfflineClient(supabase = supabase, store = store, coordinatorScope = clientScope)
         supabase.signInForTest("user-a")
         server.answer = { connectivityFailure() }
         client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"A's edit"}""")) { filter { eq("id", 1) } }
         supabase.auth.clearSession()
         server.answer = { okJson("[]") }
-        advanceUntilIdle()
         val sentWhileSignedOut = server.requests.count { it.method == "PATCH" } - 1
 
         // When — A signs in again, and nothing else asks for a pass
@@ -46,6 +49,8 @@ class SessionSettleReplayTest {
         val drained = withContext(Dispatchers.Default) {
             withTimeoutOrNull(5.seconds) { store.pendingMutationCountFlow().first { pending -> pending == 0 } }
         }
+
+        clientScope.cancel()
 
         // Then — the settle started a pass that sent A's edit
         assertEquals(0, sentWhileSignedOut)

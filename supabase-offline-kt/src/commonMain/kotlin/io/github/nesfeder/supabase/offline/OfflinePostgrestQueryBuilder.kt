@@ -16,12 +16,14 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResol
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapperImpl
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
+import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
 import io.github.nesfeder.supabase.offline.internal.postgrest.UnsupportedOfflineFilterException
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromBuilder
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromRequest
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorStrictFromRequest
 import io.github.nesfeder.supabase.offline.internal.postgrest.wasRolledBack
+import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
@@ -600,8 +602,11 @@ internal class OfflinePostgrestQueryBuilderImpl(
         /** The write can be queued; [enqueue] inserts its mutation row and returns the id. */
         class Queueable(val enqueue: suspend OfflineStore.() -> Long) : QueueCapture
 
-        /** The write cannot be queued faithfully, for [reason]. */
-        class Refused(val reason: String) : QueueCapture
+        /**
+         * The write cannot be queued faithfully. [reason] carries no filter value and may be logged
+         * at any level; [detail] may quote the filter, so it is logged at DEBUG only.
+         */
+        class Refused(val reason: String, val detail: String? = null) : QueueCapture
     }
 
     /**
@@ -622,7 +627,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 request = request
             )
         } catch (lossy: UnsupportedOfflineFilterException) {
-            return QueueCapture.Refused(lossy.message.orEmpty())
+            return QueueCapture.Refused(reason = "its filter cannot be captured exactly", detail = lossy.message)
         }
         return when {
             descriptor == null -> QueueCapture.Refused("a write without a filter would reach every row")
@@ -698,23 +703,28 @@ internal class OfflinePostgrestQueryBuilderImpl(
         val queueable = when (val capture = captureForQueue()) {
             is QueueCapture.Queueable -> capture
             // Replaying it would target a broader row set than the caller wrote.
-            is QueueCapture.Refused -> return direct.send(OfflineLogLevel.ERROR) { "Refusing to queue offline $verbLabel for $table: ${capture.reason}" }
+            is QueueCapture.Refused -> {
+                capture.detail?.let { detail -> sdkLogger.debug { "Offline $verbLabel for $table would not be queued: $detail" } }
+                return direct.send(OfflineLogLevel.ERROR) { "Refusing to queue offline $verbLabel for $table: ${capture.reason}" }
+            }
         }
         if (identity == null) {
             return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: the session's identity cannot be told" }
         }
-        when (dryRunProbe.requestsRollback(performOnline)) {
-            false -> Unit
-            true -> return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: a dry run is never queued" }
-            null -> {
-                if (store.claimUnclassifiableWriteReport()) {
-                    // Once per store: every such write loses its offline safety net.
-                    sdkLogger.error {
-                        "Could not tell whether a write is a dry run; such writes are sent without being queued, " +
-                            "so they fail rather than queue when offline"
-                    }
-                }
+        when (val verdict = dryRunProbe.classify(performOnline)) {
+            DryRunVerdict.NotDryRun -> Unit
+            DryRunVerdict.DryRun ->
+                return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: a dry run is never queued" }
+            // The write's own failure, before any request: sending it directly reports it as it is.
+            is DryRunVerdict.NotBuilt ->
+                return direct.send(OfflineLogLevel.INFO) { "Not queueing offline $verbLabel for $table: its request could not be built" }
+            DryRunVerdict.Unavailable -> {
+                reportUnclassifiableWriteOnce()
                 return direct.send(OfflineLogLevel.WARNING) { "Not queueing offline $verbLabel for $table: it may be a dry run" }
+            }
+            is DryRunVerdict.Sent -> {
+                reportUnclassifiableWriteOnce()
+                return direct.applied(verdict.result)
             }
         }
 
@@ -743,21 +753,45 @@ internal class OfflinePostgrestQueryBuilderImpl(
 
             is OfflineMutationSyncer.HeadSendOutcome.Sent -> {
                 sdkLogger.debug { "$verbLabel $table response: ${sent.result.data}" }
-                // Writes queued behind this one while it was in flight wait for a pass.
-                if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) requestSync()
+                requestPassIfPending(identity)
                 MutationOutcome.Applied(sent.result)
             }
 
             is OfflineMutationSyncer.HeadSendOutcome.Offline -> {
-                sdkLogger.info { "$verbLabel $table queued offline (network unavailable)" }
+                sdkLogger.info {
+                    if (sent.cause.isNetworkOrConnectivityFailure()) {
+                        "$verbLabel $table queued offline (network unavailable)"
+                    } else {
+                        "$verbLabel $table queued (the server could not run it: ${sent.cause.httpStatusOrNull()})"
+                    }
+                }
                 MutationOutcome.Queued
             }
 
-            is OfflineMutationSyncer.HeadSendOutcome.Refused -> throw sent.cause
+            is OfflineMutationSyncer.HeadSendOutcome.Refused -> {
+                requestPassIfPending(identity)
+                throw sent.cause
+            }
 
             is OfflineMutationSyncer.HeadSendOutcome.Cleared -> {
                 sdkLogger.info { "$verbLabel $table returned after local data was cleared; the cache is left as it was" }
+                requestPassIfPending(identity)
                 sent.result?.let { result -> MutationOutcome.Applied(result) } ?: throw checkNotNull(sent.cause)
+            }
+        }
+    }
+
+    /** Asks for a pass when [identity] has mutations queued, which the head it just left held back. */
+    private suspend fun requestPassIfPending(identity: QueueIdentity) {
+        if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) requestSync()
+    }
+
+    /** Logs, once per store, that the dry-run check cannot tell: such writes lose their offline safety net. */
+    private fun reportUnclassifiableWriteOnce() {
+        if (store.claimUnclassifiableWriteReport()) {
+            sdkLogger.error {
+                "Could not tell whether a write is a dry run; such writes are sent without being queued, " +
+                    "so they fail rather than queue when offline"
             }
         }
     }
@@ -788,6 +822,11 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 if (failure.isNetworkOrConnectivityFailure()) sdkLogger.log(level, whyNotQueued)
                 throw failure
             }
+            return applied(result)
+        }
+
+        /** The outcome of a write the server applied with [result], its cache patch done. */
+        suspend fun applied(result: PostgrestResult): MutationOutcome {
             sdkLogger.debug { "$verbLabel $table response: ${result.data}" }
             overlay(result)
             return MutationOutcome.Applied(result)
