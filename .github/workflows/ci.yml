@@ -351,10 +351,11 @@ jobs:
       # The engine suite again on the system SQLite, which the Swift package links. A separate
       # build: see supabase-offline-kt/build.gradle.kts.
       - name: Run the iOS suite on the system SQLite
+        id: system-sqlite
         run: ./gradlew :supabase-offline-kt:iosSimulatorArm64Test -Psupabase.offline.iosSqlite=system --stacktrace
 
       - name: Count the tests that ran on the system SQLite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.system-sqlite.outcome != 'skipped' }}
         run: >-
           python3 .github/scripts/count-test-results.py "iOS simulator tests, system SQLite"
           iosSimulatorArm64Test supabase-offline-kt
