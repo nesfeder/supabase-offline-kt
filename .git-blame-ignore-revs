@@ -5,3 +5,6 @@
 #
 # One full SHA per line, under a comment naming the commit. A SHA stays valid because pull
 # requests land as merge commits: never squash or rebase a pull request that adds one.
+
+# chore(format): format the tree with kempt (#23)
+3014fe8195c55cfd7e0024570fe758753014719b
