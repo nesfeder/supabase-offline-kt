@@ -242,6 +242,9 @@ class SupabaseOfflineClientCloseTest {
             "list" to { bucket -> bucket.list("u-1") },
             "info" to { bucket -> bucket.info("u-1/me.png") },
             "exists" to { bucket -> bucket.exists("u-1/me.png") },
+            "delete" to { bucket -> bucket.delete("u-1/me.png") },
+            "move" to { bucket -> bucket.move("u-1/me.png", "u-1/moved.png") },
+            "copy" to { bucket -> bucket.copy("u-1/me.png", "u-1/copy.png") },
         )
         for ((name, call) in calls) {
             // Given — the call on the wire, held at the server

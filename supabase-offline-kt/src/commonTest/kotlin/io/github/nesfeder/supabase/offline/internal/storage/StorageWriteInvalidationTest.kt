@@ -1,6 +1,7 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.storage.storage
+import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.jan.supabase.exceptions.UnauthorizedRestException
@@ -99,36 +100,48 @@ class StorageWriteInvalidationTest {
     }
 
     @Test
-    fun an_update_stopped_by_close_never_leaves_the_old_bytes_to_be_served() = runTest {
-        // Given — the old avatar is cached, and an update of it is on the wire, held at the server
-        bucket().downloadAuthenticated(PATH) { }
-        val gate = ClientOperationGate()
-        val clientScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val closing = newTestBucketApi(
-            delegate = server.supabaseClient().storage.from(BUCKET),
-            baseDirectory = dataDirectory,
-            store = store,
-            backgroundScope = clientScope,
-            operationGate = gate,
+    fun a_write_stopped_by_close_never_leaves_a_stale_copy_to_be_served() = runTest {
+        // Each write, and the paths whose cached copies it touches
+        val writes: List<Triple<String, List<String>, suspend (OfflineBucketApi) -> Unit>> = listOf(
+            Triple("update", listOf(PATH)) { bucket -> bucket.update(PATH, NEW.encodeToByteArray()) },
+            Triple("delete", listOf(PATH)) { bucket -> bucket.delete(PATH) },
+            Triple("move", listOf(PATH, OTHER_PATH)) { bucket -> bucket.move(PATH, OTHER_PATH) },
+            Triple("copy", listOf(OTHER_PATH)) { bucket -> bucket.copy(PATH, OTHER_PATH) },
         )
-        val held = CompletableDeferred<Unit>()
-        server.gate = held
-        server.requestArrived = CompletableDeferred()
-        val update = async(Dispatchers.Default) { runCatching { closing.update(PATH, NEW.encodeToByteArray()) } }
-        withContext(Dispatchers.Default) { withTimeout(5.seconds) { server.requestArrived.await() } }
+        for ((name, touched, write) in writes) {
+            // Given — the old bytes cached at every path the write touches, and the write on the wire,
+            // held at the server
+            server.objects["$BUCKET/$PATH"] = OLD.encodeToByteArray()
+            server.objects["$BUCKET/$OTHER_PATH"] = OLD.encodeToByteArray()
+            touched.forEach { path -> bucket().downloadAuthenticated(path) { } }
+            val gate = ClientOperationGate()
+            val clientScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val closing = newTestBucketApi(
+                delegate = server.supabaseClient().storage.from(BUCKET),
+                baseDirectory = dataDirectory,
+                store = store,
+                backgroundScope = clientScope,
+                operationGate = gate,
+            )
+            val held = CompletableDeferred<Unit>()
+            server.gate = held
+            server.requestArrived = CompletableDeferred()
+            val call = async(Dispatchers.Default) { runCatching { write(closing) } }
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { server.requestArrived.await() } }
 
-        // When — the client closes, as its close() does: the gate refuses, the client's scope ends
-        gate.close()
-        clientScope.cancel()
-        val outcome = withContext(Dispatchers.Default) { withTimeoutOrNull(5.seconds) { update.await() } }
-        server.gate = null
-        held.complete(Unit)
+            // When — the client closes, as its close() does: the gate refuses, the client's scope ends
+            gate.close()
+            clientScope.cancel()
+            val outcome = withContext(Dispatchers.Default) { withTimeoutOrNull(5.seconds) { call.await() } }
+            server.gate = null
+            held.complete(Unit)
 
-        // Then — the update was stopped with the closed error, and since it may have reached the
-        // server, no read serves the old image
-        assertNotNull(outcome, "close() did not stop the update on the wire")
-        assertClientClosedError(outcome.exceptionOrNull(), "the update on the wire at close()")
-        assertNotEquals(OLD, offlineRead(PATH))
+            // Then — the write was stopped with the closed error, and since it may have reached the
+            // server, no read serves the old bytes at any path it touched
+            assertNotNull(outcome, "close() did not stop the $name on the wire")
+            assertClientClosedError(outcome.exceptionOrNull(), "the $name on the wire at close()")
+            touched.forEach { path -> assertNotEquals(OLD, offlineRead(path), "$name left the old bytes served at $path") }
+        }
     }
 
     @Test
@@ -266,5 +279,6 @@ class StorageWriteInvalidationTest {
         const val PATH = "u-1/me.png"
         const val OLD = "old-avatar"
         const val NEW = "new-avatar"
+        const val OTHER_PATH = "u-1/other.png"
     }
 }

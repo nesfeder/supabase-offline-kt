@@ -355,7 +355,7 @@ internal class CachingBucketApi(
         throw failure
     }
 
-    // ─────────────────────── Writes: online-only, invalidating ───────────────────────
+    // ─────────── Writes: online-only, invalidating, and stopped by close() ───────────
 
     override suspend fun upload(path: String, data: UploadData, options: UploadOptionBuilder.() -> Unit): FileUploadResponse =
         invalidatingAfter(path) { delegate.upload(path, data, options) }
@@ -383,25 +383,31 @@ internal class CachingBucketApi(
         options: UploadOptionBuilder.() -> Unit,
     ): FileUploadResponse = invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
 
-    override suspend fun delete(paths: Collection<String>): Unit = operationGate.call {
-        delegate.delete(paths)
-        paths.forEach { path -> cache.invalidateObject(bucketId, path) }
-    }
+    override suspend fun delete(paths: Collection<String>): Unit = storageWrite(
+        write = { delegate.delete(paths) },
+        applied = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
+        uncertain = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
+    )
 
     override suspend fun delete(vararg paths: String) {
         delete(paths.toList())
     }
 
-    override suspend fun move(from: String, to: String, destinationBucket: String?): Unit = operationGate.call {
-        delegate.move(from, to, destinationBucket)
-        cache.moveObject(fromBucket = bucketId, from = from, toBucket = destinationBucket ?: bucketId, to = to)
-    }
+    override suspend fun move(from: String, to: String, destinationBucket: String?): Unit = storageWrite(
+        write = { delegate.move(from, to, destinationBucket) },
+        applied = { cache.moveObject(fromBucket = bucketId, from = from, toBucket = destinationBucket ?: bucketId, to = to) },
+        uncertain = {
+            cache.invalidateObject(bucketId, from)
+            cache.invalidateObject(destinationBucket ?: bucketId, to)
+        },
+    )
 
-    override suspend fun copy(from: String, to: String, destinationBucket: String?): Unit = operationGate.call {
-        delegate.copy(from, to, destinationBucket)
-        // The copy's bytes are not on the device; the destination's cached copy, if any, is stale.
-        cache.invalidateObject(destinationBucket ?: bucketId, to)
-    }
+    // The copy's bytes are not on the device; the destination's cached copy, if any, is stale either way
+    override suspend fun copy(from: String, to: String, destinationBucket: String?): Unit = storageWrite(
+        write = { delegate.copy(from, to, destinationBucket) },
+        applied = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
+        uncertain = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
+    )
 
     // ─────────────── Passed through: refused once closed, and stopped by close() ───────────────
 
@@ -433,21 +439,30 @@ internal class CachingBucketApi(
     override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
         operationGate.cancellableCall(backgroundScope) { delegate.purgeCache(path, options) }
 
+    /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
+    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T = storageWrite(
+        write = write,
+        applied = { cache.invalidateObject(bucketId, path) },
+        uncertain = { cache.invalidateObject(bucketId, path) },
+    )
+
     /**
-     * Runs a write that close() may stop, then drops the cached copies of [path] it made stale. One
-     * that timed out or was stopped may have been stored anyway, so it drops them too; any other
-     * failure left the server's copy, and the cache, as they were. Storage writes are never queued.
+     * Runs a Storage write that close() may stop; [applied] then brings the cache in line with it. One
+     * that timed out or was stopped may have been stored anyway, so [uncertain] drops what it touched;
+     * any other failure left the server, and the cache, as they were. Storage writes are never queued.
      */
-    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T = operationGate.cancellableCall(backgroundScope) {
+    private suspend fun <T> storageWrite(
+        write: suspend () -> T,
+        applied: suspend () -> Unit,
+        uncertain: suspend () -> Unit,
+    ): T = operationGate.cancellableCall(backgroundScope) {
         val result = try {
             write()
         } catch (failure: Exception) {
-            if (failure is CancellationException || failure.mayHaveReachedTheServer()) {
-                withContext(NonCancellable) { cache.invalidateObject(bucketId, path) }
-            }
+            if (failure is CancellationException || failure.mayHaveReachedTheServer()) withContext(NonCancellable) { uncertain() }
             throw failure
         }
-        withContext(NonCancellable) { cache.invalidateObject(bucketId, path) }
+        withContext(NonCancellable) { applied() }
         result
     }
 
