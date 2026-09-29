@@ -37,15 +37,15 @@ class ClientOperationGateTest {
     @Test
     fun a_collection_whose_collector_is_cancelled_counts_until_its_work_has_ended() = runTest {
         // Given — a live collection whose work, once cancelled, still has a moment to finish, as a
-        // query does
+        // query does. The cancellation may land in emit, which returns once the collector is done
         val gate = ClientOperationGate()
         val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val entered = CompletableDeferred<Unit>()
         val finishing = CompletableDeferred<Unit>()
         val finish = CompletableDeferred<Unit>()
         val work = flow {
-            emit(1)
             try {
+                emit(1)
                 awaitCancellation()
             } finally {
                 withContext(NonCancellable) {
