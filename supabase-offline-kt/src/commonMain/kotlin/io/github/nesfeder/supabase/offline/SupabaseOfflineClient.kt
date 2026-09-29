@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.BackgroundSyncTrigger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
@@ -344,6 +345,8 @@ internal class SupabaseOfflineClientImpl(
     private val closeWait: Duration = CLOSE_WAIT,
     /** Told, with the count of calls still in flight, when [close] returns before the release. */
     private val onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
+    /** Each table's primary-key columns; `id` for every table unless the app says otherwise. */
+    @Suppress("unused") private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
 ) : SupabaseOfflineClient {
 
     /**

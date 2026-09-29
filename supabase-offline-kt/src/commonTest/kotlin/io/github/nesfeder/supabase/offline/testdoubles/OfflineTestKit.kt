@@ -17,6 +17,8 @@ import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
@@ -144,6 +146,7 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  *   background work can never run (see [idleCoroutineScope]): its `close()` always waits it out.
  * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
  *   factories tell the registry; it is handed the count of calls still in flight.
+ * @param primaryKeys each table's primary-key columns; `id` for every table by default.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -156,6 +159,7 @@ internal fun newTestOfflineClient(
     scrubDatabase: suspend () -> Unit = {},
     closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
+    primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
 ): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
     supabase = supabase,
     store = store,
@@ -166,6 +170,7 @@ internal fun newTestOfflineClient(
     onClose = onClose,
     closeWait = closeWait,
     onStillClosing = onStillClosing,
+    primaryKeys = primaryKeys,
 )
 
 /**
