@@ -91,6 +91,28 @@ class SessionSettleReplayTest {
         assertEquals("""{"title":"A's edit"}""", server.requests.last { it.method == "PATCH" }.body)
     }
 
+    @Test
+    fun a_refreshed_session_sends_the_users_queued_mutations() = runTest {
+        // Given — as above: the engine has seen user A signed in, then A's edit is queued offline
+        val clientScheduler = TestCoroutineScheduler()
+        val clientScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(clientScheduler))
+        val supabase = newTestSupabaseClientWithAuth(server.engine)
+        val client = newTestOfflineClient(supabase = supabase, store = store, coordinatorScope = clientScope)
+        supabase.signInForTest("user-a")
+        clientScheduler.runCurrent()
+        server.answer = { connectivityFailure() }
+        client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"A's edit"}""")) { filter { eq("id", 1) } }
+
+        // When — the network returns and A gets a new session with no sign-out, as a refresh gives
+        server.answer = { okJson("[]") }
+        supabase.signInForTest("user-a")
+        val drained = runUntilDrained(clientScheduler)
+        clientScope.cancel()
+
+        // Then
+        assertEquals(0, drained, "A's edit was never sent")
+    }
+
     /**
      * Runs the client's work on [scheduler] as it arrives — work resumed from the HTTP engine's
      * threads included — until nothing is pending.
