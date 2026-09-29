@@ -294,6 +294,41 @@ class CacheBelongsToOneIdentityTest {
     }
 
     @Test
+    fun a_read_waiting_on_a_restore_that_settles_signed_out_gets_the_anonymous_answer() = runTest {
+        listOf(ReadStrategy.NetworkOnly, ReadStrategy.NetworkFirst(), ReadStrategy.CacheFirst())
+            .forEach { strategy ->
+                // Given — A's rows cached as A's, and a restore that will find no session
+                objectDao.deleteAll()
+                objectDao.seedPayload(TABLE, TABLE, rowsOf("A"))
+                objectDao.seedPayload(
+                    RESERVED_TABLE_NAME,
+                    CACHE_OWNER_SIGNATURE,
+                    ownerRecordOf("user:A"),
+                )
+                val sessions = FakeHeldSessionManager(stored = null)
+                val client =
+                    launchClient(newServer(), sessions = sessions, restoresStoredSession = true)
+                val read = async { client.from(TABLE).select(readStrategy = strategy).data }
+                advanceTimeBy(1.seconds)
+                runCurrent()
+
+                // When — the restore settles signed out
+                sessions.release()
+                awaitCacheOwner("anonymous")
+                advanceTimeBy(1.minutes)
+                runCurrent()
+
+                // Then — the anonymous answer; A's rows are dropped, and what is kept, if the
+                // answer landed after the drop, is that answer, for nobody signed in
+                assertEquals("[]", read.await(), "$strategy")
+                val stored = objectDao.rowsOf(TABLE).map { row -> row.payload }
+                assertTrue(stored == emptyList<String>() || stored == listOf("[]"), "$stored")
+                assertEquals(ownerRecordOf("anonymous"), recordedOwner(), "$strategy")
+                client.close()
+            }
+    }
+
+    @Test
     fun signing_in_over_another_user_drops_the_cache_and_keeps_every_queued_write() = runTest {
         // Given — A's rows cached, and a write of A's queued offline
         val server = newServer()
