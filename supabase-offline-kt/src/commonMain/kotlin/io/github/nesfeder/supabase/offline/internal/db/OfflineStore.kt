@@ -1827,7 +1827,13 @@ internal class OfflineStore(
                         elsewhere.filter { entry -> select == null || entry.select != select }
                     )
                     .filter { row -> indexOfKey(same, row, keyColumns) == null }
-            return PatchTarget(rows, shape, sameSelectRows = same, otherSelectRows = other)
+            return PatchTarget(
+                rows,
+                shape,
+                sameSelectRows = same,
+                otherSelectRows = other,
+                keyColumns = keyColumns.toSet(),
+            )
         }
 
         /** The first row of [entries] per key. */

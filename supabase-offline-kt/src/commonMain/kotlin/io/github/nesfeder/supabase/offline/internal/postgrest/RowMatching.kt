@@ -44,9 +44,18 @@ internal enum class RowMatch {
 internal val EVALUATED_OPERATORS: Set<FilterOperator> =
     setOf(FilterOperator.EQ, FilterOperator.NEQ, FilterOperator.IN, FilterOperator.IS)
 
-/** [filter] against [row]: its conditions combined by its mode. */
-internal fun rowMatch(row: JsonObject, filter: FilterDescriptor): RowMatch {
-    val matches = filter.conditions.map { condition -> rowMatch(row, condition) }
+/**
+ * [filter] against [row]: its conditions combined by its mode.
+ *
+ * @param uuidColumns columns read as Postgres reads a `uuid`, such as a table's key: one UUID in
+ *   any letter case, braces or hyphens is one value.
+ */
+internal fun rowMatch(
+    row: JsonObject,
+    filter: FilterDescriptor,
+    uuidColumns: Set<String> = emptySet(),
+): RowMatch {
+    val matches = filter.conditions.map { condition -> rowMatch(row, condition, uuidColumns) }
     return when (filter.mode) {
         FilterDescriptor.Mode.AND ->
             matches.fold(RowMatch.MATCHES) { combined, match -> combined and match }
@@ -61,20 +70,25 @@ internal fun rowMatch(row: JsonObject, filter: FilterDescriptor): RowMatch {
  * (a server default, a projection, a JSON path or a cast), an array or object value, and a literal
  * that some column type could read as equal to a different-looking value.
  */
-internal fun rowMatch(row: JsonObject, condition: FilterDescriptor.Condition): RowMatch {
+internal fun rowMatch(
+    row: JsonObject,
+    condition: FilterDescriptor.Condition,
+    uuidColumns: Set<String> = emptySet(),
+): RowMatch {
     val operator = condition.operator
     if (operator == null || operator !in EVALUATED_OPERATORS || !isPlainColumn(condition.column))
         return RowMatch.UNKNOWN
     val value = row[condition.column] ?: return RowMatch.UNKNOWN
+    val asUuid = condition.column in uuidColumns
     return when (operator) {
         FilterOperator.IS -> isMatch(value, condition.value)
-        FilterOperator.EQ -> equalityOf(value, condition.value)
+        FilterOperator.EQ -> equalityOf(value, condition.value, asUuid)
         FilterOperator.NEQ ->
             when (value) {
                 JsonNull -> RowMatch.EXCLUDED
-                else -> equalityOf(value, condition.value).negated()
+                else -> equalityOf(value, condition.value, asUuid).negated()
             }
-        FilterOperator.IN -> membershipOf(value, condition.value)
+        FilterOperator.IN -> membershipOf(value, condition.value, asUuid)
         else -> RowMatch.UNKNOWN
     }
 }
@@ -86,11 +100,14 @@ internal fun rowMatch(row: JsonObject, condition: FilterDescriptor.Condition): R
 internal fun isPlainColumn(column: String): Boolean =
     column.isNotEmpty() && '.' !in column && "->" !in column && "::" !in column && '(' !in column
 
-/** `eq`: a null compares unknown, which excludes. */
-private fun equalityOf(value: JsonElement, literal: String): RowMatch =
+/** `eq`: a null compares unknown, which excludes. [asUuid] reads UUIDs as a `uuid` column does. */
+private fun equalityOf(value: JsonElement, literal: String, asUuid: Boolean = false): RowMatch =
     when {
         value == JsonNull -> RowMatch.EXCLUDED
         value !is JsonPrimitive -> RowMatch.UNKNOWN
+        value.isString && asUuid && isUuid(value.content) && isUuid(literal) ->
+            if (uuidDigits(value.content) == uuidDigits(literal)) RowMatch.MATCHES
+            else RowMatch.EXCLUDED
         value.isString -> textEquality(value.content, literal)
         value.booleanOrNull != null -> booleanEquality(value.content.toBoolean(), literal)
         else -> numberEquality(value.content, literal)
@@ -107,14 +124,14 @@ private fun RowMatch.negated(): RowMatch =
  * `in`: a member matches; a null column, or no member when none is unknown, excludes. The list is
  * read by the parser replay uses, so the overlay and the replayed request see the same members.
  */
-private fun membershipOf(value: JsonElement, literal: String): RowMatch {
+private fun membershipOf(value: JsonElement, literal: String, asUuid: Boolean): RowMatch {
     if (value == JsonNull) return RowMatch.EXCLUDED
     val members = FilterEngine.inListMembersOf(literal) ?: return RowMatch.UNKNOWN
     return members.fold(RowMatch.EXCLUDED) { combined, member ->
         // An unquoted null may be SQL's NULL or the text "null"; only the column's value can say
         val match =
             if (member.equals(NULL_LITERAL, ignoreCase = true)) nullMemberMatch(value)
-            else equalityOf(value, member)
+            else equalityOf(value, member, asUuid)
         combined or match
     }
 }
@@ -131,7 +148,11 @@ private fun nullMemberMatch(value: JsonElement): RowMatch =
         RowMatch.UNKNOWN
     else RowMatch.EXCLUDED
 
-/** `is`: `null`, `not_null`, `true`, `false` and `unknown`; any other value is not evaluated. */
+/**
+ * `is`: `null`, `not_null`, `true`, `false` and `unknown`; any other value is not evaluated. A JSON
+ * null is read as SQL's NULL: a `jsonb` column holding the JSON value `null` is not NULL to
+ * Postgres, and the engine cannot tell the two apart.
+ */
 private fun isMatch(value: JsonElement, literal: String): RowMatch {
     val isNull = value == JsonNull
     val boolean = (value as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
@@ -175,31 +196,76 @@ private fun postgresBooleanOrNull(literal: String): Boolean? {
     return readings.singleOrNull()
 }
 
-/** A number column against [literal], compared by value: `5.0` equals `5`, `1e2` equals `100`. */
+/**
+ * A number column against [literal], compared by value: `5.0` equals `5`, `1e2` equals `100`. Two
+ * fractions a `double precision` or `real` column reads as one value are unknown: `numeric` tells
+ * them apart.
+ */
 private fun numberEquality(value: String, literal: String): RowMatch {
     val left = decimalOf(value) ?: return RowMatch.UNKNOWN
     val right = decimalOf(literal) ?: return RowMatch.UNKNOWN
-    return if (left == right) RowMatch.MATCHES else RowMatch.EXCLUDED
+    return when {
+        left == right -> RowMatch.MATCHES
+        (left.exponent < 0 || right.exponent < 0) && equalAsFloatingPoint(value, literal) ->
+            RowMatch.UNKNOWN
+        else -> RowMatch.EXCLUDED
+    }
+}
+
+/** Whether [value] and [literal] read as the same `double precision`, or the same `real`. */
+private fun equalAsFloatingPoint(value: String, literal: String): Boolean {
+    val left = value.trim().toDoubleOrNull() ?: return false
+    val right = literal.trim().toDoubleOrNull() ?: return false
+    return left == right || left.toFloat() == right.toFloat()
 }
 
 /**
- * A text value against [literal]. Equal strings match, and ones equal but for letter case or
- * trailing spaces are unknown (a case-insensitive or padded type). Otherwise the row value, which
- * is its column type's output, decides: text-shaped output compares as text, so a different ASCII
- * literal excludes; two different UUIDs, digit strings or ISO dates exclude; anything else is
- * unknown.
+ * A text value against [literal]. Equal strings match; ones some type reads as equal are unknown:
+ * equal but for letter case or trailing spaces, digits but for leading zeros, boolean words, a
+ * quoted literal (a `jsonb` string), one MAC address. Otherwise text-shaped output compares as
+ * text, so a different ASCII literal excludes; two different UUIDs, digit strings or ISO dates
+ * exclude; anything else is unknown.
  */
 private fun textEquality(value: String, literal: String): RowMatch =
     when {
         value == literal -> RowMatch.MATCHES
         value.trimEnd().equals(literal.trimEnd(), ignoreCase = true) -> RowMatch.UNKNOWN
+        literal.length >= 2 &&
+            literal.first() == '"' &&
+            literal.last() == '"' &&
+            literal.substring(1, literal.length - 1) == value -> RowMatch.UNKNOWN
         isUuid(value) && isUuid(literal) ->
             if (uuidDigits(value) == uuidDigits(literal)) RowMatch.UNKNOWN else RowMatch.EXCLUDED
+        value.isAllDigits() && literal.isAllDigits() ->
+            if (value.trimStart('0') == literal.trimStart('0')) RowMatch.UNKNOWN
+            else RowMatch.EXCLUDED
+        sameBooleanWord(value, literal) -> RowMatch.UNKNOWN
+        sameMacAddress(value, literal) -> RowMatch.UNKNOWN
         isTextShaped(value) && literal.all { it in ' '..'~' } -> RowMatch.EXCLUDED
-        value.isAllDigits() && literal.isAllDigits() -> RowMatch.EXCLUDED
         ISO_DATE.matches(value) && ISO_DATE.matches(literal) -> RowMatch.EXCLUDED
         else -> RowMatch.UNKNOWN
     }
+
+/**
+ * Whether [value] and [literal] are both boolean input with one meaning, as a boolean reads them.
+ */
+private fun sameBooleanWord(value: String, literal: String): Boolean {
+    val left = postgresBooleanOrNull(value) ?: return false
+    return left == postgresBooleanOrNull(literal)
+}
+
+/** Whether [value] and [literal] are one MAC address written with different separators. */
+private fun sameMacAddress(value: String, literal: String): Boolean {
+    val left = macDigitsOrNull(value) ?: return false
+    return left == macDigitsOrNull(literal)
+}
+
+/** The hex digits of a MAC address in [text], lower case, or `null` when it is not one. */
+private fun macDigitsOrNull(text: String): String? {
+    val digits = text.trim().filterNot { it == ':' || it == '-' || it == '.' }.lowercase()
+    if (digits.length != MAC_HEX_DIGITS && digits.length != MAC8_HEX_DIGITS) return null
+    return digits.takeIf { candidate -> candidate.all { it in '0'..'9' || it in 'a'..'f' } }
+}
 
 /**
  * Whether [value] can only be the output of a type that compares as text: empty, or printable ASCII
@@ -222,12 +288,13 @@ private fun String.isAllDigits(): Boolean = isNotEmpty() && all { it in '0'..'9'
 private fun Char.isAsciiLetter(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
 
 /** Whether [text] is a UUID as Postgres accepts one: 32 hex digits, hyphens and braces aside. */
-private fun isUuid(text: String): Boolean {
+internal fun isUuid(text: String): Boolean {
     val digits = uuidDigits(text)
     return digits.length == UUID_HEX_DIGITS && digits.all { it in '0'..'9' || it in 'a'..'f' }
 }
 
-private fun uuidDigits(text: String): String =
+/** The 32 hex digits of the UUID [text], lower case; see [isUuid]. */
+internal fun uuidDigits(text: String): String =
     text.trim().removePrefix("{").removeSuffix("}").replace("-", "").lowercase()
 
 /** A decimal number reduced to its value: sign, significant digits and exponent. */
@@ -252,6 +319,8 @@ private fun decimalOf(text: String): DecimalValue? {
 
 private const val NULL_LITERAL = "null"
 private const val UUID_HEX_DIGITS = 32
+private const val MAC_HEX_DIGITS = 12
+private const val MAC8_HEX_DIGITS = 16
 
 private val DECIMAL = Regex("""([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?""")
 private val ISO_DATE = Regex("""\d{4}-\d{2}-\d{2}""")
@@ -273,4 +342,14 @@ private val BOOLEAN_WORDS: Map<String, Boolean> =
 
 /** Words Postgres reads as a value of a date, time or number type rather than as text. */
 private val SPECIAL_INPUTS: Set<String> =
-    setOf("infinity", "nan", "epoch", "now", "today", "tomorrow", "yesterday", "allballs")
+    setOf(
+        "infinity",
+        "inf",
+        "nan",
+        "epoch",
+        "now",
+        "today",
+        "tomorrow",
+        "yesterday",
+        "allballs",
+    )

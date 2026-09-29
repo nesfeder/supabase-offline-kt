@@ -10,7 +10,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.isUuid
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.uuidDigits
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -189,29 +191,33 @@ internal class MutationOverlay(
 
         private fun update(mutation: MutationRow) {
             val filter = filterOf(mutation) ?: return
+            val keys = primaryKeys.of(mutation.table).toSet()
             val patch = json.parseToJsonElement(mutation.bodyJson) as? JsonObject ?: return
             // Rows the loop below moves aside land after these, and are not visited twice
             val heldBefore = held.size
             visible.indices.reversed().forEach { index ->
                 val row = visible[index] as? JsonObject ?: return@forEach
-                if (rowMatch(row, filter) == RowMatch.MATCHES)
+                if (rowMatch(row, filter, keys) == RowMatch.MATCHES)
                     replaceShown(index, merge(row, patch))
             }
             (0 until heldBefore).reversed().forEach { index ->
                 val row = held[index]
-                if (rowMatch(row, filter) == RowMatch.MATCHES) replaceHeld(index, merge(row, patch))
+                if (rowMatch(row, filter, keys) == RowMatch.MATCHES)
+                    replaceHeld(index, merge(row, patch))
             }
         }
 
         private fun delete(mutation: MutationRow) {
             val filter = filterOf(mutation) ?: return
+            val keys = primaryKeys.of(mutation.table).toSet()
             visible.indices.reversed().forEach { index ->
                 val row = visible[index]
-                if (row is JsonObject && rowMatch(row, filter) == RowMatch.MATCHES)
+                if (row is JsonObject && rowMatch(row, filter, keys) == RowMatch.MATCHES)
                     visible.removeWithUndo(index)
             }
             held.indices.reversed().forEach { index ->
-                if (rowMatch(held[index], filter) == RowMatch.MATCHES) held.removeWithUndo(index)
+                if (rowMatch(held[index], filter, keys) == RowMatch.MATCHES)
+                    held.removeWithUndo(index)
             }
         }
 
@@ -335,12 +341,27 @@ internal fun indexOfKey(rows: List<JsonElement>, row: JsonObject, keyColumns: Li
     return index.takeIf { it >= 0 }
 }
 
-/** Whether two keys name the same row, comparing values by their JSON content. */
+/**
+ * Whether two keys name the same row, comparing values by their JSON content, and two UUIDs as a
+ * `uuid` column does, whatever their letter case.
+ */
 private fun isSameKey(first: JsonObject, second: JsonObject): Boolean =
     first.keys == second.keys &&
         first.all { (column, value) ->
-            (value as? JsonPrimitive)?.content == (second[column] as? JsonPrimitive)?.content
+            sameKeyValue(
+                (value as? JsonPrimitive)?.content,
+                (second[column] as? JsonPrimitive)?.content,
+            )
         }
+
+/** Whether two key values, as JSON content, name one row. */
+private fun sameKeyValue(first: String?, second: String?): Boolean =
+    first == second ||
+        (first != null &&
+            second != null &&
+            isUuid(first) &&
+            isUuid(second) &&
+            uuidDigits(first) == uuidDigits(second))
 
 /** [base] with [patch]'s columns written over it. */
 private fun merge(base: JsonObject, patch: JsonObject): JsonObject = JsonObject(base + patch)

@@ -25,12 +25,14 @@ import kotlinx.serialization.json.JsonObject
  * @property sameSelectRows rows the table's other queries hold, read with this query's select list.
  * @property otherSelectRows rows the table's other queries hold, read with another select list, or
  *   by a query whose shape is not known.
+ * @property keyColumns the table's key columns, read as a `uuid` column reads them.
  */
 internal class PatchTarget(
     val rows: List<JsonElement>,
     val shape: QueryShape?,
     val sameSelectRows: List<JsonObject>,
     val otherSelectRows: List<JsonObject>,
+    val keyColumns: Set<String> = emptySet(),
 ) {
     /** The rows the query admits. */
     val admission: QueryAdmission
@@ -56,7 +58,8 @@ internal fun patchMayLeaveWrong(
         MutationOperation.UPDATE -> updateMayLeaveWrong(write, target, json)
         MutationOperation.DELETE -> {
             val filter = FilterEngine.decodeOrNull(write.filterJson, json)
-            filter != null && target.rows.any { row -> reachIsUnknown(row, filter) }
+            filter != null &&
+                target.rows.any { row -> reachIsUnknown(row, filter, target.keyColumns) }
         }
         MutationOperation.UPSERT -> upsertMayLeaveWrong(write, target, json, conflictColumnsOf)
         else -> false
@@ -66,12 +69,16 @@ internal fun patchMayLeaveWrong(
 private fun updateMayLeaveWrong(write: MutationRow, target: PatchTarget, json: Json): Boolean {
     val filter = FilterEngine.decodeOrNull(write.filterJson, json) ?: return false
     val patch = json.parseToJsonElement(write.bodyJson) as? JsonObject ?: return false
-    if (target.rows.any { row -> reachIsUnknown(row, filter) }) return true
+    if (target.rows.any { row -> reachIsUnknown(row, filter, target.keyColumns) }) return true
     val mayJoin = mayGainRowsBy(patch, target.shape)
-    if (mayJoin && target.sameSelectRows.any { row -> reachIsUnknown(row, filter) }) return true
+    if (
+        mayJoin &&
+            target.sameSelectRows.any { row -> reachIsUnknown(row, filter, target.keyColumns) }
+    )
+        return true
     val admission = target.admission
     return target.otherSelectRows.any { row ->
-        when (rowMatch(row, filter)) {
+        when (rowMatch(row, filter, target.keyColumns)) {
             RowMatch.MATCHES -> !admission.admits(row) && admission.admits(JsonObject(row + patch))
             RowMatch.UNKNOWN -> mayJoin
             RowMatch.EXCLUDED -> false
@@ -109,8 +116,11 @@ private fun upsertMayLeaveWrong(
 /**
  * Whether [filter]'s reach of [row] is unknown: a row, not a stray value, the engine cannot judge.
  */
-private fun reachIsUnknown(row: JsonElement, filter: FilterDescriptor): Boolean =
-    row is JsonObject && rowMatch(row, filter) == RowMatch.UNKNOWN
+private fun reachIsUnknown(
+    row: JsonElement,
+    filter: FilterDescriptor,
+    keyColumns: Set<String>,
+): Boolean = row is JsonObject && rowMatch(row, filter, keyColumns) == RowMatch.UNKNOWN
 
 /**
  * Whether an UPDATE setting [patch]'s columns may bring rows into a query of [shape]: its filters
