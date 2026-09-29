@@ -11,7 +11,6 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
-import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -20,6 +19,8 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapperImpl
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
+import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
+import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.postgrest.UnsupportedOfflineFilterException
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromBuilder
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorStrictFromRequest
@@ -253,14 +254,10 @@ internal class OfflinePostgrestQueryBuilderImpl(
     private val delegate: PostgrestQueryBuilderWrapper,
     private val store: OfflineStore,
     private val sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-    /**
-     * Snapshot of the auth session, forwarded to [QueryReader], which reads it once
-     * before each network SELECT to decide how an empty response is treated: retried while the
-     * session restores, authoritative (cache-replacing) when authenticated, dropped when
-     * unauthenticated. Defaults to always-[AuthSessionState.AUTHENTICATED] to preserve prior
-     * behavior for tests and any caller that wires the builder up directly.
-     */
-    private val authSessionState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
+    /** The session a read's request goes out under; built directly, a client without the Auth plugin. */
+    private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
+    /** Which read responses may replace what the cache holds. */
+    private val trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     /**
      * Coordinator forwarded to [QueryReader] for single-flight refresh sharing per
      * `(table, signature)` and the live-signature registry backing materialize-on-write.
@@ -313,7 +310,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
         delegate: PostgrestQueryBuilder,
         store: OfflineStore,
         sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-        authSessionState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
+        requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
+        trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
         refreshCoordinator: RefreshCoordinator = defaultRefreshCoordinator(),
         accelerator: Flow<Unit> = emptyFlow(),
         queueIdentity: suspend () -> QueueIdentity? = { delegate.postgrest.supabaseClient.currentQueueIdentity() },
@@ -329,7 +327,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
         delegate = PostgrestQueryBuilderWrapperImpl(delegate),
         store = store,
         sdkLogger = sdkLogger,
-        authSessionState = authSessionState,
+        requestSession = requestSession,
+        trustPolicy = trustPolicy,
         refreshCoordinator = refreshCoordinator,
         accelerator = accelerator,
         queueIdentity = queueIdentity,
@@ -343,7 +342,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
         delegate = delegate,
         store = store,
         sdkLogger = sdkLogger,
-        authSessionState = authSessionState,
+        requestSession = requestSession,
+        trustPolicy = trustPolicy,
         refreshCoordinator = refreshCoordinator,
         accelerator = accelerator,
     )

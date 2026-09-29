@@ -1,8 +1,10 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.util.isReplaySafeSessionStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -27,27 +29,32 @@ import kotlinx.coroutines.flow.merge
  *
  * Two sources are merged, both derived entirely from types the SDK already owns so the offline
  * package stays free of app-layer imports:
- * - **Auth session restored** — [SupabaseClient.auth]'s session status transitioning into
- *   [SessionStatus.Authenticated]. Covers the cold-start race where session restore takes longer
- *   than the fast ladder, plus recovery from a failed token refresh. Degrades to an empty flow
- *   (via [runCatching]) when the Auth plugin is not installed, mirroring the defensive probe in
- *   [SupabaseOfflineClientImpl].
+ * - **Auth session settled** — the session status becoming one [trustPolicy] trusts: signed in or
+ *   signed out, or only signed in under [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY]. Covers the
+ *   cold-start race where session restore takes longer than the fast ladder, plus recovery from a
+ *   failed token refresh. Empty when the Auth plugin is not installed.
  * - **Connectivity regained** — the optional [networkAvailability] hint transitioning to `true`.
  *   This is a plain platform-agnostic `Flow<Boolean>`, not any particular connectivity type; the
  *   caller maps its own connectivity monitor into it, so that mapping stays with the caller.
  *
  * @param supabase The underlying online client whose auth session status is observed.
  * @param networkAvailability Optional connectivity hint; `null` disables the connectivity source.
+ * @param trustPolicy which session statuses a read trusts, and so which ones wake it.
  * @return A merged edge-triggered accelerator flow, or an effectively-empty flow when no source
  *   is available.
  */
 internal fun buildRefreshAccelerator(
     supabase: SupabaseClient,
     networkAvailability: Flow<Boolean>?,
+    trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
 ): Flow<Unit> {
-    val authEdges = runCatching {
-        refreshReadyEdges(supabase.auth.sessionStatus.map { status -> status is SessionStatus.Authenticated })
-    }.getOrDefault(emptyFlow())
+    val sessionReady: (SessionStatus) -> Boolean = when (trustPolicy) {
+        ResponseTrustPolicy.SETTLED_SESSION -> ::isReplaySafeSessionStatus
+        ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY -> { status -> status is SessionStatus.Authenticated }
+    }
+    val authEdges = supabase.pluginManager.getPluginOrNull(Auth)?.sessionStatus
+        ?.let { statuses -> refreshReadyEdges(statuses.map(sessionReady)) }
+        ?: emptyFlow()
     val connectivityEdges = networkAvailability?.let { availability -> refreshReadyEdges(availability) } ?: emptyFlow()
     return merge(authEdges, connectivityEdges)
 }

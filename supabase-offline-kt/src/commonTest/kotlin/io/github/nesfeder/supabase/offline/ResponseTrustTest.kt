@@ -7,6 +7,7 @@ import io.github.jan.supabase.auth.MemorySessionManager
 import io.github.jan.supabase.auth.SessionManager
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -56,12 +57,18 @@ class ResponseTrustTest {
      */
     private suspend fun TestScope.observing(
         supabase: (TestDispatcher) -> Pair<SupabaseClient, RecordingPostgrestServer>,
+        responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
         block: suspend TestScope.(server: RecordingPostgrestServer, observed: Observed) -> Unit,
     ) {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
         val (client, server) = supabase(dispatcher)
-        val offline = newTestOfflineClient(supabase = client, store = newTestOfflineStore(objectDao = objectDao), coordinatorScope = scope)
+        val offline = newTestOfflineClient(
+            supabase = client,
+            store = newTestOfflineStore(objectDao = objectDao),
+            coordinatorScope = scope,
+            responseTrust = responseTrust,
+        )
         val observed = Observed()
         scope.launch {
             offline.from(TABLE).selectAsFlow().collect { read ->
@@ -230,6 +237,20 @@ class ResponseTrustTest {
             // Then
             assertEquals(RefreshState.Idle, observed.refresh)
             assertEquals("""[{"id":"public"},{"id":"my-draft"}]""", objectDao.getRow(TABLE, TABLE)?.payload)
+        }
+    }
+
+    @Test
+    fun under_the_authenticated_only_rule_an_empty_table_without_auth_never_settles() = runTest {
+        // Given — the rule the engine followed before, set explicitly
+        observing(::withoutAuth, responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY) { server, observed ->
+            // When
+            settle()
+
+            // Then — no data, still retrying, as before
+            assertEquals(listOf<String?>(null), observed.shown.distinct())
+            assertEquals(true, observed.refresh is RefreshState.Stalled, "the read settled under the authenticated-only rule")
+            assertEquals(true, server.reads() > 1)
         }
     }
 

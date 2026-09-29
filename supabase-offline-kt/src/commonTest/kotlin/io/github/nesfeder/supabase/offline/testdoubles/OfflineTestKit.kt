@@ -19,6 +19,7 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
@@ -147,6 +148,7 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
  *   factories tell the registry; it is handed the count of calls still in flight.
  * @param primaryKeys each table's primary-key columns; `id` for every table by default.
+ * @param responseTrust which read responses may replace what the cache holds.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -160,6 +162,7 @@ internal fun newTestOfflineClient(
     closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
 ): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
     supabase = supabase,
     store = store,
@@ -171,6 +174,7 @@ internal fun newTestOfflineClient(
     closeWait = closeWait,
     onStillClosing = onStillClosing,
     primaryKeys = primaryKeys,
+    responseTrust = responseTrust,
 )
 
 /**

@@ -15,10 +15,12 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueId
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
-import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
+import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
+import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
@@ -347,6 +349,8 @@ internal class SupabaseOfflineClientImpl(
     private val onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     /** Each table's primary-key columns; `id` for every table unless the app says otherwise. */
     private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    /** Which read responses may replace what the cache holds; see [ResponseTrustPolicy]. */
+    private val responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
 ) : SupabaseOfflineClient {
 
     /**
@@ -402,7 +406,7 @@ internal class SupabaseOfflineClientImpl(
      * SDK-internal recovery accelerator merging auth-session-restored and connectivity-regained
      * edges. Forwarded to every builder to short-circuit a stalled refresh's backoff.
      */
-    private val refreshAccelerator: Flow<Unit> = buildRefreshAccelerator(supabase, networkAvailability)
+    private val refreshAccelerator: Flow<Unit> = buildRefreshAccelerator(supabase, networkAvailability, responseTrust)
 
     /** The identity the overlay and counts are for, read once per session status. */
     private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
@@ -469,7 +473,8 @@ internal class SupabaseOfflineClientImpl(
             delegate = delegate,
             store = store,
             sdkLogger = sdkLogger,
-            authSessionState = ::authSessionState,
+            requestSession = ::requestSession,
+            trustPolicy = responseTrust,
             refreshCoordinator = refreshCoordinator,
             accelerator = refreshAccelerator,
             queueIdentity = { supabase.currentQueueIdentity() },
@@ -479,37 +484,8 @@ internal class SupabaseOfflineClientImpl(
         )
     }
 
-    /**
-     * Maps the supabase-kt session status to the resolver's [AuthSessionState] snapshot,
-     * which decides how an empty SELECT response is treated:
-     *
-     * - `Initializing` → [AuthSessionState.RESTORING]: the cold-start window where session
-     *   restore from storage hasn't completed — a request may go out without a usable JWT,
-     *   RLS filters every row, and the server returns `200 OK` with `[]`; the resolver
-     *   retries that via [io.github.nesfeder.supabase.offline.internal.postgrest.TransientEmptyResponseException].
-     * - `Authenticated` → [AuthSessionState.AUTHENTICATED]: empties are the server's real
-     *   answer and may replace cached rows.
-     * - Anything else (signed out, refresh failure) → [AuthSessionState.UNAUTHENTICATED]:
-     *   supabase-kt attaches the user JWT only while `Authenticated` (its token resolution
-     *   reads `currentSessionOrNull()`, which is null for every other status), so requests in
-     *   these states go out on the anon key and their empties are RLS-shaped by construction
-     *   — kept out of the cache, no retry. Logout's `clearAllCache` owns removing cached
-     *   data. This mapping is exact, not conservative: `AUTHENTICATED` ⟺ user JWT on the
-     *   wire. Do not relax it.
-     *
-     * Defensive in two ways: a) wraps the auth probe in `runCatching` so an SDK that hasn't
-     * installed the Auth plugin (no session-status notion at all) still works, b) maps any
-     * probe failure to `UNAUTHENTICATED` — the fail-safe value: reads are never blocked
-     * behind the restore-retry (that takes `RESTORING`), and the empty-clobber guard stays
-     * active exactly as it did before empties could be authoritative at all.
-     */
-    private fun authSessionState(): AuthSessionState = runCatching {
-        when (supabase.auth.sessionStatus.value) {
-            is SessionStatus.Initializing -> AuthSessionState.RESTORING
-            is SessionStatus.Authenticated -> AuthSessionState.AUTHENTICATED
-            else -> AuthSessionState.UNAUTHENTICATED
-        }
-    }.getOrDefault(AuthSessionState.UNAUTHENTICATED)
+    /** The session a read sent now goes out under; the identity is the mutation queue's own. */
+    private fun requestSession(): RequestSession = requestSessionFor(authPluginOrNull()?.sessionStatus?.value)
 
     override fun storage(bucket: String): OfflineBucketApi {
         ensureOpen()

@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
@@ -52,7 +53,9 @@ import kotlin.time.ExperimentalTime
  *
  * These pin the junctions the isolated unit tests can't: the resolver wiring the accelerator and
  * coordinator into the combinator, the per-query [OfflineReadResult] surface, single-flight
- * sharing, and the Part B removal of the empty-array cache seed.
+ * sharing, and the Part B removal of the empty-array cache seed. They run under
+ * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], the rule the engine followed before the settled
+ * session became the default, to pin that it still behaves exactly as it did.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class QueryReaderRecoveryTest {
@@ -294,7 +297,7 @@ class QueryReaderRecoveryTest {
             // server (legitimately or RLS-filtered, the client can't tell yet) returns []
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authState = AuthSessionState.AUTHENTICATED
+            var authState: RequestSession = SIGNED_IN
             val accelerator = MutableSharedFlow<Unit>()
             val wrapper = FakePostgrestQueryBuilderWrapper(
                 table = "plans",
@@ -311,7 +314,7 @@ class QueryReaderRecoveryTest {
             // a genuinely fresh refresh instead of attaching to the completed one.
             advanceUntilIdle()
             serverRows = "[]"
-            authState = AuthSessionState.RESTORING
+            authState = RequestSession.Restoring
 
             // When: a new subscription refreshes during the restore window
             val emissions = mutableListOf<String>()
@@ -330,7 +333,7 @@ class QueryReaderRecoveryTest {
 
             // When: session restore completes and fires the recovery accelerator (the
             // auth-restored edge), short-circuiting the current backoff sleep
-            authState = AuthSessionState.AUTHENTICATED
+            authState = SIGNED_IN
             accelerator.emit(Unit)
             runCurrent()
 
@@ -377,7 +380,7 @@ class QueryReaderRecoveryTest {
             // subscription torn down but the cache not yet cleared
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authState = AuthSessionState.AUTHENTICATED
+            var authState: RequestSession = SIGNED_IN
             val wrapper = FakePostgrestQueryBuilderWrapper(
                 table = "plans",
                 postgrest = postgrest,
@@ -393,7 +396,7 @@ class QueryReaderRecoveryTest {
 
             // When: a one-shot NetworkFirst read runs on the anon key and RLS filters every row
             serverRows = "[]"
-            authState = AuthSessionState.UNAUTHENTICATED
+            authState = RequestSession.SignedOut
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
             // Then: the caller still sees the server response, but the RLS-shaped empty says
@@ -412,13 +415,13 @@ class QueryReaderRecoveryTest {
             // flipping the session state from within onSelect.
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authState = AuthSessionState.AUTHENTICATED
+            var authState: RequestSession = SIGNED_IN
             var flipMidRequest = false
             val wrapper = FakePostgrestQueryBuilderWrapper(
                 table = "plans",
                 postgrest = postgrest,
                 onSelect = {
-                    if (flipMidRequest) authState = AuthSessionState.UNAUTHENTICATED
+                    if (flipMidRequest) authState = RequestSession.SignedOut
                     postgrestResultOf(serverRows, postgrest)
                 },
             )
@@ -452,7 +455,7 @@ class QueryReaderRecoveryTest {
             // snapshot instead, this attempt would wrongly accept the [] AND schedule a retry.
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authStateProvider: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED }
+            var authStateProvider: () -> RequestSession = { SIGNED_IN }
             val wrapper = FakePostgrestQueryBuilderWrapper(
                 table = "plans",
                 postgrest = postgrest,
@@ -469,7 +472,7 @@ class QueryReaderRecoveryTest {
             serverRows = "[]"
             var stateReads = 0
             authStateProvider = {
-                if (stateReads++ == 0) AuthSessionState.RESTORING else AuthSessionState.AUTHENTICATED
+                if (stateReads++ == 0) RequestSession.Restoring else SIGNED_IN
             }
 
             // When: a new subscription runs its first refresh attempt (snapshot = RESTORING)
@@ -515,7 +518,7 @@ class QueryReaderRecoveryTest {
                 // data that exists
                 val postgrest = testPostgrest()
                 var serverRows = "[]"
-                var authState = AuthSessionState.RESTORING
+                var authState: RequestSession = RequestSession.Restoring
                 var networkCalls = 0
                 val accelerator = MutableSharedFlow<Unit>()
                 val wrapper = FakePostgrestQueryBuilderWrapper(
@@ -546,7 +549,7 @@ class QueryReaderRecoveryTest {
 
                 // When: session restore completes and fires the recovery accelerator (the
                 // auth-restored edge), short-circuiting the current backoff sleep
-                authState = AuthSessionState.AUTHENTICATED
+                authState = SIGNED_IN
                 serverRows = freshPayload
                 accelerator.emit(Unit)
                 runCurrent()
@@ -575,7 +578,7 @@ class QueryReaderRecoveryTest {
             val resolver = buildResolver(
                 wrapper = wrapper,
                 scope = backgroundScope,
-                authState = { AuthSessionState.RESTORING },
+                authState = { RequestSession.Restoring },
                 objectDao = objectDao,
             )
 
@@ -620,7 +623,7 @@ class QueryReaderRecoveryTest {
             // of it is simply never delivered — this test emits no edge at all to model that.
             val postgrest = testPostgrest()
             var serverRows = "[]"
-            var authState = AuthSessionState.RESTORING
+            var authState: RequestSession = RequestSession.Restoring
             var networkCalls = 0
             val wrapper = FakePostgrestQueryBuilderWrapper(
                 table = "plans",
@@ -637,7 +640,7 @@ class QueryReaderRecoveryTest {
             assertEquals(1, networkCalls)
 
             // When: the session finishes restoring mid-wait and nothing wakes the ladder
-            authState = AuthSessionState.AUTHENTICATED
+            authState = SIGNED_IN
             serverRows = freshPayload
 
             // Then: the very next step boundary observes it and fires — the missed edge costs one
@@ -657,7 +660,7 @@ class QueryReaderRecoveryTest {
             // result — rather than on the raw server body — would skip the ladder entirely.
             val postgrest = testPostgrest()
             var serverRows = "[]"
-            var authState = AuthSessionState.RESTORING
+            var authState: RequestSession = RequestSession.Restoring
             var networkCalls = 0
             val accelerator = MutableSharedFlow<Unit>()
             val wrapper = FakePostgrestQueryBuilderWrapper(
@@ -692,7 +695,7 @@ class QueryReaderRecoveryTest {
             )
 
             // When: the session returns
-            authState = AuthSessionState.AUTHENTICATED
+            authState = SIGNED_IN
             serverRows = freshPayload
             accelerator.emit(Unit)
             runCurrent()
@@ -726,7 +729,7 @@ class QueryReaderRecoveryTest {
             val resolver = buildResolver(
                 wrapper = wrapper,
                 scope = backgroundScope,
-                authState = { AuthSessionState.RESTORING },
+                authState = { RequestSession.Restoring },
                 store = store,
             )
             val oneShot = async { resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {} }
@@ -764,7 +767,7 @@ class QueryReaderRecoveryTest {
             val resolver = buildResolver(
                 wrapper = wrapper,
                 scope = backgroundScope,
-                authState = { AuthSessionState.RESTORING },
+                authState = { RequestSession.Restoring },
             )
 
             // When: a one-shot read runs
@@ -793,7 +796,7 @@ class QueryReaderRecoveryTest {
             val resolver = buildResolver(
                 wrapper = wrapper,
                 scope = backgroundScope,
-                authState = { AuthSessionState.UNAUTHENTICATED },
+                authState = { RequestSession.SignedOut },
                 objectDao = objectDao,
             )
 
@@ -823,7 +826,7 @@ class QueryReaderRecoveryTest {
             val resolver = buildResolver(
                 wrapper = wrapper,
                 scope = backgroundScope,
-                authState = { AuthSessionState.AUTHENTICATED },
+                authState = { SIGNED_IN },
                 objectDao = objectDao,
             )
 
@@ -846,7 +849,7 @@ class QueryReaderRecoveryTest {
             // been retired yet — its overlay is still standing in for server state
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authState = AuthSessionState.AUTHENTICATED
+            var authState: RequestSession = SIGNED_IN
             val wrapper = FakePostgrestQueryBuilderWrapper(
                 table = "plans",
                 postgrest = postgrest,
@@ -878,7 +881,7 @@ class QueryReaderRecoveryTest {
 
             // When: the next SELECT comes back RLS-shaped empty and the cache refuses it
             serverRows = "[]"
-            authState = AuthSessionState.UNAUTHENTICATED
+            authState = RequestSession.SignedOut
             resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
             // Then: the refused payload did not authorize retirement. Retiring the overlay while
@@ -900,7 +903,7 @@ class QueryReaderRecoveryTest {
             // refresh is failing — the anon-key request is RLS-filtered to []
             val postgrest = testPostgrest()
             var serverRows = "[]"
-            var authState = AuthSessionState.UNAUTHENTICATED
+            var authState: RequestSession = RequestSession.SignedOut
             val accelerator = MutableSharedFlow<Unit>()
             val wrapper = FakePostgrestQueryBuilderWrapper(
                 table = "plans",
@@ -941,7 +944,7 @@ class QueryReaderRecoveryTest {
             )
 
             // When: the session comes back and the auth-restored edge fires
-            authState = AuthSessionState.AUTHENTICATED
+            authState = SIGNED_IN
             serverRows = freshPayload
             accelerator.emit(Unit)
             runCurrent()
@@ -1080,13 +1083,14 @@ class QueryReaderRecoveryTest {
         wrapper: FakePostgrestQueryBuilderWrapper,
         scope: CoroutineScope,
         accelerator: MutableSharedFlow<Unit> = MutableSharedFlow(),
-        authState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
+        authState: () -> RequestSession = { SIGNED_IN },
         objectDao: FakeObjectDao = FakeObjectDao(),
         store: OfflineStore = buildStore(objectDao),
     ): QueryReader = QueryReader(
         delegate = wrapper,
         store = store,
-        authSessionState = authState,
+        requestSession = authState,
+        trustPolicy = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
         refreshCoordinator = RefreshCoordinator(scope),
         accelerator = accelerator,
     )
@@ -1105,4 +1109,9 @@ class QueryReaderRecoveryTest {
         objectDao = objectDao,
         mutationDao = mutationDao,
     )
+
+    private companion object {
+        /** A signed-in session, as the reader's session source reports one. */
+        val SIGNED_IN: RequestSession = RequestSession.SignedIn(QueueIdentity.User("u-1"))
+    }
 }

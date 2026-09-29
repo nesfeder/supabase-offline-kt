@@ -82,6 +82,12 @@ internal enum class AddPayloadOutcome {
     DROPPED_EMPTY,
 
     /**
+     * The response came back under a session the read's trust policy does not take as speaking for
+     * the current identity, such as one still restoring, so nothing of it was written.
+     */
+    DROPPED_UNTRUSTED,
+
+    /**
      * The producing request started **before** the cache was torn down by [OfflineStore.clearAll]
      * — sign-out, account switch, or account deletion. The response belongs to a cache generation
      * that no longer exists and, on an account switch, to a different user entirely. Unlike
@@ -377,6 +383,8 @@ internal class OfflineStore(
      *   went out signed in), so it may replace cached rows or seed a cold slot.
      * @param requestStartedAtTick [monotonicTickNow] read before the request went out, or `null` for
      *   a writer with no request behind it, which is never refused as stale.
+     * @param isTrusted Whether the response speaks for the current identity at all; one that does not
+     *   is refused as [AddPayloadOutcome.DROPPED_UNTRUSTED], empty or not.
      * @return What happened, so a caller can re-fetch after a stale drop.
      */
     suspend fun addPayload(
@@ -385,6 +393,7 @@ internal class OfflineStore(
         payload: String,
         authoritativeEmpty: Boolean = false,
         requestStartedAtTick: Long? = null,
+        isTrusted: Boolean = true,
     ): AddPayloadOutcome {
         requireUserTable(table)
         // The guards and the write are one critical section under the table's write lock, so a
@@ -400,6 +409,8 @@ internal class OfflineStore(
                 // The response left before the local write landed; keeping the cache is the only
                 // answer that preserves it. The caller re-fetches to converge on real server state.
                 isStaleRelativeToLocalWrite(table, requestStartedAtTick) -> AddPayloadOutcome.DROPPED_STALE
+
+                !isTrusted -> AddPayloadOutcome.DROPPED_UNTRUSTED
 
                 // Nothing about this emptiness is known to describe the signed-in user's data, so
                 // it is never written — not over cached rows, and not into a cold or already-empty
