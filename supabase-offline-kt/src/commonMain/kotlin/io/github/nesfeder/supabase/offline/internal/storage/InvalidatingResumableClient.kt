@@ -12,13 +12,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * supabase-kt's resumable client, with the offline cache kept honest: once an upload it starts or
- * continues finishes, [onUploadFinished] drops the cached copies of the object it replaced, as every
- * other write through the offline bucket does.
- *
- * supabase-kt's `ResumableUpload` is sealed, so the uploads are handed back as they are; the wait
- * for each to finish runs in [backgroundScope], watching the upload's own state. An upload that is
- * cancelled or never started never finishes, and its wait ends with the scope.
+ * supabase-kt's resumable client, whose finished uploads drop the cached copies they replaced. Its
+ * uploads are sealed upstream, so each is watched in [backgroundScope] until it finishes or the
+ * scope ends.
  *
  * @param delegate supabase-kt's resumable client for the bucket.
  * @param backgroundScope where the waits run.

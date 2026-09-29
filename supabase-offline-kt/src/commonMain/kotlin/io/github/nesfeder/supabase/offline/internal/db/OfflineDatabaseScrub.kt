@@ -11,16 +11,8 @@ private const val CHECKPOINT_ATTEMPTS: Int = 20
 private const val CHECKPOINT_RETRY_MILLIS: Long = 50L
 
 /**
- * Rewrites the database so rows deleted from it cannot be read back from its files.
- *
- * A `DELETE` only marks pages free. Their bytes stay in the database file — Apple's SQLite, whose
- * `secure_delete` is FAST, leaves them as they were — and every earlier version of those pages
- * stays in the write-ahead log until a checkpoint overwrites or truncates it, which on Android,
- * where the process is killed rather than closed, can be never. `VACUUM` rebuilds the database
- * from its live rows alone, and a `TRUNCATE` checkpoint copies the result into the database file
- * and empties the log.
- *
- * Runs on Room's writer connection, outside any transaction, as `VACUUM` requires.
+ * Rewrites the database so deleted rows cannot be read back from its files or its write-ahead log:
+ * `VACUUM`, then a `TRUNCATE` checkpoint, on Room's writer connection outside any transaction.
  *
  * @return `true` when the write-ahead log was emptied; `false` when open reads held the checkpoint
  *   off on every try, which leaves the old pages in the log until the next checkpoint.

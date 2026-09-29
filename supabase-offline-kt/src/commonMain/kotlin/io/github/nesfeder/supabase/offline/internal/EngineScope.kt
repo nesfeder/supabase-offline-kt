@@ -8,12 +8,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 
 /**
- * The exception handler every engine-owned coroutine scope carries.
- *
- * Failures inside the engine's background work are meant to reach whoever is waiting on it — a
- * shared refresh hands its failure to its collectors — but a scope with no handler turns anything
- * that slips past into an uncaught exception: a crash on Android, termination on iOS. This logs the
- * failure's type (never its message, which can carry row data) and keeps the process alive.
+ * The handler every engine scope carries, so a background failure that reaches no caller is logged
+ * by type (never its message, which can carry row data) instead of crashing the process.
  *
  * @param sdkLogger where to log, or `null` to only contain the failure.
  * @return the handler.

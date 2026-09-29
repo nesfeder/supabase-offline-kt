@@ -48,17 +48,9 @@ private const val HTTP_NOT_FOUND = 404
 private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
 
 /**
- * The offline client's [OfflineBucketApi]: every [BucketApi] operation forwarded to supabase-kt,
- * with downloads cached through the client's [StorageFileCache].
- *
- * Every entry point that can change what the server holds at a path is overridden — including the
- * interface's own convenience overloads (`upload(ByteArray)`, `update(ByteArray)`,
- * `uploadToSignedUrl(ByteArray)`, `delete(vararg)`), which `BucketApi by delegate` would otherwise
- * forward straight to supabase-kt past the cache. [setHeader] returns another offline bucket, for
- * the same reason.
- *
- * Resumable uploads go through [resumable], which drops the path's cached copies once an upload
- * finishes.
+ * The offline client's [OfflineBucketApi]: supabase-kt's bucket, with downloads cached in the client's
+ * [StorageFileCache]. Every member that can change the server's copy of a path is overridden, its
+ * convenience overloads included, so stale copies are dropped; every member passes the client's gate.
  *
  * @param delegate the supabase-kt bucket.
  * @param cache the client's file cache.
@@ -190,10 +182,8 @@ internal class CachingBucketApi(
     }
 
     /**
-     * A download into the caller's channel. It streams to a temporary file first and never holds
-     * the object in memory; the caller's channel receives nothing until the download is complete,
-     * so a failure part-way can still fall back to the cached copy cleanly. Closes [channel] after
-     * a successful download, as supabase-kt does.
+     * A download into the caller's channel, streamed through a temporary file so it is never held in
+     * memory; [channel] gets nothing until the download is complete, then is closed, as supabase-kt does.
      */
     private suspend fun downloadToChannel(
         path: String,
@@ -247,14 +237,9 @@ internal class CachingBucketApi(
     }
 
     /**
-     * What a failed download returns instead of its failure, if anything.
-     *
-     * - The server says the object is gone: every cached copy of it is dropped and the failure is
-     *   rethrown, so a deleted object stops being served.
-     * - Anything else (offline, a server error, a 403 during a token refresh): the cached copy of
-     *   the variant the download asked for, when there is one. When the request was never built
-     *   (the access token could not be resolved), the variant is unknown and the original's copy is
-     *   served: never a thumbnail in place of the full image.
+     * What a failed download returns instead of its failure: when the server says the object is gone,
+     * nothing (its copies are dropped and the failure rethrown); otherwise the cached copy of the
+     * variant asked for, or of the original when the request was never built.
      */
     private suspend fun <T : Any> recover(
         path: String,
@@ -289,12 +274,9 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Runs [fetch] into a pipe and streams the pipe into a temporary file, chunk by chunk.
-     *
-     * The temporary file is opened when the first bytes arrive, in the directory of the entry
-     * [entryProvider] names then — by that point the request has been built, so the variant is
-     * known. A failed or cancelled download deletes it; a failure to write it cancels the download
-     * and reports [StreamedDownload.CacheRefused]. The download's own failure is rethrown as it was.
+     * Streams [fetch] into a temporary file for the entry [entryProvider] names once bytes arrive and
+     * the variant is known. A failed download deletes the file and rethrows; a disk that refuses it
+     * cancels the download and reports [StreamedDownload.CacheRefused].
      */
     private suspend fun downloadToTemporaryFile(
         entryProvider: () -> StorageCacheEntry?,
@@ -481,12 +463,8 @@ internal class CachingBucketApi(
     }
 
     /**
-     * True when this throwable (or any cause in its chain) says the object no longer exists on the
-     * server, so its cached copies should be dropped rather than served.
-     *
-     * Supabase Storage reports a missing object as a [NotFoundRestException] — usually carried on an
-     * HTTP 400 whose JSON body reports a 404, so its [RestException.statusCode] can read 400 — so
-     * the type is matched directly, plus any [RestException] or Ktor response with a literal 404.
+     * Whether this failure, or a cause, says the object is gone: a [NotFoundRestException] (Storage
+     * reports one on an HTTP 400), or any [RestException] or response with a literal 404.
      */
     private fun Throwable.indicatesServerObjectMissing(): Boolean {
         var current: Throwable? = this

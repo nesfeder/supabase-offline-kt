@@ -17,18 +17,9 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 internal const val OFFLINE_DATABASE_FILE_NAME: String = "supabase_offline.db"
 
 /**
- * The offline databases and data directories open in this process, one client each.
- *
- * Two clients on one database file each run their own queue replay, write locks, stale-response
- * watermarks and refresh loops, none of which see the other's: the same queued write can be sent
- * twice, and one client's observers go stale on the other's writes. Two clients on one data
- * directory share a file cache neither can see the other's half of: one's clear empties the other's
- * cache, and one's sweep can take the other's download for a crash's leftover. So opening a second
- * client on a database or a data directory that is already open fails fast, and
- * [Registration.release] (from the client's `close()`) frees them for the next one.
- *
- * Paths are compared once every symlink on them is resolved, so one directory reached two ways —
- * iOS's `/var` and `/private/var`, or an app's own link — is still one.
+ * The offline databases and data directories open in this process, one client each: two clients on
+ * one would replay the same queue twice and clear each other's file cache. Paths are compared with
+ * every symlink resolved; [Registration.release], from the client's close, frees them.
  */
 internal object OpenDatabaseRegistry {
 

@@ -29,21 +29,9 @@ internal fun renderImagePathOf(supabase: SupabaseClient): String =
     Url(supabase.storage.resolveUrl("render/image")).encodedPath.trimEnd('/') + "/"
 
 /**
- * Learns which variant of an object a download fetched — the original, or an image transform — by
- * reading the request supabase-kt builds.
- *
- * supabase-kt keeps a download's transform in internal state no other module can read. What it does
- * expose is request overrides, which it runs on the request it is about to send, after the URL is
- * set. [wrap] appends one that records that URL: a transformed download goes to the Storage URL's
- * `render/image/…?width=…` rather than to its `object/…`, and its query names the transform. Only
- * a URL whose path starts with [renderImagePath] counts: an object's own path can contain
- * `render/image/` too.
- *
- * The override runs only once the request is built, after supabase-kt has resolved the access
- * token. When that fails — a third-party token provider refreshing offline, a session that is
- * required but expired — nothing is recorded. The download is then served from the original's
- * cached copy (a caller that asked for a thumbnail may get the full image, never the reverse), and
- * nothing it fetched is ever stored under a guessed variant.
+ * Learns which variant a download fetched, the original or an image transform, from the URL
+ * supabase-kt builds: [wrap] appends a request override that records it. When the request is never
+ * built, nothing is recorded: the original's copy is served, and nothing is stored.
  *
  * @param renderImagePath the encoded path prefix of a transformed download, ending in `/`.
  */

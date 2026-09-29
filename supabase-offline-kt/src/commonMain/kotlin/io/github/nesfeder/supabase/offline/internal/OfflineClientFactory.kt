@@ -21,9 +21,8 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
- * What both platform factories do once they have resolved where the data lives: claim the database
- * file and the data directory for this client, open the database, and build the client over it,
- * with [SupabaseOfflineClient.close] wired to close the database and release the claim.
+ * Claims the database and data directory, opens the database and builds the client over it, with
+ * [SupabaseOfflineClient.close] wired to close the database and release the claim.
  *
  * @param supabase the supabase-kt client to wrap.
  * @param config the caller's configuration.
@@ -31,8 +30,7 @@ import okio.SYSTEM
  * @param dataDirectory the directory the Storage file cache lives under.
  * @param openDatabase opens the platform's Room database at a path.
  * @param defaultDatabasePath the platform's default database file when [databasePath] is a
- *   configured one, so a database an earlier version kept there is brought along (see
- *   [adoptDefaultDatabase]); `null` when [databasePath] is the default.
+ *   configured one, so a database kept there is brought along (see [adoptDefaultDatabase]).
  * @return the client.
  * @throws IllegalStateException when another open client already uses the database or the data
  *   directory.
@@ -89,15 +87,9 @@ internal fun openOfflineClient(
 private val DATABASE_SIDE_FILE_SUFFIXES: List<String> = listOf("-wal", "-shm", "-journal")
 
 /**
- * The database a client with a configured data directory should open.
- *
- * Earlier versions kept the database at the platform's default path whatever the configuration
- * said, so an app that already set `offlineStoragePath` has its cache and its unsent writes there.
- * When the configured directory has no database yet and the default path has one that no client in
- * this process holds, that database — with its log, index and journal — is moved into the
- * configured directory. When it cannot be moved, or a client in this process holds it, the default
- * database stays in use, and the app is told: a queue is never silently abandoned. When both hold a
- * database, the configured one is used and the app is told the other was left behind.
+ * The database a client with a configured data directory opens: the default one is moved there,
+ * with its side files, when only it exists and no client here holds it; otherwise the one that can be
+ * opened without abandoning a queue, with a warning whenever the other is left behind.
  *
  * @param configured the configured database file.
  * @param default the platform's default database file.

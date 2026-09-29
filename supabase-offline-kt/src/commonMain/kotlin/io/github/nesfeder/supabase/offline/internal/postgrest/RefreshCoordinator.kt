@@ -26,23 +26,11 @@ import kotlinx.coroutines.withContext
 internal const val CLIENT_CLOSED_MESSAGE: String = "This SupabaseOfflineClient is closed"
 
 /**
- * Client-scoped coordinator for `CacheFirstThenNetwork` subscriptions, keyed by
- * `(table, signature)`. Owns two responsibilities that both need a single client-wide instance:
+ * The client's single-flight refresh per `(table, signature)`: overlapping `selectAsFlow` collectors
+ * share one upstream and one refresh loop, torn down when the last leaves. It also tracks the live
+ * signatures, so the store can materialize a write into a query that is observed but not cached.
  *
- * 1. **Single-flight refresh.** When N subscriptions share a signature, exactly one refresh loop
- *    runs and every subscriber observes its outcome. Implemented by a hot [shareIn]-backed flow per
- *    live key: the first collector starts the shared upstream (and its refresh loop), later
- *    collectors attach to it, and the entry — sharing coroutine included — is torn down once the
- *    last collector leaves. N collectors would otherwise each run their own refresh ladder —
- *    wasteful and stampede-prone.
- *
- * 2. **Live-signature registry.** Tracks which `(table, signature)` pairs currently have a live
- *    `selectAsFlow` collector, so [io.github.nesfeder.supabase.offline.internal.db.OfflineStore] can materialize
- *    an online-success mutation into a real cache row for a cache-less-but-observed signature
- *    (the fix for the "save then stale UI" bug), and self-GC when no subscriber is present.
- *
- * @param scope Long-lived scope hosting shared refresh upstreams; the client provides a
- *   process-lifetime scope. Injectable so tests can supply a controlled scope.
+ * @param scope hosts the shared upstreams: the client's own scope, which its close ends.
  */
 internal class RefreshCoordinator(
     private val scope: CoroutineScope,
@@ -71,20 +59,9 @@ internal class RefreshCoordinator(
     private val liveSignatures = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
 
     /**
-     * Returns the shared, single-flight read flow for [table]/[signature]. Collectors that overlap
-     * share one upstream — started from [upstream] by the first of them — and one refresh loop.
-     *
-     * - A joining collector receives the latest value (`replay = 1`).
-     * - When the last collector leaves, the entry is removed and its sharing coroutine cancelled,
-     *   so nothing keeps running, and nothing keeps the first collector's [upstream] (and whatever
-     *   its request captured) alive. A later collector starts a genuinely fresh refresh instead of
-     *   replaying a stale, possibly cross-session, row.
-     * - A failure in the upstream — a Room read failing on a malformed database, say — reaches
-     *   every collector of that entry as their own exception, instead of escaping from the sharing
-     *   coroutine to the process. The entry ends with it; the next collector starts afresh.
-     * - When [scope] ends (the client was closed), every collection fails with
-     *   [IllegalStateException] — a collection started after that fails at once — rather than
-     *   completing as if the table had nothing more to say.
+     * The shared read flow for [table]/[signature]. A joining collector gets the latest value; the
+     * upstream's failure reaches every collector in band; the last to leave ends the entry; and
+     * once [scope] ends every collection fails with the client's closed error.
      *
      * @param table Table of the query.
      * @param signature Canonical signature of the query.
