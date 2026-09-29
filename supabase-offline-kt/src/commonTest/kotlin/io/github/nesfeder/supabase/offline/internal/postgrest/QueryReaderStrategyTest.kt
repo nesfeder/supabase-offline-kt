@@ -247,6 +247,34 @@ class QueryReaderStrategyTest {
     }
 
     @Test
+    fun cacheFirst_expiredInCache_networkFailure_throws() = runTest {
+        // Given — an expired cache and no network
+        currentTime = 1_000L
+        store.addPayload(TABLE, signature(), CACHED_DATA)
+        currentTime = 1_000L + 2.hours.inWholeMilliseconds
+        failNetwork()
+        val resolver = resolver(backgroundScope)
+
+        // When / Then — no stale fallback
+        assertFailsWith<HttpRequestTimeoutException> {
+            resolver.select(Columns.ALL, ReadStrategy.CacheFirst(cacheDuration = 1.hours)) {}
+        }
+    }
+
+    @Test
+    fun cacheFirst_noCache_networkFailure_throws() = runTest {
+        // Given — nothing cached and no network
+        failNetwork()
+        val resolver = resolver(backgroundScope)
+
+        // When / Then
+        assertFailsWith<HttpRequestTimeoutException> {
+            resolver.select(Columns.ALL, ReadStrategy.CacheFirst()) {}
+        }
+        assertEquals(1, networkCalls)
+    }
+
+    @Test
     fun cacheOnly_foundInCache_returnsCache() = runTest {
         // Given
         store.addPayload(TABLE, signature(), CACHED_DATA)

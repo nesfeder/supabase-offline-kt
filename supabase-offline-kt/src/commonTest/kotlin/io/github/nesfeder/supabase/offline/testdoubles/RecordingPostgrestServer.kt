@@ -61,6 +61,9 @@ internal class RecordingPostgrestServer(
          * equality, so a test that pins a write's wire form need not spell the client's own value.
          */
         var accept: String? = null
+
+        /** The `Authorization` header, or `null`: whose token the request carried. Outside equality too. */
+        var authorization: String? = null
     }
 
     /** Every request received, in order. */
@@ -79,7 +82,10 @@ internal class RecordingPostgrestServer(
                     contentProfile = request.headers["Content-Profile"],
                     acceptProfile = request.headers["Accept-Profile"],
                     body = request.body.toByteArray().decodeToString(),
-                ).apply { accept = request.headers.getAll("Accept")?.joinToString(",") }
+                ).apply {
+                    accept = request.headers.getAll("Accept")?.joinToString(",")
+                    authorization = request.headers["Authorization"]
+                }
                 requests += recorded
                 answer(recorded)
             }
