@@ -37,8 +37,18 @@ class ClientCloseRaceIosTest {
         ClientCloseRaces.objectsObtainedBeforeCloseRefuseAfterIt(directory, openClient)
     }
 
+    @Test
+    fun reads_racing_close_all_end_with_the_closed_error_and_never_crash() = runTest(timeout = 10.minutes) {
+        ClientCloseRaces.readersRacingClose(directory, openClient, iterations = RACE_ITERATIONS)
+    }
+
+    @Test
+    fun a_logout_with_a_live_read_clears_closes_and_ends_the_read() = runTest(timeout = 10.minutes) {
+        ClientCloseRaces.logoutWithALiveRead(directory, openClient, iterations = RACE_ITERATIONS)
+    }
+
     private companion object {
-        /** The review needed 150 races to see the crash. */
+        /** The reviews needed 150 races to see each crash. */
         const val RACE_ITERATIONS = 150
     }
 }

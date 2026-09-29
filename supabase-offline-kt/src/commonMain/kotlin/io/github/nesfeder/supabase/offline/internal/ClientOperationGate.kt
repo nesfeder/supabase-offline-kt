@@ -76,18 +76,24 @@ internal class ClientOperationGate {
         }
     }
 
-    /** [flow] as a call for as long as it is collected, ended with the closed error when [close] runs. */
+    /**
+     * [flow] as a call for as long as it is collected. When [close] runs, [flow]'s collection is
+     * cancelled, so the call leaves once that work has stopped, however its collector is stuck; the
+     * collector reads the closed error next.
+     */
     fun <T> callCollecting(flow: Flow<T>): Flow<T> = channelFlow {
         call {
+            // Leaves the gate only once the collection has ended, even when the collector is cancelled
             coroutineScope {
-                val watcher = launch {
-                    closing.await()
+                val upstream = launch(start = CoroutineStart.UNDISPATCHED) { flow.collect { value -> send(value) } }
+                val onClose = closing.invokeOnCompletion {
+                    upstream.cancel()
                     this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
                 }
                 try {
-                    flow.collect { value -> send(value) }
+                    upstream.join()
                 } finally {
-                    watcher.cancel()
+                    onClose.dispose()
                 }
             }
         }

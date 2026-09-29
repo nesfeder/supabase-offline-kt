@@ -68,6 +68,7 @@ internal fun openOfflineClient(
                     registration.release()
                 }
             },
+            onStillClosing = registration::markStillClosing,
         )
     } catch (failure: Throwable) {
         registration.release()

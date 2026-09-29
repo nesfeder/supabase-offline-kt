@@ -403,45 +403,48 @@ internal class CachingBucketApi(
         cache.invalidateObject(destinationBucket ?: bucketId, to)
     }
 
-    // ─────────────────────── Passed through, refused once closed ───────────────────────
+    // ─────────────── Passed through: refused once closed, and stopped by close() ───────────────
 
     override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
-        operationGate.call { delegate.createSignedUploadUrl(path, upsert) }
+        operationGate.cancellableCall(backgroundScope) { delegate.createSignedUploadUrl(path, upsert) }
 
     override suspend fun createSignedUrl(path: String, expiresIn: Duration, builder: SignedUrlBuilder.() -> Unit): String =
-        operationGate.call { delegate.createSignedUrl(path, expiresIn, builder) }
+        operationGate.cancellableCall(backgroundScope) { delegate.createSignedUrl(path, expiresIn, builder) }
 
     override suspend fun createSignedUrls(
         expiresIn: Duration,
         paths: Collection<String>,
         builder: SignedUrlsBuilder.() -> Unit,
-    ): List<SignedUrl> = operationGate.call { delegate.createSignedUrls(expiresIn, paths, builder) }
+    ): List<SignedUrl> = operationGate.cancellableCall(backgroundScope) { delegate.createSignedUrls(expiresIn, paths, builder) }
 
     override suspend fun createSignedUrls(expiresIn: Duration, vararg paths: String, builder: SignedUrlsBuilder.() -> Unit): List<SignedUrl> =
         createSignedUrls(expiresIn, paths.toList(), builder)
 
     override suspend fun list(prefix: String, filter: StorageListFilter.Files.() -> Unit): List<FileObject> =
-        operationGate.call { delegate.list(prefix, filter) }
+        operationGate.cancellableCall(backgroundScope) { delegate.list(prefix, filter) }
 
-    override suspend fun info(path: String): FileObjectV2 = operationGate.call { delegate.info(path) }
+    override suspend fun info(path: String): FileObjectV2 = operationGate.cancellableCall(backgroundScope) { delegate.info(path) }
 
-    override suspend fun exists(path: String): Boolean = operationGate.call { delegate.exists(path) }
+    override suspend fun exists(path: String): Boolean = operationGate.cancellableCall(backgroundScope) { delegate.exists(path) }
 
-    override suspend fun changePublicStatusTo(public: Boolean): Unit = operationGate.call { delegate.changePublicStatusTo(public) }
+    override suspend fun changePublicStatusTo(public: Boolean): Unit =
+        operationGate.cancellableCall(backgroundScope) { delegate.changePublicStatusTo(public) }
 
     override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
-        operationGate.call { delegate.purgeCache(path, options) }
+        operationGate.cancellableCall(backgroundScope) { delegate.purgeCache(path, options) }
 
     /**
-     * Runs a write, then drops the cached copies of [path] it made stale. A write that timed out
-     * may have been stored anyway, so it drops them too; any other failure left the server's copy
-     * as it was, and the cache with it. Storage writes are never queued.
+     * Runs a write that close() may stop, then drops the cached copies of [path] it made stale. One
+     * that timed out or was stopped may have been stored anyway, so it drops them too; any other
+     * failure left the server's copy, and the cache, as they were. Storage writes are never queued.
      */
-    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T = operationGate.call {
+    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T = operationGate.cancellableCall(backgroundScope) {
         val result = try {
             write()
         } catch (failure: Exception) {
-            if (failure.mayHaveReachedTheServer()) withContext(NonCancellable) { cache.invalidateObject(bucketId, path) }
+            if (failure is CancellationException || failure.mayHaveReachedTheServer()) {
+                withContext(NonCancellable) { cache.invalidateObject(bucketId, path) }
+            }
             throw failure
         }
         withContext(NonCancellable) { cache.invalidateObject(bucketId, path) }

@@ -1,19 +1,29 @@
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.storage.Storage
+import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -28,12 +38,14 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * `close()` releases what the client holds: it stops the client's background work — without
@@ -42,7 +54,7 @@ import kotlin.time.Duration.Companion.seconds
  * would send writes whose bookkeeping can no longer be recorded, and the next client would send
  * them again.
  */
-@OptIn(ExperimentalAtomicApi::class)
+@OptIn(ExperimentalAtomicApi::class, FlowPreview::class)
 class SupabaseOfflineClientCloseTest {
 
     private val callerJob = SupervisorJob()
@@ -54,52 +66,207 @@ class SupabaseOfflineClientCloseTest {
     }
 
     @Test
-    fun close_stops_the_clients_background_work_and_fails_its_reactive_reads() = runTest {
-        // Given — a live reactive read, whose shared refresh runs in the client's own scope
-        var releases = 0
-        val client = newTestOfflineClient(onClose = { releases++ }, coordinatorScope = callerScope)
-        val ended = CompletableDeferred<Throwable?>()
-        val observer = callerScope.launch {
-            ended.complete(runCatching { client.from("todos").selectAsFlow().collect { } }.exceptionOrNull())
-        }
-        withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) {
-                while (callerJob.children.none { it !== observer && it.children.any() }) delay(5)
+    fun close_stops_the_clients_background_work_and_ends_a_live_read_of_every_strategy() = runTest {
+        for (strategy in FlowReadStrategy.entries) {
+            // Given — a live reactive read of this strategy, which has emitted
+            val releases = AtomicInt(0)
+            val server = RecordingPostgrestServer()
+            val client = newTestOfflineClient(supabase = server.supabaseClient(), onClose = { releases.addAndFetch(1) }, coordinatorScope = callerScope)
+            val emitted = CompletableDeferred<Unit>()
+            val ended = CompletableDeferred<Throwable?>()
+            val observer = callerScope.launch {
+                ended.complete(runCatching { client.from("todos").selectAsFlow(readStrategy = strategy).collect { emitted.complete(Unit) } }.exceptionOrNull())
             }
-        }
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { emitted.await() } }
 
-        // When
-        client.close()
-        client.close()
+            // When
+            client.close()
+            client.close()
+            val requestsAtClose = server.requests.size
 
-        // Then — the read fails in band rather than ending as if the table were done, everything
-        // the client started is gone, the caller's own scope is untouched, and the factory's
-        // release ran exactly once
-        withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) {
-                observer.join()
-                while (callerJob.children.any()) delay(5)
+            // Then — the read fails in band rather than ending as if the table were done, everything
+            // the client started is gone, nothing more reaches the server, the caller's own scope is
+            // untouched, and the factory's release ran exactly once
+            withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) {
+                    observer.join()
+                    while (callerJob.children.any()) delay(5)
+                }
+                delay(SETTLE_MILLIS)
             }
+            assertClientClosedError(ended.await(), "the $strategy read live at close()")
+            assertEquals(requestsAtClose, server.requests.size, "the $strategy read sent a request after close()")
+            assertTrue(callerJob.isActive, "close() cancelled the caller's scope")
+            assertEquals(1, releases.load(), "$strategy: the factory's release ran ${releases.load()} times")
         }
-        assertClientClosedError(ended.await(), "the reactive read live at close()")
-        assertTrue(callerJob.isActive, "close() cancelled the caller's scope")
-        assertEquals(1, releases)
     }
 
     @Test
-    fun a_reactive_read_started_on_a_closed_client_fails_rather_than_completing_empty() = runTest {
-        // Given — a builder obtained before close()
-        val client = newTestOfflineClient(coordinatorScope = callerScope)
-        val builder = client.from("todos")
+    fun a_read_of_any_strategy_made_after_close_fails_with_the_closed_error_and_sends_nothing() = runTest {
+        for (strategy in FlowReadStrategy.entries) {
+            // Given — a builder obtained before close()
+            val server = RecordingPostgrestServer()
+            val client = newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = callerScope)
+            val builder = client.from("todos")
 
-        // When
-        client.close()
-        val outcome = withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) { runCatching { builder.selectAsFlow().toList() } }
+            // When
+            client.close()
+            val outcome = withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) { runCatching { builder.selectAsFlow(readStrategy = strategy).toList() } }
+            }
+
+            // Then
+            assertClientClosedError(outcome.exceptionOrNull(), "a $strategy read started after close(), which gave ${outcome.getOrNull()?.size} emissions,")
+            assertEquals(0, server.requests.size, "a $strategy read started after close() sent a request")
         }
+    }
 
-        // Then
-        assertClientClosedError(outcome.exceptionOrNull(), "a reactive read started after close(), which gave ${outcome.getOrNull()?.size} emissions,")
+    @Test
+    fun close_called_inside_a_collector_returns_at_once_and_ends_the_collection() = runTest {
+        val flows: List<Pair<String, (SupabaseOfflineClient) -> Flow<*>>> =
+            listOf<Pair<String, (SupabaseOfflineClient) -> Flow<*>>>(
+                "pendingMutationCountFlow()" to { client -> client.pendingMutationCountFlow() },
+                "pendingMutationCountFlow(table)" to { client -> client.pendingMutationCountFlow("todos") },
+            ) + FlowReadStrategy.entries.map { strategy ->
+                "selectAsFlow($strategy)" to { client: SupabaseOfflineClient -> client.from("todos").selectAsFlow(readStrategy = strategy) }
+            }
+        for ((name, flowOf) in flows) {
+            // Given — a client that waits its full bound for calls in flight
+            val releases = AtomicInt(0)
+            val client = newTestOfflineClient(supabase = RecordingPostgrestServer().supabaseClient(), onClose = { releases.addAndFetch(1) }, coordinatorScope = callerScope)
+            val tookInside = CompletableDeferred<Duration>()
+
+            // When — the collector closes the client from inside its body
+            val outcome = withContext(Dispatchers.Default) {
+                withTimeout(15.seconds) {
+                    runCatching {
+                        flowOf(client).collect {
+                            if (!tookInside.isCompleted) {
+                                val mark = TimeSource.Monotonic.markNow()
+                                client.close()
+                                tookInside.complete(mark.elapsedNow())
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Then — close() did not wait on the collection it was called from, the collection ended
+            // with the closed error, and the database was released
+            val took = tookInside.await()
+            assertTrue(took < PROMPTLY, "$name: close() inside the collector took $took")
+            assertClientClosedError(outcome.exceptionOrNull(), "$name after close() inside its collector")
+            assertEquals(1, releases.load(), "$name: the factory's release ran ${releases.load()} times")
+        }
+    }
+
+    @Test
+    fun a_collection_that_stops_reading_does_not_hold_close() = runTest {
+        for (variant in listOf(STUCK_IN_ITS_BODY, NEVER_READ_AGAIN)) {
+            for (strategy in FlowReadStrategy.entries) {
+                // Given — reads the server answers and writes that queue, so every read keeps wanting
+                // to emit, and a collection that stops reading after its first value
+                val releases = AtomicInt(0)
+                val server = RecordingPostgrestServer(answer = { request -> if (request.method == "GET") okJson("[]") else connectivityFailure() })
+                val client = newTestOfflineClient(supabase = server.supabaseClient(), onClose = { releases.addAndFetch(1) }, coordinatorScope = callerScope)
+                val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                val entered = CompletableDeferred<Unit>()
+                val read = client.from("todos").selectAsFlow(readStrategy = strategy)
+                if (variant == STUCK_IN_ITS_BODY) {
+                    appScope.launch { read.collect { entered.complete(Unit); awaitCancellation() } }
+                } else {
+                    appScope.launch {
+                        val values = read.produceIn(this)
+                        values.receive()
+                        entered.complete(Unit)
+                    }
+                }
+                withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
+                repeat(3) { index -> client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", index) }) }) }
+
+                // When
+                val mark = TimeSource.Monotonic.markNow()
+                client.close()
+                val took = mark.elapsedNow()
+
+                // Then — close() returned promptly with the database released, though the collection never ended
+                assertTrue(took < PROMPTLY, "$variant, $strategy: close() took $took")
+                assertEquals(1, releases.load(), "$variant, $strategy: the database was not released when close() returned")
+                appScope.cancel()
+            }
+        }
+    }
+
+    @Test
+    fun a_second_close_returns_only_once_the_database_is_released() = runTest {
+        // Given — a write on the wire, held at the server, and a first close() waiting for it
+        val releases = AtomicInt(0)
+        val arrived = CompletableDeferred<Unit>()
+        val held = CompletableDeferred<Unit>()
+        val server = RecordingPostgrestServer(
+            answer = {
+                arrived.complete(Unit)
+                held.await()
+                okJson("[]")
+            },
+        )
+        val client = newTestOfflineClient(supabase = server.supabaseClient(), onClose = { releases.addAndFetch(1) }, coordinatorScope = callerScope)
+        val write = callerScope.async { runCatching { client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) }) } }
+        withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
+        val first = callerScope.async { client.close(); releases.load() }
+        withContext(Dispatchers.Default) { withTimeout(5.seconds) { while (runCatching { client.from("todos") }.isSuccess) delay(1) } }
+
+        // When — a second close() while the first still waits, then the server answers
+        val second = callerScope.async { client.close(); releases.load() }
+        withContext(Dispatchers.Default) { delay(SETTLE_MILLIS) }
+        val secondReturnedFirst = second.isCompleted
+        held.complete(Unit)
+
+        // Then — neither returned before the database was released, and it was released once
+        assertFalse(secondReturnedFirst, "the second close() returned while the first was still waiting")
+        val releasedWhenEachReturned = withContext(Dispatchers.Default) { withTimeout(5.seconds) { listOf(first.await(), second.await()) } }
+        assertEquals(listOf(1, 1), releasedWhenEachReturned)
+        assertIs<MutationOutcome.Applied>(write.await().getOrNull(), "the write in flight at close() got ${write.await().exceptionOrNull()}")
+    }
+
+    @Test
+    fun a_storage_call_on_the_wire_at_close_is_stopped_with_the_closed_error() = runTest {
+        val calls: List<Pair<String, suspend (OfflineBucketApi) -> Any?>> = listOf(
+            "upload" to { bucket -> bucket.upload("u-1/new.png", byteArrayOf(1)) },
+            "update" to { bucket -> bucket.update("u-1/new.png", byteArrayOf(1)) },
+            "createSignedUrl" to { bucket -> bucket.createSignedUrl("u-1/me.png", 60.seconds) },
+            "createSignedUploadUrl" to { bucket -> bucket.createSignedUploadUrl("u-1/new.png") },
+            "list" to { bucket -> bucket.list("u-1") },
+            "info" to { bucket -> bucket.info("u-1/me.png") },
+            "exists" to { bucket -> bucket.exists("u-1/me.png") },
+        )
+        for ((name, call) in calls) {
+            // Given — the call on the wire, held at the server
+            val releases = AtomicInt(0)
+            val server = RecordingStorageServer()
+            val held = CompletableDeferred<Unit>()
+            server.gate = held
+            val supabase = newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest)
+                install(Storage) { resumable { cache = FakeResumableCache() } }
+            }
+            val client = newTestOfflineClient(supabase = supabase, onClose = { releases.addAndFetch(1) }, coordinatorScope = callerScope)
+            val bucket = client.storage("avatars")
+            val outcome = callerScope.async { runCatching { call(bucket) } }
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { server.requestArrived.await() } }
+
+            // When
+            val mark = TimeSource.Monotonic.markNow()
+            client.close()
+            val took = mark.elapsedNow()
+
+            // Then — close() stopped the call rather than waiting for it, and its caller got the closed error
+            held.complete(Unit)
+            assertTrue(took < PROMPTLY, "$name: close() waited $took for the call")
+            val failure = withContext(Dispatchers.Default) { withTimeout(5.seconds) { outcome.await() } }.exceptionOrNull()
+            assertClientClosedError(failure, "$name on the wire at close()")
+            assertEquals(1, releases.load(), "$name: the database was not released when close() returned")
+        }
     }
 
     @Test
@@ -182,7 +349,7 @@ class SupabaseOfflineClientCloseTest {
     @Test
     fun close_waits_in_real_time_for_a_call_in_flight_when_called_under_a_test_scheduler() = runTest {
         // Given — a write on the wire, which the server answers after a moment of real time
-        var releases = 0
+        val releases = AtomicInt(0)
         val arrived = CompletableDeferred<Unit>()
         val held = CompletableDeferred<Unit>()
         val server = RecordingPostgrestServer(
@@ -192,7 +359,7 @@ class SupabaseOfflineClientCloseTest {
                 okJson("[]")
             },
         )
-        val client = newTestOfflineClient(supabase = server.supabaseClient(), onClose = { releases++ }, coordinatorScope = callerScope)
+        val client = newTestOfflineClient(supabase = server.supabaseClient(), onClose = { releases.addAndFetch(1) }, coordinatorScope = callerScope)
         val write = callerScope.async { runCatching { client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) }) } }
         withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
         callerScope.launch {
@@ -204,7 +371,7 @@ class SupabaseOfflineClientCloseTest {
         client.close()
 
         // Then — it returned only after the write was answered and the database was released
-        assertEquals(1, releases, "close() returned before the database was released")
+        assertEquals(1, releases.load(), "close() returned before the database was released")
         assertIs<MutationOutcome.Applied>(write.await().getOrNull(), "the write in flight at close() got ${write.await().exceptionOrNull()}")
     }
 
@@ -222,17 +389,20 @@ class SupabaseOfflineClientCloseTest {
                 okJson("[]")
             },
         )
+        val callsInFlightWhenStillClosing = AtomicInt(-1)
         val client = newTestOfflineClient(
             supabase = server.supabaseClient(),
             sdkLogger = SdkLogger(logger, OfflineLogLevel.INFO),
             onClose = { releases.addAndFetch(1) },
             coordinatorScope = callerScope,
             closeWait = IDLE_CLOSE_WAIT,
+            onStillClosing = { callsInFlight -> callsInFlightWhenStillClosing.store(callsInFlight()) },
         )
         val write = callerScope.async { runCatching { client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) }) } }
         withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
 
-        // When — close() waits out its bound with the write still held, then the server answers
+        // When — close() waits out its bound with the write still held, twice, then the server answers
+        client.close()
         client.close()
         val releasedWhenCloseReturned = releases.load()
         held.complete(Unit)
@@ -243,10 +413,11 @@ class SupabaseOfflineClientCloseTest {
             }
         }
 
-        // Then — close() left the database open under the write and said so; the write was answered,
-        // and the database was released once, after it
+        // Then — close() left the database open under the write and said so, once, with the call
+        // still in flight; the write was answered, and the database was released once, after it
         assertEquals(0, releasedWhenCloseReturned, "close() released the database under a call in flight")
         assertEquals(1, logger.entriesAt(OfflineLogLevel.WARNING).count { entry -> entry.message.startsWith("close() waited") })
+        assertEquals(1, callsInFlightWhenStillClosing.load(), "the calls still in flight were not reported")
         assertIs<MutationOutcome.Applied>(outcome.getOrNull(), "the write in flight at close() got ${outcome.exceptionOrNull()}")
         assertEquals(1, releases.load())
     }
@@ -276,6 +447,12 @@ class SupabaseOfflineClientCloseTest {
     private companion object {
         /** Real time given to anything in flight to reach the server. */
         const val SETTLE_MILLIS = 200L
+
+        /** Far below `close()`'s own ten-second wait: what "returned at once" means here. */
+        val PROMPTLY: Duration = 2.seconds
+
+        const val STUCK_IN_ITS_BODY = "a collector stuck in its body"
+        const val NEVER_READ_AGAIN = "a produceIn channel never read again"
 
         /** An idle client's work can never finish, so its `close()` always waits this long. */
         val IDLE_CLOSE_WAIT: Duration = 100.milliseconds

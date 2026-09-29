@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
+import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
@@ -141,6 +142,8 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  *   database's scrub.
  * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose
  *   background work can never run (see [idleCoroutineScope]): its `close()` always waits it out.
+ * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
+ *   factories tell the registry; it is handed the count of calls still in flight.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -152,6 +155,7 @@ internal fun newTestOfflineClient(
     coordinatorScope: CoroutineScope = newEngineScope(sdkLogger),
     scrubDatabase: suspend () -> Unit = {},
     closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
+    onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
 ): SupabaseOfflineClientImpl = SupabaseOfflineClientImpl(
     supabase = supabase,
     store = store,
@@ -161,6 +165,7 @@ internal fun newTestOfflineClient(
     scrubDatabase = scrubDatabase,
     onClose = onClose,
     closeWait = closeWait,
+    onStillClosing = onStillClosing,
 )
 
 /**
@@ -203,6 +208,7 @@ internal fun newTestFileCache(
  * @param cache the file cache; by default one over [baseDirectory], [store] and [sdkLogger].
  * @param backgroundScope where the bucket waits for resumable uploads to finish; by default an
  *   engine scope of its own, as the client's is.
+ * @param operationGate the gate every member passes; pass one to close it as the client's close does.
  * @return the offline bucket.
  */
 internal fun newTestBucketApi(
@@ -212,11 +218,13 @@ internal fun newTestBucketApi(
     sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
     cache: StorageFileCache = newTestFileCache(baseDirectory = baseDirectory, store = store, sdkLogger = sdkLogger),
     backgroundScope: CoroutineScope = newEngineScope(sdkLogger),
+    operationGate: ClientOperationGate = ClientOperationGate(),
 ): CachingBucketApi = CachingBucketApi(
     delegate = delegate,
     cache = cache,
     sdkLogger = sdkLogger,
     backgroundScope = backgroundScope,
+    operationGate = operationGate,
 )
 
 /**
