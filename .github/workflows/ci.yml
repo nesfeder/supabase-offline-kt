@@ -372,9 +372,12 @@ jobs:
             echo "TMPDIR=$root/tmp"
           } >> "$GITHUB_ENV"
 
+      # The whole output first: piping it into `head` can close the pipe while xcodebuild is still
+      # writing, and xcodebuild aborts on the broken pipe.
       - name: Check the Xcode version
         run: |
-          version=$(xcodebuild -version | head -1)
+          output=$(xcodebuild -version)
+          version="${output%%$'\n'*}"
           if [[ "$IOS_RUNNER" == local ]]; then
             where="the maintainer's Mac (self-hosted, offline-kt)"
           else
