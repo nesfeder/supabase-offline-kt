@@ -71,7 +71,8 @@ internal enum class ResponseTrustPolicy {
      * Only a signed-in session produces authoritative empty results: an empty response is written
      * only when the session was signed in before and after the request. A non-empty one is written
      * too, signed out or without the Auth plugin, but never while a stored session restores or its
-     * refresh has failed, when the anon key's narrower answer would overwrite the user's rows.
+     * refresh has failed, when the anon key's narrower answer would overwrite the user's rows, and
+     * never when another user signed in during the request.
      */
     AUTHENTICATED_SESSION_ONLY;
 
@@ -88,6 +89,7 @@ internal enum class ResponseTrustPolicy {
             AUTHENTICATED_SESSION_ONLY ->
                 when {
                     isUnsettledStoredSession(before) || isUnsettledStoredSession(after) -> false
+                    isChangeOfUser(before, after) -> false
                     else ->
                         !isEmpty ||
                             (before is RequestSession.SignedIn && after is RequestSession.SignedIn)
@@ -105,17 +107,24 @@ internal enum class ResponseTrustPolicy {
 
     /**
      * Whether a one-shot read that got an untrusted response asks again once the session has moved:
-     * after it stops restoring, or at once when it settled into another identity during the
-     * request.
+     * after it stops restoring, whatever the response held, or at once when it settled into another
+     * identity during the request (under the authenticated-only rule, another user).
      */
     fun oneShotAsksAgain(before: RequestSession, after: RequestSession, isEmpty: Boolean): Boolean =
         when (this) {
             SETTLED_SESSION ->
                 before is RequestSession.Restoring ||
                     (settledIdentityOf(after) != null && after != before)
-            AUTHENTICATED_SESSION_ONLY -> isEmpty && before is RequestSession.Restoring
+            AUTHENTICATED_SESSION_ONLY ->
+                before is RequestSession.Restoring || isChangeOfUser(before, after)
         }
 }
+
+/** Whether [before] and [after] are two different users' sessions. */
+private fun isChangeOfUser(before: RequestSession, after: RequestSession): Boolean =
+    before is RequestSession.SignedIn &&
+        after is RequestSession.SignedIn &&
+        before.identity != after.identity
 
 /**
  * Whether [session] belongs to a stored user whose token is not on the wire: restoring, or after a
