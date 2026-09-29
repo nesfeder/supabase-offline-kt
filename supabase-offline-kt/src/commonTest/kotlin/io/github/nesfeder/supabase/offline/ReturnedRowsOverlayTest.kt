@@ -19,9 +19,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * S-35: a write that asked for its rows back (`select()`) is patched into the cache with what the
- * server returned, which carries what the server set itself — a trigger's `updated_at`, a generated
- * `id` — as an INSERT's already was. A write that returned nothing is patched with its body.
+ * A write that asked for its rows back (`select()`) is patched into the cache with what the server
+ * returned, which carries what the server set itself — a trigger's `updated_at`, a generated `id` —
+ * as an INSERT's already was. A write that returned nothing is patched with its body.
  */
 class ReturnedRowsOverlayTest {
 

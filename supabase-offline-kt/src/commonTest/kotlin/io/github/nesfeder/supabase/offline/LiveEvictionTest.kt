@@ -26,8 +26,8 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 
 /**
- * Size-based eviction never removes a payload a live reader shows (S-28): it takes the oldest
- * payload nobody observes instead, and the reader never drops to "no data".
+ * Size-based eviction never removes a payload a live reader shows: it takes the oldest payload
+ * nobody observes instead, and the reader never drops to "no data".
  */
 class LiveEvictionTest {
 

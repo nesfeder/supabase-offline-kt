@@ -21,9 +21,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 
 /**
- * S-39: a cached payload's age is the age of what the server last said. A local write patched into
- * it, or a payload made of local writes alone, does not make it fresh for a read with a cache
- * duration.
+ * A cached payload's age is the age of what the server last said. A local write patched into it, or
+ * a payload made of local writes alone, does not make it fresh for a read with a cache duration.
  */
 class OverlayFreshnessTest {
 
