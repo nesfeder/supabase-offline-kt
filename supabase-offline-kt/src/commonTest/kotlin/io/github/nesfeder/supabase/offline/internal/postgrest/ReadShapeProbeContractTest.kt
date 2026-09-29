@@ -34,7 +34,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * Pins the upstream behaviour the read-shape check depends on: supabase-kt writes the shape a SELECT
+ * Pins the upstream behavior the read-shape check depends on: supabase-kt writes the shape a SELECT
  * asks for only into its method and its `Accept` and `Prefer` headers. Also pins that the check
  * sends nothing, and stops nothing but a PostgREST read made under a capture.
  */

@@ -74,7 +74,7 @@ internal class MutationOverlay(
     fun encode(rows: List<JsonElement>): String = json.encodeToString(ListSerializer(JsonElement.serializer()), rows)
 
     /**
-     * The rows as the mutations change them. Each change is journalled until [keep] or [undo], so a
+     * The rows as the mutations change them. Each change is journaled until [keep] or [undo], so a
      * mutation that fails half-way is taken back without copying every row for every mutation.
      */
     private inner class Working(start: OverlaidRows) {
@@ -98,16 +98,19 @@ internal class MutationOverlay(
             journal.clear()
         }
 
+        /** Adds [element] at the end, to be removed on [undo]. */
         private fun <T> MutableList<T>.append(element: T) {
             add(element)
             journal += { removeAt(lastIndex) }
         }
 
+        /** Sets [element] at [index], to be put back on [undo]. */
         private fun <T> MutableList<T>.replace(index: Int, element: T) {
             val old = set(index, element)
             journal += { set(index, old) }
         }
 
+        /** Removes the element at [index], to be reinserted there on [undo]. */
         private fun <T> MutableList<T>.removeWithUndo(index: Int) {
             val old = removeAt(index)
             journal += { add(index, old) }
