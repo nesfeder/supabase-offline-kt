@@ -87,21 +87,29 @@ class ClientOperationGateTest {
 
     @Test
     fun closing_ends_a_collection_waiting_for_its_next_value_with_the_closed_error() = runTest {
-        // Given — a collector waiting for a value that never comes
-        val gate = ClientOperationGate()
-        val entered = CompletableDeferred<Unit>()
-        val collection = async(Dispatchers.Default) {
-            runCatching {
-                gate.callCollecting(flow { emit(1); awaitCancellation() }).collect { entered.complete(Unit) }
-            }.exceptionOrNull()
+        // Close and the collection's own end race, so run it enough times to see either order
+        repeat(ORDERINGS) { attempt ->
+            // Given — a collector waiting for a value that never comes
+            val gate = ClientOperationGate()
+            val entered = CompletableDeferred<Unit>()
+            val collection = async(Dispatchers.Default) {
+                runCatching {
+                    gate.callCollecting(flow { emit(1); awaitCancellation() }).collect { entered.complete(Unit) }
+                }.exceptionOrNull()
+            }
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
+
+            // When
+            gate.close()
+
+            // Then — it ended with the closed error, never as if the flow were done
+            val failure = withContext(Dispatchers.Default) { withTimeout(5.seconds) { collection.await() } }
+            assertClientClosedError(failure, "attempt $attempt: the collection live at close()")
+            assertEquals(0, gate.inFlight)
         }
-        withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
+    }
 
-        // When
-        gate.close()
-
-        // Then
-        assertClientClosedError(withContext(Dispatchers.Default) { withTimeout(5.seconds) { collection.await() } }, "the collection live at close()")
-        assertEquals(0, gate.inFlight)
+    private companion object {
+        const val ORDERINGS = 200
     }
 }

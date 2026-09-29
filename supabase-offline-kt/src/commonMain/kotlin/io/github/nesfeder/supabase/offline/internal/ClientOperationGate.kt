@@ -87,8 +87,9 @@ internal class ClientOperationGate {
             coroutineScope {
                 val upstream = launch(start = CoroutineStart.UNDISPATCHED) { flow.collect { value -> send(value) } }
                 val onClose = closing.invokeOnCompletion {
-                    upstream.cancel()
+                    // The error first: once cancelled, the collection may end the channel cleanly
                     this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
+                    upstream.cancel()
                 }
                 try {
                     upstream.join()
