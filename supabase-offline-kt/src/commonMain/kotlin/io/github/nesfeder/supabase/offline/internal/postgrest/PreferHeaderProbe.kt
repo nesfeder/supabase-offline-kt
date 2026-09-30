@@ -141,10 +141,10 @@ private val PreferProbeInstallation =
 
 /**
  * Installs the dry-run check on this client's request pipeline, in a phase ahead of every other,
- * once however many threads call it. A flag in the client's attributes, claimed by
- * compare-and-set, admits one installer. The check acts only on a PostgREST write sent under a
- * [PreferHeaderProbe]; no plugin sees the request it stops, but an `HttpRequestCreated` monitor
- * subscriber does, since that event fires before the pipeline runs.
+ * once however many threads call it. A flag in the client's attributes, claimed by compare-and-set,
+ * admits one installer. The check acts only on a PostgREST write sent under a [PreferHeaderProbe];
+ * no plugin sees the request it stops, but an `HttpRequestCreated` monitor subscriber does, since
+ * that event fires before the pipeline runs.
  *
  * @return `true` when this call installed it.
  */

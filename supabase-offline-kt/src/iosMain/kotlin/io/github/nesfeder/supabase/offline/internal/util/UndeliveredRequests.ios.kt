@@ -13,8 +13,8 @@ private val NEVER_SENT_URL_ERROR_CODES: Set<Int> = setOf(-1003, -1004, -1006, -1
 
 /**
  * Matches the code of a top-level `NSURLErrorDomain` error at the start of the Darwin engine's
- * message: `Exception in http request: ` and the `NSError`'s description, which is not localized.
- * A code nested under another error, or quoted in any other message, does not match.
+ * message: `Exception in http request: ` and the `NSError`'s description, which is not localized. A
+ * code nested under another error, or quoted in any other message, does not match.
  */
 private val URL_ERROR_CODE =
     Regex("""^Exception in http request: Error Domain=NSURLErrorDomain Code=(-?\d+)""")
