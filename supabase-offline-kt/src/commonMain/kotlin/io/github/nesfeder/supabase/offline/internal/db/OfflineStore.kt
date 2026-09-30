@@ -554,7 +554,8 @@ internal class OfflineStore(
      *   for a writer with no request behind it, which is never refused as stale.
      * @param isTrusted Whether the response speaks for the current identity at all; one that does
      *   not is refused as [AddPayloadOutcome.DROPPED_UNTRUSTED], empty or not.
-     * @param shape the query's shape, recorded with a written payload; `null` when not known.
+     * @param shape the query's shape, recorded with a written payload before the table's lock is
+     *   released; `null` when not known.
      * @return What happened, so a caller can re-fetch after a stale drop.
      */
     suspend fun addPayload(
@@ -617,6 +618,10 @@ internal class OfflineStore(
                                         ),
                                     coversSyncedMutations = requestStartedAtTick != null,
                                 )
+                                // Before the lock is released, so no patch finds the payload
+                                // without the shape that says which rows it admits
+                                if (shape != null)
+                                    queryShapes.remember(table, signature, shape, persist = true)
                                 AddPayloadOutcome.WRITTEN
                             }
                         }
@@ -624,8 +629,6 @@ internal class OfflineStore(
                 }
             }
 
-        if (outcome == AddPayloadOutcome.WRITTEN && shape != null)
-            queryShapes.remember(table, signature, shape, persist = true)
         // Outside the table lock: eviction takes its own mutex and scans every table.
         if (outcome == AddPayloadOutcome.WRITTEN && shouldEnforceSizeAfterWrite(payload)) {
             enforceDbSizeLimitIfNeeded()
