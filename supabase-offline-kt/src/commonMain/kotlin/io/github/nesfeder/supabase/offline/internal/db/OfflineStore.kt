@@ -10,13 +10,14 @@ import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
+import io.github.nesfeder.supabase.offline.internal.cache.Projection
 import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
 import io.github.nesfeder.supabase.offline.internal.cache.keyOf
 import io.github.nesfeder.supabase.offline.internal.cache.mayGainRowsBy
 import io.github.nesfeder.supabase.offline.internal.cache.patchMayLeaveWrong
 import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
+import io.github.nesfeder.supabase.offline.internal.cache.projectionOf
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
-import io.github.nesfeder.supabase.offline.internal.cache.selectListOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -1578,7 +1579,7 @@ internal class OfflineStore(
     ): String = overlayFor(admission, unconfirmedSends).overlay(serverJson, mutations, knownRows)
 
     /**
-     * The rows the table's other cached queries hold, read with the same columns as the query
+     * The rows the table's other cached queries hold, read with the same [Projection] as the query
      * cached under [signature], when one of [mutations] may bring such a row into it; see
      * [mayBringRowsIn]. Empty otherwise, and when the query's shape is unknown: then the other
      * payloads are not read at all.
@@ -1612,11 +1613,12 @@ internal class OfflineStore(
                 mutationsThatReach(bringing, mutations),
                 unknownMatters = false,
             ) ?: return emptyList()
-        val select = selectListOf(known)
+        val projection = projectionOf(known)
         val shapes = queryShapes.shapesOf(table)
         val sameSelect =
             objectDao.allForTable(table).filter { row ->
-                row.signature != signature && shapes[row.signature]?.let(::selectListOf) == select
+                row.signature != signature &&
+                    shapes[row.signature]?.let(::projectionOf) == projection
             }
         if (sameSelect.isEmpty()) return emptyList()
         val parsed = sameSelect.map { row -> row to parsedPayloadOf(row) }
@@ -1725,7 +1727,7 @@ internal class OfflineStore(
      * Patches a write the server accepted, or a row it sent, into every cached query of [table],
      * and creates a payload for each live query of the table that has none and admits one of its
      * rows. Each query shows only the rows it admits. Rows cached for the table's other queries,
-     * read with the same select list, stand in for rows the write changes but the query does not
+     * read with the same [Projection], stand in for rows the write changes but the query does not
      * hold yet, so a row an UPDATE makes match joins. A patched payload keeps its fetch time and a
      * created one is stale: local rows are not fresh data. A query the patch may leave wrong is
      * marked stale, and its live readers fetch again.
@@ -1902,7 +1904,7 @@ internal class OfflineStore(
 
     /**
      * A table's cached rows, one per key from the most recently fetched payload holding it, with
-     * the select list each was read with. A query is given only copies [mayMatter] keeps, and only
+     * the [Projection] each was read with. A query is given only copies [mayMatter] keeps, and only
      * keys some copy of which may matter are indexed, so [targetFor] costs a query's rows and
      * those.
      *
@@ -1917,12 +1919,12 @@ internal class OfflineStore(
         mayMatter: (JsonObject, List<String>) -> Boolean,
     ) {
         /**
-         * A row, the query that holds it, its select list (`null` when that is not known), and
+         * A row, the query that holds it, its projection (`null` when that is not known), and
          * whether it [matters] to the writes at hand.
          */
         private class Held(
             val signature: String,
-            val select: String?,
+            val projection: Projection?,
             val row: JsonObject,
             val matters: Boolean,
         )
@@ -1933,8 +1935,8 @@ internal class OfflineStore(
          */
         private val byKey = LinkedHashMap<List<String>, MutableList<Held>>()
 
-        /** The indexed keys held under each select list, in the order they first appear. */
-        private val keysBySelect = HashMap<String, LinkedHashSet<List<String>>>()
+        /** The indexed keys held under each projection, in the order they first appear. */
+        private val keysByProjection = HashMap<Projection, LinkedHashSet<List<String>>>()
 
         init {
             // Which copy a query is given depends on the query, so a key is indexed, with every
@@ -1946,12 +1948,13 @@ internal class OfflineStore(
             }
             if (indexed.isNotEmpty()) {
                 newestFirst.forEach { (row, payload) ->
-                    val select = shapes[row.signature]?.let(::selectListOf)
+                    val projection = shapes[row.signature]?.let(::projectionOf)
                     forEachKeyedRow(payload) { key, candidate ->
                         if (key !in indexed) return@forEachKeyedRow
                         byKey.getOrPut(key) { mutableListOf() } +=
-                            Held(row.signature, select, candidate, mayMatter(candidate, key))
-                        if (select != null) keysBySelect.getOrPut(select) { LinkedHashSet() } += key
+                            Held(row.signature, projection, candidate, mayMatter(candidate, key))
+                        if (projection != null)
+                            keysByProjection.getOrPut(projection) { LinkedHashSet() } += key
                     }
                 }
             }
@@ -1981,7 +1984,7 @@ internal class OfflineStore(
             rows: List<JsonElement>,
             rowKeys: List<List<String>?>? = null,
         ): PatchTarget {
-            val select = shape?.let(::selectListOf)
+            val projection = shape?.let(::projectionOf)
             val own = HashSet<List<String>>()
             (rowKeys
                     ?: rows.map { element ->
@@ -1989,14 +1992,14 @@ internal class OfflineStore(
                     })
                 .forEach { key -> if (key != null) own += key }
             val same = mutableListOf<JsonObject>()
-            // Keys another query holds with this select list: given from there, or not at all
+            // Keys another query holds with this projection: given from there, or not at all
             val sameKeys = HashSet<List<String>>()
-            if (select != null) {
-                keysBySelect[select]?.forEach { key ->
+            if (projection != null) {
+                keysByProjection[projection]?.forEach { key ->
                     if (key in own) return@forEach
                     val holder =
                         byKey.getValue(key).firstOrNull { held ->
-                            held.signature != signature && held.select == select
+                            held.signature != signature && held.projection == projection
                         } ?: return@forEach
                     sameKeys += key
                     if (holder.matters) same += holder.row
@@ -2007,7 +2010,8 @@ internal class OfflineStore(
                 if (key in own || key in sameKeys) return@forEach
                 val holder =
                     holders.firstOrNull { held ->
-                        held.signature != signature && (select == null || held.select != select)
+                        held.signature != signature &&
+                            (projection == null || held.projection != projection)
                     } ?: return@forEach
                 if (holder.matters) other += holder.row
             }

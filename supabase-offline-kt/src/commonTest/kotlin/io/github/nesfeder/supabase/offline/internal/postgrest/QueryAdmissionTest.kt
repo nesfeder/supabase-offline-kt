@@ -144,4 +144,40 @@ class QueryAdmissionTest {
             assertEquals(emptyList(), shape.conditions)
         }
     }
+
+    @Test
+    fun what_a_query_asks_of_an_embedded_table_is_recorded_sorted() {
+        // Given / When — a limit, an order and a filter on the comments a query embeds
+        val shape =
+            shapeOf(Columns.raw("id,comments(body)")) {
+                filter { eq("comments.author", "me") }
+                order("created_at", Order.DESCENDING, referencedTable = "comments")
+                limit(1, referencedTable = "comments")
+                filter { eq("done", false) }
+            }
+
+        // Then — each, as sent; the query's own filter stays a condition
+        assertEquals(
+            listOf(
+                "comments.author=eq.me",
+                "comments.limit=1",
+                "comments.order=created_at.desc.nullslast",
+            ),
+            shape.referencedTableOptions,
+        )
+        assertEquals(listOf(FilterDescriptor.Condition("done", "eq", "false")), shape.conditions)
+    }
+
+    @Test
+    fun a_query_that_embeds_nothing_asks_nothing_of_another_table() {
+        // Given / When — its own order and limit, and a negated group
+        val shape = shapeOf {
+            order("position", Order.ASCENDING)
+            limit(10)
+            filter { or(negate = true) { eq("a", 1) } }
+        }
+
+        // Then
+        assertEquals(emptyList(), shape.referencedTableOptions)
+    }
 }

@@ -12,7 +12,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
 import io.github.nesfeder.supabase.offline.internal.cache.keyOf
 import io.github.nesfeder.supabase.offline.internal.cache.patchMayLeaveWrong
 import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
-import io.github.nesfeder.supabase.offline.internal.cache.selectListOf
+import io.github.nesfeder.supabase.offline.internal.cache.projectionOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
@@ -190,7 +190,7 @@ class KnownRowsPruningTest {
         sameSelect: Boolean,
         own: List<JsonElement>?,
     ): List<JsonObject> {
-        val select = selectListOf(shapes.getValue(signature))
+        val projection = projectionOf(shapes.getValue(signature))
         val ownKeys =
             own.orEmpty().mapNotNullTo(HashSet()) { element ->
                 (element as? JsonObject)?.let { row -> keyOf(row, KEY) }
@@ -199,7 +199,7 @@ class KnownRowsPruningTest {
         return payloads.values
             .filter { row -> row.signature != signature }
             .filter { row ->
-                (selectListOf(shapes.getValue(row.signature)) == select) == sameSelect
+                (projectionOf(shapes.getValue(row.signature)) == projection) == sameSelect
             }
             .sortedByDescending { row -> row.updatedAt }
             .flatMap { row -> payloadRowsOf(OfflineJson, row.payload).orEmpty() }

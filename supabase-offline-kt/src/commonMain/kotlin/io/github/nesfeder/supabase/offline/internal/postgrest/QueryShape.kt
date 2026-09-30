@@ -19,12 +19,15 @@ import kotlinx.serialization.Serializable
  *   one supabase-kt sends.
  * @property hasOtherFilters whether the request also filters in a way kept out of [conditions]: a
  *   logical group, a referenced table's column, a JSON path or a cast.
+ * @property referencedTableOptions what the request asks of the tables it embeds (a limit, an
+ *   offset, an order, a filter), each `name=value`, sorted: they decide what an embedded row holds.
  */
 @Serializable
 internal data class QueryShape(
     val select: String,
     val conditions: List<FilterDescriptor.Condition>,
     val hasOtherFilters: Boolean,
+    val referencedTableOptions: List<String> = emptyList(),
 ) {
     /** Which locally written rows the query admits. */
     val admission: QueryAdmission
@@ -39,7 +42,11 @@ internal data class QueryShape(
 internal fun queryShapeOf(columns: Columns, builder: SelectRequestBuilder): QueryShape {
     val conditions = mutableListOf<FilterDescriptor.Condition>()
     var hasOtherFilters = false
+    val referencedTableOptions = mutableListOf<String>()
     builder.params.forEach { (name, values) ->
+        // A referenced table's parameter: `comments.limit`, `comments.order`, `comments.author`
+        if ('.' in name && name !in LOGICAL_GROUPS)
+            values.firstOrNull()?.let { value -> referencedTableOptions += "$name=$value" }
         if (
             name in WINDOW_AND_PROJECTION_PARAMETERS ||
                 name.substringAfterLast('.') in WINDOW_AND_PROJECTION_PARAMETERS
@@ -62,6 +69,7 @@ internal fun queryShapeOf(columns: Columns, builder: SelectRequestBuilder): Quer
         select = columns.value,
         conditions = conditions,
         hasOtherFilters = hasOtherFilters,
+        referencedTableOptions = referencedTableOptions.sorted(),
     )
 }
 

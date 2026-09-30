@@ -22,8 +22,9 @@ import kotlinx.serialization.json.JsonObject
  *
  * @property rows the query's cached rows.
  * @property shape the query's shape; `null` when not known.
- * @property sameSelectRows rows the table's other queries hold, read with this query's select list.
- * @property otherSelectRows rows the table's other queries hold, read with another select list, or
+ * @property sameSelectRows rows the table's other queries hold, read with this query's
+ *   [Projection].
+ * @property otherSelectRows rows the table's other queries hold, read with another projection, or
  *   by a query whose shape is not known.
  * @property keyColumns the table's key columns, read as a `uuid` column reads them.
  */
@@ -43,8 +44,9 @@ internal class PatchTarget(
  * Whether a patch of [writes] may leave [target] wrong, so the query is to be fetched again:
  * - an UPDATE or DELETE reaches a row the engine cannot tell it reaches (its filter is
  *   [RowMatch.UNKNOWN] for the row), in the query, or, for an UPDATE, one that may join it;
- * - an UPDATE brings in a row read with another select list, which lacks this list's columns;
- * - an UPSERT row has no key to place it by, or its key is a row read with another select list.
+ * - an UPDATE brings in a row read with another [Projection], which may lack this list's columns or
+ *   hold other embedded rows;
+ * - an UPSERT row has no key to place it by, or its key is a row read with another projection.
  *
  * @param conflictColumnsOf the columns an UPSERT matches rows on.
  */
@@ -131,6 +133,15 @@ internal fun mayGainRowsBy(patch: JsonObject, shape: QueryShape?): Boolean =
         shape.hasOtherFilters ||
         shape.conditions.any { condition -> condition.column in patch.keys }
 
-/** [shape]'s select list as compared between queries: without whitespace, `*` when empty. */
-internal fun selectListOf(shape: QueryShape): String =
-    shape.select.filterNot { character -> character.isWhitespace() }.ifEmpty { "*" }
+/**
+ * What a row a query reads holds, as compared between queries: its select list without whitespace
+ * (`*` when empty), and what it asks of the tables it embeds. Queries share rows only when equal.
+ */
+internal data class Projection(val select: String, val referencedTableOptions: List<String>)
+
+/** [shape]'s [Projection]. */
+internal fun projectionOf(shape: QueryShape): Projection =
+    Projection(
+        select = shape.select.filterNot { character -> character.isWhitespace() }.ifEmpty { "*" },
+        referencedTableOptions = shape.referencedTableOptions,
+    )
