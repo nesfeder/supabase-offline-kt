@@ -25,6 +25,7 @@ internal const val OFFLINE_DATABASE_FILE_NAME: String = "supabase_offline.db"
  */
 internal object OpenDatabaseRegistry {
 
+    /** Each claimed key, `database:` or `data:` and a resolved path, to the claim that holds it. */
     private val openPaths = AtomicReference<Map<String, Registration>>(emptyMap())
 
     /**
@@ -54,7 +55,10 @@ internal object OpenDatabaseRegistry {
     /** One client's claim on its database and data directory. */
     internal class Registration(private val keys: Set<String>) {
 
+        /** Set by the first [release], so a second one frees nothing. */
         private val released = AtomicBoolean(false)
+
+        /** Counts the closing client's calls in flight, once [markStillClosing] has run. */
         private val stillClosing = AtomicReference<(() -> Int)?>(null)
 
         /**

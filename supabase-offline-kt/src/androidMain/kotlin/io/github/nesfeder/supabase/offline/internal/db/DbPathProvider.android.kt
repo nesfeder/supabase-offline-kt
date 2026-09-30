@@ -7,8 +7,8 @@ import okio.Path
 import okio.Path.Companion.toPath
 
 /**
- * Android implementation of [DbPathProvider] that resolves to the Room database file used for the
- * offline cache.
+ * The default database location on Android: [OFFLINE_DATABASE_FILE_NAME] in the app's database
+ * directory.
  */
 internal class AndroidDbPathProvider(private val context: Context) : DbPathProvider {
 
