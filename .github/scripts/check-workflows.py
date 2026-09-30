@@ -24,6 +24,10 @@ It fails when:
      the self-hosted guard and the home record, or does not end with the clean-up and the
      comparison, both under always(); or a step sets IOS_RUNNER for itself; or the job or one of
      those four steps may continue on error.
+  8. a workflow other than ci.yml runs on a schedule and is not listed below; or a listed one
+     triggers on anything but its schedule and a manual run, grants default permissions, has
+     other jobs than its own, or a job holds other permissions than its own or runs on any
+     condition but the repository guard.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -69,6 +73,13 @@ DEPENDABOT_GUARD = ("github.actor != 'dependabot[bot]'"
                     " && github.triggering_actor != 'dependabot[bot]'")
 CI_TRIGGERS = {"pull_request", "push", "merge_group", "schedule", "workflow_dispatch"}
 CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
+# Workflows that only their schedule or a maintainer can start, never a pull request, a push or
+# Dependabot, with each job's exact permissions. Every other scheduled workflow but ci.yml fails.
+SCHEDULED_WORKFLOWS = {
+    "upstream-canary.yml": {"canary": {"contents": "read", "issues": "write"}},
+}
+SCHEDULED_TRIGGERS = {"schedule", "workflow_dispatch"}
+REPOSITORY_GUARD = "github.repository == 'nesfeder/supabase-offline-kt'"
 
 
 def load_yaml(path: Path) -> object:
@@ -78,13 +89,19 @@ def load_yaml(path: Path) -> object:
     return json.loads(converted.stdout)
 
 
+def trigger_mapping(triggers: object) -> dict | None:
+    """The `on` value as a mapping of event to its settings, or None when it has no valid shape."""
+    if isinstance(triggers, str):
+        return {triggers: None}
+    if isinstance(triggers, list):
+        return {trigger: None for trigger in triggers}
+    return triggers if isinstance(triggers, dict) else None
+
+
 def trigger_problems(name: str, triggers: object) -> list[str]:
     """Rules 1 and 2."""
-    if isinstance(triggers, str):
-        triggers = {triggers: None}
-    elif isinstance(triggers, list):
-        triggers = {trigger: None for trigger in triggers}
-    if not isinstance(triggers, dict):
+    triggers = trigger_mapping(triggers)
+    if triggers is None:
         return [f"{name}: `on` is not a string, list or mapping"]
     problems = [f"{name}: triggers on {event}" for event in ("pull_request_target", "workflow_run")
                 if event in triggers]
@@ -238,6 +255,35 @@ def oidc_problems(name: str, document: dict) -> list[str]:
     return problems
 
 
+def scheduled_problems(name: str, document: dict) -> list[str]:
+    """Rule 8."""
+    triggers = trigger_mapping(document.get("on")) or {}
+    allowed_jobs = SCHEDULED_WORKFLOWS.get(name)
+    if allowed_jobs is None:
+        if name != "ci.yml" and "schedule" in triggers:
+            return [f"{name}: runs on a schedule and is not one of the listed scheduled workflows"]
+        return []
+    problems = []
+    if set(triggers) != SCHEDULED_TRIGGERS:
+        problems.append(f"{name}: triggers {sorted(triggers)}, not {sorted(SCHEDULED_TRIGGERS)}")
+    if document.get("permissions") != {}:
+        problems.append(f"{name}: default permissions {document.get('permissions')!r}, not {{}}")
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    if set(jobs) != set(allowed_jobs):
+        problems.append(f"{name}: jobs {sorted(jobs)}, not {sorted(allowed_jobs)}")
+    for job_id, permissions in allowed_jobs.items():
+        job = jobs.get(job_id)
+        if not isinstance(job, dict):
+            continue
+        if job.get("permissions") != permissions:
+            problems.append(f"{name}: job {job_id} holds {job.get('permissions')}, not exactly"
+                            f" {permissions}")
+        if job.get("if") != REPOSITORY_GUARD:
+            problems.append(f"{name}: job {job_id} runs if {job.get('if')!r}, not"
+                            f" {REPOSITORY_GUARD!r}")
+    return problems
+
+
 def self_reference_problems(root: Path, name: str, document: object) -> list[str]:
     """Rule 5: every `$/` reference in the document names a path that exists."""
     problems = []
@@ -284,6 +330,7 @@ def check_tree(root: Path) -> list[str]:
         problems += fan_in_problems(path.name, jobs)
         problems += self_reference_problems(root, path.name, document)
         problems += oidc_problems(path.name, document)
+        problems += scheduled_problems(path.name, document)
     for path in sorted((root / ".github" / "actions").glob("*/action.y*ml")):
         name = str(path.relative_to(root))
         document = load_yaml(path)
@@ -351,6 +398,21 @@ on:
     tags: ['v*']
 jobs:
   check: {runs-on: ubuntu-latest, steps: [{run: echo supabase-offline-kt}]}
+"""
+COMPLIANT_CANARY = f"""\
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      pretend_pinned: {{type: string}}
+permissions: {{}}
+jobs:
+  canary:
+    if: {REPOSITORY_GUARD}
+    runs-on: ubuntu-latest
+    permissions: {{contents: read, issues: write}}
+    steps: [{{uses: $/.github/actions/setup}}]
 """
 COMPLIANT_ACTION = "runs: {using: composite, steps: [{run: echo, shell: bash}]}\n"
 ROUTING_LINE = "      ${{ needs.changes.outputs.ios-runner == 'local'"
@@ -511,6 +573,37 @@ CASES: list[tuple[str, str, str, str]] = [
      COMPLIANT_CI.replace("    env:\n      IOS_RUNNER:",
                           "    continue-on-error: ${{ true }}\n    env:\n      IOS_RUNNER:"),
      "the job may continue on error"),
+    # The scheduled workflows: only their schedule and a maintainer start them.
+    ("the canary gains a pull_request trigger", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("  workflow_dispatch:\n", "  pull_request:\n  workflow_dispatch:\n"),
+     "upstream-canary.yml: triggers"),
+    ("the canary gains a push to main", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("  workflow_dispatch:\n",
+                              "  push:\n    branches: [main]\n  workflow_dispatch:\n"),
+     "upstream-canary.yml: triggers"),
+    ("the canary loses its schedule", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("  schedule:\n    - cron: '0 7 * * 1'\n", ""),
+     "upstream-canary.yml: triggers"),
+    ("the canary grants default permissions", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {}\n", "permissions: {contents: write}\n"),
+     "default permissions"),
+    ("the canary job gains a permission", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("issues: write}", "issues: write, pull-requests: write}"),
+     "job canary holds"),
+    ("the canary job writes contents", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("contents: read, issues", "contents: write, issues"),
+     "job canary holds"),
+    ("the canary job without permissions", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("    permissions: {contents: read, issues: write}\n", ""),
+     "job canary holds None"),
+    ("the canary job without its repository guard", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"    if: {REPOSITORY_GUARD}\n", ""), "job canary runs if"),
+    ("the canary gains a second job", "upstream-canary.yml",
+     COMPLIANT_CANARY + "  other: {runs-on: ubuntu-latest, steps: [{run: echo}]}\n",
+     "upstream-canary.yml: jobs"),
+    ("another workflow on a schedule", "extra.yml",
+     "on: {schedule: [{cron: '0 0 * * 0'}]}\njobs: {a: {runs-on: ubuntu-latest}}\n",
+     "not one of the listed scheduled workflows"),
 ]
 
 
@@ -519,6 +612,7 @@ def write_compliant_tree(root: Path) -> None:
     (root / ".github" / "workflows").mkdir(parents=True)
     (root / ".github" / "workflows" / "ci.yml").write_text(COMPLIANT_CI)
     (root / ".github" / "workflows" / "docs-check.yml").write_text(COMPLIANT_DOCS)
+    (root / ".github" / "workflows" / "upstream-canary.yml").write_text(COMPLIANT_CANARY)
     for action in ("setup", "home-snapshot"):
         (root / ".github" / "actions" / action).mkdir(parents=True)
         (root / ".github" / "actions" / action / "action.yml").write_text(COMPLIANT_ACTION)
