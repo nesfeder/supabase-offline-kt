@@ -143,3 +143,10 @@ on every push to `main` that changes it and sends the resulting dependency graph
 Dependabot alerts and security updates for Gradle dependencies are based on that graph. An alert
 on a transitive dependency comes without a pull request: update the dependency that brings it in,
 or add a dependency constraint.
+
+Each package in the graph is labelled. It is `runtime` when a published module's shipping
+classpath resolves it (the Android runtime classpath or an iOS target's klibs), and `development`
+otherwise: Gradle plugins, build tools and test libraries. GitHub tags an alert on a development
+package "Development". An alert without that tag concerns what the library ships, so read those
+first (`scope:runtime` in the alerts filter). A new module whose output ships joins the project
+pattern in the workflow's `resolve` step.
