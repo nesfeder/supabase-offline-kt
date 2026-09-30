@@ -214,7 +214,8 @@ class ReadShapeProbeContractTest {
 
     @Test
     fun the_checks_own_instance_copies_each_setting_of_the_apps_but_the_token_and_retries() {
-        // Given — every setting away from its default
+        // Given — every setting away from its default, a logging factory of the app's own included
+        val appsLogs = RecordingSupabaseLogs()
         val supabase =
             newTestSupabaseClient(engine = server.engine) {
                 install(Postgrest) {
@@ -227,6 +228,7 @@ class ReadShapeProbeContractTest {
                     customUrl = "$TEST_SUPABASE_URL/custom/rest/v1"
                     serializer = KotlinXSerializer(Json { encodeDefaults = true })
                     logLevel = LogLevel.WARNING
+                    loggingFactory = { appsLogs }
                     jwtToken = "the-apps-own-token"
                 }
             }
@@ -240,6 +242,7 @@ class ReadShapeProbeContractTest {
         assertEquals(source.customUrl, copied.customUrl)
         assertEquals(source.serializer, copied.serializer)
         assertEquals(source.logLevel, copied.logLevel)
+        assertNotNull(source.loggingFactory)
         assertEquals(source.loggingFactory, copied.loggingFactory)
         assertEquals(READ_SHAPE_CHECK_TOKEN, copied.jwtToken)
         assertEquals(0, copied.maxRetries)
