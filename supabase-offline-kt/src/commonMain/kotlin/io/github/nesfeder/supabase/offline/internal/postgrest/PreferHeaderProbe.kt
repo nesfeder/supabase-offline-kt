@@ -118,7 +118,7 @@ internal fun requestsRollback(header: String?): Boolean =
 
 /**
  * Whether PostgREST rolled the write that produced this result back: its `Preference-Applied`
- * header says `tx=rollback`, which PostgREST sends only when it honoured the preference.
+ * header says `tx=rollback`, which PostgREST sends only when it honored the preference.
  */
 internal val PostgrestResult.wasRolledBack: Boolean
     get() = requestsRollback(headers[PREFERENCE_APPLIED_HEADER])
