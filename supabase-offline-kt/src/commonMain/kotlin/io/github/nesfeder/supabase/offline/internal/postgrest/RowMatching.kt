@@ -68,6 +68,14 @@ internal class RowFilter(filter: FilterDescriptor, uuidColumns: Set<String> = em
     private val conditions =
         filter.conditions.map { condition -> RowCondition(condition, uuidColumns) }
 
+    /**
+     * Whether [match] can answer [RowMatch.MATCHES] for some row: not when every row needs a
+     * condition the engine never evaluates.
+     */
+    val canMatch: Boolean =
+        if (isAnd) conditions.all { condition -> condition.isEvaluated }
+        else conditions.any { condition -> condition.isEvaluated }
+
     /** What the engine can tell about [row] against the filter. */
     fun match(row: JsonObject): RowMatch {
         var combined = if (isAnd) RowMatch.MATCHES else RowMatch.EXCLUDED
@@ -93,6 +101,10 @@ internal class RowCondition(condition: FilterDescriptor.Condition, uuidColumns: 
     /** The operator, or `null` when the engine does not evaluate this condition at all. */
     private val operator: FilterOperator? =
         condition.operator?.takeIf { it in EVALUATED_OPERATORS && isPlainColumn(column) }
+
+    /** Whether the engine evaluates this condition for some row; otherwise it is always unknown. */
+    val isEvaluated: Boolean
+        get() = operator != null
 
     /** What the engine can tell about [row] against the condition. */
     fun match(row: JsonObject): RowMatch {

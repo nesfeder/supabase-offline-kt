@@ -11,7 +11,7 @@ import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
 import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
-import io.github.nesfeder.supabase.offline.internal.cache.indexOfKey
+import io.github.nesfeder.supabase.offline.internal.cache.keyOf
 import io.github.nesfeder.supabase.offline.internal.cache.mayGainRowsBy
 import io.github.nesfeder.supabase.offline.internal.cache.patchMayLeaveWrong
 import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
@@ -23,13 +23,17 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.isPlainColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
+import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -51,6 +55,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import okio.Path
 
@@ -199,6 +204,31 @@ internal class OfflineStore(
 
     /** Ids for the writes a patch overlays, one per write, below any queued mutation's. */
     private val patchIds = AtomicLong(0L)
+
+    /**
+     * Payloads' rows as parsed, by table and cache key, each with the text it was parsed from, so
+     * an unchanged payload is not parsed again; see [parsedPayloadOf].
+     */
+    private val parsedPayloads =
+        MutableStateFlow<Map<Pair<String, String>, ParsedPayload>>(emptyMap())
+
+    /** A payload's [text] and its [rows], `null` when it is not a JSON array. */
+    private class ParsedPayload(val text: String, val rows: List<JsonElement>?) {
+
+        /** The key columns [keys] were read for, and each row's [keyOf] under them. */
+        @Volatile private var keyed: Pair<List<String>, List<List<String>?>>? = null
+
+        /** Each row's [keyOf] under [keyColumns], `null` for a row without one; read once. */
+        fun keysFor(keyColumns: List<String>): List<List<String>?> {
+            keyed?.let { (columns, keys) -> if (columns == keyColumns) return keys }
+            val keys =
+                rows.orEmpty().map { element ->
+                    (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
+                }
+            keyed = keyColumns to keys
+            return keys
+        }
+    }
 
     /**
      * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
@@ -742,6 +772,7 @@ internal class OfflineStore(
                     mutationQueueState.resetCaches()
                 }
                 queryShapes.forgetAll()
+                parsedPayloads.value = emptyMap()
                 loggedOverlaySkips.value = emptySet()
             }
         }
@@ -771,6 +802,7 @@ internal class OfflineStore(
                     }
                 }
                 queryShapes.forgetAll()
+                parsedPayloads.value = emptyMap()
             }
         }
     }
@@ -1402,7 +1434,7 @@ internal class OfflineStore(
             pending,
             admissionOf(table, signature, shape),
             mutationQueueState.unconfirmedSends(),
-            sameSelectRowsFor(table, signature, shape, pending),
+            sameSelectRowsFor(table, signature, shape, pending, ownJson = serverJson),
         )
     }
 
@@ -1435,7 +1467,11 @@ internal class OfflineStore(
 
         val admission = signature?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
         return overlayFor(admission, mutationQueueState.unconfirmedSends())
-            .overlay(cachedJson, all, sameSelectRowsFor(table, signature, shape, all))
+            .overlay(
+                cachedJson,
+                all,
+                sameSelectRowsFor(table, signature, shape, all, ownJson = cachedJson),
+            )
     }
 
     /** [overlayCachedPayload] for a payload whose signature is not known. */
@@ -1519,7 +1555,7 @@ internal class OfflineStore(
                 mutations,
                 admissionOf(table, signature, shape),
                 mutationQueueState.unconfirmedSends(),
-                sameSelectRowsFor(table, signature, shape, mutations),
+                sameSelectRowsFor(table, signature, shape, mutations, ownJson = cachedJson),
             )
         return if (cachedJson == null && isEmptyJsonArrayPayload(overlaid)) null else overlaid
     }
@@ -1543,22 +1579,39 @@ internal class OfflineStore(
 
     /**
      * The rows the table's other cached queries hold, read with the same columns as the query
-     * cached under [signature], when one of [mutations] may bring such a row into it: an UPDATE
-     * setting a column its filter names, or an UPSERT. Empty otherwise, and when the query's shape
-     * is unknown.
+     * cached under [signature], when one of [mutations] may bring such a row into it; see
+     * [mayBringRowsIn]. Empty otherwise, and when the query's shape is unknown: then the other
+     * payloads are not read at all.
+     *
+     * @param ownJson the rows the query shows before [mutations], when known.
      */
     private suspend fun sameSelectRowsFor(
         table: String,
         signature: String?,
         shape: QueryShape?,
         mutations: List<MutationRow>,
+        ownJson: String?,
     ): List<JsonObject> {
         if (signature == null) return emptyList()
         val known = shape ?: queryShapes.shapeOf(table, signature) ?: return emptyList()
         // The filter's column names as a JSON body writes them, once for every mutation
-        val filterColumns = known.conditions.map { condition -> "\"${condition.column}\"" }
-        if (mutations.none { mutation -> mayBringRowsIn(mutation, known, filterColumns) })
-            return emptyList()
+        val filterColumns = known.conditions.map { condition -> jsonNameOf(condition.column) }
+        val keyColumns = primaryKeys.of(table)
+        val ownKeys by lazy {
+            ownJson?.let { text ->
+                parsedTextOf(table, signature, text).keysFor(keyColumns).filterNotNullTo(HashSet())
+            } ?: emptySet()
+        }
+        val bringing = mutations.filter { mutation ->
+            mayBringRowsIn(mutation, known, filterColumns, keyColumns) { ownKeys }
+        }
+        if (bringing.isEmpty()) return emptyList()
+        val mayMatter =
+            rowsThatMayMatter(
+                table,
+                mutationsThatReach(bringing, mutations),
+                unknownMatters = false,
+            ) ?: return emptyList()
         val select = selectListOf(known)
         val shapes = queryShapes.shapesOf(table)
         val sameSelect =
@@ -1566,28 +1619,54 @@ internal class OfflineStore(
                 row.signature != signature && shapes[row.signature]?.let(::selectListOf) == select
             }
         if (sameSelect.isEmpty()) return emptyList()
-        val parsed = sameSelect.map { row -> row to payloadRowsOf(json, row.payload) }
-        return KnownRows(parsed, shapes, primaryKeys.of(table))
+        val parsed = sameSelect.map { row -> row to parsedPayloadOf(row) }
+        return KnownRows(parsed, shapes, keyColumns, mayMatter)
             .targetFor(signature, known, rows = emptyList())
             .sameSelectRows
     }
 
     /**
-     * Whether [mutation] may bring a row another query holds into a query of [shape]: an UPSERT, or
-     * an UPDATE whose body names a column the query's filter does, read without parsing it.
+     * Whether [mutation] may bring a row another query holds into a query of [shape]: an UPSERT of
+     * a row the query does not hold and does not exclude on the columns the upsert sets, or an
+     * UPDATE setting a column the query's filter names (read without parsing the body) to a value
+     * it does not exclude.
      *
-     * @param filterColumns the names of the columns [shape]'s filter names, in double quotes.
+     * @param filterColumns the columns [shape]'s filter names, as a JSON body writes them as keys.
+     * @param ownKeys the keys of the rows the query holds, under [keyColumns].
      */
     private fun mayBringRowsIn(
         mutation: MutationRow,
         shape: QueryShape,
         filterColumns: List<String>,
+        keyColumns: List<String>,
+        ownKeys: () -> Set<List<String>>,
     ): Boolean =
         when (mutation.operation) {
-            MutationOperation.UPSERT -> true
+            // A row the query holds merges there; one it excludes on what the upsert sets stays
+            // out, whatever row it merges with
+            MutationOperation.UPSERT -> {
+                val columns = conflictColumnsOf(mutation)
+                upsertRowsOf(mutation).any { row ->
+                    val key = keyOf(row, columns) ?: return@any false
+                    shape.admission.admits(row) && (columns != keyColumns || key !in ownKeys())
+                }
+            }
             MutationOperation.UPDATE ->
-                shape.hasOtherFilters || filterColumns.any { column -> column in mutation.bodyJson }
+                (shape.hasOtherFilters ||
+                    filterColumns.any { column -> column in mutation.bodyJson }) &&
+                    (patchOf(mutation)?.let(shape.admission::admits) != false)
             else -> false
+        }
+
+    /** [column] quoted and escaped as a JSON body writes it as a key. */
+    private fun jsonNameOf(column: String): String = JsonPrimitive(column).toString()
+
+    /** An UPDATE's body; `null` when it is not a JSON object. */
+    private fun patchOf(mutation: MutationRow): JsonObject? =
+        try {
+            json.parseToJsonElement(mutation.bodyJson) as? JsonObject
+        } catch (_: IllegalArgumentException) {
+            null
         }
 
     /**
@@ -1764,15 +1843,29 @@ internal class OfflineStore(
             val uncachedLive =
                 (liveSignatures ?: liveSignatureProvider(table)) -
                     cached.mapTo(mutableSetOf()) { row -> row.signature }
-            // Only a patch that may write records whose the cache is
+            // Only a patch that may write claims an unowned cache for the current identity
             if (cached.isEmpty() && uncachedLive.isEmpty()) return@withLock
             if (!cacheTakesWritesOfCurrentIdentity()) return@withLock
-            val parsed = cached.map { row -> row to payloadRowsOf(json, row.payload) }
+            val parsed = cached.map { row -> row to parsedPayloadOf(row) }
             val shapes = queryShapes.shapesOf(table)
-            val known = KnownRows(parsed, shapes, primaryKeys.of(table))
-            for ((row, rows) in parsed) {
-                if (rows == null) continue
-                val target = known.targetFor(row.signature, shapes[row.signature], rows)
+            val keyColumns = primaryKeys.of(table)
+            val mayMatter =
+                rowsThatMayMatter(table, writes, unknownMatters = true) ?: { _, _ -> false }
+            val known = KnownRows(parsed, shapes, keyColumns, mayMatter)
+            for ((row, payload) in parsed) {
+                val rows = payload.rows ?: continue
+                val shape = shapes[row.signature]
+                val target =
+                    if (writes.any { write -> mayJoinKnownRows(write, shape) }) {
+                        known.targetFor(
+                            row.signature,
+                            shape,
+                            rows,
+                            rowKeys = payload.keysFor(keyColumns),
+                        )
+                    } else {
+                        PatchTarget(rows, shape, emptyList(), emptyList(), keyColumns.toSet())
+                    }
                 val overlay = patchOverlayFor(target.admission)
                 val patched = overlay.overlayRows(rows, writes, knownRows = target.sameSelectRows)
                 val wrong = patchMayLeaveWrong(writes, target, json, ::conflictColumnsOf)
@@ -1790,51 +1883,134 @@ internal class OfflineStore(
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }
 
+    /**
+     * Whether a patch of [write] reads rows other queries hold for a query of [shape]: an UPSERT
+     * matches them by key, and an UPDATE may bring one in only when it sets a column the query's
+     * filter reads. INSERT and DELETE never read them.
+     */
+    private fun mayJoinKnownRows(write: MutationRow, shape: QueryShape?): Boolean =
+        when (write.operation) {
+            MutationOperation.UPSERT -> true
+            MutationOperation.UPDATE ->
+                patchOf(write)?.let { patch -> mayGainRowsBy(patch, shape) } ?: true
+            else -> false
+        }
+
     /** The upsert-rule columns of [mutation]; see [conflictColumnsOf]. */
     private fun conflictColumnsOf(mutation: MutationRow): List<String> =
         conflictColumnsOf(mutation, primaryKeys)
 
     /**
-     * The rows a table's cached queries hold, one per key, taken from the most recently fetched
-     * payload that holds it, each with the select list it was read with.
+     * A table's cached rows, one per key from the most recently fetched payload holding it, with
+     * the select list each was read with. A query is given only copies [mayMatter] keeps, and only
+     * keys some copy of which may matter are indexed, so [targetFor] costs a query's rows and
+     * those.
      *
      * @param keyColumns the table's key columns; rows without them are left out.
+     * @param mayMatter whether a row, with its key, may matter to the writes at hand; see
+     *   [rowsThatMayMatter]. It is asked of the copy a query would be given, never of another.
      */
     private class KnownRows(
-        parsed: List<Pair<ObjectRow, List<JsonElement>?>>,
+        parsed: List<Pair<ObjectRow, ParsedPayload>>,
         shapes: Map<String, QueryShape?>,
         private val keyColumns: List<String>,
+        mayMatter: (JsonObject, List<String>) -> Boolean,
     ) {
-        /** A row, the query that holds it, and its select list; `null` when that is not known. */
-        private class Held(val signature: String, val select: String?, val row: JsonObject)
+        /**
+         * A row, the query that holds it, its select list (`null` when that is not known), and
+         * whether it [matters] to the writes at hand.
+         */
+        private class Held(
+            val signature: String,
+            val select: String?,
+            val row: JsonObject,
+            val matters: Boolean,
+        )
 
-        private val held: List<Held> =
-            parsed
-                .sortedByDescending { (row, _) -> fetchedAtOf(row.updatedAt) }
-                .flatMap { (row, rows) ->
+        /**
+         * Each indexed key's holders, most recently fetched first, keys in the order they first
+         * appear.
+         */
+        private val byKey = LinkedHashMap<List<String>, MutableList<Held>>()
+
+        /** The indexed keys held under each select list, in the order they first appear. */
+        private val keysBySelect = HashMap<String, LinkedHashSet<List<String>>>()
+
+        init {
+            // Which copy a query is given depends on the query, so a key is indexed, with every
+            // copy, when any may matter; targetFor keeps a query's copy only if that one matters
+            val newestFirst = parsed.sortedByDescending { (row, _) -> fetchedAtOf(row.updatedAt) }
+            val indexed = HashSet<List<String>>()
+            newestFirst.forEach { (_, payload) ->
+                forEachKeyedRow(payload) { key, row -> if (mayMatter(row, key)) indexed += key }
+            }
+            if (indexed.isNotEmpty()) {
+                newestFirst.forEach { (row, payload) ->
                     val select = shapes[row.signature]?.let(::selectListOf)
-                    rows.orEmpty().mapNotNull { element ->
-                        (element as? JsonObject)
-                            ?.takeIf { primaryKeyOf(it, keyColumns) != null }
-                            ?.let { Held(row.signature, select, it) }
+                    forEachKeyedRow(payload) { key, candidate ->
+                        if (key !in indexed) return@forEachKeyedRow
+                        byKey.getOrPut(key) { mutableListOf() } +=
+                            Held(row.signature, select, candidate, mayMatter(candidate, key))
+                        if (select != null) keysBySelect.getOrPut(select) { LinkedHashSet() } += key
                     }
                 }
-
-        /** What the patch of the query cached under [signature], holding [rows], may draw on. */
-        fun targetFor(signature: String, shape: QueryShape?, rows: List<JsonElement>): PatchTarget {
-            val select = shape?.let(::selectListOf)
-            val elsewhere = held.filter { entry ->
-                entry.signature != signature && indexOfKey(rows, entry.row, keyColumns) == null
             }
-            val same =
-                distinctByKey(
-                    elsewhere.filter { entry -> select != null && entry.select == select }
-                )
-            val other =
-                distinctByKey(
-                        elsewhere.filter { entry -> select == null || entry.select != select }
-                    )
-                    .filter { row -> indexOfKey(same, row, keyColumns) == null }
+        }
+
+        /** Each row of [payload] that carries the key, with it. */
+        private inline fun forEachKeyedRow(
+            payload: ParsedPayload,
+            action: (List<String>, JsonObject) -> Unit,
+        ) {
+            val keys = payload.keysFor(keyColumns)
+            payload.rows?.forEachIndexed { index, element ->
+                val key = keys[index] ?: return@forEachIndexed
+                val row = element as? JsonObject ?: return@forEachIndexed
+                action(key, row)
+            }
+        }
+
+        /**
+         * What the patch of the query cached under [signature], holding [rows], may draw on.
+         *
+         * @param rowKeys [rows]' keys when already read; see [ParsedPayload.keysFor].
+         */
+        fun targetFor(
+            signature: String,
+            shape: QueryShape?,
+            rows: List<JsonElement>,
+            rowKeys: List<List<String>?>? = null,
+        ): PatchTarget {
+            val select = shape?.let(::selectListOf)
+            val own = HashSet<List<String>>()
+            (rowKeys
+                    ?: rows.map { element ->
+                        (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
+                    })
+                .forEach { key -> if (key != null) own += key }
+            val same = mutableListOf<JsonObject>()
+            // Keys another query holds with this select list: given from there, or not at all
+            val sameKeys = HashSet<List<String>>()
+            if (select != null) {
+                keysBySelect[select]?.forEach { key ->
+                    if (key in own) return@forEach
+                    val holder =
+                        byKey.getValue(key).firstOrNull { held ->
+                            held.signature != signature && held.select == select
+                        } ?: return@forEach
+                    sameKeys += key
+                    if (holder.matters) same += holder.row
+                }
+            }
+            val other = mutableListOf<JsonObject>()
+            byKey.forEach { (key, holders) ->
+                if (key in own || key in sameKeys) return@forEach
+                val holder =
+                    holders.firstOrNull { held ->
+                        held.signature != signature && (select == null || held.select != select)
+                    } ?: return@forEach
+                if (holder.matters) other += holder.row
+            }
             return PatchTarget(
                 rows,
                 shape,
@@ -1843,16 +2019,128 @@ internal class OfflineStore(
                 keyColumns = keyColumns.toSet(),
             )
         }
+    }
 
-        /** The first row of [entries] per key. */
-        private fun distinctByKey(entries: List<Held>): List<JsonObject> {
-            val seen = mutableListOf<JsonObject>()
-            entries.forEach { entry ->
-                if (indexOfKey(seen, entry.row, keyColumns) == null) seen += entry.row
+    /**
+     * Whether a row other queries of [table] hold may matter to [mutations]: an UPSERT's row shares
+     * its conflict key, or an UPDATE's filter matches it. No mutation here reads or changes any
+     * other row held aside, so leaving those out changes no overlay and no stale mark. `null` when
+     * no row can matter.
+     *
+     * @param unknownMatters whether a row an UPDATE's filter cannot judge matters too: to a patch,
+     *   which marks stale what it cannot judge, it does; to the read overlay, which moves only rows
+     *   a filter matches, it does not.
+     */
+    private fun rowsThatMayMatter(
+        table: String,
+        mutations: List<MutationRow>,
+        unknownMatters: Boolean,
+    ): ((JsonObject, List<String>) -> Boolean)? {
+        val keyColumns = primaryKeys.of(table)
+        val uuidColumns = keyColumns.toSet()
+        val filters =
+            mutations
+                .filter { mutation -> mutation.operation == MutationOperation.UPDATE }
+                .mapNotNull { mutation -> decodeOrNull(mutation.filterJson, json) }
+                .map { filter -> RowFilter(filter, uuidColumns) }
+                .filter { filter -> unknownMatters || filter.canMatch }
+        val reached =
+            if (unknownMatters) setOf(RowMatch.MATCHES, RowMatch.UNKNOWN)
+            else setOf(RowMatch.MATCHES)
+        // The keys each set of conflict columns upserts
+        val upserted = HashMap<List<String>, HashSet<List<String>>>()
+        mutations
+            .filter { mutation -> mutation.operation == MutationOperation.UPSERT }
+            .forEach { mutation ->
+                val columns = conflictColumnsOf(mutation)
+                val keys = upserted.getOrPut(columns) { HashSet() }
+                upsertRowsOf(mutation).forEach { row -> keyOf(row, columns)?.let(keys::add) }
             }
-            return seen
+        // Upserts on the key look a row up by the key it already has; the rest read the row
+        val byKey = upserted.remove(keyColumns)?.takeIf { keys -> keys.isNotEmpty() }
+        val byOtherColumns = upserted.entries.filter { (_, keys) -> keys.isNotEmpty() }
+        if (byKey == null && byOtherColumns.isEmpty() && filters.isEmpty()) return null
+        return { row, key ->
+            (byKey != null && key in byKey) ||
+                byOtherColumns.any { (columns, keys) -> keyOf(row, columns) in keys } ||
+                filters.any { filter -> filter.match(row) in reached }
         }
     }
+
+    /**
+     * [bringing], and each other UPDATE or UPSERT of [mutations] that sets a column one of those
+     * reads (an UPSERT's conflict columns, an UPDATE's filter columns), until no more join: only
+     * these can change a row held aside in a way the overlay then reads.
+     */
+    private fun mutationsThatReach(
+        bringing: List<MutationRow>,
+        mutations: List<MutationRow>,
+    ): List<MutationRow> {
+        val reaching = bringing.toMutableList()
+        val read = HashSet<String>()
+        var readsEveryColumn = false
+        fun noteWhatItReads(mutation: MutationRow) {
+            when (mutation.operation) {
+                MutationOperation.UPSERT ->
+                    conflictColumnsOf(mutation).forEach { column -> read += jsonNameOf(column) }
+                MutationOperation.UPDATE ->
+                    decodeOrNull(mutation.filterJson, json)?.conditions?.forEach { condition ->
+                        if (isPlainColumn(condition.column)) read += jsonNameOf(condition.column)
+                        else readsEveryColumn = true
+                    }
+            }
+        }
+        reaching.forEach(::noteWhatItReads)
+        // Both change rows held aside: an UPSERT merges into the one with its key
+        var rest = mutations.filter { mutation ->
+            (mutation.operation == MutationOperation.UPDATE ||
+                mutation.operation == MutationOperation.UPSERT) && mutation !in reaching
+        }
+        while (rest.isNotEmpty()) {
+            // Read without parsing: a column the body sets appears as its quoted name
+            val joining = rest.filter { mutation ->
+                readsEveryColumn || read.any { name -> name in mutation.bodyJson }
+            }
+            if (joining.isEmpty()) break
+            reaching += joining
+            joining.forEach(::noteWhatItReads)
+            rest = rest - joining.toSet()
+        }
+        return reaching
+    }
+
+    /**
+     * [row]'s rows, parsed once for each text the payload holds. What is kept is dropped whole when
+     * it would pass [PARSED_PAYLOAD_TEXT_KEPT] characters, and when the cache is emptied.
+     */
+    private fun parsedPayloadOf(row: ObjectRow): ParsedPayload =
+        parsedTextOf(row.table, row.signature, row.payload)
+
+    /** [parsedPayloadOf] for [text], the rows the query cached under [signature] shows. */
+    private fun parsedTextOf(table: String, signature: String, text: String): ParsedPayload {
+        val key = table to signature
+        parsedPayloads.value[key]?.let { kept -> if (kept.text == text) return kept }
+        val parsed = ParsedPayload(text, payloadRowsOf(json, text))
+        if (text.length <= PARSED_PAYLOAD_TEXT_KEPT) {
+            parsedPayloads.update { kept ->
+                val total = kept.values.sumOf { held -> held.text.length } + text.length
+                (if (total > PARSED_PAYLOAD_TEXT_KEPT) emptyMap() else kept) + (key to parsed)
+            }
+        }
+        return parsed
+    }
+
+    /** An UPSERT's body rows; none when the body is not JSON. */
+    private fun upsertRowsOf(mutation: MutationRow): List<JsonObject> =
+        try {
+            when (val body = json.parseToJsonElement(mutation.bodyJson)) {
+                is JsonArray -> body.filterIsInstance<JsonObject>()
+                is JsonObject -> listOf(body)
+                else -> emptyList()
+            }
+        } catch (_: IllegalArgumentException) {
+            emptyList()
+        }
 
     /**
      * Writes a payload for each of [signatures], queries a live reader observes that have none, of
@@ -2226,5 +2514,8 @@ internal class OfflineStore(
 
         /** Live signatures eviction passes over at most, within SQLite's 999 bound variables. */
         const val MAX_KEPT_LIVE_SIGNATURES = 500
+
+        /** The characters of payload text whose parsed rows are kept, about a megabyte of text. */
+        const val PARSED_PAYLOAD_TEXT_KEPT = 1_000_000
     }
 }

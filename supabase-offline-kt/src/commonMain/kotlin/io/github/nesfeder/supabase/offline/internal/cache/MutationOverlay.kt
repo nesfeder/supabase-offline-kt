@@ -65,7 +65,16 @@ internal class MutationOverlay(
         if (mutations.isEmpty()) return payload
         val rows = payloadRowsOf(json, payload) ?: return payload
         val keyColumns = primaryKeys.of(mutations.first().table)
-        val elsewhere = knownRows.filter { known -> indexOfKey(rows, known, keyColumns) == null }
+        val elsewhere =
+            if (knownRows.isEmpty()) {
+                knownRows
+            } else {
+                val shown =
+                    rows.mapNotNullTo(HashSet()) { element ->
+                        (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
+                    }
+                knownRows.filter { known -> keyOf(known, keyColumns) !in shown }
+            }
         return encode(overlayRows(rows, mutations, elsewhere).visible)
     }
 
@@ -195,6 +204,8 @@ internal class MutationOverlay(
             val filter =
                 RowFilter(filterOf(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
             val patch = json.parseToJsonElement(mutation.bodyJson) as? JsonObject ?: return
+            // No row can match: none is visited
+            if (!filter.canMatch) return
             // Rows the loop below moves aside land after these, and are not visited twice
             val heldBefore = held.size
             visible.indices.reversed().forEach { index ->
@@ -210,6 +221,8 @@ internal class MutationOverlay(
         private fun delete(mutation: MutationRow) {
             val filter =
                 RowFilter(filterOf(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
+            // No row can match: none is visited
+            if (!filter.canMatch) return
             visible.indices.reversed().forEach { index ->
                 val row = visible[index]
                 if (row is JsonObject && filter.match(row) == RowMatch.MATCHES)
@@ -343,6 +356,29 @@ internal fun indexOfKey(rows: List<JsonElement>, row: JsonObject, keyColumns: Li
     }
     return index.takeIf { it >= 0 }
 }
+
+/**
+ * [row]'s key in [keyColumns] as a value two rows share exactly when [indexOfKey] finds them the
+ * same row — each value's JSON content, a UUID reduced to its digits in lower case — for hashing.
+ * `null` when [row] lacks one.
+ */
+internal fun keyOf(row: JsonObject, keyColumns: List<String>): List<String>? {
+    if (keyColumns.isEmpty()) return null
+    return keyColumns.map { column ->
+        val value = keyValueOf(row, column) ?: return null
+        if (value.length in UUID_KEY_LENGTHS && isUuid(value)) {
+            UUID_KEY_PREFIX + value.filter { character -> character.isLetterOrDigit() }.lowercase()
+        } else {
+            VALUE_KEY_PREFIX + value
+        }
+    }
+}
+
+/** Marks a [keyOf] part that is a UUID's digits, so no other value can equal it. */
+private const val UUID_KEY_PREFIX = "u:"
+
+/** Marks a [keyOf] part that is a value as written. */
+private const val VALUE_KEY_PREFIX = "v:"
 
 /** [row]'s values of [keyColumns], in order, or `null` when it lacks one; see [primaryKeyOf]. */
 private fun keyValuesOf(row: JsonObject, keyColumns: List<String>): List<String>? {

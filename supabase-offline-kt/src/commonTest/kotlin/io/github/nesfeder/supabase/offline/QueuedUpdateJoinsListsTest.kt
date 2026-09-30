@@ -15,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -27,6 +28,9 @@ class QueuedUpdateJoinsListsTest {
     /** Whether the server can be reached. */
     private var online = true
 
+    /** What the server answers for the list of open tasks. */
+    private var openRows = OPEN
+
     private val server =
         RecordingPostgrestServer(
             answer = { request ->
@@ -34,7 +38,7 @@ class QueuedUpdateJoinsListsTest {
                 when {
                     request.method != "GET" -> okJson("")
                     request.query["done"] == "eq.false" && request.query["select"] == "*" ->
-                        okJson(OPEN)
+                        okJson(openRows)
                     request.query["done"] == "eq.true" -> okJson(DONE)
                     request.query["select"] == PICKER -> okJson(PICKED)
                     else -> okJson("[]")
@@ -115,6 +119,27 @@ class QueuedUpdateJoinsListsTest {
         assertEquals(DONE, cachedList(done = true))
     }
 
+    @Test
+    fun a_queued_upsert_of_part_of_a_row_then_an_update_that_moves_it_brings_the_whole_row() =
+        runTest {
+            // Given — x open and flagged "normal"; both lists cached
+            openRows = OPEN_FLAGGED
+            items.select(readStrategy = ReadStrategy.NetworkOnly, request = list(false))
+            items.select(readStrategy = ReadStrategy.NetworkOnly, request = list(true))
+            online = false
+
+            // When — offline, an upsert of some of x's columns flags it, and an update marks every
+            // urgent task done
+            items.upsertJson(Json.parseToJsonElement(URGENT_X) as JsonArray)
+            items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+                filter { eq("flag", "urgent") }
+            }
+
+            // Then — x joins "done" whole, with the title only the cached row carries
+            assertEquals(DONE_WITH_WHOLE_URGENT_X, cachedList(done = true))
+            assertEquals("[]", cachedList(done = false))
+        }
+
     private companion object {
         const val TABLE = "tasks"
         const val PICKER = "id,title"
@@ -123,5 +148,10 @@ class QueuedUpdateJoinsListsTest {
         const val PICKED = """[{"id":"x","title":"x title"}]"""
         const val DONE_WITH_X =
             """[{"id":"y","title":"y title","done":true},{"id":"x","title":"x title","done":true}]"""
+        const val OPEN_FLAGGED = """[{"id":"x","title":"x title","done":false,"flag":"normal"}]"""
+        const val URGENT_X = """[{"id":"x","done":false,"flag":"urgent"}]"""
+        const val DONE_WITH_WHOLE_URGENT_X =
+            """[{"id":"y","title":"y title","done":true},""" +
+                """{"id":"x","title":"x title","done":true,"flag":"urgent"}]"""
     }
 }
