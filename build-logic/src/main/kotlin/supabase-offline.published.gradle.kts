@@ -8,7 +8,7 @@ import org.gradle.api.GradleException
 /** A property of the root gradle.properties that every published module needs. */
 private fun requiredGradleProperty(key: String): String =
     providers.gradleProperty(key).orNull?.takeIf { it.isNotBlank() }
-        ?: throw GradleException("$path: gradle.properties has no $key")
+        ?: throw GradleException("The root gradle.properties has no $key, which $path needs")
 
 group = requiredGradleProperty("GROUP")
 
