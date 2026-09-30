@@ -168,14 +168,16 @@ To see the report for each file and line, run the following, then open
 ./gradlew :supabase-offline-kt:koverHtmlReport
 ```
 
-It runs the Android host tests first unless they are up to date. `./gradlew check` also runs
-`koverVerify`, whose floor is far below the real figure: it fails when the measurement itself has
-broken, as when a Kover release once reported no coverage at all, not when coverage falls. Only
-generated classes are left out of the report (Room's output and the compiler's bridges for
+It runs the Android host tests first unless they are up to date.
+
+`./gradlew check` also runs `koverVerify`, whose floor is set far below the real figure. It is
+there to catch a measurement that has broken, as when a Kover release once reported no coverage at
+all; an ordinary fall in coverage does not reach it.
+
+Only generated classes are left out of the report (Room's output and the compiler's bridges for
 interface default methods), in `build-logic`'s `supabase-offline.published` plugin; the test
-doubles that ship in the artifacts are measured.
-Codecov's figure reads lower than Kover's, because it counts a line where only some branches ran
-as partly covered.
+doubles that ship in the artifacts are measured. Codecov's figure reads lower than Kover's,
+because Codecov counts a line where only some branches ran as partly covered, not covered.
 
 ## Documentation site
 
