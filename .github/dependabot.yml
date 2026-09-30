@@ -106,6 +106,12 @@ updates:
           # Kover's plugin and the library build-logic compiles against share one version.
           - "org.jetbrains.kotlinx.kover"
           - "org.jetbrains.kotlinx:kover-gradle-plugin"
+          # The publishing plugin and Dokka, the same way. What they change in the published files
+          # shows in scripts/check-published-artifacts.py, which CI runs.
+          - "com.vanniktech.maven.publish"
+          - "com.vanniktech:gradle-maven-publish-plugin"
+          - "org.jetbrains.dokka"
+          - "org.jetbrains.dokka:dokka-gradle-plugin"
           # The build-tool floors (`buildToolFloor-*` in the catalog): libraries the plugins bring,
           # raised to patched versions. Keep in step with the catalog.
           - "org.bouncycastle:*"
