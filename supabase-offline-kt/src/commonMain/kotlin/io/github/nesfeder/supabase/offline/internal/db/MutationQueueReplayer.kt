@@ -5,10 +5,8 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.result.PostgrestResult
-import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
@@ -49,7 +47,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
@@ -682,20 +679,7 @@ internal class MutationQueueReplayer(
                 val replayableFilter =
                     replayableFilterOrNull(filter)
                         ?: return refuseUnreplayableFilter(mutation, filter)
-                Prepared.Ready { tableApi ->
-                    applyUpdate(
-                        tableApi = tableApi,
-                        body =
-                            rebaseDeltasAgainstServer(
-                                tableApi = tableApi,
-                                table = mutation.table,
-                                body = body,
-                                filter = replayableFilter,
-                                deltaColumns = decodeNumericDeltaColumns(mutation.deltaJson, json),
-                            ),
-                        filter = replayableFilter,
-                    )
-                }
+                Prepared.Ready { tableApi -> applyUpdate(tableApi, body, replayableFilter) }
             }
 
             MutationOperation.DELETE -> {
@@ -828,33 +812,6 @@ internal class MutationQueueReplayer(
             this.defaultToNull = defaultToNull ?: true
             if (filter != null) applyTo(this, filter)
         }
-    }
-
-    /**
-     * Rebases [body]'s delta-declared columns onto the value the server holds now, read with the
-     * UPDATE's own filter (see [NumericDeltaColumn]). Applies only when the filter matches exactly
-     * one row; otherwise [body] is sent as it is. Read failures propagate, so the mutation stays
-     * queued.
-     */
-    private suspend fun rebaseDeltasAgainstServer(
-        tableApi: PostgrestQueryBuilderWrapper,
-        table: String,
-        body: JsonElement,
-        filter: FilterDescriptor,
-        deltaColumns: List<NumericDeltaColumn>,
-    ): JsonElement {
-        if (deltaColumns.isEmpty()) return body
-
-        val current = tableApi.select(Columns.ALL) { applyTo(this, filter) }
-        val rows = parseJsonArrayOrNull(store.json, current.data)
-        if (rows == null || rows.size != 1) {
-            sdkLogger.warning {
-                "delta-encoded UPDATE on $table re-read ${rows?.size ?: "an unusable payload"}; replaying the absolute body"
-            }
-            return body
-        }
-        val row = rows.single() as? JsonObject ?: return body
-        return rebaseNumericDeltas(body = body, serverRow = row, deltaColumns = deltaColumns)
     }
 
     private suspend fun applyUpdate(

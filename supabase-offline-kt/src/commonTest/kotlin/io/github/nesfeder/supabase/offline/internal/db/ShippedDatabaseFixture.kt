@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline.internal.db
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.execSQL
-import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 
 /**
@@ -24,8 +23,8 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
  *
  * The rows use the stored formats the engine reads back: `operation` strings (written as literals,
  * so the file does not follow the library's constants), `filter_json` as the JSON encoding of
- * `FilterDescriptor` (an AND descriptor omits its default `mode`), `delta_json` as a JSON list of
- * `NumericDeltaColumn` (a null `minValue` is omitted), and booleans as SQLite integers.
+ * `FilterDescriptor` (an AND descriptor omits its default `mode`), and booleans as SQLite integers.
+ * The UPDATE's `delta_json` holds what the earlier engine wrote there; nothing reads it now.
  */
 internal object ShippedDatabaseFixture {
 
@@ -113,13 +112,6 @@ internal object ShippedDatabaseFixture {
                         value = "archived",
                     ),
                 ),
-        )
-
-    /** [UPDATE_DELTA_JSON] decoded. */
-    val UPDATE_DELTAS: List<NumericDeltaColumn> =
-        listOf(
-            NumericDeltaColumn(column = "done_count", snapshotValue = 4.0, minValue = 0.0),
-            NumericDeltaColumn(column = "minutes_spent", snapshotValue = 30.0),
         )
 
     /** Cached SELECT payloads, one plain and one positional window. */

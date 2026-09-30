@@ -232,22 +232,18 @@ public interface OfflinePostgrestQueryBuilder {
     ): MutationOutcome
 
     /**
-     * Update columns from [body], targeting rows via the [request] filter.
+     * Update columns from [body], targeting rows via the [request] filter. A queued update replays
+     * exactly the values in [body]; a value several devices change concurrently belongs in a
+     * server-side computation, not in a queued write.
      *
      * @param body columns to update, as a JSON element.
      * @param mutationStrategy offline strategy; defaults to [MutationStrategy.QueueIfOffline].
-     * @param deltaColumns columns of [body] that carry a change *relative* to the snapshot each
-     *   declaration names, rather than an absolute value. Only consulted when the write is queued:
-     *   the replay re-reads the targeted row and writes `serverCurrent + (desired - snapshot)`, so
-     *   a change that landed while the mutation waited is carried rather than clobbered. See
-     *   [NumericDeltaColumn]. Empty (the default) queues an ordinary absolute UPDATE.
      * @param request request-configuration block (e.g. `filter { … }; select()`).
      * @return the mutation outcome.
      */
     public suspend fun updateJson(
         body: JsonElement,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        deltaColumns: List<NumericDeltaColumn> = emptyList(),
         request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
@@ -257,7 +253,6 @@ public interface OfflinePostgrestQueryBuilder {
      * @param serializer value serializer.
      * @param value columns to update.
      * @param mutationStrategy offline strategy; defaults to [MutationStrategy.QueueIfOffline].
-     * @param deltaColumns delta-encoded columns; see [updateJson].
      * @param request request-configuration block.
      * @return the mutation outcome.
      */
@@ -265,7 +260,6 @@ public interface OfflinePostgrestQueryBuilder {
         serializer: KSerializer<T>,
         value: T,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        deltaColumns: List<NumericDeltaColumn> = emptyList(),
         request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome
 
@@ -567,7 +561,6 @@ internal class OfflinePostgrestQueryBuilderImpl(
     override suspend fun updateJson(
         body: JsonElement,
         mutationStrategy: MutationStrategy,
-        deltaColumns: List<NumericDeltaColumn>,
         request: PostgrestRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val table = delegate.table
@@ -580,9 +573,6 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
-            // [deltaColumns] deliberately does not touch the online path: the write lands now,
-            // against the row the caller just read, so there is no queue window to rebase across
-            // — and PostgREST cannot express `col = col + x` in a PATCH anyway.
             performOnline = { delegate.update(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
                 // Asked for rows back, the response names every row the update changed, none when
@@ -605,12 +595,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             },
             captureForQueue = {
                 captureFilteredWrite(built.value) { descriptor ->
-                    enqueueUpdate(
-                        table = table,
-                        body = body,
-                        filter = descriptor,
-                        deltaColumns = deltaColumns,
-                    )
+                    enqueueUpdate(table = table, body = body, filter = descriptor)
                 }
             },
         )
@@ -620,11 +605,10 @@ internal class OfflinePostgrestQueryBuilderImpl(
         serializer: KSerializer<T>,
         value: T,
         mutationStrategy: MutationStrategy,
-        deltaColumns: List<NumericDeltaColumn>,
         request: PostgrestRequestBuilder.() -> Unit,
     ): MutationOutcome {
         val element = json.encodeToJsonElement(serializer, value)
-        return updateJson(element, mutationStrategy, deltaColumns, request)
+        return updateJson(element, mutationStrategy, request)
     }
 
     // DELETE -------------------------------------------------------------------

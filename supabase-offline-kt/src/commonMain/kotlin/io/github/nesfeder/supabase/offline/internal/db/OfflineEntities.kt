@@ -313,18 +313,7 @@ internal data class MutationRow(
      */
     @ColumnInfo(name = "ignore_duplicates") val ignoreDuplicates: Boolean? = null,
 
-    /**
-     * Optional JSON-encoded list of [io.github.nesfeder.supabase.offline.NumericDeltaColumn]
-     * declarations: the columns of [bodyJson] whose written value is a *relative* change measured
-     * against the snapshot recorded here, rather than an absolute the replay should restate
-     * verbatim.
-     *
-     * Only meaningful for UPDATE. When present, the syncer re-reads the targeted row before
-     * replaying and rewrites each declared column to `serverCurrent + (desired - snapshot)`, so a
-     * change that landed server-side while this mutation waited in the queue is carried rather than
-     * clobbered. `null` (the default, and every row written before delta encoding shipped) replays
-     * the body verbatim.
-     */
+    /** Unused: nothing writes or reads it. */
     @ColumnInfo(name = "delta_json") val deltaJson: String? = null,
 )
 

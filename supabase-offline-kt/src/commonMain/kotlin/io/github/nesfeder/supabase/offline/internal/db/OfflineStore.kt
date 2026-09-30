@@ -4,7 +4,6 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
@@ -949,17 +948,12 @@ internal class OfflineStore(
     /**
      * Enqueue an UPDATE mutation, with an optional [filter] describing the targeted rows.
      *
-     * @param deltaColumns Columns of [body] whose written value is a change *relative* to the
-     *   snapshot each declaration carries, rather than an absolute to restate on replay. Stored
-     *   alongside the body so [MutationQueueReplayer] can rebase them onto the row's current server
-     *   value; empty (the default) queues an ordinary absolute UPDATE.
      * @return The mutation's id.
      */
     suspend fun enqueueUpdate(
         table: String,
         body: JsonElement,
         filter: FilterDescriptor? = null,
-        deltaColumns: List<NumericDeltaColumn> = emptyList(),
     ): Long {
         requireUserTable(table)
         return mutationDao.insert(
@@ -970,7 +964,6 @@ internal class OfflineStore(
                 filterJson = filter?.let { encode(it, json) },
                 createdAtMs = nowMillis(),
                 syncedAtMs = null,
-                deltaJson = encodeNumericDeltaColumns(deltaColumns, json),
             )
         )
     }

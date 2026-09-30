@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingSqliteConnection
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -66,18 +65,12 @@ class OfflineDatabaseMigrationTest {
         // When
         MIGRATION_1_2.migrate(connection)
 
-        // Then — no NOT NULL and no DEFAULT: every row already in the table gets SQL NULL, which
-        // [decodeNumericDeltaColumns] reads as "no declarations" and replays exactly as before.
-        // (A NOT NULL add without a default is also the one form of ADD COLUMN SQLite rejects
-        // outright, which would strand the upgrade on an exception instead.)
+        // Then — no NOT NULL and no DEFAULT: every row already in the table gets SQL NULL. (A NOT
+        // NULL add without a default is also the one form of ADD COLUMN SQLite rejects outright,
+        // which would strand the upgrade on an exception instead.)
         val statement = connection.statements.single()
         assertFalse("NOT NULL" in statement, "the new column must be nullable")
         assertFalse("DEFAULT" in statement, "existing rows must read back as NULL")
         assertTrue(statement.endsWith("delta_json TEXT"), "column must carry TEXT affinity")
-        assertEquals(
-            emptyList(),
-            decodeNumericDeltaColumns(deltaJson = null, json = OfflineJson),
-            "a NULL delta_json must decode to no declarations",
-        )
     }
 }

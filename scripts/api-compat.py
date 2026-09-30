@@ -825,7 +825,7 @@ def emit(text: str) -> None:
 # CHANGELOG
 # ─────────────────────────────────────────────────────────────────────────────
 
-HEADINGS = ["Breaking", "Added", "Changed", "Deprecated", "Fixed"]
+HEADINGS = ["Breaking", "Added", "Changed", "Deprecated", "Removed", "Fixed"]
 
 
 def changelog_section(content: Optional[str], title: str) -> Dict[str, Set[str]]:
@@ -1422,7 +1422,7 @@ def self_test() -> int:
     scenario(
         "a watched pin loosened while both records stay the same",
         lambda repository: (
-            repository.write("lib/src/commonMain/Delta.kt", "@SerialName(\"snapshot\") val snapshotValue: Double\n"),
+            repository.write("lib/src/commonMain/Stored.kt", "@SerialName(\"label\") val name: String\n"),
             repository.write("lib/src/commonTest/StoredFormatTest.kt", "\n"),
         ),
         "additive",

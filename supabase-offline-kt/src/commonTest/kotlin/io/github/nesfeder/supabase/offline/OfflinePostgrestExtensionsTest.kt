@@ -84,21 +84,19 @@ class OfflinePostgrestExtensionsTest {
     }
 
     @Test
-    fun update_value_calls_updateWith_with_the_value_serializer_and_delta_columns() = runTest {
+    fun update_value_calls_updateWith_with_the_value_serializer() = runTest {
         // Given
         val builder = RecordingOfflinePostgrestQueryBuilder()
         val row = ExtensionTestRow(1, "A")
-        val deltas = listOf(NumericDeltaColumn(column = "id", snapshotValue = 0.0))
 
         // When
-        builder.update(row, deltaColumns = deltas)
+        builder.update(row)
 
         // Then
         val call = builder.calls.single()
         assertEquals("updateWith(value)", call.verb)
         assertEquals(listOf(row), call.values)
         assertEquals(rowSerialName, call.serializer.descriptor.serialName)
-        assertEquals(deltas, call.deltaColumns)
     }
 }
 

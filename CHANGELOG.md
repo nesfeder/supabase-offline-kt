@@ -4,7 +4,7 @@ All notable changes to this project are recorded in this file. The format follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and version numbers follow the
 [compatibility policy](https://nesfeder.github.io/supabase-offline-kt/project/compatibility/).
 
-<!-- Keep the five headings under "Unreleased", even when they are empty: scripts/api-compat.py
+<!-- Keep the six headings under "Unreleased", even when they are empty: scripts/api-compat.py
      requires a change to the public API, the stored data or the supabase-kt pin to add a line under
      the heading it needs (before the first release, under any of them). A release renames
      "Unreleased" to its version and date, and starts a new one. -->
@@ -70,6 +70,13 @@ release.
   same request every time.
 
 ### Deprecated
+
+### Removed
+
+- `NumericDeltaColumn`, and the `deltaColumns` parameter of `updateJson`, `updateWith` and
+  `update`. A queued write replays exactly what was sent; a value that several devices change
+  concurrently, such as a counter or a running total, is computed on the server from the facts
+  clients write.
 
 ### Fixed
 

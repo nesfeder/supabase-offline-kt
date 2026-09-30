@@ -40,17 +40,7 @@ internal expect object OfflineDatabaseConstructor : RoomDatabaseConstructor<Offl
     override fun initialize(): OfflineDatabase
 }
 
-/**
- * Adds [MutationRow.deltaJson] so a queued UPDATE can declare which of its columns carry a
- * *relative* change (see [io.github.nesfeder.supabase.offline.NumericDeltaColumn]).
- *
- * This one is migrated rather than dropped. The object cache is genuinely disposable — it refills
- * on the next read — but `mutation_cache` holds **writes the user made that the server has never
- * seen**, and the destructive fallback would delete them on the update that ships this column.
- * Losing an unsynced edit is the exact failure class delta encoding exists to prevent, so an
- * additive `ALTER TABLE` carries the queue across instead. Every existing row gets `NULL`, which
- * the syncer reads as "no declarations" and replays verbatim, exactly as before.
- */
+/** Adds the `delta_json` column to `mutation_cache`, keeping every queued row. */
 internal val MIGRATION_1_2: Migration =
     object : Migration(1, 2) {
         override fun migrate(connection: SQLiteConnection) {

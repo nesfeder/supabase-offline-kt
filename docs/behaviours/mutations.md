@@ -45,7 +45,10 @@ configure the same request every time: no side effects, and no clock or counter 
 
 ## Upsert options
 
-## Delta columns
+## Values several devices change
+
+A queued write replays exactly what you sent; a value that several devices change concurrently (a
+counter, a running total) is computed on the server, and clients write only the facts that feed it.
 
 ## Idempotency
 

@@ -9,10 +9,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The strings a queued write stores in `filter_json` and `delta_json` are read back by the engine
- * long after they were written — across app updates, onto whatever engine version is installed
- * then. These cases pin both directions against the literal strings in [ShippedDatabaseFixture]:
- * the engine still decodes what an earlier install wrote, and still writes the same bytes.
+ * The strings a queued write stores in `filter_json` are read back by the engine long after they
+ * were written — across app updates, onto whatever engine version is installed then. These cases
+ * pin both directions against the literal strings in [ShippedDatabaseFixture]: the engine still
+ * decodes what an earlier install wrote, and still writes the same bytes.
  */
 class ShippedStoredFormatTest {
 
@@ -34,33 +34,18 @@ class ShippedStoredFormatTest {
     }
 
     @Test
-    fun stored_delta_declarations_decode_to_the_declarations_that_were_queued() {
-        // Given
-        val deltaJson = ShippedDatabaseFixture.UPDATE_DELTA_JSON
-
-        // When
-        val deltas = decodeNumericDeltaColumns(deltaJson, OfflineJson)
-
-        // Then
-        assertEquals(ShippedDatabaseFixture.UPDATE_DELTAS, deltas)
-    }
-
-    @Test
     fun the_engine_still_writes_the_stored_formats_byte_for_byte() {
         // Given
         val updateFilter = ShippedDatabaseFixture.UPDATE_FILTER
         val deleteFilter = ShippedDatabaseFixture.DELETE_FILTER
-        val deltas = ShippedDatabaseFixture.UPDATE_DELTAS
 
         // When
         val encodedUpdateFilter = FilterEngine.encode(updateFilter, OfflineJson)
         val encodedDeleteFilter = FilterEngine.encode(deleteFilter, OfflineJson)
-        val encodedDeltas = encodeNumericDeltaColumns(deltas, OfflineJson)
 
         // Then
         assertEquals(ShippedDatabaseFixture.UPDATE_FILTER_JSON, encodedUpdateFilter)
         assertEquals(ShippedDatabaseFixture.DELETE_FILTER_JSON, encodedDeleteFilter)
-        assertEquals(ShippedDatabaseFixture.UPDATE_DELTA_JSON, encodedDeltas)
     }
 
     @Test

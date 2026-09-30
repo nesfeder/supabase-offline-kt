@@ -11,7 +11,6 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.ReadStrategy
@@ -33,7 +32,6 @@ internal class RecordingOfflinePostgrestQueryBuilder : OfflinePostgrestQueryBuil
         val serializer: KSerializer<*>,
         val values: List<Any?>,
         val mutationStrategy: MutationStrategy,
-        val deltaColumns: List<NumericDeltaColumn> = emptyList(),
     )
 
     /** Every typed-verb call received, in order. */
@@ -99,7 +97,6 @@ internal class RecordingOfflinePostgrestQueryBuilder : OfflinePostgrestQueryBuil
     override suspend fun updateJson(
         body: JsonElement,
         mutationStrategy: MutationStrategy,
-        deltaColumns: List<NumericDeltaColumn>,
         request: PostgrestRequestBuilder.() -> Unit,
     ): MutationOutcome = unexpected("updateJson")
 
@@ -107,10 +104,9 @@ internal class RecordingOfflinePostgrestQueryBuilder : OfflinePostgrestQueryBuil
         serializer: KSerializer<T>,
         value: T,
         mutationStrategy: MutationStrategy,
-        deltaColumns: List<NumericDeltaColumn>,
         request: PostgrestRequestBuilder.() -> Unit,
     ): MutationOutcome =
-        record(Call("updateWith(value)", serializer, listOf(value), mutationStrategy, deltaColumns))
+        record(Call("updateWith(value)", serializer, listOf(value), mutationStrategy))
 
     override suspend fun delete(
         mutationStrategy: MutationStrategy,
