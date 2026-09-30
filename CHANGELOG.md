@@ -68,6 +68,18 @@ release.
   turn, and never holds back the query's other collectors.
 - The request lambda passed to a read or a write may run more than once, so it must configure the
   same request every time.
+- The on-device database is schema version 1, the one this release ships: each queued write keeps
+  its owner, its replay order and its schema-cache refusals in its own row, and each cached query
+  the replay order it has caught up with.
+- Replayed writes are kept for the overlay until every cached query of their table has been
+  fetched again since, or until they fall beyond the newest 1,000 of the table, whatever the device
+  clock says; a table nothing caches keeps none.
+- A write PostgREST refuses because its schema cache does not know the table or a column yet
+  (`PGRST205`, `PGRST204`), as happens just after a migration, stays queued. It is rejected only
+  at the tenth such refusal, each counted at least 30 seconds after the last, so a table that does
+  not exist cannot hold the queue for ever.
+- `close()` lets a replay pass finish the request it has on the wire, and record the answer,
+  before it stops, so the next client does not send the write again.
 
 ### Deprecated
 
@@ -86,3 +98,9 @@ release.
   again, instead of showing values the server no longer holds.
 - A cached list a live reader shows is never evicted, for up to 500 live readers.
 - A patched list keeps the time it was fetched, and a list made only of local writes is stale.
+- A queued write is sent with its owner's session token or not at all: a user signing in while
+  another's writes replay no longer has them sent as theirs.
+- Offline for longer than a session token lives, a write that may queue is queued instead of
+  throwing `TokenExpiredException`.
+- A replay refused because its stored filter can no longer be read says so, instead of saying the
+  write has no filter.
