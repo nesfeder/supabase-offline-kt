@@ -100,7 +100,7 @@ must use. A supabase-kt patch can arrive in a patch release.
 Every Monday a scheduled job looks for a newer supabase-kt minor, builds this library against it,
 runs its Android host tests, and reports the result in one issue labelled
 [`upstream-pin`](https://github.com/nesfeder/supabase-offline-kt/labels/upstream-pin). A maintainer
-adopts that minor deliberately, in a pull request that adds its row to this table and an entry to
+adopts that minor deliberately, in a pull request that records it in this table, adds an entry to
 the changelog, and closes the issue.
 
 ## How this is enforced
