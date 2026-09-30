@@ -8,9 +8,10 @@ name: CI
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
 #            │                                        SQLite; iOS device framework link
 #            └─ docs                           Linux  docs-check.yml
-#   coverage-upload ── after jvm-tests: sends the coverage report to Codecov. Deliberately NOT in
-#                      final-status, so Codecov being down never blocks a merge
-#   final-status ── fans in every job above but coverage-upload
+#   coverage-upload ──── after jvm-tests: sends the coverage report to Codecov (see the job)
+#   coverage-rehearsal ─ after jvm-tests: the upload as a dry run, when CI's configuration changed
+#   final-status ── fans in every job above but the two coverage jobs, so Codecov being down never
+#                   blocks a merge
 #
 #   formatting     kempt check; skipped until .kempt.toml exists
 #   static-checks  API visibility and the classifier of API changes (each self-test first); when
@@ -43,7 +44,9 @@ name: CI
 # `Final status (iOS tests held)`, so it can never satisfy the required `Final status`: that name
 # exists only on a run where every due job ran. A green held check means the Linux jobs passed.
 #
-# Forks: every job runs with a read-only token and no secrets; nothing here writes anything.
+# Forks: every job runs with a read-only token and no secrets, and nothing writes to the
+# repository. The one thing sent outside GitHub is coverage-upload's report to Codecov, with an
+# OIDC token that no fork's pull request and no run Dependabot started can obtain.
 
 on:
   # Every pull request, whatever its base, so a stacked pull request is checked the same way.
@@ -145,7 +148,8 @@ jobs:
           workflows=false
           while IFS= read -r file; do
             case "$file" in
-              .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/*)
+              .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/* \
+                | .github/codecov.yml)
                 kotlin=true; docs=true; workflows=true ;;
               .github/workflows/docs-check.yml | .github/workflows/docs-requirements.txt)
                 docs=true; workflows=true ;;
@@ -305,9 +309,10 @@ jobs:
           fi
 
       # The scripts CI itself depends on, each proved by its own self-test, then the structure
-      # of the workflows: the fan-in needs every job but coverage-upload, `$/` references exist,
-      # only ios-tests may use the self-hosted runner, nothing Dependabot can trigger reaches it,
-      # and only coverage-upload may mint an OIDC token.
+      # of the workflows: the fan-in needs every job but the two coverage jobs, `$/` references
+      # exist, only ios-tests may use the self-hosted runner, nothing Dependabot can trigger reaches
+      # it, and only the listed jobs may mint an OIDC token, with exact permissions, never on a run
+      # Dependabot started.
       - name: Check the CI scripts and the workflow structure
         if: needs.changes.outputs.workflows == 'true'
         run: |
@@ -368,7 +373,7 @@ jobs:
           python3 .github/scripts/check-coverage-report.py
           supabase-offline-kt/build/reports/kover/report.xml
 
-      # For coverage-upload, which alone can authenticate to Codecov; this job never does.
+      # For the two coverage jobs; only coverage-upload can authenticate to Codecov, never this one.
       - name: Keep the coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -578,31 +583,28 @@ jobs:
       contents: read
     uses: $/.github/workflows/docs-check.yml
 
-  # The only job that can authenticate to Codecov, and it runs no project code: it checks out,
-  # takes the report jvm-tests kept, installs the pinned CLI and hands it the report. It signs in
-  # with OIDC, so there is no stored secret; a fork's pull request is given no OIDC token.
+  # Codecov. coverage-upload sends the report jvm-tests kept; coverage-rehearsal makes the same
+  # call with the CLI's dry run, which sends nothing. Neither is in final-status: Codecov being down
+  # must never block a merge.
   #
-  # While the repository is private only a push to main uploads: the free plan allows 250 uploads a
-  # month, and pull requests alone would pass that. Every other run rehearses the upload with the
-  # CLI's dry run, which sends nothing. Once the repository is public, pull requests, the merge
-  # queue and manual runs upload too.
-  #
-  # Not in final-status on purpose: a Codecov outage must never block a merge.
+  # coverage-upload is the only job that can authenticate to Codecov. It runs no project code and
+  # signs in with OIDC, so there is no stored secret. It uploads on a push to main, and on every run
+  # once the repository is public: the free plan allows a private repository 250 uploads a month,
+  # and pull requests would pass that. A scheduled run has no event payload, so its visibility reads
+  # as not public. A run Dependabot pushed or started never holds the OIDC token, so an action
+  # update never runs with it before a maintainer has read the change; a fork's pull request is
+  # given none.
   coverage-upload:
     name: Coverage upload
     needs: jvm-tests
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.event_name == 'push' || github.event.repository.visibility == 'public')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read # the checkout, whose file list the CLI maps the report's paths onto
       id-token: write # the OIDC token Codecov accepts in place of an upload token
-    env:
-      # A scheduled run has no event payload, so a missing visibility must read as not public.
-      UPLOAD: ${{ github.event_name == 'push' || github.event.repository.visibility == 'public' }}
-      CODECOV_CLI_VERSION: v11.3.1
-      # SHA-256 of the codecovcli_linux asset of that release: GitHub's recorded digest, and the
-      # SHA256SUM file Codecov signs. Change both together.
-      CODECOV_CLI_LINUX_X64_SHA256: ca1d64196d2d34771084afe76ea657d581bf628e31d993ff8e52ea09cc88a56d
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -614,21 +616,13 @@ jobs:
           name: coverage-kotlin
           path: supabase-offline-kt/build/reports/kover
 
-      # Codecov's action would otherwise download the newest CLI at run time and trust a signing key
-      # it also fetches at run time. This pins one release and checks it before it runs.
-      - name: Install the Codecov CLI
-        run: |
-          set -euo pipefail
-          cli="$RUNNER_TEMP/codecov"
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$cli" \
-            "https://github.com/codecov/codecov-cli/releases/download/$CODECOV_CLI_VERSION/codecovcli_linux"
-          echo "$CODECOV_CLI_LINUX_X64_SHA256  $cli" | sha256sum --check --strict
-          chmod +x "$cli"
-          "$cli" --version
+      - uses: $/.github/actions/install-codecov-cli
 
-      # fail_ci_if_error is off, so Codecov being unreachable leaves this job green.
+      # A refused or throttled upload fails this step, but not the job or the run; the next step
+      # puts a warning on the run's page instead.
       - name: Upload to Codecov
-        if: env.UPLOAD == 'true'
+        id: upload
+        continue-on-error: true
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           binary: ${{ runner.temp }}/codecov
@@ -639,13 +633,44 @@ jobs:
           flags: kotlin
           name: android-host-tests
           disable_telem: true
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           verbose: true
 
-      # The same call with the CLI's dry run: it reads the report and maps its files, but sends
-      # nothing and needs no token. It fails the job if the CLI cannot do that much.
+      - name: Warn that the upload failed
+        if: steps.upload.outcome == 'failure'
+        run: >-
+          echo "::warning title=Codecov upload failed::The coverage report did not reach Codecov;
+          the Upload to Codecov step's log says why."
+
+  # The upload's dry run, holding no token: it reads the report and maps its files onto the
+  # repository. It runs when CI's configuration changed, Codecov's settings included, and
+  # coverage-upload does not (its condition, negated), so a change to the upload is proved on its
+  # pull request, a Dependabot update of these actions included.
+  coverage-rehearsal:
+    name: Coverage upload rehearsal
+    needs: [changes, jvm-tests]
+    if: >-
+      needs.changes.outputs.workflows == 'true'
+      && !(github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.event_name == 'push' || github.event.repository.visibility == 'public'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the checkout, whose file list the CLI maps the report's paths onto
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the coverage report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-kotlin
+          path: supabase-offline-kt/build/reports/kover
+
+      - uses: $/.github/actions/install-codecov-cli
+
       - name: Rehearse the upload without sending it
-        if: env.UPLOAD != 'true'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           binary: ${{ runner.temp }}/codecov
@@ -668,7 +693,7 @@ jobs:
       || needs.changes.outputs.ios-held == 'true' && 'Final status (iOS tests held)'
       || 'Final status' }}
     if: always() && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
-    # Every job but coverage-upload, which is left out on purpose (see that job).
+    # Every job but coverage-upload and coverage-rehearsal, left out on purpose (see them).
     needs: [changes, formatting, static-checks, jvm-tests, ios-tests, docs]
     runs-on: ubuntu-slim
     timeout-minutes: 5
