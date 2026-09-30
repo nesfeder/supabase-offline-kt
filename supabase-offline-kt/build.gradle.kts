@@ -13,6 +13,7 @@ plugins {
     `maven-publish`
     id("supabase-offline.kmp-library")
     id("supabase-offline.published")
+    id("supabase-offline.host-test-sqlite")
     id("supabase-offline.room")
 }
 

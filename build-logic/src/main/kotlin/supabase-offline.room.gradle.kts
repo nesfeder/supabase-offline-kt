@@ -1,17 +1,14 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
 import androidx.room.gradle.RoomExtension
-import io.github.nesfeder.supabase.offline.buildlogic.ExtractHostSqliteNative
-import io.github.nesfeder.supabase.offline.buildlogic.HostSqliteNativeArguments
 import io.github.nesfeder.supabase.offline.buildlogic.SchemaDirectoryArgument
 import io.github.nesfeder.supabase.offline.buildlogic.catalogLibrary
-import io.github.nesfeder.supabase.offline.buildlogic.hostSqliteNativeEntry
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 
 // supabase-offline.room: this module owns a Room database. It runs the Room compiler for every
-// target, exports the schema to schemas/, and gives the Android host tests a SQLite they can load
-// and the location of that schema. It applies KSP and Room itself, so a module lists neither.
+// target, exports the schema to schemas/, and tells the Android host tests where that schema is.
+// It applies KSP and Room itself, so a module lists neither.
 
 pluginManager.apply("com.google.devtools.ksp")
 
@@ -37,35 +34,9 @@ pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
         }
 }
 
-// The Android driver ships only Android binaries, which a host JVM cannot load. Its loader takes
-// an explicit binary instead, so the host tests get the one in the JVM artifact of the same driver.
-private val hostSqliteNative: Configuration =
-    configurations.create("hostSqliteNative") {
-        isCanBeConsumed = false
-        isTransitive = false
-    }
-
-dependencies.add(
-    hostSqliteNative.name,
-    dependencies.variantOf(catalogLibrary("androidx-sqlite-bundled-jvm")) { artifactType("jar") },
-)
-
-private val extractHostSqliteNative =
-    tasks.register<ExtractHostSqliteNative>("extractHostSqliteNative") {
-        driverJar.from(hostSqliteNative)
-        nativeEntry.set(hostSqliteNativeEntry())
-        outputDirectory.set(layout.buildDirectory.dir("host-sqlite-native"))
-    }
-
 tasks
     .withType<Test>()
     .matching { it.name == "testAndroidHostTest" }
     .configureEach {
-        jvmArgumentProviders.add(
-            HostSqliteNativeArguments(
-                directory = extractHostSqliteNative.flatMap { it.outputDirectory },
-                libraryName = hostSqliteNativeEntry().substringAfterLast('/'),
-            )
-        )
         jvmArgumentProviders.add(SchemaDirectoryArgument(schemaDirectory.asFile))
     }
