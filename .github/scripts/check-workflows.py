@@ -28,8 +28,10 @@ It fails when:
      triggers on anything but its schedule and a manual run, grants default permissions, has
      other jobs than its own, or reads a secret (a stored token would bypass the permissions
      below); or one of its jobs holds other permissions than its own, does not start with the
-     repository guard as a conjunct of its own, or holds a write permission and runs an action,
-     a checkout included.
+     repository guard as a conjunct of its own, or holds a write permission and runs an action
+     (a checkout or a reusable workflow included); or a step runs Gradle other than as the
+     unprivileged build user, with only Gradle arguments, between a step that prepares that user
+     and a step under always() that stops it.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -84,6 +86,11 @@ SCHEDULED_WORKFLOWS = {
 }
 SCHEDULED_TRIGGERS = {"schedule", "workflow_dispatch"}
 REPOSITORY_GUARD = "github.repository == 'nesfeder/supabase-offline-kt'"
+# The one way a listed workflow may run Gradle: as the unprivileged build user, after the step that
+# prepares it and before the step that stops it, so the build never holds the runner's tokens.
+BUILD_USER_SCRIPT = "bash .github/scripts/build-as-unprivileged-user.sh"
+RUNS_GRADLE = re.compile(r"gradlew|run-gradle|gradle-wrapper|GradleWrapperMain")
+GRADLE_ARGUMENT = re.compile(r"[-:A-Za-z0-9=._]+")
 
 
 def load_yaml(path: Path) -> object:
@@ -288,10 +295,39 @@ def scheduled_problems(name: str, document: dict) -> list[str]:
         held = job.get("permissions")
         writes = held == "write-all" or (isinstance(held, dict) and "write" in held.values())
         steps = job.get("steps") if isinstance(job.get("steps"), list) else []
-        if writes and any(isinstance(step, dict) and "uses" in step for step in steps):
+        runs_action = "uses" in job or any(isinstance(step, dict) and "uses" in step
+                                           for step in steps)
+        if writes and runs_action:
             problems.append(f"{name}: job {job_id} holds a write permission and runs an action")
+        problems += build_user_problems(f"{name}: job {job_id}", steps)
     if reads_secrets(document):
         problems.append(f"{name}: reads a secret")
+    return problems
+
+
+def build_user_problems(where: str, steps: list) -> list[str]:
+    """Rule 8: Gradle runs only as the build user, prepared before the build and stopped after."""
+    steps = [step if isinstance(step, dict) else {} for step in steps]
+    runs = [" ".join(str(step.get("run", "")).split()) for step in steps]
+    build = BUILD_USER_SCRIPT + " build "
+    problems = []
+    for index, text in enumerate(runs):
+        if not text.startswith(build):
+            if RUNS_GRADLE.search(text):
+                problems.append(f"{where} runs Gradle outside the unprivileged build user")
+            continue
+        if not all(GRADLE_ARGUMENT.fullmatch(argument) for argument in text[len(build):].split()):
+            problems.append(f"{where} passes the build user more than Gradle arguments")
+        prepared = [before for before in range(index)
+                    if runs[before] == BUILD_USER_SCRIPT + " prepare"]
+        if not prepared or steps[prepared[-1]].get("continue-on-error", False) is not False:
+            problems.append(f"{where} builds without first preparing the build user")
+        collected = [after for after in range(index + 1, len(runs))
+                     if runs[after].startswith(BUILD_USER_SCRIPT + " collect ")]
+        condition = " ".join(str(steps[collected[0]].get("if", "")).split()) if collected else ""
+        if (not collected or not condition.startswith("always()")
+                or steps[collected[0]].get("continue-on-error", False) is not False):
+            problems.append(f"{where} does not stop the build user under always() after the build")
     return problems
 
 
@@ -432,7 +468,16 @@ jobs:
     if: {REPOSITORY_GUARD}
     runs-on: ubuntu-latest
     permissions: {{contents: read}}
-    steps: [{{uses: $/.github/actions/setup}}]
+    steps:
+      - uses: $/.github/actions/setup
+      - run: {BUILD_USER_SCRIPT} prepare
+      - id: build
+        continue-on-error: true
+        run: >-
+          {BUILD_USER_SCRIPT} build
+          :a:testAndroidHostTest --continue
+      - if: always() && steps.versions.outputs.newer == 'true'
+        run: {BUILD_USER_SCRIPT} collect "$RUNNER_TEMP/results" testAndroidHostTest a
   report:
     needs: canary
     if: {REPOSITORY_GUARD} && (needs.canary.outputs.newer == 'true')
@@ -652,6 +697,48 @@ CASES: list[tuple[str, str, str, str]] = [
     ("a job passes secrets on", "upstream-canary.yml",
      COMPLIANT_CANARY.replace("    needs: canary\n", "    needs: canary\n    secrets: inherit\n"),
      "upstream-canary.yml: reads a secret"),
+    ("a reporting job that calls a reusable workflow", "upstream-canary.yml",
+     COMPLIANT_CANARY[:COMPLIANT_CANARY.index("  report:")]
+     + "  report:\n    needs: canary\n"
+     + f"    if: {REPOSITORY_GUARD} && (needs.canary.outputs.newer == 'true')\n"
+     + "    permissions: {issues: write}\n    uses: $/.github/workflows/docs-check.yml\n",
+     "job report holds a write permission and runs an action"),
+    ("the build runs the Gradle wrapper directly", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"{BUILD_USER_SCRIPT} build\n", "./gradlew\n"),
+     "runs Gradle outside the unprivileged build user"),
+    ("the build runs run-gradle.sh as the runner user", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"{BUILD_USER_SCRIPT} build\n",
+                              "bash .github/scripts/run-gradle.sh\n"),
+     "runs Gradle outside the unprivileged build user"),
+    ("a command after the build user's Gradle arguments", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(":a:testAndroidHostTest --continue\n",
+                              ":a:testAndroidHostTest --continue; curl example.com\n"),
+     "passes the build user more than Gradle arguments"),
+    ("no step prepares the build user", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n", ""),
+     "builds without first preparing the build user"),
+    ("the build user is prepared after the build", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n", "").replace(
+         "  report:\n",
+         f"      - run: {BUILD_USER_SCRIPT} prepare\n  report:\n"),
+     "builds without first preparing the build user"),
+    ("preparing the build user may continue on error", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n",
+                              f"      - run: {BUILD_USER_SCRIPT} prepare\n"
+                              "        continue-on-error: true\n"),
+     "builds without first preparing the build user"),
+    ("the build user is stopped only when the build passed", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("      - if: always() && steps", "      - if: steps"),
+     "does not stop the build user under always()"),
+    ("stopping the build user may continue on error", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("      - if: always() && steps",
+                              "      - continue-on-error: true\n        if: always() && steps"),
+     "does not stop the build user under always()"),
+    ("no step stops the build user", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("      - if: always() && steps.versions.outputs.newer == 'true'\n"
+                              f"        run: {BUILD_USER_SCRIPT} collect \"$RUNNER_TEMP/results\""
+                              " testAndroidHostTest a\n", ""),
+     "does not stop the build user under always()"),
     ("the canary gains a third job", "upstream-canary.yml",
      COMPLIANT_CANARY + "  other: {runs-on: ubuntu-latest, steps: [{run: echo}]}\n",
      "upstream-canary.yml: jobs"),

@@ -16,14 +16,20 @@ name: Upstream canary
 # issue; the workflow fails only on its own errors (Maven Central unreachable, the catalog
 # unreadable, a value it cannot trust, the issue not written).
 #
-# Two jobs, because the build runs a release nobody here has reviewed, with whatever newer Ktor,
-# okio, coroutines or serialization it brings:
-#   canary  contents: read only. Compares the versions, builds, tests, and hands on the versions,
-#           the build's outcome and the test counts as job outputs. It holds no credential that
-#           could push or write anything.
+# The build runs a release nobody here has reviewed, with whatever newer Ktor, okio, coroutines or
+# serialization it brings, so it is kept away from every credential:
+#   canary  contents: read only. Compares the versions and hands on the versions, the build's
+#           outcome and the test counts as job outputs. The build itself runs as a separate
+#           unprivileged user, on a copy of the checkout without .git, with no Gradle daemon and
+#           seven named environment variables (.github/scripts/build-as-unprivileged-user.sh). It
+#           cannot reach the job's token, the Actions cache token the setup actions' post steps
+#           hold, those steps' programs, the workspace or the step files, and its processes are
+#           stopped before anything else runs. Only its JUnit XML comes back.
 #   report  issues: write only. Checks out nothing and runs nothing from the build. It refuses any
 #           value the canary could not have produced, and writes the issue from fixed text and
-#           those values, so a hostile build can at worst misreport its own result.
+#           those values.
+# So a hostile build can at worst misreport its own result: it can write neither the issue tracker
+# nor the Actions cache that other runs restore.
 #
 # Only the schedule, which runs on main, and a maintainer's manual run start it. Dependabot can
 # raise neither event, and no pull request or push starts it: check-workflows.py holds the
@@ -146,10 +152,10 @@ jobs:
             echo "pretend=$pretend"
           } >> "$GITHUB_OUTPUT"
 
-      # As in ci.yml's self-hosted runs, the Gradle User Home is the job's own, under RUNNER_TEMP,
-      # and setup-gradle's cache is off, so nothing built against an unadopted supabase-kt is
-      # saved for another run.
-      - name: Give the build a Gradle home of its own
+      # setup-gradle's Gradle User Home is the job's own, under RUNNER_TEMP, and its cache is off.
+      # The build uses the build user's Gradle home instead, so this one stays empty and the post
+      # step has nothing to save.
+      - name: Give setup-gradle a Gradle home of its own
         if: steps.versions.outputs.newer == 'true'
         run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
 
@@ -183,20 +189,34 @@ jobs:
           git diff
           echo "::$token::"
 
+      # Before any upstream code runs: the user, its copy of the checkout, and the proof of what it
+      # cannot reach (listed in the job summary). Any doubt fails the job instead of building.
+      - name: Prepare the unprivileged build user
+        if: steps.versions.outputs.newer == 'true'
+        run: bash .github/scripts/build-as-unprivileged-user.sh prepare
+
       # A failure here is what the issue reports, not a failure of this job.
-      - name: Build and run the Android host tests against the newest release
+      - name: Build and run the Android host tests as the build user
         id: build
         if: steps.versions.outputs.newer == 'true'
         continue-on-error: true
         timeout-minutes: 20
         run: >-
-          bash .github/scripts/run-gradle.sh
+          bash .github/scripts/build-as-unprivileged-user.sh build
           :supabase-offline-kt:testAndroidHostTest
           :supabase-offline-kt-testing:testAndroidHostTest
           --continue
 
-      # Each module's counts from its JUnit XML. A module with no results, or with a file that
-      # cannot be read (a run cut off mid-write), gets none, and the issue says so.
+      # Whatever happened above, before the post steps run.
+      - name: Stop the build user and collect its test results
+        if: always() && steps.versions.outputs.newer == 'true'
+        run: >-
+          bash .github/scripts/build-as-unprivileged-user.sh collect
+          "$RUNNER_TEMP/build-user-results" testAndroidHostTest
+          supabase-offline-kt supabase-offline-kt-testing
+
+      # Each module's counts from the XML collected above. A module with no results, or with a file
+      # that cannot be read (a run cut off mid-write), gets none, and the issue says so.
       - name: Count the tests that ran
         id: counts
         if: steps.versions.outputs.newer == 'true'
@@ -210,7 +230,7 @@ jobs:
           MODULES = {"core": "supabase-offline-kt", "testing": "supabase-offline-kt-testing"}
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as outputs:
               for key, module in MODULES.items():
-                  results = Path(module, "build", "test-results", "testAndroidHostTest")
+                  results = Path(os.environ["RUNNER_TEMP"], "build-user-results", module)
                   files = sorted(results.glob("*.xml"))
                   if not files:
                       print(f"{module}: no test results")
