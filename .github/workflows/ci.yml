@@ -4,7 +4,7 @@ name: CI
 #
 #   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules and their
 #            │                   │                    coverage; the public API records (Android
-#            │                   │                    and iOS)
+#            │                   │                    and iOS); the build-tool floors check
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
 #            │                                        SQLite; iOS device framework link
 #            └─ docs                           Linux  docs-check.yml
@@ -14,9 +14,10 @@ name: CI
 #                   blocks a merge
 #
 #   formatting     kempt check; skipped until .kempt.toml exists
-#   static-checks  API visibility and the classifier of API changes (each self-test first); when
-#                  the workflows changed, zizmor, the CI scripts' self-tests and the workflow
-#                  structure check
+#   static-checks  API visibility and the classifier of API changes (each self-test first), and
+#                  the build-tool floors check's self-test (the check itself needs Gradle, so it
+#                  runs in jvm-tests); when the workflows changed, zizmor, the CI scripts'
+#                  self-tests and the workflow structure check
 #
 # Why a fan-in: branch protection names one check instead of a list that must change with the
 # jobs, and no workflow is path-filtered, so no required check waits for a run that never starts.
@@ -338,6 +339,12 @@ jobs:
             python3 scripts/api-compat.py check-pr --base HEAD^1 --head HEAD
           fi
 
+      # The build-tool floors' check proves it sees each kind of failure. The check itself needs
+      # the build's resolved classpaths, so it runs where Gradle is set up: the Android host tests.
+      - name: Test the build-tool floors check
+        if: needs.changes.outputs.kotlin == 'true'
+        run: python3 scripts/check-build-tool-floors.py --self-test
+
       # The scripts CI itself depends on, each proved by its own self-test, then the structure
       # of the workflows: the fan-in needs every job but the two coverage jobs, `$/` references
       # exist, only ios-tests may use the self-hosted runner, nothing Dependabot can trigger reaches
@@ -422,6 +429,12 @@ jobs:
           :supabase-offline-kt:checkKotlinAbi
           :supabase-offline-kt-testing:checkKotlinAbi
           --stacktrace
+
+      # The build-tool floors (gradle/libs.versions.toml) hold in every classpath the plugins and
+      # their tools resolve, and each still raises something (scripts/check-build-tool-floors.py).
+      - name: Check the build-tool floors
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-build-tool-floors.py
 
       - name: Upload the test reports
         if: failure()

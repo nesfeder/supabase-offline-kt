@@ -17,6 +17,9 @@ private fun requiredGradleProperty(key: String): String =
     providers.gradleProperty(key).orNull?.takeIf { it.isNotBlank() }
         ?: throw GradleException("The root gradle.properties has no $key, which $path needs")
 
+// The build-tool floors, which every role plugin applies.
+pluginManager.apply("supabase-offline.build-tool-floors")
+
 group = requiredGradleProperty("GROUP")
 
 version = requiredGradleProperty("VERSION_NAME")

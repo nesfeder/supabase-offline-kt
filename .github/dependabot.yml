@@ -87,6 +87,15 @@ updates:
           # Kover's plugin and the library build-logic compiles against share one version.
           - "org.jetbrains.kotlinx.kover"
           - "org.jetbrains.kotlinx:kover-gradle-plugin"
+          # The build-tool floors (`buildToolFloor-*` in the catalog): libraries the plugins bring,
+          # raised to patched versions. Keep in step with the catalog.
+          - "org.bouncycastle:*"
+          - "org.apache.commons:commons-lang3"
+          - "org.freemarker:freemarker"
+          - "org.apache.httpcomponents:httpclient"
+          - "org.jdom:jdom2"
+          - "org.bitbucket.b_c:jose4j"
+          - "io.opentelemetry:*"
         update-types: ["minor", "patch"]
       test-libraries:
         patterns:
