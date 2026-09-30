@@ -26,8 +26,10 @@ It fails when:
      those four steps may continue on error.
   8. a workflow other than ci.yml runs on a schedule and is not listed below; or a listed one
      triggers on anything but its schedule and a manual run, grants default permissions, has
-     other jobs than its own, or a job holds other permissions than its own or runs on any
-     condition but the repository guard.
+     other jobs than its own, or reads a secret (a stored token would bypass the permissions
+     below); or one of its jobs holds other permissions than its own, does not start with the
+     repository guard as a conjunct of its own, or holds a write permission and runs an action,
+     a checkout included.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -75,8 +77,10 @@ CI_TRIGGERS = {"pull_request", "push", "merge_group", "schedule", "workflow_disp
 CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
 # Workflows that only their schedule or a maintainer can start, never a pull request, a push or
 # Dependabot, with each job's exact permissions. Every other scheduled workflow but ci.yml fails.
+# The canary builds an unreviewed upstream release with a read-only token; only `report`, which
+# checks out and runs nothing from that build, may write.
 SCHEDULED_WORKFLOWS = {
-    "upstream-canary.yml": {"canary": {"contents": "read", "issues": "write"}},
+    "upstream-canary.yml": {"canary": {"contents": "read"}, "report": {"issues": "write"}},
 }
 SCHEDULED_TRIGGERS = {"schedule", "workflow_dispatch"}
 REPOSITORY_GUARD = "github.repository == 'nesfeder/supabase-offline-kt'"
@@ -214,14 +218,14 @@ def grants_oidc(permissions: object) -> bool:
     return isinstance(permissions, dict) and permissions.get("id-token") == "write"
 
 
-def starts_with_guard(condition: object) -> bool:
-    """Whether a job's `if` is the Dependabot guard alone or `guard && (...)`, one bracketed term."""
+def starts_with_guard(condition: object, guard: str = DEPENDABOT_GUARD) -> bool:
+    """Whether a job's `if` is the guard alone or `guard && (...)`, with one bracketed term."""
     text = " ".join(str(condition or "").split())
     if text.startswith("${{") and text.endswith("}}"):
         text = " ".join(text[3:-2].split())
-    if text == DEPENDABOT_GUARD:
+    if text == guard:
         return True
-    prefix = DEPENDABOT_GUARD + " && ("
+    prefix = guard + " && ("
     if not (text.startswith(prefix) and text.endswith(")")):
         return False
     term = text[len(prefix) - 1:]
@@ -278,10 +282,26 @@ def scheduled_problems(name: str, document: dict) -> list[str]:
         if job.get("permissions") != permissions:
             problems.append(f"{name}: job {job_id} holds {job.get('permissions')}, not exactly"
                             f" {permissions}")
-        if job.get("if") != REPOSITORY_GUARD:
-            problems.append(f"{name}: job {job_id} runs if {job.get('if')!r}, not"
-                            f" {REPOSITORY_GUARD!r}")
+        if not starts_with_guard(job.get("if"), REPOSITORY_GUARD):
+            problems.append(f"{name}: job {job_id} runs if {job.get('if')!r}, which does not"
+                            f" start with {REPOSITORY_GUARD!r}")
+        held = job.get("permissions")
+        writes = held == "write-all" or (isinstance(held, dict) and "write" in held.values())
+        steps = job.get("steps") if isinstance(job.get("steps"), list) else []
+        if writes and any(isinstance(step, dict) and "uses" in step for step in steps):
+            problems.append(f"{name}: job {job_id} holds a write permission and runs an action")
+    if reads_secrets(document):
+        problems.append(f"{name}: reads a secret")
     return problems
+
+
+def reads_secrets(document: dict) -> bool:
+    """Whether any expression in the workflow names `secrets`, or a job passes secrets on."""
+    expressions = re.findall(r"\$\{\{(.*?)\}\}", json.dumps(document), re.DOTALL)
+    if any(re.search(r"\bsecrets\b", expression) for expression in expressions):
+        return True
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    return any(isinstance(job, dict) and "secrets" in job for job in jobs.values())
 
 
 def self_reference_problems(root: Path, name: str, document: object) -> list[str]:
@@ -411,8 +431,16 @@ jobs:
   canary:
     if: {REPOSITORY_GUARD}
     runs-on: ubuntu-latest
-    permissions: {{contents: read, issues: write}}
+    permissions: {{contents: read}}
     steps: [{{uses: $/.github/actions/setup}}]
+  report:
+    needs: canary
+    if: {REPOSITORY_GUARD} && (needs.canary.outputs.newer == 'true')
+    runs-on: ubuntu-latest
+    permissions: {{issues: write}}
+    steps:
+      - env: {{GH_TOKEN: '${{{{ github.token }}}}'}}
+        run: echo
 """
 COMPLIANT_ACTION = "runs: {using: composite, steps: [{run: echo, shell: bash}]}\n"
 ROUTING_LINE = "      ${{ needs.changes.outputs.ios-runner == 'local'"
@@ -587,18 +615,44 @@ CASES: list[tuple[str, str, str, str]] = [
     ("the canary grants default permissions", "upstream-canary.yml",
      COMPLIANT_CANARY.replace("permissions: {}\n", "permissions: {contents: write}\n"),
      "default permissions"),
-    ("the canary job gains a permission", "upstream-canary.yml",
-     COMPLIANT_CANARY.replace("issues: write}", "issues: write, pull-requests: write}"),
+    ("the build job gains issues: write", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {contents: read}",
+                              "permissions: {contents: read, issues: write}"),
+     "job canary holds a write permission and runs an action"),
+    ("the build job holds write-all", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {contents: read}", "permissions: write-all"),
+     "job canary holds a write permission and runs an action"),
+    ("the build job writes contents", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {contents: read}", "permissions: {contents: write}"),
      "job canary holds"),
-    ("the canary job writes contents", "upstream-canary.yml",
-     COMPLIANT_CANARY.replace("contents: read, issues", "contents: write, issues"),
-     "job canary holds"),
-    ("the canary job without permissions", "upstream-canary.yml",
-     COMPLIANT_CANARY.replace("    permissions: {contents: read, issues: write}\n", ""),
+    ("the build job without permissions", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("    permissions: {contents: read}\n", ""),
      "job canary holds None"),
-    ("the canary job without its repository guard", "upstream-canary.yml",
-     COMPLIANT_CANARY.replace(f"    if: {REPOSITORY_GUARD}\n", ""), "job canary runs if"),
-    ("the canary gains a second job", "upstream-canary.yml",
+    ("the report job gains a permission", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {issues: write}",
+                              "permissions: {issues: write, pull-requests: write}"),
+     "job report holds"),
+    ("the report job checks out the repository", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("    steps:\n      - env:",
+                              "    steps:\n      - uses: actions/checkout@v7\n      - env:"),
+     "job report holds a write permission and runs an action"),
+    ("the build job without its repository guard", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"    if: {REPOSITORY_GUARD}\n", ""), "job canary runs if None"),
+    ("the report job without its repository guard", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"    if: {REPOSITORY_GUARD} && (needs",
+                              "    if: (needs"),
+     "job report runs if"),
+    ("the repository guard only one side of an or", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"    if: {REPOSITORY_GUARD} && (needs",
+                              f"    if: {REPOSITORY_GUARD} || (needs"),
+     "job report runs if"),
+    ("the report job reads a personal access token", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("github.token", "secrets.MAINTAINER_PAT"),
+     "upstream-canary.yml: reads a secret"),
+    ("a job passes secrets on", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("    needs: canary\n", "    needs: canary\n    secrets: inherit\n"),
+     "upstream-canary.yml: reads a secret"),
+    ("the canary gains a third job", "upstream-canary.yml",
      COMPLIANT_CANARY + "  other: {runs-on: ubuntu-latest, steps: [{run: echo}]}\n",
      "upstream-canary.yml: jobs"),
     ("another workflow on a schedule", "extra.yml",
