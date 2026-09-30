@@ -11,7 +11,7 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 
 // supabase-offline.room: this module owns a Room database. It runs the Room compiler for every
 // target, exports the schema to schemas/, and gives the Android host tests a SQLite they can load
-// and the location of that schema. It applies KSP and Room if the module has not already.
+// and the location of that schema. It applies KSP and Room itself, so a module lists neither.
 
 pluginManager.apply("com.google.devtools.ksp")
 
