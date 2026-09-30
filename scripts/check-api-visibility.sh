@@ -13,6 +13,19 @@
 #                                   @RequiresOptIn at level ERROR) and @HiddenFromObjC;
 #   3. published-api                @PublishedApi appears anywhere.
 #
+# It also keeps the ABI records honest (see compat/abi-exclusions.txt). It fails when:
+#
+#   4. marker-not-excluded          an error-level opt-in marker is not listed as
+#                                   `annotation <fully qualified name>` in compat/abi-exclusions.txt,
+#                                   so the hooks it gates would reach the records as public API;
+#   5. exclusion-without-marker     compat/abi-exclusions.txt names something that is not an
+#                                   error-level opt-in marker in these sources, which would hide
+#                                   real API from the records;
+#   6. exclusion-malformed          a line of compat/abi-exclusions.txt is not `annotation <name>`,
+#                                   or the file is missing;
+#   7. gated-list-stale             compat/gated-declarations.txt is not the list --list-gated
+#                                   prints, so a new gated hook would not show in the pull request.
+#
 # Comments, string literals (including raw strings and string templates), character literals and
 # backticked names are stripped before anything is matched, so the words `public` and `internal`
 # in prose or in a string never count. Annotations are read on the line above a declaration and
@@ -27,8 +40,12 @@
 # check that saw nothing proves nothing.
 #
 # Usage:
-#   scripts/check-api-visibility.sh              check the tree
-#   scripts/check-api-visibility.sh --self-test  prove the check catches each kind of violation
+#   scripts/check-api-visibility.sh               check the tree
+#   scripts/check-api-visibility.sh --self-test   prove the check catches each kind of violation
+#   scripts/check-api-visibility.sh --list-gated  print every public declaration in an internal
+#                                                 package that an error-level marker and
+#                                                 @HiddenFromObjC gate, as `path|declaration|markers`;
+#                                                 compat/gated-declarations.txt holds this list
 #
 # Portable: bash 3.2 (macOS) or later, POSIX awk (BSD awk, mawk or gawk), BSD or GNU find.
 
@@ -53,6 +70,7 @@ internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/n
 # declaration and every @PublishedApi as tab-separated records:
 #
 #   DECL  path line packageKind visibility keyword name annotationNames annotationText modifiers
+#         packageName
 #   PUBLISHEDAPI  path line name
 # ─────────────────────────────────────────────────────────────────────────────
 read -r -d '' SCAN_AWK <<'AWK' || true
@@ -146,7 +164,7 @@ function resetPending() { pendingNames = ""; pendingText = ""; inAnnotationArgs 
 
 BEGIN {
     sp = 0; mode[0] = "C"; blockDepth = 0; braceDepth = 0; parenDepth = 0
-    packageKind = "public"; publishedLine = 0
+    packageKind = "public"; packageName = ""; publishedLine = 0
     resetPending()
 }
 
@@ -231,7 +249,7 @@ BEGIN {
             if (rest == "") {
                 inAnnotationArgs = annOpen
             } else if (readDeclaration(rest)) {
-                printf "DECL\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", path, FNR, packageKind, declVisibility, declKeyword, declName, pendingNames, pendingText, declModifiers
+                printf "DECL\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", path, FNR, packageKind, declVisibility, declKeyword, declName, pendingNames, pendingText, declModifiers, packageName
                 if (publishedLine > 0) { printf "PUBLISHEDAPI\t%s\t%d\t%s\n", path, publishedLine, declName; publishedLine = 0 }
                 resetPending()
             } else {
@@ -296,6 +314,64 @@ $1 == "PUBLISHEDAPI" {
 }
 AWK
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Pass 3: compare the error-level markers with the exclusions file (rules 4 to 6). Reads the
+# records, then the file: one `annotation <fully qualified name>` per line, `#` starts a comment.
+# ─────────────────────────────────────────────────────────────────────────────
+read -r -d '' EXCLUSIONS_AWK <<'AWK' || true
+BEGIN { FS = "\t" }
+NR == FNR {
+    if ($1 == "DECL" && $6 == "class" && index($10, " annotation ") && index($8 ",", ",RequiresOptIn,") && $9 ~ /RequiresOptIn[^@]*ERROR/) {
+        fqn = ($11 == "") ? $7 : $11 "." $7
+        markers[fqn] = $2 "\t" $3
+    }
+    next
+}
+{
+    line = $0
+    sub(/#.*/, "", line)
+    sub(/^[[:space:]]+/, "", line)
+    sub(/[[:space:]]+$/, "", line)
+    if (line == "") next
+    count = split(line, parts, /[[:space:]]+/)
+    if (count != 2 || parts[1] != "annotation") {
+        printf "exclusion-malformed\t%s\t%d\t%s\tnot `annotation <fully qualified name>`\n", exclusionsPath, FNR, line
+    } else {
+        excluded[parts[2]] = 1
+        if (!(parts[2] in markers)) {
+            printf "exclusion-without-marker\t%s\t%d\t%s\tno error-level opt-in marker of that name in the sources\n", exclusionsPath, FNR, parts[2]
+        }
+    }
+}
+END {
+    for (fqn in markers) {
+        if (!(fqn in excluded)) {
+            split(markers[fqn], where, "\t")
+            printf "marker-not-excluded\t%s\t%s\t%s\tadd `annotation %s` to %s\n", where[1], where[2], fqn, fqn, exclusionsPath
+        }
+    }
+}
+AWK
+
+# Prints `path|keyword name|markers` for every public declaration in an internal package that an
+# error-level marker and @HiddenFromObjC gate: the hooks another module of this project calls.
+read -r -d '' GATED_AWK <<'AWK' || true
+BEGIN { FS = "\t" }
+NR == FNR {
+    if ($1 == "DECL" && $6 == "class" && index($10, " annotation ") && index($8 ",", ",RequiresOptIn,") && $9 ~ /RequiresOptIn[^@]*ERROR/) marker[$7] = 1
+    next
+}
+$1 == "DECL" && $4 == "internal" && $5 == "public" && index($8 ",", ",HiddenFromObjC,") {
+    count = split($8, names, ",")
+    found = ""
+    for (k = 1; k <= count; k++) if (names[k] in marker) found = found (found == "" ? "" : ",") names[k]
+    if (found != "") printf "%s|%s %s|%s\n", $2, $6, $7, found
+}
+AWK
+
+EXCLUSIONS_FILE="compat/abi-exclusions.txt"
+GATED_FILE="compat/gated-declarations.txt"
+
 # Lists every main-source Kotlin file under root "$1", one per line, sorted. Fails when a module's
 # source directory is missing or `find` reports an error, so the check never covers less than
 # the whole tree without saying so.
@@ -326,7 +402,7 @@ scan_records() {
 # violation or stale allow-list entry, and 2 when the sources cannot be listed or scanned.
 check_tree() {
     local root="$1" allow_list="$2" work sources records findings rule path line name detail key
-    local entry reason declarations files violations=0 grandfathered=0 stale=0
+    local entry reason declarations files expected violations=0 grandfathered=0 stale=0
     work="$(mktemp -d "${TMPDIR:-/tmp}/check-api-visibility.XXXXXX")"
     sources="$work/sources.txt"
     records="$work/records.tsv"
@@ -349,6 +425,28 @@ check_tree() {
         rm -rf "${work:?}"
         return 2
     fi
+    if [ -f "$root/$EXCLUSIONS_FILE" ]; then
+        if ! awk -v exclusionsPath="$EXCLUSIONS_FILE" "$EXCLUSIONS_AWK" "$records" \
+            "$root/$EXCLUSIONS_FILE" >> "$findings"; then
+            echo "ERROR: could not read $EXCLUSIONS_FILE; nothing was checked." >&2
+            rm -rf "${work:?}"
+            return 2
+        fi
+    else
+        printf 'exclusion-malformed\t%s\t0\t<file>\tthe file is missing\n' "$EXCLUSIONS_FILE" >> "$findings"
+    fi
+    if ! awk "$GATED_AWK" "$records" "$records" | LC_ALL=C sort > "$work/gated.txt"; then
+        echo "ERROR: could not list the gated declarations under $root; nothing was checked." >&2
+        rm -rf "${work:?}"
+        return 2
+    fi
+    if ! cmp -s "$work/gated.txt" "$root/$GATED_FILE"; then
+        printf 'gated-list-stale\t%s\t0\t<file>\tdiffers from --list-gated; regenerate it with scripts/check-api-visibility.sh --list-gated > %s\n' \
+            "$GATED_FILE" "$GATED_FILE" >> "$findings"
+        expected="$root/$GATED_FILE"
+        [ -f "$expected" ] || expected=/dev/null
+        diff -u -L "$GATED_FILE" -L "--list-gated" "$expected" "$work/gated.txt" > "$work/gated.diff" || true
+    fi
 
     declarations="$(awk -F '\t' '$1 == "DECL" { count++ } END { print count + 0 }' "$records")"
     echo "Scanned $declarations top-level declarations in $files main-source files."
@@ -364,6 +462,10 @@ check_tree() {
             echo "  VIOLATION      $rule  $path:$line  $name — $detail"
         fi
     done < "$findings"
+    if [ -s "$work/gated.diff" ]; then
+        echo "  $GATED_FILE against --list-gated:"
+        sed 's/^/    /' "$work/gated.diff"
+    fi
 
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
@@ -457,6 +559,15 @@ internal val continuedObject: Comparator<Int> =
 internal val continuedFunction: (Int) -> Int =
     fun(value: Int): Int = value
 KOTLIN
+    mkdir -p "$1/compat"
+    cat > "$1/$EXCLUSIONS_FILE" <<'TEXT'
+# The hooks' marker, left out of the ABI records.
+annotation io.example.api.PlantedTestingApi
+TEXT
+    cat > "$1/$GATED_FILE" <<'TEXT'
+supabase-offline-kt/src/commonMain/kotlin/io/example/internal/util/InternalHelpers.kt|fun hookOnOneLine|PlantedTestingApi
+supabase-offline-kt/src/commonMain/kotlin/io/example/internal/util/InternalHelpers.kt|fun hookOnSeparateLines|PlantedTestingApi
+TEXT
 }
 
 run_self_test() {
@@ -564,6 +675,52 @@ public fun
 plantedLateFunction(): Int = 1
 KOTLIN
                 ;;
+            marker-not-excluded)
+                cat > "$src/io/example/api/PlantedMarker.kt" <<'KOTLIN'
+package io.example.api
+
+@RequiresOptIn(level = RequiresOptIn.Level.ERROR)
+@Retention(AnnotationRetention.BINARY)
+public annotation class PlantedUnlistedApi
+KOTLIN
+                ;;
+            exclusion-without-marker)
+                printf 'annotation io.example.api.NoSuchMarker\n' >> "$root/$EXCLUSIONS_FILE"
+                ;;
+            exclusion-of-a-warning-marker)
+                cat > "$src/io/example/api/PlantedMarker.kt" <<'KOTLIN'
+package io.example.api
+
+@RequiresOptIn(level = RequiresOptIn.Level.WARNING)
+@Retention(AnnotationRetention.BINARY)
+public annotation class PlantedExperimentalApi
+KOTLIN
+                printf 'annotation io.example.api.PlantedExperimentalApi\n' >> "$root/$EXCLUSIONS_FILE"
+                ;;
+            exclusion-by-package)
+                printf 'names io.example.internal.**\n' >> "$root/$EXCLUSIONS_FILE"
+                ;;
+            exclusions-file-missing)
+                rm "$root/$EXCLUSIONS_FILE"
+                ;;
+            gated-hook-not-listed)
+                cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
+@file:OptIn(ExperimentalObjCRefinement::class)
+
+package io.example.internal.util
+
+import io.example.api.PlantedTestingApi
+import kotlin.experimental.ExperimentalObjCRefinement
+import kotlin.native.HiddenFromObjC
+
+@PlantedTestingApi
+@HiddenFromObjC
+public fun plantedNewHook(): Int = 1
+KOTLIN
+                ;;
+            gated-list-missing)
+                rm "$root/$GATED_FILE"
+                ;;
             published-api)
                 cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
 package io.example.internal.util
@@ -609,6 +766,37 @@ KOTLIN
     expect_failure object-name-on-next-line public-in-internal-package "<anonymous>"
     expect_failure function-name-on-next-line public-in-internal-package "<anonymous>"
     expect_failure published-api published-api plantedPublishedMember
+    expect_failure marker-not-excluded marker-not-excluded io.example.api.PlantedUnlistedApi
+    expect_failure exclusion-without-marker exclusion-without-marker io.example.api.NoSuchMarker
+    expect_failure exclusion-of-a-warning-marker exclusion-without-marker io.example.api.PlantedExperimentalApi
+    expect_failure exclusion-by-package exclusion-malformed "names io.example.internal.**"
+    expect_failure exclusions-file-missing exclusion-malformed "the file is missing"
+    expect_failure gated-hook-not-listed gated-list-stale "+supabase-offline-kt/src/commonMain/kotlin/io/example/internal/util/Planted.kt|fun plantedNewHook|PlantedTestingApi"
+    expect_failure gated-list-missing gated-list-stale "compat/gated-declarations.txt"
+
+    local gated="$work/gated" listing
+    write_compliant_files "$gated"
+    status=0
+    listing="$(list_gated "$gated")" || status=$?
+    if [ "$status" -eq 0 ] && [ "$listing" = "$(cat "$gated/$GATED_FILE")" ]; then
+        echo "ok   --list-gated: prints both gated hooks, as compat/gated-declarations.txt holds them"
+    else
+        echo "FAIL --list-gated: exit $status, got"
+        printf '%s\n' "$listing" | sed 's/^/     /'
+        failures=$((failures + 1))
+    fi
+    # A hook hidden from Objective-C but gated only by a warning-level marker is not gated.
+    write_compliant_files "$gated-warning"
+    plant "$gated-warning" public-in-internal-package-warning-marker
+    status=0
+    listing="$(list_gated "$gated-warning")" || status=$?
+    if [ "$status" -eq 0 ] && [ "$listing" = "$(cat "$gated-warning/$GATED_FILE")" ]; then
+        echo "ok   --list-gated: leaves out a hook that only a warning-level marker gates"
+    else
+        echo "FAIL --list-gated: listed a hook that only a warning-level marker gates (exit $status)"
+        printf '%s\n' "$listing" | sed 's/^/     /'
+        failures=$((failures + 1))
+    fi
 
     local clean="$work/compliant"
     write_compliant_files "$clean"
@@ -666,8 +854,26 @@ KOTLIN
     fi
 }
 
+# Prints the gated declarations under root "$1", sorted: the contents compat/gated-declarations.txt
+# must have. Returns 2 when the sources cannot be listed or scanned.
+list_gated() {
+    local root="$1" work status=0
+    work="$(mktemp -d "${TMPDIR:-/tmp}/check-api-visibility-gated.XXXXXX")"
+    if ! list_sources "$root" > "$work/sources.txt" || [ ! -s "$work/sources.txt" ] \
+        || ! scan_records "$root" "$work/sources.txt" > "$work/records.tsv" \
+        || ! awk "$GATED_AWK" "$work/records.tsv" "$work/records.tsv" | LC_ALL=C sort > "$work/gated.txt"; then
+        echo "ERROR: could not list the gated declarations under $root." >&2
+        status=2
+    else
+        cat "$work/gated.txt"
+    fi
+    rm -rf "${work:?}"
+    return "$status"
+}
+
 case "${1:-}" in
     --self-test) run_self_test ;;
+    --list-gated) list_gated "$REPO_ROOT" ;;
     "") check_tree "$REPO_ROOT" "$GRANDFATHERED" ;;
-    *) echo "usage: $0 [--self-test]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--self-test | --list-gated]" >&2; exit 2 ;;
 esac

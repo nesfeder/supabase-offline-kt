@@ -1,8 +1,8 @@
 # Contributing
 
 Thank you for helping. Instructions for building, testing and releasing the library itself will
-follow; for now, this file covers formatting, the documentation site and how dependency updates
-are handled.
+follow; for now, this file covers formatting, changing the public API, the documentation site and
+how dependency updates are handled.
 
 ## Formatting
 
@@ -54,6 +54,105 @@ request:
 1. The version in `gradle/libs.versions.toml`.
 2. `KTFMT_VERSION` and `KTFMT_SHA256` in the Formatting job of `.github/workflows/ci.yml`.
 3. The result of `kempt format` on that branch, in a commit of its own.
+
+## Changing the public API
+
+The library promises what its
+[compatibility policy](https://nesfeder.github.io/supabase-offline-kt/project/compatibility/)
+describes: before 1.0, a patch release changes nothing in the contract. These steps keep every pull
+request honest about what it changes, and CI checks each one.
+
+### 1. Update the API records
+
+Each published module commits a record of its public API, which the Kotlin Gradle plugin writes:
+
+| File | What it covers |
+| --- | --- |
+| `<module>/api/android/<module>.api` | The Android target, as JVM signatures |
+| `<module>/api/<module>.klib.api` | The `iosArm64` and `iosSimulatorArm64` targets, as Kotlin signatures |
+
+`./gradlew check` runs `checkKotlinAbi`, which fails when the code's public API no longer matches
+the records. After changing the API, write the records again and commit them with the change:
+
+```bash
+./gradlew updateKotlinAbi
+git add supabase-offline-kt/api supabase-offline-kt-testing/api
+```
+
+Run `updateKotlinAbi` on its own, not in the same Gradle command as `checkKotlinAbi` or `check`:
+Gradle refuses to run the two together, because one writes the files the other reads.
+
+Then read the diff of `api/` as a reviewer will. Every line added is a new promise; every line
+removed or changed breaks someone.
+
+The records hold every public declaration's types, but not its parameter names or their order.
+Renaming a public parameter breaks every caller that passes it by name, and swapping two
+parameters of the same type changes what a call does, yet neither changes a record. A reviewer
+checks every parameter name and order in the diff of the sources.
+
+### 2. Say what kind of change it is
+
+CI rates each pull request as none, patch, additive or breaking, from the committed records, the
+Room schemas, the tests that pin stored formats and the version catalog. To see the rating before
+you push, commit and run:
+
+```bash
+python3 scripts/api-compat.py classify --base "$(git merge-base origin/main HEAD)"
+```
+
+Compare with the merge base, not with `origin/main` itself: on a branch behind `main`, whatever
+`main` added since would read as removed.
+
+Then add a line under `## Unreleased` in `CHANGELOG.md`, under the heading the rating needs:
+
+| Rating | Heading |
+| --- | --- |
+| breaking | `### Breaking`, saying what a user has to do |
+| a stored format, a supabase-kt minor, or a raised minimum version | `### Breaking` or `### Changed` |
+| additive | `### Added` or `### Changed` |
+| none or patch | nothing is required; `### Fixed` for a fix |
+
+Until the first release is tagged, `## Unreleased` describes that release as a whole, so any new or
+edited line in it satisfies the check; from the first release on, the rating decides the heading.
+`python3 scripts/api-compat.py check-pr --base "$(git merge-base origin/main HEAD)"` runs the same
+check CI does.
+
+The script cannot see everything. A person reviews:
+
+- **Parameter names and their order**, which neither record shows (see step 1).
+- **Documented behaviour**, such as a default, the order of replay, or what is kept after a
+  sign-out. If your change alters it, put it under `### Breaking` yourself: the release check
+  treats a Breaking line as breaking whatever the records say.
+- **The body of an inline function**, which a caller keeps until it recompiles; anything a
+  published inline body calls must stay.
+- **A deprecation level raised to error, or a new opt-in requirement** on existing API: neither
+  record shows annotations.
+
+The script errs towards breaking. If it calls a change breaking that is not, copy its finding into
+`compat/overrides.txt`, followed by two spaces, `# ` and the reason. The reviewer judges the reason.
+An override stays until the release after it empties the file, so the release check sees it too; a
+line your pull request adds must match one of its findings.
+
+The rules the script applies are in `compat/policy.json`. A pull request is rated under the stricter
+of its own rules and its base's: a change that loosens them applies from the next pull request on,
+one that tightens them at once, and either is reported for review.
+
+### 3. What is never allowed
+
+- **Editing an exported Room schema** (`supabase-offline-kt/schemas/`). A shipped schema is what
+  devices have on disk. A schema change is a new version with a migration and a migration test, and
+  it waits for a minor release.
+- **Changing a stored name or format without saying so.** The tests that pin what is on the device
+  (the reserved rows, the persisted names and JSON keys, the stored mutation formats and their
+  replay, the file-cache layout, and where the database and the cached files live) are listed in
+  `compat/policy.json`. Changing one of them, or loosening it, is reported, and needs a changelog
+  line that says what happens to data already on a device. A new pinning test belongs in that list.
+- **Hiding API from the records.** Only declarations gated by an error-level opt-in marker listed in
+  `compat/abi-exclusions.txt` are left out. `scripts/check-api-visibility.sh` fails when a marker is
+  missing from that file or the file names anything else. A public declaration in an internal
+  package also has to be listed in `compat/gated-declarations.txt`, so it shows in the pull
+  request; regenerate that file with
+  `bash scripts/check-api-visibility.sh --list-gated > compat/gated-declarations.txt`.
 
 ## Documentation site
 
@@ -108,27 +207,40 @@ The configuration is
 ### Held dependencies
 
 The library is built and tested against one supabase-kt minor release at a time, and a few other
-dependencies move with it. For these, Dependabot proposes patch releases only. A new minor or
-major version is adopted by hand, in a pull request that moves the coupled versions together.
+dependencies move with it. For these, Dependabot proposes patch releases only, and for the
+pass-through set below, none at all. A new version is adopted by hand, in a pull request that
+moves the coupled versions together.
 
 | Dependency | Why it is held |
 | --- | --- |
 | supabase-kt | The library compiles supabase-kt's inline functions into its own artifact and matches exhaustively on its filter operators, so a minor release can change its behavior or break the build. |
-| Ktor, kotlinx.coroutines, kotlinx.serialization | They are `api` dependencies, kept at the versions supabase-kt is built against. A newer version here is a newer version for every consumer. |
+| Ktor, okio, kotlinx.coroutines, kotlinx.serialization | The pass-through set, below. |
 | Kotlin | The version the library is built with limits the Kotlin versions its consumers can use, and it has to work with the pinned supabase-kt. |
 | Android Gradle plugin | It has to stay inside the Kotlin Gradle plugin's supported range. |
 | Room, androidx.sqlite | Together they define the on-device database and the bundled SQLite, and Room is built against a particular androidx.sqlite. |
 | SKIE | It supports exact Kotlin versions only, so Dependabot proposes no version updates for it; it moves with Kotlin. |
 
-Patch releases of the held dependencies arrive in three groups: `upstream-pin`, `toolchain` and
-`persistence`. The Dependabot triage workflow gives each such pull request the matching label and
-a checklist of what a passing build does not prove. It never approves or merges. Two cases need
-care:
+**The pass-through set.** Ktor, okio, kotlinx.coroutines and kotlinx.serialization are `api`
+dependencies: every app that uses the library gets the versions this build names. The library
+keeps each at the version the pinned supabase-kt release was built with, so an app gets the
+combination supabase-kt was tested with, and a newer one here would be a newer one for every
+consumer. Dependabot proposes no version update for them, patch releases included. They move by
+hand, together with supabase-kt, in the pull request that moves the pin, and the owner decides
+that pull request. A security update still arrives, because the rule that holds them covers
+version updates only: Dependabot opens it as a security pull request, and the triage workflow
+labels it `upstream-pin` and marks it as a security update. The owner decides it too: take the
+fix alone, or move the supabase-kt pin instead.
+
+Patch releases of the other held dependencies arrive in three groups: `upstream-pin`
+(supabase-kt), `toolchain` and `persistence`. The Dependabot triage workflow gives each such pull
+request the matching label and a checklist of what a passing build does not prove. It never
+approves or merges. Two cases need care:
 
 - A Kotlin `x.y.20` release is a tooling release, not a bug fix, although semver reads it as a
   patch. It arrives in the `toolchain` group like any other patch.
 - Security updates are not held. Dependabot proposes a fix even when it needs a new minor or
-  major version, and the triage workflow says so on the pull request.
+  major version, or moves a pass-through dependency, and the triage workflow says so on the pull
+  request.
 
 Other Gradle dependencies arrive as grouped minor and patch updates, and a new major version as a
 pull request of its own. ktfmt, the formatter, arrives alone in the `formatter` group, because
@@ -143,3 +255,10 @@ on every push to `main` that changes it and sends the resulting dependency graph
 Dependabot alerts and security updates for Gradle dependencies are based on that graph. An alert
 on a transitive dependency comes without a pull request: update the dependency that brings it in,
 or add a dependency constraint.
+
+Each package in the graph is labelled. It is `runtime` when a published module's shipping
+classpath resolves it (the Android runtime classpath or an iOS target's klibs), and `development`
+otherwise: Gradle plugins, build tools and test libraries. GitHub tags an alert on a development
+package "Development". An alert without that tag concerns what the library ships, so read those
+first (`scope:runtime` in the alerts filter). A new module whose output ships joins the project
+pattern in the workflow's `resolve` step.
