@@ -3,16 +3,14 @@
 import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
 import io.github.nesfeder.supabase.offline.buildlogic.catalogLibrary
 import io.github.nesfeder.supabase.offline.buildlogic.catalogVersion
-import io.github.nesfeder.supabase.offline.buildlogic.constrainToBuildToolFloors
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 
 // supabase-offline.kmp-library: what every Kotlin Multiplatform library module shares. A module
 // keeps its own namespace, host-test setup and dependencies.
 
-// The tool configurations the Android Gradle plugin (lint) and the Kotlin Gradle plugin (Swift
-// export) create in each module get the build-tool floors. Neither reaches a published artifact.
-constrainToBuildToolFloors(setOf("androidLintTool", "swiftExportClasspath"))
+// The build-tool floors, which every role plugin applies.
+pluginManager.apply("supabase-offline.build-tool-floors")
 
 pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
     extensions.configure<KotlinMultiplatformExtension> {
