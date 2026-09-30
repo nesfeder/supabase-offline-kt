@@ -293,8 +293,9 @@ public interface SupabaseOfflineClient {
      *   closed"): on the client, and on a builder, bucket or flow obtained from it.
      * - At once, every flow being collected stops, whatever its read strategy: its collector reads
      *   that error next, even one stuck in its own body or one that has stopped reading. A channel
-     *   the app holds through `produceIn` and no longer reads ends with it quietly, failing no
-     *   scope.
+     *   the app holds through `produceIn` applied directly to the flow, and no longer reads, ends
+     *   with it quietly, failing no scope; with an operator such as `map` between them, the closed
+     *   error fails the scope as any collection's failure does.
      * - At once, the client's own work stops (refreshes, replay passes), and so does every Storage
      *   call and sync: syncs, downloads, uploads, updates, deletes, moves, copies, signed URLs,
      *   list, info and exists. Their callers get the same error, never a cancellation. A stopped
