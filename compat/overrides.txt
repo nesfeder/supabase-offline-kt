@@ -1,0 +1,10 @@
+# Findings of scripts/api-compat.py that a reviewer has judged compatible.
+#
+# One per line: the finding exactly as the classifier prints it (its category, a colon, a space and
+# its detail, without the backticks), then two spaces, "# " and the reason. For example:
+#
+#   kotlin-removed: supabase-offline-kt/api/android/supabase-offline-kt.api: … :: public fun …  # made `open`, which is compatible
+#
+# An overridden finding counts as additive. A line without a reason, or one that matches no
+# finding, fails the check, so stale entries cannot pile up. An edit to an exported Room schema can
+# never be overridden. The pull request that follows a release empties this file.

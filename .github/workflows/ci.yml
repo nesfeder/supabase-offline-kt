@@ -2,15 +2,17 @@ name: CI
 
 # One workflow, one required check: `Final status`.
 #
-#   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules
+#   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules; the
+#            │                   │                    public API records (Android and iOS)
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
 #            │                                        SQLite; iOS device framework link
 #            └─ docs                           Linux  docs-check.yml
 #   final-status ── fans in every job above
 #
 #   formatting     kempt check; skipped until .kempt.toml exists
-#   static-checks  API visibility (its self-test first); when the workflows changed, zizmor, the
-#                  CI scripts' self-tests and the workflow structure check
+#   static-checks  API visibility and the classifier of API changes (each self-test first); when
+#                  the workflows changed, zizmor, the CI scripts' self-tests and the workflow
+#                  structure check
 #
 # Why a fan-in: branch protection names one check instead of a list that must change with the
 # jobs, and no workflow is path-filtered, so no required check waits for a run that never starts.
@@ -270,15 +272,34 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The commit being checked and its first parent, the base the classifier compares with,
+          # and the release tags, which decide the changelog rule it applies.
+          fetch-depth: 2
+          fetch-tags: true
           persist-credentials: false
 
-      # Internal code stays out of the public surface. The self-test runs first, so a check that
+      # Internal code stays out of the public surface, and compat/abi-exclusions.txt and
+      # compat/gated-declarations.txt match the sources. The self-test runs first, so a check that
       # has stopped seeing violations fails loudly instead of passing quietly.
       - name: Check API visibility
         if: needs.changes.outputs.kotlin == 'true'
         run: |
           bash scripts/check-api-visibility.sh --self-test
           bash scripts/check-api-visibility.sh
+
+      # What this change does to the public contract: none, patch, additive or breaking, from the
+      # committed API records, Room schemas, stored-format pins and version catalog. A change that
+      # needs one must add a matching line under `## Unreleased` in CHANGELOG.md. The rating goes to
+      # the job summary. On a push or a scheduled run there is no pull request to rate.
+      - name: Classify the change to the public contract
+        if: needs.changes.outputs.kotlin == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 scripts/api-compat.py self-test
+          if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" == merge_group ]]; then
+            python3 scripts/api-compat.py check-pr --base HEAD^1 --head HEAD
+          fi
 
       # The scripts CI itself depends on, each proved by its own self-test, then the structure
       # of the workflows: the fan-in needs every job, `$/` references exist, only ios-tests may
@@ -329,6 +350,17 @@ jobs:
         run: >-
           python3 .github/scripts/count-test-results.py "Android host tests" testAndroidHostTest
           supabase-offline-kt supabase-offline-kt-testing
+
+      # Each module's api/ records against what the code compiles to: the Android target, and the
+      # iOS klibs, which cross-compile on Linux. `check` would run these tasks, but this job names
+      # its tasks. On failure, run updateKotlinAbi and commit the records (CONTRIBUTING.md).
+      - name: Check the public API records
+        if: ${{ !cancelled() }}
+        run: >-
+          ./gradlew
+          :supabase-offline-kt:checkKotlinAbi
+          :supabase-offline-kt-testing:checkKotlinAbi
+          --stacktrace
 
       - name: Upload the test reports
         if: failure()
