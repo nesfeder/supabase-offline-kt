@@ -75,12 +75,13 @@ internal class CacheOwnerRecord(private val objectDao: ObjectDao, private val js
         )
 
     /**
-     * Records that a caller's committed transaction emptied the cache and left [owner] as its
-     * owner, `null` for none. The count moves before the owner, so whoever sees the new owner sees
-     * it too.
+     * Runs [emptyCache], the caller's transaction that empties the cache and writes [owner]'s
+     * record (none for `null`), then counts it and takes [owner] as the owner. The owner is read by
+     * nobody in between, and the count moves first, so whoever sees the new owner sees it too.
      */
-    suspend fun recorded(owner: String?) {
+    suspend fun emptying(owner: String?, emptyCache: suspend () -> Unit) {
         mutex.withLock {
+            emptyCache()
             emptied.value += 1
             state.value = Owner(owner)
         }

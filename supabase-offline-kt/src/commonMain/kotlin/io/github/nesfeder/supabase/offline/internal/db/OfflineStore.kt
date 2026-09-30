@@ -732,15 +732,16 @@ internal class OfflineStore(
                 // One transaction: a clear that fails part-way must not leave mutations without the
                 // owner records in object_cache, where the next identity would adopt them. The
                 // mutations go first as well, so even a store without transactions never does.
-                mutationDao.runInTransaction {
-                    mutationDao.deleteAll()
-                    storageDao.deleteAll()
-                    objectDao.deleteAll()
-                    if (owner != null) objectDao.upsert(cacheOwner.rowOf(owner))
+                cacheOwner.emptying(owner) {
+                    mutationDao.runInTransaction {
+                        mutationDao.deleteAll()
+                        storageDao.deleteAll()
+                        objectDao.deleteAll()
+                        if (owner != null) objectDao.upsert(cacheOwner.rowOf(owner))
+                    }
+                    mutationQueueState.resetCaches()
                 }
-                mutationQueueState.resetCaches()
                 queryShapes.forgetAll()
-                cacheOwner.recorded(owner)
                 loggedOverlaySkips.value = emptySet()
             }
         }
@@ -758,17 +759,18 @@ internal class OfflineStore(
             teardownMutex.withLock {
                 val tick = monotonicTick()
                 cacheDroppedTick.update { existing -> if (existing >= tick) existing else tick }
-                mutationDao.runInTransaction {
-                    storageDao.deleteAll()
-                    objectDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
-                    objectDao.deleteWithSignaturePrefix(
-                        RESERVED_TABLE_NAME,
-                        QUERY_SHAPE_SIGNATURE_PREFIX,
-                    )
-                    objectDao.upsert(cacheOwner.rowOf(owner))
+                cacheOwner.emptying(owner) {
+                    mutationDao.runInTransaction {
+                        storageDao.deleteAll()
+                        objectDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
+                        objectDao.deleteWithSignaturePrefix(
+                            RESERVED_TABLE_NAME,
+                            QUERY_SHAPE_SIGNATURE_PREFIX,
+                        )
+                        objectDao.upsert(cacheOwner.rowOf(owner))
+                    }
                 }
                 queryShapes.forgetAll()
-                cacheOwner.recorded(owner)
             }
         }
     }

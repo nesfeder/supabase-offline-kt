@@ -707,10 +707,10 @@ internal class SupabaseOfflineClientImpl(
 
     /**
      * Clears once, locks outermost first: the replayer's send lock, after it cancels passes in
-     * flight; the file cache's lock; the store's, around [OfflineStore.clearAll]'s one transaction.
-     * Signed out, that transaction records the emptied cache as nobody's; a user's first use claims
-     * it, so no user id is written back by the clear. The scrub runs after that transaction, and
-     * the cache files go last.
+     * flight; the file cache's lock; the store's, and innermost the cache-owner record's, around
+     * [OfflineStore.clearAll]'s one transaction. Signed out, that transaction records the emptied
+     * cache as nobody's; a user's first use claims it, so no user id is written back by the clear.
+     * The scrub runs after that transaction, and the cache files go last.
      */
     override suspend fun clearAllCache(): Unit = operationGate.call {
         val owner =
