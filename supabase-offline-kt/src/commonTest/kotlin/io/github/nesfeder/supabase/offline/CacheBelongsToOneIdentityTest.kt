@@ -30,6 +30,13 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
+import io.ktor.client.engine.mock.MockRequestHandleScope
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.request.HttpResponseData
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -292,6 +299,58 @@ class CacheBelongsToOneIdentityTest {
             outcomeOf { client.from(TABLE).select(readStrategy = ReadStrategy.CacheFirst()).data },
         )
     }
+
+    @Test
+    fun a_stored_session_whose_refresh_is_refused_shows_its_users_rows_until_it_settles() =
+        runTest {
+            // Given — A's rows cached as A's, and A's stored session expired, its refresh refused
+            objectDao.seedPayload(TABLE, TABLE, rowsOf("A"))
+            objectDao.seedPayload(
+                RESERVED_TABLE_NAME,
+                CACHE_OWNER_SIGNATURE,
+                ownerRecordOf("user:A"),
+            )
+            val sessions = FakeHeldSessionManager(stored = expiredSessionOf("A"))
+            val server = newServer()
+            val answerData = server.answer
+            server.answer = { request ->
+                if (request.table == TOKEN_ENDPOINT) refreshRefused() else answerData(this, request)
+            }
+            val client =
+                launchClient(server) {
+                    install(Auth) {
+                        sessionManager = sessions
+                        codeVerifierCache = MemoryCodeVerifierCache()
+                        autoLoadFromStorage = true
+                        alwaysAutoRefresh = true
+                        enableLifecycleCallbacks = false
+                    }
+                }
+            val shown = mutableListOf<String?>()
+            val job = backgroundScope.launch {
+                client.from(TABLE).selectAsFlow().collect { emission ->
+                    shown += emission.result?.data
+                }
+            }
+            awaitUntil { shown.isNotEmpty() }
+            advanceTimeBy(1.seconds)
+            runCurrent()
+            val whileRestoring = shown.toList()
+
+            // When — the session is loaded, and its refresh refused
+            sessions.release()
+            awaitCacheOwner("anonymous")
+            awaitUntil { shown.lastOrNull() == "[]" }
+            job.cancel()
+
+            // Then — the stored user's rows showed while the session restored, and are gone for
+            // good
+            assertTrue(server.requests.any { request -> request.table == TOKEN_ENDPOINT })
+            assertTrue(whileRestoring.isNotEmpty(), "$shown")
+            assertTrue(whileRestoring.all { data -> data == rowsOf("A") }, "$whileRestoring")
+            assertEquals("[]", shown.last())
+            assertEquals("[]", objectDao.getRow(TABLE, TABLE)?.payload)
+        }
 
     @Test
     fun a_read_waiting_on_a_restore_that_settles_signed_out_gets_the_anonymous_answer() = runTest {
@@ -590,6 +649,28 @@ class CacheBelongsToOneIdentityTest {
                 refreshToken = "refresh-token",
                 expiresIn = 3600,
                 tokenType = "bearer",
+            )
+
+        /** A stored session of [user] that expired a minute ago, so loading it refreshes it. */
+        fun expiredSessionOf(user: String): UserSession =
+            UserSession(
+                accessToken = testJwt(user),
+                refreshToken = "refresh-token",
+                expiresIn = -60,
+                tokenType = "bearer",
+            )
+
+        /** The last path segment of the Auth server's token endpoint. */
+        const val TOKEN_ENDPOINT = "token"
+
+        /** The Auth server refusing a refresh token, as it does one revoked. */
+        fun MockRequestHandleScope.refreshRefused(): HttpResponseData =
+            respond(
+                content =
+                    """{"error":"invalid_grant","error_description":"Invalid Refresh Token"}""",
+                status = HttpStatusCode.BadRequest,
+                headers =
+                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
     }
 }
