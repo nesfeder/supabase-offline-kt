@@ -503,11 +503,11 @@ class CacheBelongsToOneIdentityTest {
         assertEquals(rowsOf("A"), shown.last())
         val shownBefore = shown.size
 
-        // When — B signs in over A
+        // When — B signs in over A; the drop and the fetch after it finish partly on real threads
         client.supabase.signInForTest("B")
         awaitCacheOwner("user:B")
         advanceTimeBy(1.minutes)
-        runCurrent()
+        awaitUntil { shown.lastOrNull() == rowsOf("B") }
         job.cancel()
 
         // Then — nothing of A's after the change, never a mix, and B's rows in the end
