@@ -1,8 +1,8 @@
 # Contributing
 
 Thank you for helping. Instructions for building, testing and releasing the library itself will
-follow; for now, this file covers formatting, changing the public API, the documentation site and
-how dependency updates are handled.
+follow; for now, this file covers formatting, changing the public API, test coverage, the
+documentation site and how dependency updates are handled.
 
 ## Formatting
 
@@ -153,6 +153,29 @@ one that tightens them at once, and either is reported for review.
   package also has to be listed in `compat/gated-declarations.txt`, so it shows in the pull
   request; regenerate that file with
   `bash scripts/check-api-visibility.sh --list-gated > compat/gated-declarations.txt`.
+
+## Coverage
+
+CI measures test coverage with [Kover](https://github.com/Kotlin/kotlinx-kover) and sends the core
+module's report to [Codecov](https://about.codecov.io/). The figure counts the common and Android
+code as the Android host tests run it on the JVM; the iOS-only Kotlin, and whatever only the iOS
+simulator tests exercise, cannot be in it, because Kotlin/Native has no coverage tooling.
+
+To see the report for each file and line, run the following, then open
+`supabase-offline-kt/build/reports/kover/html/index.html`:
+
+```bash
+./gradlew :supabase-offline-kt:koverHtmlReport
+```
+
+It runs the Android host tests first unless they are up to date. `./gradlew check` also runs
+`koverVerify`, whose floor is far below the real figure: it fails when the measurement itself has
+broken, as when a Kover release once reported no coverage at all, not when coverage falls. Only
+generated classes are left out of the report (Room's output and the compiler's bridges for
+interface default methods), in `build-logic`'s `supabase-offline.published` plugin; the test
+doubles that ship in the artifacts are measured.
+Codecov's figure reads lower than Kover's, because it counts a line where only some branches ran
+as partly covered.
 
 ## Documentation site
 
