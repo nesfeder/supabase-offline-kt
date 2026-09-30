@@ -584,7 +584,8 @@ jobs:
   #
   # While the repository is private only a push to main uploads: the free plan allows 250 uploads a
   # month, and pull requests alone would pass that. Every other run rehearses the upload with the
-  # CLI's dry run, which sends nothing. Once the repository is public, every run uploads.
+  # CLI's dry run, which sends nothing. Once the repository is public, pull requests, the merge
+  # queue and manual runs upload too.
   #
   # Not in final-status on purpose: a Codecov outage must never block a merge.
   coverage-upload:
@@ -596,7 +597,8 @@ jobs:
       contents: read # the checkout, whose file list the CLI maps the report's paths onto
       id-token: write # the OIDC token Codecov accepts in place of an upload token
     env:
-      UPLOAD: ${{ github.event_name == 'push' || !github.event.repository.private }}
+      # A scheduled run has no event payload, so a missing visibility must read as not public.
+      UPLOAD: ${{ github.event_name == 'push' || github.event.repository.visibility == 'public' }}
       CODECOV_CLI_VERSION: v11.3.1
       # SHA-256 of the codecovcli_linux asset of that release: GitHub's recorded digest, and the
       # SHA256SUM file Codecov signs. Change both together.
