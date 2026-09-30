@@ -12,11 +12,10 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 /**
  * The in-memory storage DAO, recording how often the file cache scans it, and with a database
  * failure a test can switch on.
- *
- * @property failUpserts when set, every row write throws, as SQLite does on a full disk.
  */
 internal class RecordingStorageDao : InMemoryStorageDao() {
 
+    /** When set, every row write throws, as SQLite does on a full disk. */
     var failUpserts: Boolean = false
 
     private val allCalls = AtomicInt(0)

@@ -19,15 +19,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
 /**
- * A PostgREST server with state, on top of a [RecordingPostgrestServer]: it keeps rows per table,
- * enforces each table's primary key and the foreign keys it is given, and answers the way PostgREST
- * does — a duplicate key is `409` with SQLSTATE `23505`, a missing parent `409` with `23503`.
- *
- * It understands exactly what the engine's replay sends: `POST` (with `on_conflict` and the
- * `resolution=ignore-duplicates` / `merge-duplicates` preferences), `PATCH` and `DELETE` scoped by
- * `eq` filters, and `GET` scoped the same way. Anything else is answered `400`. With `Prefer:
- * count=exact` a `POST` answers a `Content-Range` whose count is the rows it wrote, as PostgREST
- * does.
+ * A stateful PostgREST server over a [RecordingPostgrestServer] that keeps rows per table and
+ * enforces primary and foreign keys, answering as PostgREST does: `409` with `23505` or `23503`. It
+ * understands what replay sends, `POST`, `PATCH`, `DELETE` and `GET` scoped by `eq` filters, and
+ * answers anything else `400`.
  *
  * @property primaryKey the primary-key column every table shares.
  * @property foreignKeys child table → the foreign key it must satisfy.
@@ -56,8 +51,8 @@ internal class FakeRelationalPostgrestServer(
     var loseResponseAfterCommit: ((RecordedRequest) -> Boolean)? = null
 
     /**
-     * Tables with no unique constraint on [primaryKey]: an upsert on them is answered `400` with
-     * SQLSTATE `42P10`, as Postgres answers an `ON CONFLICT` target that matches no constraint.
+     * Tables with no unique constraint on [primaryKey]. An upsert on one is answered `400` with
+     * SQLSTATE `42P10`, as Postgres answers an `ON CONFLICT` target no constraint matches.
      */
     var tablesWithoutUniqueKey: Set<String> = emptySet()
 
@@ -81,7 +76,7 @@ internal class FakeRelationalPostgrestServer(
         rows.forEach { row -> stored[keyOf(row)] = row }
     }
 
-    /** The rows [table] holds now. */
+    /** The rows [table] holds. */
     fun rows(table: String): List<JsonObject> = tables[table].orEmpty().values.toList()
 
     private fun MockRequestHandleScope.handle(request: RecordedRequest): HttpResponseData {
@@ -100,6 +95,11 @@ internal class FakeRelationalPostgrestServer(
         return response
     }
 
+    /**
+     * A `POST`, honoring `on_conflict` and the `ignore-duplicates` and `merge-duplicates`
+     * resolutions. With `Prefer: count=exact` it answers a `Content-Range` counting the rows it
+     * wrote, as PostgREST does.
+     */
     private fun MockRequestHandleScope.insert(request: RecordedRequest): HttpResponseData {
         val body = Json.parseToJsonElement(request.body) as JsonArray
         val resolution = request.prefer.orEmpty().split(',').map { it.trim() }

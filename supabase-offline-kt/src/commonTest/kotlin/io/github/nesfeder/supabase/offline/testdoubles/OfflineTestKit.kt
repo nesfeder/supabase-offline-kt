@@ -140,8 +140,8 @@ internal fun newTestSupabaseClient(
 internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 
 /**
- * Records, as reading the query through the client would, that the query cached under [signature]
- * has the shape of a SELECT of [columns] that [request] configures.
+ * Records that the query cached under [signature] has the shape of a SELECT of [columns] that
+ * [request] configures, as a read through the client would.
  *
  * @param persist whether to write the record to the object cache as well; by default it is kept in
  *   memory only, so a test counting cache writes is not disturbed.
@@ -171,7 +171,9 @@ internal suspend fun OfflineStore.recordQueryShape(
  * @param onClose what the client's `close()` releases, as the factories wire the database.
  * @param coordinatorScope the parent of the client's own scope, whose dispatcher runs its
  *   background work (refresh loops, replay passes it starts itself); pass `runTest`'s
- *   `backgroundScope` to drive it from the test scheduler.
+ *   `backgroundScope` to drive it from the test scheduler. The default's handler logs a background
+ *   failure to [sdkLogger] instead of failing the test; build that logger from a
+ *   [RecordingOfflineLogger] to see one.
  * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
  *   database's scrub.
  * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose

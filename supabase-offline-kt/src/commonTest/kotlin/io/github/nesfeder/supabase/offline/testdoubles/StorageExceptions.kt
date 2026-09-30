@@ -18,8 +18,8 @@ import io.ktor.http.HttpStatusCode
  */
 
 /**
- * A missing object as Supabase Storage reports it: an HTTP **400** whose body says 404, so
- * `statusCode` reads 400 and only the exception type marks the object as missing.
+ * A missing object as Supabase Storage reports it: HTTP 400 with 404 in the body. `statusCode`
+ * reads 400, so only the exception type marks the object missing.
  */
 internal suspend fun notFoundRestException(): NotFoundRestException =
     NotFoundRestException(

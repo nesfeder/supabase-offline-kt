@@ -12,24 +12,21 @@ import okio.Sink
 import okio.Timeout
 
 /**
- * The real file system, with failures a test can switch on: a disk that fills up part-way through
- * writing a file, and a rename the file system refuses. Every other operation reaches the disk.
- *
- * @property failWritesAfterBytes when set, every file sink opened from now on throws once that many
- *   bytes have been written to it.
- * @property failMoves when `true`, [atomicMove] throws.
- * @property onSinkOpened runs once a file sink is open, with the file already on disk, on the
- *   thread that opened it.
- * @property onMove runs as [atomicMove] starts, before it moves or refuses.
+ * The real file system with two failures a test can switch on: a disk that fills part-way through a
+ * file, and a refused rename. Every other operation reaches the disk.
  */
 internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
 
+    /** When set, every file sink opened after it is set throws once that many bytes are written. */
     var failWritesAfterBytes: Long? = null
 
+    /** When `true`, [atomicMove] throws. */
     var failMoves: Boolean = false
 
+    /** Runs once a file sink is open, with the file on disk, on the thread that opened it. */
     var onSinkOpened: ((Path) -> Unit)? = null
 
+    /** Runs as [atomicMove] starts, before it moves or refuses. */
     var onMove: ((source: Path, target: Path) -> Unit)? = null
 
     /** Every file a sink was opened on, in order. */
