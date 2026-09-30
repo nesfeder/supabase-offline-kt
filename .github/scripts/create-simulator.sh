@@ -5,17 +5,19 @@
 #
 # First it deletes any simulator a killed job left behind: one whose name has this job's prefix and
 # a creation time older than the job's timeout, so no job still running can own it. The creation
-# time is part of the name.
+# time is part of the name. Its logs and CoreSimulator's folders for it go too, as the clean-up
+# removes them for the job's own simulator.
 #
 # Portable: bash 3.2 (macOS's /bin/bash) or later.
 
 set -euo pipefail
 
-: "${GITHUB_ENV:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}"
+: "${GITHUB_ENV:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" "${HOME:?}"
 prefix="offline-kt-ci-"
 stale_after_seconds=$((60 * 60)) # longer than the job's 45-minute timeout
 now="$(date +%s)"
 device_type="com.apple.CoreSimulator.SimDeviceType.iPhone-17"
+udid_pattern='^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$'
 
 devices_json="$(xcrun simctl list devices --json)"
 stale="$(printf '%s' "$devices_json" | python3 -c '
@@ -31,11 +33,27 @@ for devices in json.load(sys.stdin)["devices"].values():
             print(device["udid"], now - int(created) if created.isdigit() else "unknown")
 ' "$prefix" "$now" "$stale_after_seconds")"
 if [[ -n "$stale" ]]; then
-    echo "Removed simulators left by earlier jobs:"
+    echo "Removed simulators left by earlier jobs, with their logs:"
+    user_temp="$(getconf DARWIN_USER_TEMP_DIR)"
     while read -r udid age; do
+        if [[ ! "$udid" =~ $udid_pattern ]]; then
+            echo "::error::simctl reported a device id that is not a simulator UDID; nothing deleted"
+            exit 1
+        fi
         xcrun simctl shutdown "$udid" > /dev/null 2>&1 || true
         xcrun simctl delete "$udid"
         echo "  $udid (created ${age}s ago)"
+        simulator_logs="$HOME/Library/Logs/CoreSimulator/$udid"
+        if [[ -d "$simulator_logs" ]]; then
+            rm -rf "${simulator_logs:?}"
+            echo "    ~/Library/Logs/CoreSimulator/$udid"
+        fi
+        for folder in "${user_temp:?}"com.apple.CoreSimulator.SimDevice."$udid".*; do
+            if [[ -e "$folder" ]]; then
+                rm -rf "${folder:?}"
+                echo "    <user temp>/$(basename "$folder")"
+            fi
+        done
     done <<< "$stale"
 fi
 
