@@ -23,7 +23,7 @@ import kotlinx.serialization.json.put
 
 /**
  * [preferResponseForCacheOverlay]: a write that asked for its rows back patches the cache with the
- * server's rows, so columns the server assigns, such as `id`, reach live readers at once. Without
+ * server's rows. Columns the server assigns, such as `id`, then reach live readers at once; without
  * usable rows in the response, the request body patches it.
  */
 class PreferResponseForCacheOverlayTest {

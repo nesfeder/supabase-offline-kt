@@ -28,8 +28,9 @@ import kotlin.time.Duration
 
 /**
  * Scriptable [BucketApi] for the offline bucket's tests: every download returns [onDownload]'s
- * bytes, every write records its arguments after [onWrite], and any other member fails. It sees no
- * image transform; a test that needs one uses [RecordingStorageServer] and the real bucket.
+ * bytes, and every write records its arguments after [onWrite]. [setHeader] records its header,
+ * [bucketId] is served, and every other member fails. It sees no image transform; a test that needs
+ * one uses [RecordingStorageServer] and the real bucket.
  *
  * @property bucketId Bucket identifier the wrapper reads via `BucketApi by delegate`.
  * @property onDownload what every download, of every kind, returns or throws: a transport error, a

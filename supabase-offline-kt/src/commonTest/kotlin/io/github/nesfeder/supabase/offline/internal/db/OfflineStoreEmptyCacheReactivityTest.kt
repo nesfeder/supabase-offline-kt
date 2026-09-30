@@ -25,7 +25,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * An empty cache is never seeded with `[]`. The overlay substrate,
+ * An empty cache is never seeded with `[]`. The in-memory overlay,
  * [OfflineStore.overlaidPayloadFlow], shows a queued INSERT without a cache write; a write that
  * succeeds online becomes a real cache row for a live reader with nothing cached; and nothing is
  * written when no reader is live.

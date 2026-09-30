@@ -51,10 +51,10 @@ import kotlinx.serialization.json.put
 /**
  * Integration tests across the real read stack: [QueryReader], [cacheFirstWithParallelRefresh], a
  * real [OfflineStore] over in-memory DAOs and a real [RefreshCoordinator], with only the network
- * SELECT scripted. They pin what unit tests cannot: the wiring of wake-ups and the coordinator into
- * the refresh, the per-query [OfflineReadResult], single-flight sharing, and that nothing seeds an
- * empty cache with `[]`. They run under the non-default
- * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY].
+ * SELECT scripted. They pin what unit tests cannot: the wiring of the accelerator and the
+ * coordinator into the refresh, the per-query [OfflineReadResult], single-flight sharing, and that
+ * nothing seeds an empty cache with `[]`. They run under the non-default
+ * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], whose rules their expectations assume.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class QueryReaderRecoveryTest {
@@ -79,7 +79,8 @@ class QueryReaderRecoveryTest {
                 )
             val resolver = buildResolver(wrapper, backgroundScope, accelerator)
 
-            // When: a CacheFirstThenNetwork subscription with state starts and the fast ladder ends
+            // When: a CacheFirstThenNetwork subscription with state starts and the fast retries run
+            // out
             val reads = mutableListOf<OfflineReadResult>()
             val collector = launch {
                 resolver
