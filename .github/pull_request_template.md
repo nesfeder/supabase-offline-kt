@@ -6,6 +6,7 @@
 
 <!-- Each command, its result, and where it ran (macOS, Linux, a simulator). -->
 
+- [ ] A test that shows the change: for a fix, one that failed before it (name it here)
 - [ ] `./gradlew check`
 - [ ] `kempt check`
 - [ ] A line under `## Unreleased` in `CHANGELOG.md`, under the heading the change needs, or none

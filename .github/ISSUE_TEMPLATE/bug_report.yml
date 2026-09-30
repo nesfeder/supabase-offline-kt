@@ -24,6 +24,12 @@ body:
       placeholder: "3.8.0"
     validations:
       required: true
+  - type: input
+    id: toolchain-version
+    attributes:
+      label: Kotlin version, or Xcode version for the Swift package
+      description: The Kotlin version your build uses, or the Xcode version that builds your app if you use the Swift package.
+      placeholder: "Kotlin 2.4.20, or Xcode 26.0"
   - type: dropdown
     id: platform
     attributes:
@@ -79,7 +85,7 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: With the library's logging at debug level, if you can. Logs must carry no tokens, keys or personal data, row contents included; remove them before you paste.
+      description: With the library's logging at INFO, which carries no row data. Use DEBUG only if the maintainer asks, and then remove the row contents it prints. Logs must carry no tokens, keys or personal data; remove them before you paste.
       render: text
   - type: checkboxes
     id: nothing-private
