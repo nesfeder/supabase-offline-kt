@@ -1,0 +1,332 @@
+public final class io/github/nesfeder/supabase/offline/CachedFile {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lkotlin/time/Instant;
+	public final fun component3 ()J
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFetchedAt ()Lkotlin/time/Instant;
+	public final fun getPath ()Ljava/lang/String;
+	public final fun getSizeBytes ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/FlowReadStrategy : java/lang/Enum {
+	public static final field CacheFirstThenNetwork Lio/github/nesfeder/supabase/offline/FlowReadStrategy;
+	public static final field CacheOnly Lio/github/nesfeder/supabase/offline/FlowReadStrategy;
+	public static final field NetworkFirstThenCache Lio/github/nesfeder/supabase/offline/FlowReadStrategy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/FlowReadStrategy;
+	public static fun values ()[Lio/github/nesfeder/supabase/offline/FlowReadStrategy;
+}
+
+public abstract interface annotation class io/github/nesfeder/supabase/offline/InternalOfflineTestingApi : java/lang/annotation/Annotation {
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/MutationOutcome {
+	public fun resultOrNull ()Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+}
+
+public final class io/github/nesfeder/supabase/offline/MutationOutcome$Applied : io/github/nesfeder/supabase/offline/MutationOutcome {
+	public fun <init> (Lio/github/jan/supabase/postgrest/result/PostgrestResult;)V
+	public final fun component1 ()Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+	public final fun copy (Lio/github/jan/supabase/postgrest/result/PostgrestResult;)Lio/github/nesfeder/supabase/offline/MutationOutcome$Applied;
+	public static synthetic fun copy$default (Lio/github/nesfeder/supabase/offline/MutationOutcome$Applied;Lio/github/jan/supabase/postgrest/result/PostgrestResult;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/MutationOutcome$Applied;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getResult ()Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+	public fun hashCode ()I
+	public fun resultOrNull ()Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/MutationOutcome$DefaultImpls {
+	public static fun resultOrNull (Lio/github/nesfeder/supabase/offline/MutationOutcome;)Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+}
+
+public final class io/github/nesfeder/supabase/offline/MutationOutcome$Queued : io/github/nesfeder/supabase/offline/MutationOutcome {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/MutationOutcome$Queued;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun resultOrNull ()Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/MutationStrategy : java/lang/Enum {
+	public static final field OnlineOnly Lio/github/nesfeder/supabase/offline/MutationStrategy;
+	public static final field QueueIfOffline Lio/github/nesfeder/supabase/offline/MutationStrategy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/MutationStrategy;
+	public static fun values ()[Lio/github/nesfeder/supabase/offline/MutationStrategy;
+}
+
+public final class io/github/nesfeder/supabase/offline/NumericDeltaColumn {
+	public static final field Companion Lio/github/nesfeder/supabase/offline/NumericDeltaColumn$Companion;
+	public fun <init> (Ljava/lang/String;DLjava/lang/Double;)V
+	public synthetic fun <init> (Ljava/lang/String;DLjava/lang/Double;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()D
+	public final fun component3 ()Ljava/lang/Double;
+	public final fun copy (Ljava/lang/String;DLjava/lang/Double;)Lio/github/nesfeder/supabase/offline/NumericDeltaColumn;
+	public static synthetic fun copy$default (Lio/github/nesfeder/supabase/offline/NumericDeltaColumn;Ljava/lang/String;DLjava/lang/Double;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/NumericDeltaColumn;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getColumn ()Ljava/lang/String;
+	public final fun getMinValue ()Ljava/lang/Double;
+	public final fun getSnapshotValue ()D
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class io/github/nesfeder/supabase/offline/NumericDeltaColumn$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/NumericDeltaColumn$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Lio/github/nesfeder/supabase/offline/NumericDeltaColumn;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Lio/github/nesfeder/supabase/offline/NumericDeltaColumn;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/nesfeder/supabase/offline/NumericDeltaColumn$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/OfflineBucketApi : io/github/jan/supabase/storage/BucketApi {
+	public abstract fun cachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun ensureCachedFile (Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun ensureCachedFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public synthetic fun setHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/jan/supabase/storage/BucketApi;
+	public abstract fun setHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
+}
+
+public final class io/github/nesfeder/supabase/offline/OfflineBucketApi$DefaultImpls {
+	public static fun createSignedUrls-rnQQ1Ag (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;J[Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static fun delete (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;[Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun ensureCachedFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun publicRenderUrl (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Ljava/lang/String;
+	public static fun update (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;[BLkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static fun upload (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;[BLkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static fun uploadToSignedUrl (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Ljava/lang/String;[BLkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/github/nesfeder/supabase/offline/OfflineBucketApi_androidKt {
+	public static final fun ensureLocalFile (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun ensureLocalFile$default (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun ensureLocalUri (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun ensureLocalUri$default (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun localUriIfCached (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/github/nesfeder/supabase/offline/OfflineLogLevel : java/lang/Enum {
+	public static final field DEBUG Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+	public static final field ERROR Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+	public static final field INFO Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+	public static final field WARNING Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+	public static fun values ()[Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/OfflineLogger {
+	public abstract fun log (Lio/github/nesfeder/supabase/offline/OfflineLogLevel;Ljava/lang/String;)V
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder {
+	public abstract fun delete (Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun delete$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun insertJson (Lkotlinx/serialization/json/JsonArray;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun insertJson$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/json/JsonArray;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun insertWith (Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun insertWith (Lkotlinx/serialization/KSerializer;Ljava/util/List;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun insertWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun insertWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/util/List;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun select-xUsJgKc (Ljava/lang/String;Lio/github/nesfeder/supabase/offline/ReadStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun select-xUsJgKc$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Ljava/lang/String;Lio/github/nesfeder/supabase/offline/ReadStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun selectAsFlow-Ao2T0zE (Ljava/lang/String;Lio/github/nesfeder/supabase/offline/FlowReadStrategy;Lkotlin/jvm/functions/Function1;)Lkotlinx/coroutines/flow/Flow;
+	public static synthetic fun selectAsFlow-Ao2T0zE$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Ljava/lang/String;Lio/github/nesfeder/supabase/offline/FlowReadStrategy;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun updateJson (Lkotlinx/serialization/json/JsonElement;Lio/github/nesfeder/supabase/offline/MutationStrategy;Ljava/util/List;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun updateJson$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/json/JsonElement;Lio/github/nesfeder/supabase/offline/MutationStrategy;Ljava/util/List;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun updateWith (Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Ljava/util/List;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun updateWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Ljava/util/List;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun upsertJson (Lkotlinx/serialization/json/JsonArray;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun upsertJson$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/json/JsonArray;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun upsertWith (Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun upsertWith (Lkotlinx/serialization/KSerializer;Ljava/util/List;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun upsertWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun upsertWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/util/List;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder$DefaultImpls {
+	public static synthetic fun delete$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun insertJson$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/json/JsonArray;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun insertWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun insertWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/util/List;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun select-xUsJgKc$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Ljava/lang/String;Lio/github/nesfeder/supabase/offline/ReadStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun selectAsFlow-Ao2T0zE$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Ljava/lang/String;Lio/github/nesfeder/supabase/offline/FlowReadStrategy;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
+	public static synthetic fun updateJson$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/json/JsonElement;Lio/github/nesfeder/supabase/offline/MutationStrategy;Ljava/util/List;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun updateWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Ljava/util/List;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun upsertJson$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/json/JsonArray;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun upsertWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/lang/Object;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun upsertWith$default (Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;Lkotlinx/serialization/KSerializer;Ljava/util/List;Lio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/github/nesfeder/supabase/offline/OfflineReadResult {
+	public fun <init> (Lio/github/jan/supabase/postgrest/result/PostgrestResult;Lio/github/nesfeder/supabase/offline/RefreshState;)V
+	public final fun component1 ()Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+	public final fun component2 ()Lio/github/nesfeder/supabase/offline/RefreshState;
+	public final fun copy (Lio/github/jan/supabase/postgrest/result/PostgrestResult;Lio/github/nesfeder/supabase/offline/RefreshState;)Lio/github/nesfeder/supabase/offline/OfflineReadResult;
+	public static synthetic fun copy$default (Lio/github/nesfeder/supabase/offline/OfflineReadResult;Lio/github/jan/supabase/postgrest/result/PostgrestResult;Lio/github/nesfeder/supabase/offline/RefreshState;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/OfflineReadResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRefresh ()Lio/github/nesfeder/supabase/offline/RefreshState;
+	public final fun getResult ()Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/ReadStrategy {
+}
+
+public final class io/github/nesfeder/supabase/offline/ReadStrategy$CacheFirst : io/github/nesfeder/supabase/offline/ReadStrategy {
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/Long;)V
+	public synthetic fun <init> (Lkotlin/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/time/Duration;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-FghU774 ()Lkotlin/time/Duration;
+	public final fun copy-BwNAW2A (Lkotlin/time/Duration;)Lio/github/nesfeder/supabase/offline/ReadStrategy$CacheFirst;
+	public static synthetic fun copy-BwNAW2A$default (Lio/github/nesfeder/supabase/offline/ReadStrategy$CacheFirst;Lkotlin/time/Duration;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/ReadStrategy$CacheFirst;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCacheDuration-FghU774 ()Lkotlin/time/Duration;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/ReadStrategy$CacheOnly : io/github/nesfeder/supabase/offline/ReadStrategy {
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/Long;)V
+	public synthetic fun <init> (Lkotlin/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/time/Duration;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-FghU774 ()Lkotlin/time/Duration;
+	public final fun copy-BwNAW2A (Lkotlin/time/Duration;)Lio/github/nesfeder/supabase/offline/ReadStrategy$CacheOnly;
+	public static synthetic fun copy-BwNAW2A$default (Lio/github/nesfeder/supabase/offline/ReadStrategy$CacheOnly;Lkotlin/time/Duration;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/ReadStrategy$CacheOnly;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCacheDuration-FghU774 ()Lkotlin/time/Duration;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/ReadStrategy$NetworkFirst : io/github/nesfeder/supabase/offline/ReadStrategy {
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/Long;)V
+	public synthetic fun <init> (Lkotlin/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/time/Duration;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-FghU774 ()Lkotlin/time/Duration;
+	public final fun copy-BwNAW2A (Lkotlin/time/Duration;)Lio/github/nesfeder/supabase/offline/ReadStrategy$NetworkFirst;
+	public static synthetic fun copy-BwNAW2A$default (Lio/github/nesfeder/supabase/offline/ReadStrategy$NetworkFirst;Lkotlin/time/Duration;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/ReadStrategy$NetworkFirst;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCacheDuration-FghU774 ()Lkotlin/time/Duration;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/ReadStrategy$NetworkOnly : io/github/nesfeder/supabase/offline/ReadStrategy {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/ReadStrategy$NetworkOnly;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/RefreshState {
+}
+
+public final class io/github/nesfeder/supabase/offline/RefreshState$Idle : io/github/nesfeder/supabase/offline/RefreshState {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/RefreshState$Idle;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RefreshState$InFlight : io/github/nesfeder/supabase/offline/RefreshState {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/RefreshState$InFlight;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RefreshState$Stalled : io/github/nesfeder/supabase/offline/RefreshState {
+	public fun <init> (Ljava/lang/Throwable;)V
+	public final fun component1 ()Ljava/lang/Throwable;
+	public final fun copy (Ljava/lang/Throwable;)Lio/github/nesfeder/supabase/offline/RefreshState$Stalled;
+	public static synthetic fun copy$default (Lio/github/nesfeder/supabase/offline/RefreshState$Stalled;Ljava/lang/Throwable;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/RefreshState$Stalled;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCause ()Ljava/lang/Throwable;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SupabaseErrorClassificationKt {
+	public static final fun isNetworkOrConnectivityFailure (Ljava/lang/Throwable;)Z
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/SupabaseOfflineClient {
+	public abstract fun applyServerDelete (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun applyServerDelete$default (Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun applyServerRecord (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun applyServerRecord$default (Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun clearAllCache (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun from (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
+	public abstract fun from (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
+	public fun get (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
+	public fun get (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
+	public abstract fun getSupabase ()Lio/github/jan/supabase/SupabaseClient;
+	public abstract fun pendingMutationCount (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun pendingMutationCount (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun pendingMutationCountFlow ()Lkotlinx/coroutines/flow/Flow;
+	public abstract fun pendingMutationCountFlow (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun storage (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
+	public abstract fun syncAllPendingMutations (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun syncPendingMutations (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/github/nesfeder/supabase/offline/SupabaseOfflineClient$DefaultImpls {
+	public static synthetic fun applyServerDelete$default (Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun applyServerRecord$default (Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun get (Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
+	public static fun get (Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
+}
+
+public final class io/github/nesfeder/supabase/offline/SupabaseOfflineClient_androidKt {
+	public static final fun createSupabaseOfflineClient (Landroid/content/Context;Lio/github/jan/supabase/SupabaseClient;Lio/github/nesfeder/supabase/offline/SupabaseOfflineConfig;)Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;
+	public static synthetic fun createSupabaseOfflineClient$default (Landroid/content/Context;Lio/github/jan/supabase/SupabaseClient;Lio/github/nesfeder/supabase/offline/SupabaseOfflineConfig;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;
+}
+
+public final class io/github/nesfeder/supabase/offline/SupabaseOfflineConfig {
+	public static final field CACHE_SIZE_UNLIMITED J
+	public static final field Companion Lio/github/nesfeder/supabase/offline/SupabaseOfflineConfig$Companion;
+	public static final field DEFAULT_CACHE_SIZE_BYTES J
+	public static final field DEFAULT_FILE_CACHE_SIZE_BYTES J
+	public static final field MIN_CACHE_SIZE_BYTES J
+	public fun <init> ()V
+	public fun <init> (JLokio/Path;Lio/github/nesfeder/supabase/offline/OfflineLogger;Lio/github/nesfeder/supabase/offline/OfflineLogLevel;Lkotlinx/coroutines/flow/Flow;J)V
+	public synthetic fun <init> (JLokio/Path;Lio/github/nesfeder/supabase/offline/OfflineLogger;Lio/github/nesfeder/supabase/offline/OfflineLogLevel;Lkotlinx/coroutines/flow/Flow;JILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()J
+	public final fun component2 ()Lokio/Path;
+	public final fun component3 ()Lio/github/nesfeder/supabase/offline/OfflineLogger;
+	public final fun component4 ()Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+	public final fun component5 ()Lkotlinx/coroutines/flow/Flow;
+	public final fun component6 ()J
+	public final fun copy (JLokio/Path;Lio/github/nesfeder/supabase/offline/OfflineLogger;Lio/github/nesfeder/supabase/offline/OfflineLogLevel;Lkotlinx/coroutines/flow/Flow;J)Lio/github/nesfeder/supabase/offline/SupabaseOfflineConfig;
+	public static synthetic fun copy$default (Lio/github/nesfeder/supabase/offline/SupabaseOfflineConfig;JLokio/Path;Lio/github/nesfeder/supabase/offline/OfflineLogger;Lio/github/nesfeder/supabase/offline/OfflineLogLevel;Lkotlinx/coroutines/flow/Flow;JILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SupabaseOfflineConfig;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCacheSizeBytes ()J
+	public final fun getFileCacheSizeBytes ()J
+	public final fun getLogger ()Lio/github/nesfeder/supabase/offline/OfflineLogger;
+	public final fun getMinLogLevel ()Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+	public final fun getNetworkAvailability ()Lkotlinx/coroutines/flow/Flow;
+	public final fun getOfflineStoragePath ()Lokio/Path;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SupabaseOfflineConfig$Companion {
+}
+

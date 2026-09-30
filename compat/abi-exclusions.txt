@@ -1,0 +1,14 @@
+# Opt-in markers whose declarations are left out of the ABI records (supabase-offline-kt/api and
+# supabase-offline-kt-testing/api).
+#
+# Each line is `annotation <fully qualified marker>`; `#` starts a comment. The published-module
+# convention plugin (build-logic) reads this file. scripts/check-api-visibility.sh fails when an
+# error-level @RequiresOptIn marker in the sources is missing here, or when a line here names
+# anything else, so nothing can be hidden from the records by adding a line.
+#
+# A marker listed here gates a public hook that another module of this project needs and no
+# consumer may call. It is not API; see docs/project/compatibility.md. Nothing is excluded by
+# package: a public declaration in an internal package must carry one of these markers, and the
+# visibility check fails if it does not.
+
+annotation io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
