@@ -229,17 +229,47 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # The release archive, checked against the digest above before anything in it runs. kempt's
-      # own action pipes an installer script into a shell instead.
+      # The formatter's release archive and the ktfmt jar are kept between runs under their
+      # digests, so a run downloads them only when a digest above changes or the entry has expired.
+      - name: Restore the formatter downloads
+        id: formatter-downloads
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/formatter-downloads
+          key: formatter-downloads-kempt-${{ env.KEMPT_LINUX_X64_SHA256 }}-ktfmt-${{ env.KTFMT_SHA256 }}
+
+      # A failed download is tried three more times, after 10, 30 and 60 s. A file that fails its
+      # digest fails the job at once, with no retry, and is never saved.
+      - name: Download the formatter archive and the ktfmt jar
+        if: steps.formatter-downloads.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          downloads="$RUNNER_TEMP/formatter-downloads"
+          mkdir -p "$downloads"
+          bash .github/scripts/download-verified.sh \
+            "https://github.com/ZacSweers/kempt/releases/download/$KEMPT_VERSION/kempt-fmt-x86_64-unknown-linux-gnu.tar.xz" \
+            "$KEMPT_LINUX_X64_SHA256" "$downloads/kempt-fmt-x86_64-unknown-linux-gnu.tar.xz"
+          bash .github/scripts/download-verified.sh \
+            "https://repo1.maven.org/maven2/com/facebook/ktfmt/$KTFMT_VERSION/ktfmt-$KTFMT_VERSION-with-dependencies.jar" \
+            "$KTFMT_SHA256" "$downloads/ktfmt-$KTFMT_VERSION.jar"
+
+      - name: Save the formatter downloads
+        if: steps.formatter-downloads.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/formatter-downloads
+          key: ${{ steps.formatter-downloads.outputs.cache-primary-key }}
+
+      # The release archive, checked against the digest above before anything in it runs, whether
+      # it came from the cache or the download. kempt's own action pipes an installer script into a
+      # shell instead.
       - name: Install kempt
         run: |
           set -euo pipefail
-          archive="kempt-fmt-x86_64-unknown-linux-gnu.tar.xz"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/$archive" \
-            "https://github.com/ZacSweers/kempt/releases/download/$KEMPT_VERSION/$archive"
-          echo "$KEMPT_LINUX_X64_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          archive="$RUNNER_TEMP/formatter-downloads/kempt-fmt-x86_64-unknown-linux-gnu.tar.xz"
+          echo "$KEMPT_LINUX_X64_SHA256  $archive" | sha256sum --check --strict
           mkdir -p "$RUNNER_TEMP/kempt"
-          tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/kempt" --strip-components=1
+          tar -xJf "$archive" -C "$RUNNER_TEMP/kempt" --strip-components=1
           echo "$RUNNER_TEMP/kempt" >> "$GITHUB_PATH"
 
       - name: Install ktfmt where kempt looks for it
@@ -247,8 +277,7 @@ jobs:
           set -euo pipefail
           cache="$RUNNER_TEMP/kempt-cache"
           mkdir -p "$cache"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "$cache/ktfmt-$KTFMT_VERSION.jar" \
-            "https://repo1.maven.org/maven2/com/facebook/ktfmt/$KTFMT_VERSION/ktfmt-$KTFMT_VERSION-with-dependencies.jar"
+          cp "$RUNNER_TEMP/formatter-downloads/ktfmt-$KTFMT_VERSION.jar" "$cache/ktfmt-$KTFMT_VERSION.jar"
           echo "$KTFMT_SHA256  $cache/ktfmt-$KTFMT_VERSION.jar" | sha256sum --check --strict
           chmod a-w "$cache/ktfmt-$KTFMT_VERSION.jar" "$cache"
           echo "KEMPT_CACHE_DIR=$cache" >> "$GITHUB_ENV"
