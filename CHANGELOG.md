@@ -6,8 +6,8 @@ All notable changes to this project are recorded in this file. The format follow
 
 <!-- Keep the five headings under "Unreleased", even when they are empty: scripts/api-compat.py
      requires a change to the public API, the stored data or the supabase-kt pin to add a line under
-     the heading it needs. A release renames "Unreleased" to its version and date, and starts a new
-     one. -->
+     the heading it needs (before the first release, under any of them). A release renames
+     "Unreleased" to its version and date, and starts a new one. -->
 
 ## Unreleased
 

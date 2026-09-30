@@ -79,8 +79,16 @@ the records. After changing the API, write the records again and commit them wit
 git add supabase-offline-kt/api supabase-offline-kt-testing/api
 ```
 
+Run `updateKotlinAbi` on its own, not in the same Gradle command as `checkKotlinAbi` or `check`:
+Gradle refuses to run the two together, because one writes the files the other reads.
+
 Then read the diff of `api/` as a reviewer will. Every line added is a new promise; every line
 removed or changed breaks someone.
+
+The records hold every public declaration's types, but not its parameter names or their order.
+Renaming a public parameter breaks every caller that passes it by name, and swapping two
+parameters of the same type changes what a call does, yet neither changes a record. A reviewer
+checks every parameter name and order in the diff of the sources.
 
 ### 2. Say what kind of change it is
 
@@ -89,8 +97,11 @@ Room schemas, the tests that pin stored formats and the version catalog. To see 
 you push, commit and run:
 
 ```bash
-python3 scripts/api-compat.py classify --base origin/main
+python3 scripts/api-compat.py classify --base "$(git merge-base origin/main HEAD)"
 ```
+
+Compare with the merge base, not with `origin/main` itself: on a branch behind `main`, whatever
+`main` added since would read as removed.
 
 Then add a line under `## Unreleased` in `CHANGELOG.md`, under the heading the rating needs:
 
@@ -101,25 +112,41 @@ Then add a line under `## Unreleased` in `CHANGELOG.md`, under the heading the r
 | additive | `### Added` or `### Changed` |
 | none or patch | nothing is required; `### Fixed` for a fix |
 
-`python3 scripts/api-compat.py check-pr --base origin/main` runs the same check CI does.
+Until the first release is tagged, `## Unreleased` describes that release as a whole, so any new or
+edited line in it satisfies the check; from the first release on, the rating decides the heading.
+`python3 scripts/api-compat.py check-pr --base "$(git merge-base origin/main HEAD)"` runs the same
+check CI does.
 
-The script cannot see everything. If your change alters documented behaviour, such as a default,
-the order of replay, or what is kept after a sign-out, put it under `### Breaking` yourself. The
-release check treats a Breaking line as breaking whatever the records say.
+The script cannot see everything. A person reviews:
+
+- **Parameter names and their order**, which neither record shows (see step 1).
+- **Documented behaviour**, such as a default, the order of replay, or what is kept after a
+  sign-out. If your change alters it, put it under `### Breaking` yourself: the release check
+  treats a Breaking line as breaking whatever the records say.
+- **The body of an inline function**, which a caller keeps until it recompiles; anything a
+  published inline body calls must stay.
+- **A deprecation level raised to error, or a new opt-in requirement** on existing API: neither
+  record shows annotations.
 
 The script errs towards breaking. If it calls a change breaking that is not, copy its finding into
-`compat/overrides.txt`, followed by two spaces, `# ` and the reason. The reviewer judges the reason,
-and the file is emptied after each release.
+`compat/overrides.txt`, followed by two spaces, `# ` and the reason. The reviewer judges the reason.
+An override stays until the release after it empties the file, so the release check sees it too; a
+line your pull request adds must match one of its findings.
+
+The rules the script applies are in `compat/policy.json`. A pull request is rated under the stricter
+of its own rules and its base's: a change that loosens them applies from the next pull request on,
+one that tightens them at once, and either is reported for review.
 
 ### 3. What is never allowed
 
 - **Editing an exported Room schema** (`supabase-offline-kt/schemas/`). A shipped schema is what
   devices have on disk. A schema change is a new version with a migration and a migration test, and
   it waits for a minor release.
-- **Changing a stored name or format without saying so.** The tests that pin the reserved rows, the
-  persisted names and JSON keys, and the file-cache layout are listed in `compat/policy.json`.
-  Changing one of them is reported, and needs a changelog line that says what happens to data
-  already on a device.
+- **Changing a stored name or format without saying so.** The tests that pin what is on the device
+  (the reserved rows, the persisted names and JSON keys, the stored mutation formats and their
+  replay, the file-cache layout, and where the database and the cached files live) are listed in
+  `compat/policy.json`. Changing one of them, or loosening it, is reported, and needs a changelog
+  line that says what happens to data already on a device. A new pinning test belongs in that list.
 - **Hiding API from the records.** Only declarations gated by an error-level opt-in marker listed in
   `compat/abi-exclusions.txt` are left out. `scripts/check-api-visibility.sh` fails when a marker is
   missing from that file or the file names anything else. A public declaration in an internal

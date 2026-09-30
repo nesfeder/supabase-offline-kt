@@ -100,13 +100,16 @@ must use. A supabase-kt patch can arrive in a patch release.
 ## How this is enforced
 
 - The public API of each Kotlin artifact is recorded in its repository, and a pull request that
-  changes the API without updating the record fails its checks. A reviewer reads every change to
-  the record.
+  changes a declaration's signature without updating the record fails its checks. A reviewer reads
+  every change to the record.
 - A script rates each pull request from the records, the database schemas, the tests that pin
   stored formats, and the version catalog: none, patch, additive or breaking. The pull request must
   add a matching entry to the changelog, and a person can always mark a change breaking when the
-  script cannot see it, for example a changed default.
-- The same script rates everything since the last release tag and refuses a version number that is
-  too small for it.
+  script cannot see it.
+- Some changes reach no record, so a reviewer checks them by hand: parameter names and their order
+  (a renamed parameter breaks a call that names it), changed defaults and documented behaviour, the
+  bodies of inline functions, and new deprecation levels or opt-in requirements.
+- The release workflow will run the same script over everything since the last release tag, and
+  refuse a version number too small for what it finds.
 
 The details for contributors are in [Contributing](contributing.md#changing-the-public-api).

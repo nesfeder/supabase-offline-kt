@@ -272,8 +272,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The commit being checked and its first parent, the base the classifier compares with.
+          # The commit being checked and its first parent, the base the classifier compares with,
+          # and the release tags, which decide the changelog rule it applies.
           fetch-depth: 2
+          fetch-tags: true
           persist-credentials: false
 
       # Internal code stays out of the public surface, and compat/abi-exclusions.txt and
