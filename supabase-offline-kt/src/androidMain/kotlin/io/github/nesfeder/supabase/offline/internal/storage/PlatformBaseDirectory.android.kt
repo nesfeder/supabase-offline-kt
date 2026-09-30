@@ -7,11 +7,7 @@ import java.io.File
 import okio.Path
 import okio.Path.Companion.toPath
 
-/**
- * Android actual: inject a Context so we can choose an app-specific base dir.
- *
- * The base dir will be: <filesDir>/supabase_offline
- */
+/** `<filesDir>/supabase_offline`, resolved from the application context. */
 internal actual class PlatformBaseDirectory(context: Context) {
 
     actual val path: Path =

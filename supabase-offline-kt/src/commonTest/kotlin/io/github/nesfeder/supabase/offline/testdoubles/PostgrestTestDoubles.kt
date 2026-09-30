@@ -17,20 +17,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 
 /**
- * Scripted [PostgrestQueryBuilderWrapper] test double.
- *
- * SELECT delegates to [onSelect] so integration tests can fail a `CacheFirstThenNetwork` network
- * refresh a controlled number of times and then let it succeed, without any HTTP transport.
- *
- * Each mutation verb records its call — INSERT/UPSERT/UPDATE bodies into [recordedInsertBodies] /
- * [recordedUpsertBodies] / [recordedUpdateBodies], DELETE calls into [recordedDeleteCount] — and
- * then delegates to the matching optional handler ([onInsert] / [onUpsert] / [onUpdate] /
- * [onDelete]). A verb whose handler is left null throws, so select-only tests still fail loudly if
- * the pipeline issues an unexpected write. Handlers may throw to script network / permanent /
- * server failures for the mutation syncer.
- *
- * Build responses with [postgrestResultOf], which wraps a JSON payload in a [PostgrestResult]
- * exactly like the resolver's own result construction.
+ * Scripted [PostgrestQueryBuilderWrapper], with no HTTP: SELECT answers [onSelect], and each write
+ * records its call, then answers its handler. A write whose handler is `null` throws, so an
+ * unexpected write fails the test; a handler may throw to script a failure. Build answers with
+ * [postgrestResultOf].
  */
 internal class FakePostgrestQueryBuilderWrapper(
     override val table: String,
@@ -119,9 +109,8 @@ internal class FakePostgrestQueryBuilderWrapper(
 }
 
 /**
- * Wraps a raw JSON [payload] in a [PostgrestResult] with empty headers, mirroring how the offline
- * select resolver materializes cache payloads. For use with
- * [FakePostgrestQueryBuilderWrapper.onSelect] handlers.
+ * Wraps [payload] in a [PostgrestResult] with no headers, as the engine builds a result from a
+ * cached payload; for the handlers of [FakePostgrestQueryBuilderWrapper].
  */
 internal fun postgrestResultOf(payload: String, postgrest: Postgrest): PostgrestResult =
     PostgrestResult(payload, HeadersBuilder().build(), postgrest)

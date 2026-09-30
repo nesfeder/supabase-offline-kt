@@ -21,15 +21,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * A scripted PostgREST server on a Ktor [MockEngine] that records every request it receives, so a
- * test can assert exactly what the engine put on the wire: method, table, query parameters
- * (filters, `on_conflict`, `columns`), the `Prefer` header, the schema headers and the body.
+ * A PostgREST server on a Ktor [MockEngine] that records every request as it reached the wire, so a
+ * test can assert what the engine sent. Build a client on it with [supabaseClient].
  *
- * Build a client on it with [supabaseClient]. Every request is answered by [answer], which can
- * return a canned response ([okJson], [postgrestError]) or throw to simulate a transport failure
- * ([connectivityFailure]).
- *
- * @property answer decides the response for each recorded request; by default `200 []`.
+ * @property answer decides the response to each recorded request: `200 []` by default, a canned
+ *   [okJson] or [postgrestError], or a throw, such as [connectivityFailure], to fail the transport.
  * @param engineDispatcher where the engine runs requests; by default its own I/O threads. A test
  *   that passes its own test dispatcher keeps every request on the test scheduler.
  */
@@ -121,6 +117,7 @@ internal class RecordingPostgrestServer(
             install(Postgrest) { maxRetries = 0 }
         }
 
+    /** Canned answers for [answer]. */
     companion object {
         /**
          * A `200 OK` JSON response carrying [body].

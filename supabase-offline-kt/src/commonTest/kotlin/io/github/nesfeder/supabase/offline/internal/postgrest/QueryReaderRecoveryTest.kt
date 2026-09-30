@@ -49,15 +49,12 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Integration tests across the real resolver stack:
- * [QueryReader] + [cacheFirstWithParallelRefresh] + a real [OfflineStore] (in-memory DAO fakes) + a
- * real [RefreshCoordinator]. Only the network SELECT is scripted.
- *
- * These pin the junctions the isolated unit tests can't: the resolver wiring the accelerator and
- * coordinator into the combinator, the per-query [OfflineReadResult] surface, single-flight
- * sharing, and the Part B removal of the empty-array cache seed. They run under
- * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], the rule the engine followed before the settled
- * session became the default, to pin that it still behaves exactly as it did.
+ * Integration tests across the real read stack: [QueryReader], [cacheFirstWithParallelRefresh], a
+ * real [OfflineStore] over in-memory DAOs and a real [RefreshCoordinator], with only the network
+ * SELECT scripted. They pin what unit tests cannot: the wiring of the accelerator and the
+ * coordinator into the refresh, the per-query [OfflineReadResult], single-flight sharing, and that
+ * nothing seeds an empty cache with `[]`. They run under the non-default
+ * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], whose rules their expectations assume.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class QueryReaderRecoveryTest {
@@ -67,8 +64,7 @@ class QueryReaderRecoveryTest {
     @Test
     fun with_state_reports_no_data_then_stalled_then_network_idle_on_late_success() =
         runTest(UnconfinedTestDispatcher()) {
-            // Given: a network SELECT that fails until told otherwise — nothing cached, network
-            // down
+            // Given: nothing cached, and a network SELECT that fails until told otherwise
             val postgrest = testPostgrest()
             val accelerator = MutableSharedFlow<Unit>()
             var failing = true
@@ -83,8 +79,8 @@ class QueryReaderRecoveryTest {
                 )
             val resolver = buildResolver(wrapper, backgroundScope, accelerator)
 
-            // When: a CacheFirstThenNetwork state-carrying subscription starts and the fast ladder
-            // exhausts
+            // When: a CacheFirstThenNetwork subscription with state starts and the fast retries run
+            // out
             val reads = mutableListOf<OfflineReadResult>()
             val collector = launch {
                 resolver
@@ -224,8 +220,7 @@ class QueryReaderRecoveryTest {
             advanceUntilIdle()
             assertEquals(1, networkCalls, "the first subscription runs exactly one refresh")
 
-            // And: a genuinely fresh collector subscribes to the same signature after the first
-            // left
+            // And: a fresh collector subscribes to the same signature after the first has left
             val laterReads = mutableListOf<String>()
             val secondCollector = launch {
                 resolver
@@ -328,11 +323,10 @@ class QueryReaderRecoveryTest {
             }
             advanceUntilIdle()
 
-            // Then: the authoritative empty replaces the cached rows — both in the store and
-            // at the collector — instead of the pre-fix behavior of dropping the [] and
-            // rendering the deleted rows forever. (The eager refresh may overwrite the cache
-            // before the first cached emission reaches the collector, so only convergence is
-            // asserted, not the stale-then-empty sequence.)
+            // Then: the authoritative empty replaces the cached rows, in the store and at the
+            // collector, rather than being dropped while the deleted rows are still served. (The
+            // eager refresh may overwrite the cache before the first cached emission reaches the
+            // collector, so only convergence is asserted, not the stale-then-empty sequence.)
             assertEquals(2, networkCalls, "the re-subscription must run its own refresh")
             assertEquals("[]", emissions.last(), "collector converges to the server's empty")
             assertEquals("[]", objectDao.allForTable("plans").single().payload)
@@ -596,9 +590,8 @@ class QueryReaderRecoveryTest {
                 )
 
             for ((strategyName, strategy) in networkBoundStrategies) {
-                // And: a cold cache and a read that races session restore — the request carries
-                // only the anon key, so RLS filters every row and PostgREST answers `200 []` for
-                // data that exists
+                // And: a cold cache and a read racing session restore: sent with only the anon key,
+                // it has every row hidden by RLS, so PostgREST answers `200 []` for rows that exist
                 val postgrest = testPostgrest()
                 var serverRows = "[]"
                 var authState: RequestSession = RequestSession.Restoring
@@ -657,8 +650,7 @@ class QueryReaderRecoveryTest {
     @Test
     fun one_shot_restore_window_ladder_waits_before_it_spends_a_second_request() =
         runTest(UnconfinedTestDispatcher()) {
-            // Given: a session that never finishes restoring, so every request that goes out is
-            // RLS-filtered
+            // Given: a session that never finishes restoring, so RLS filters every request
             val postgrest = testPostgrest()
             var networkCalls = 0
             val wrapper =
@@ -1119,9 +1111,8 @@ class QueryReaderRecoveryTest {
                     postgrest = postgrest,
                     onSelect = {
                         networkCalls++
-                        // Snapshot before parking: this request's answer is the server as it was
-                        // when the request went out, not as it is when the response is finally
-                        // delivered.
+                        // Snapshot before parking: this request answers with the server as it was
+                        // when the request went out, not when the response is finally delivered.
                         val answer = serverRows
                         if (networkCalls == 2) inFlight.await()
                         postgrestResultOf(answer, postgrest)

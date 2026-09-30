@@ -11,9 +11,9 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
 
 /**
- * A bucket whose channel downloads generate [totalBytes] on the fly and never hold them, so a test
- * can measure what the offline bucket itself keeps in memory. It runs the download's request
- * overrides on a request for the untransformed object, as supabase-kt does.
+ * A bucket whose channel downloads generate [totalBytes] on the fly, so a test can measure what the
+ * offline bucket itself holds in memory. It runs the download's request overrides on a request for
+ * the untransformed object, as supabase-kt does.
  *
  * @param inner answers everything but the channel downloads.
  * @param totalBytes the size of every download.

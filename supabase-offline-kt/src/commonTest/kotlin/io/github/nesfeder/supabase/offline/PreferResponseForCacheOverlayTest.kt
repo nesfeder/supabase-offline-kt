@@ -22,19 +22,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Regression coverage for the "saved but empty" bug where a live `selectAsFlow` collector surfaces
- * a parent row whose own columns are correct but whose joined child rows (looked up by the parent's
- * server-assigned id) are missing, even after the save succeeded.
- *
- * Root cause: `OfflinePostgrestQueryBuilder` was patching the object_cache using the *request*
- * body, which for INSERT/UPSERT omits server-assigned columns (`id`, `created_at`, etc.). The
- * overlaid cache row decoded with `id = ""`, so a downstream `childrenByParentId[parent.id]` lookup
- * in the consumer's reactive join silently missed. A tab-switch forced a fresh subscription whose
- * network SELECT replaced the cache with the full server payload, at which point the join worked.
- *
- * The fix ([preferResponseForCacheOverlay]) prefers the server response payload as the overlay body
- * when the caller asked for the row back, so live collectors see the same fully-formed row the
- * server has.
+ * [preferResponseForCacheOverlay]: a write that asked for its rows back patches the cache with the
+ * server's rows. Columns the server assigns, such as `id`, then reach live readers at once; without
+ * usable rows in the response, the request body patches it.
  */
 class PreferResponseForCacheOverlayTest {
 
@@ -179,11 +169,8 @@ class PreferResponseForCacheOverlayTest {
 
     @Test
     fun cache_overlay_using_response_preserves_server_assigned_id_for_joins() = runTest {
-        // End-to-end shape-check mirroring a consumer's reactive parent/child join:
-        // a live cache-less subscription (Part B: no fabricated seed) has a successful upsert
-        // materialized into a real cache row using the *response* body (server-assigned id) rather
-        // than the id-less request body. Downstream decode + join round-trips the id — the thing
-        // that silently broke before.
+        // A live reader with nothing cached gets a successful upsert as a real cache row built from
+        // the response, with the id the server assigned, not from the request body, which has none.
 
         // Given
         val objectDao = FakeObjectDao()

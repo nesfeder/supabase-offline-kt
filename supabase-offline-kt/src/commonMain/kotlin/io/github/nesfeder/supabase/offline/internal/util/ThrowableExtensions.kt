@@ -11,12 +11,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.io.IOException
 
 /**
- * Returns the associated HTTP status code for this [Throwable] if it represents an HTTP failure, or
- * `null` if no status can be determined.
- *
- * We inspect this throwable and its cause-chain for:
- * - [PostgrestRestException]
- * - [ResponseException]
+ * The HTTP status carried by this throwable or a cause, as a [PostgrestRestException] or a
+ * [ResponseException], or `null` when neither is in the chain.
  */
 internal fun Throwable.httpStatusOrNull(): Int? {
     var current: Throwable? = this
@@ -80,29 +76,15 @@ internal fun Int.isPermanentMutationFailureStatus(): Boolean {
 internal fun Throwable.isTransientAuthFailure(): Boolean = httpStatusOrNull() == 401
 
 /**
- * Returns `true` if this error is very likely a **network / connectivity** failure rather than an
- * application or server-side error.
- *
- * This is used for both SELECT cache fallback and mutation retry behavior.
- *
- * Rules:
- * - True for:
- *     - [HttpRequestTimeoutException]
- *     - [ConnectTimeoutException]
- *     - [SocketTimeoutException]
- *     - [IOException] that indicates transport failure
- *     - Wrapped causes of the above
- * - False for:
- *     - [CancellationException]
- *     - Any throwable with an associated HTTP status (4xx/5xx)
- *     - PostgREST / server logic errors
+ * Whether this failure is the network's rather than the server's: a timeout or an [IOException],
+ * here or in a cause. A cancellation, or anything carrying an HTTP status, never is. Read fallback,
+ * write queueing and replay all decide on it.
  */
 internal fun Throwable.isNetworkOrConnectivityFailure(): Boolean {
     // Cancellation is never treated as a network error.
     if (this is CancellationException) return false
 
-    // Any error that already has an HTTP status is assumed to be a server
-    // response (4xx/5xx etc.), not a transport/connectivity failure.
+    // A failure with an HTTP status is the server's answer, not a transport failure.
     if (httpStatusOrNull() != null) return false
 
     var current: Throwable? = this

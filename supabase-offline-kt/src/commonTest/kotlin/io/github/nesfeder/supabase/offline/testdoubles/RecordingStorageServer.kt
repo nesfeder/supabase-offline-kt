@@ -21,16 +21,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.io.IOException
 
 /**
- * A Supabase Storage server on a Ktor [MockEngine], answering the real supabase-kt `BucketApi`
- * exactly as the service would for the calls the offline bucket makes: downloads (authenticated and
- * public, with or without an image transform), uploads, updates and signed-URL uploads. Every
- * request is recorded as it reached the wire, so a test can pin how supabase-kt encodes an object
- * path.
+ * A Supabase Storage server on a Ktor [MockEngine] that answers supabase-kt's `BucketApi` as the
+ * service does, recording each request as it reached the wire. It serves downloads, transformed or
+ * not, uploads, updates and signed-URL uploads.
  *
- * A transformed download answers with the original object's bytes prefixed by the transform's query
- * (`"render?height=64&width=64:" + original`), so a test can tell the variants apart. A missing
- * object answers the way Storage does: HTTP 400 with a body whose `statusCode` is 404, which
- * supabase-kt raises as a `NotFoundRestException`.
+ * A transformed download answers the transform's query before the original's bytes
+ * (`"render?height=64&width=64:" + original`). A missing object answers HTTP 400 with a
+ * `statusCode` of 404, which supabase-kt raises as a `NotFoundRestException`.
  */
 internal class RecordingStorageServer {
 

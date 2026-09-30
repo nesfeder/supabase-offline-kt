@@ -10,7 +10,7 @@ import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
 import platform.Foundation.NSUserDomainMask
 
-/** iOS actual: resolve Documents/supabase_offline */
+/** `Documents/supabase_offline`, or the same name in the temporary directory without Documents. */
 internal actual class PlatformBaseDirectory {
 
     actual val path: Path by lazy {

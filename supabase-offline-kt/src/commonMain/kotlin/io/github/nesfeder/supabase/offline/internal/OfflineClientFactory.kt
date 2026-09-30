@@ -168,15 +168,14 @@ internal fun adoptDefaultDatabase(
 /** The object-cache eviction settings [SupabaseOfflineConfig.cacheSizeBytes] asks for. */
 internal fun SupabaseOfflineConfig.toCacheSettings(): OfflineCacheSettings =
     OfflineCacheSettings(
-        // Unlimited disables size-based eviction; anything else is held above the minimum Room
-        // file.
+        // Unlimited turns size-based eviction off; any other bound is at least the minimum.
         maxDbSizeBytes =
             if (cacheSizeBytes == CACHE_SIZE_UNLIMITED) null
             else maxOf(cacheSizeBytes, MIN_CACHE_SIZE_BYTES),
-        // Evict a small batch of rows per pass; the size reduction per batch depends on payload
-        // sizes.
+        // A small batch of rows per step of a pass; what each batch frees depends on the payloads.
         evictionBatchSize = 10,
-        // Keep ~50 MB during a cleanup pass so a burst across the limit doesn't wipe everything.
+        // A pass drains 50 MB below the bound, or to the bound when it is 50 MB or less, so the
+        // next writes do not start another at once.
         minRetainedBytes = 50L * 1024L * 1024L,
     )
 

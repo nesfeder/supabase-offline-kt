@@ -6,12 +6,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-/**
- * KMP Room builder for Android (requires Context).
- *
- * Uses [AndroidDbPathProvider] so the Room database path is consistent with the platform-specific
- * path provider used elsewhere.
- */
+/** A Room builder for the offline database at [dbPath], on the application context. */
 internal fun getDatabaseBuilder(
     context: Context,
     dbPath: String,

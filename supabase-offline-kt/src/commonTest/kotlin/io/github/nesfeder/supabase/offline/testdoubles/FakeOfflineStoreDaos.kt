@@ -9,18 +9,11 @@ import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryObjectDao
 
-/**
- * Recording and scripting extensions of the engine's in-memory DAOs.
- *
- * The storage behaviour itself lives in one place — `InMemoryObjectDao`, `InMemoryStorageDao` and
- * `InMemoryMutationDao` under `internal/testing`, the same substrate the testing artifact's
- * in-memory client runs on. They mirror Room's per-table invalidation: any write on a table fans
- * out to every observer of that table, so inserts under a signature a collector is already
- * observing do surface downstream. The classes here only add what a test needs to observe or steer:
- * write counters, seeding, failure scripting and interleaving hooks. A test with no such need uses
- * the in-memory DAO directly (storage tests use `InMemoryStorageDao` as-is).
- *
- * Build a store over them with [newTestOfflineStore].
+/*
+ * Recording and scripting extensions of the engine's in-memory DAOs, which live in
+ * `internal/testing` and back the testing artifact's client too. These add only what a test needs
+ * to observe or steer: counters, seeding, scripted failures and interleaving hooks; a test that
+ * needs none uses the in-memory DAO directly. Build a store over them with newTestOfflineStore.
  */
 
 /** [InMemoryObjectDao] with write counters, silent seeding, and eviction and interleaving hooks. */
@@ -58,29 +51,21 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     var forcedDeleteCount: Int? = null
 
     /**
-     * Optional suspension point inside [allForTable], invoked with the table name **after** the
-     * snapshot the call will return has been taken and **before** it is returned.
-     *
-     * `OfflineStore.patchCachedQueries` is a read-modify-write — snapshot every cached payload for
-     * the table, patch each, write each back — and this is the seam between its read and its write.
-     * A test parks one writer here (`CompletableDeferred.await()`) so a second writer can run to
-     * completion against the *same* pre-write snapshot: the exact interleaving behind a lost
-     * update, reproduced deterministically instead of by timing. `null` (the default) makes
-     * [allForTable] return immediately, as Room would.
+     * Runs inside [allForTable], with the table, after its snapshot is taken and before it is
+     * returned. A test parks one `OfflineStore.patchCachedQueries` writer here so a second writes
+     * against the same snapshot: a lost update, reproduced without timing. `null` returns at once.
      */
     var onAllForTableSnapshot: (suspend (table: String) -> Unit)? = null
 
     /**
-     * Optional suspension point inside [get], invoked after the row the call will return has been
-     * read and before it is returned: the seam where a first load of a record can be parked while a
-     * clear runs. `null` (the default) returns immediately.
+     * Runs inside [get] between reading the row and returning it; a test parks a first load of a
+     * record here while a clear runs. `null` returns at once.
      */
     var onGetSnapshot: (suspend (table: String, signature: String) -> Unit)? = null
 
     /**
-     * When it returns `true` for a row, [upsert] of that row fails with an [IllegalStateException]
-     * instead of writing it, as a full disk or a corrupt page would. `null` (the default) never
-     * fails.
+     * Makes [upsert] of a row it accepts fail with an [IllegalStateException], as a full disk or a
+     * corrupt page would. `null` never fails.
      */
     var failUpsertOf: ((ObjectRow) -> Boolean)? = null
 
@@ -128,9 +113,8 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     }
 
     /**
-     * Optional suspension point inside [upsert], invoked with the row before it is written: the
-     * seam where a store's write can be parked inside its locks while another writer queues on
-     * them. `null` (the default) writes at once.
+     * Runs inside [upsert] before the row is written, where a test parks a store's write inside its
+     * locks while another writer queues on them. `null` writes at once.
      */
     var onUpsert: (suspend (row: ObjectRow) -> Unit)? = null
 
@@ -225,8 +209,8 @@ internal class FakeDeleteAllFailingMutationDao(real: MutationDao) : MutationDao 
 }
 
 /**
- * A real [ObjectDao] — Room's, in the on-disk tests — whose [deleteAll] fails, so a test can check
- * that a clear which fails part-way changes nothing on disk.
+ * A real [ObjectDao], Room's in the on-disk tests, whose [deleteAll] fails. A test checks with it
+ * that a clear failing part-way changes nothing on disk.
  */
 internal class FakeDeleteAllFailingObjectDao(real: ObjectDao) : ObjectDao by real {
     override suspend fun deleteAll() {

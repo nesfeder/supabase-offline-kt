@@ -5,10 +5,10 @@ package io.github.nesfeder.supabase.offline.internal.util
 import io.ktor.client.network.sockets.ConnectTimeoutException
 
 /**
- * Whether this failure, as the HTTP engine raised it, proves the request never reached the server:
- * the connection or the host name lookup failed, here or in a cause. An engine that retried inside
- * itself carries its earlier attempts as suppressed exceptions, and each of those must prove it
- * too. Any other failure may have been delivered.
+ * Whether this failure, as the HTTP engine raised it, proves the request never reached the server.
+ * It does when the connection or the host name lookup failed, here or in a cause; an engine that
+ * retried inside itself carries its earlier attempts as suppressed exceptions, and each of those
+ * must prove it too. Any other failure may have been delivered.
  */
 internal fun Throwable.provesRequestNeverSent(): Boolean =
     provesNeverSentWithin(MAX_EXCEPTIONS_WALKED)
