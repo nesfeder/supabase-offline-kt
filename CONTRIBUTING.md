@@ -289,9 +289,25 @@ package "Development". An alert without that tag concerns what the library ships
 first (`scope:runtime` in the alerts filter). A new module whose output ships joins the project
 pattern in the workflow's `resolve` step.
 
+A development alert on a library that a Gradle plugin or one of its tools brings in, when no
+release of the plugin fixes it yet, is closed with a **build-tool floor**: a `buildToolFloor-*`
+library in `gradle/libs.versions.toml` at the patched version, with a comment naming the advisory
+and the plugin release that will make it unnecessary. The build applies every floor as a
+dependency constraint, which only ever raises a version, to the classpaths those plugins and tools
+resolve: the root build script's, build-logic's, and each module's lint and Swift export tools
+(the `supabase-offline.build-tool-floors` convention plugin, which every role plugin applies).
+Nothing that ships is affected. `python3 scripts/check-build-tool-floors.py` resolves those
+classpaths, for every module Gradle lists, and fails when a floor does not hold, or when nothing
+asks for less than a floor any more, which means a plugin release has made it unnecessary: remove
+it then. A pass means the floors hold, not that they are patched versions: the check knows the
+floors, not the advisories, so a floor lowered to a vulnerable version still passes it. The
+floor's comment is what records the patched version, and the dependency graph's alerts catch a
+vulnerable one. CI runs the check with the Android host tests, and Dependabot proposes updates to
+the floors in the `build-tooling` group.
+
 ## Continuous integration
 
-Every pull request runs `.github/workflows/ci.yml`. Its last job, **Final status**, is the one check
+Every pull request runs `.github/workflows/ci.yml`. Its last job, **All Green**, is the one check
 a pull request needs. Most failures are the change's own. This section covers two kinds that are
 not.
 

@@ -9,6 +9,9 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 // supabase-offline.kmp-library: what every Kotlin Multiplatform library module shares. A module
 // keeps its own namespace, host-test setup and dependencies.
 
+// The build-tool floors, which every role plugin applies.
+pluginManager.apply("supabase-offline.build-tool-floors")
+
 pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
     extensions.configure<KotlinMultiplatformExtension> {
         explicitApi()
