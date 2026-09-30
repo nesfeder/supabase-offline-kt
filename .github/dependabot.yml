@@ -79,6 +79,10 @@ updates:
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "io.opentelemetry:opentelemetry-api"
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "com.fasterxml.jackson.*"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.jsoup:jsoup"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
     # A dependency joins the first group that matches it. The first three names are the labels the
     # triage workflow applies.
     groups:
@@ -121,6 +125,8 @@ updates:
           - "org.jdom:jdom2"
           - "org.bitbucket.b_c:jose4j"
           - "io.opentelemetry:*"
+          - "com.fasterxml.jackson.*"
+          - "org.jsoup:jsoup"
         update-types: ["minor", "patch"]
       test-libraries:
         patterns:

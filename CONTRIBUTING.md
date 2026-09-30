@@ -331,8 +331,9 @@ release of the plugin fixes it yet, is closed with a **build-tool floor**: a `bu
 library in `gradle/libs.versions.toml` at the patched version, with a comment naming the advisory
 and the plugin release that will make it unnecessary. The build applies every floor as a
 dependency constraint, which only ever raises a version, to the classpaths those plugins and tools
-resolve: the root build script's, build-logic's, and each module's lint and Swift export tools
-(the `supabase-offline.build-tool-floors` convention plugin, which every role plugin applies).
+resolve: the root build script's, build-logic's, and each module's lint and Swift export tools,
+the Kotlin Gradle plugin's publishing validation and Dokka's generator (the
+`supabase-offline.build-tool-floors` convention plugin, which every role plugin applies).
 Nothing that ships is affected. `python3 scripts/check-build-tool-floors.py` resolves those
 classpaths, for every module Gradle lists, and fails when a floor does not hold, or when nothing
 asks for less than a floor any more, which means a plugin release has made it unnecessary: remove
