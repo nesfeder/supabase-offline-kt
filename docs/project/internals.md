@@ -26,6 +26,7 @@ If you are looking for the **how to use it** surface (strategies, exception tabl
 - [Network vs. server error classification](#network-vs-server-error-classification)
 - [Storage cache](#storage-cache)
 - [Cache eviction](#cache-eviction)
+- [Engine notes](#engine-notes)
 
 ## Module map
 
@@ -435,16 +436,55 @@ See [storage.md](../behaviours/storage.md) for the user-facing API around `ensur
 
 ## Cache eviction
 
-`SupabaseOfflineConfig.cacheSizeBytes` (default 100 MB) caps the size of the Room database file.
-Eviction is implemented in `OfflineStore.enforceDbSizeLimitIfNeeded()` and uses the settings in
-[OfflineCacheSettings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineCacheSettings.kt):
+`SupabaseOfflineConfig.cacheSizeBytes` (default 100 MB) bounds the summed length of the cached
+query payloads, not the size of the database file: SQLite keeps the pages a `DELETE` frees, so the
+file never shrinks and could never tell an eviction pass to stop. Eviction is
+`OfflineStore.enforceDbSizeLimitIfNeeded()`, with the settings in `OfflineCacheSettings`:
 
-- `maxDbSizeBytes` — hard cap. `null` (when `cacheSizeBytes == CACHE_SIZE_UNLIMITED`) disables
-  eviction entirely.
-- `evictionBatchSize = 10` — number of oldest rows deleted per pass via
-  `ObjectDao.deleteOldestPayloadRows`.
-- `minRetainedBytes = 50 MB` — soft floor that keeps the eviction loop from wiping cached data
-  under normal circumstances.
+- `maxDbSizeBytes`: the bound; `null` (when `cacheSizeBytes == CACHE_SIZE_UNLIMITED`) turns
+  size-based eviction off. Any other value is at least `MIN_CACHE_SIZE_BYTES`.
+- `evictionBatchSize = 10`: how many of the oldest rows one step of a pass deletes. A value below
+  one is treated as one.
+- `minRetainedBytes = 50 MB`: headroom. A pass that starts above the bound drains to 50 MB below it,
+  so a burst of writes does not start a pass on every write. When the bound is 50 MB or less, a
+  pass drains to the bound itself.
 
-Only `object_cache` rows are evicted by size — the mutation queue and storage metadata are
-considered durable user state and never thrown away by the eviction loop.
+A pass keeps the payloads live readers show, up to 500 of them. Only `object_cache` rows are
+evicted by size: the mutation queue and the storage metadata are never thrown away by this loop.
+
+## Engine notes
+
+This section describes the engine as it is for 0.1.0: the design reasons behind code whose comments
+state only the contract.
+
+### One JSON configuration
+
+Every cached payload, overlay and stored filter descriptor is read and written with one `Json`
+instance, `OfflineJson`, so the serializer cache is shared on the read path and the settings
+cannot drift between call sites. It ignores unknown keys, and it leaves `coerceInputValues` off,
+because coercion would change what the overlay decodes.
+
+### Telling a dry run from a write
+
+supabase-kt keeps `dryRun()` private and records it nowhere but the request's `Prefer` header, as
+`tx=rollback`. The mutation queue does not keep that header, so a dry run that was queued would
+replay as a real write. Before a write can be queued, the engine therefore builds its request and
+reads the header: the write runs under a `PreferHeaderProbe` coroutine-context element, and a
+request-pipeline phase installed ahead of every plugin (`installDryRunCheck`, once per client,
+claimed by compare-and-set on a flag in the client's attributes) records the header of a PostgREST
+write sent under the probe and stops it. No plugin, such as a retry or logging plugin, sees the
+stopped request; a subscriber to the client's `HttpRequestCreated` monitor event does, because
+that event fires before the pipeline runs. Whether the server rolled a dry run back is read from
+the `Preference-Applied` response header.
+
+### The Storage file cache's lock
+
+`StorageFileCache` runs every commit, eviction, move, invalidation and clear under one lock, and a
+function whose name ends in `Locked` expects to hold it. Two fields are written outside it, both
+safely: the flag that says the cache directories were prepared is set only while the client is
+built, before any clear can run; and the canonical data directory is a cache that any caller can
+recompute, so a race resolves the same path twice. A file's last use is recorded as its
+modification time, which survives a restart and needs no database column; eviction takes the
+least recently used files until the cache is a tenth below its bound, sparing pinned files and any
+used in the last 30 seconds. Temporary download files a crash left behind are swept once per
+cache, when they are a day old and no cache row names them.
