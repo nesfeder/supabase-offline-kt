@@ -14,27 +14,27 @@
 -- destructive operations": the file drops and recreates its own policies, and nothing else.
 -- To remove it all, see "how to reset" at the end.
 
--- A table of the same name in another shape would be kept by `create table if not exists`,
--- and the statements after it would fail halfway. Stop before changing anything instead.
+-- A table of the same name in another shape would be kept by `create table if not exists`, and
+-- a later statement would fail with a confusing error. Stop with a clear one before any change.
 do $$
 declare
   conflicting text;
 begin
-  select string_agg(format('public.%I', t.table_name), ', ')
+  select string_agg(format('public.%I', c.relname), ', ')
   into conflicting
-  from information_schema.tables t
-  where t.table_schema = 'public'
-    and t.table_name in ('tasks', 'task_photos')
+  from pg_catalog.pg_class c
+  where c.relnamespace = 'public'::regnamespace
+    and c.relname in ('tasks', 'task_photos')
     and not exists (
       select 1
-      from information_schema.columns c
-      where c.table_schema = 'public'
-        and c.table_name = t.table_name
-        and c.column_name = 'user_id'
+      from pg_catalog.pg_attribute a
+      where a.attrelid = c.oid
+        and a.attname = 'user_id'
+        and not a.attisdropped
     );
   if conflicting is not null then
-    raise exception '% already exists without a user_id column, so it is not this schema''s table',
-      conflicting
+    raise exception 'this file creates public.tasks and public.task_photos, but found % '
+      'already there in another shape (no user_id column)', conflicting
       using hint = 'Rename or drop it, or apply this file to a project of its own.';
   end if;
 end
