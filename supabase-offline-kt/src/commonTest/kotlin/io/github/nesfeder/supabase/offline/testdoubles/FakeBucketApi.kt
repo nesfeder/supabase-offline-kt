@@ -27,25 +27,15 @@ import io.ktor.utils.io.writeFully
 import kotlin.time.Duration
 
 /**
- * Scriptable [BucketApi] test double for exercising the offline bucket.
- *
- * Every download — byte array or byte channel, authenticated or public — gets its bytes from
- * [onDownload], which a test can point at a success or a specific failure (transport error, a
- * `NotFoundRestException`, or `awaitCancellation`) per case. A channel download writes those bytes
- * in [channelChunkSize] pieces through [onChannelChunk] (a test can park or fail between pieces),
- * then closes the channel, as supabase-kt does.
- *
- * Like supabase-kt, every download runs the request overrides in its options against the request it
- * would send: an untransformed object URL, since this double cannot see an image transform (a test
- * that needs transforms uses [RecordingStorageServer] and the real bucket).
- *
- * `delete`, `move`, `copy`, `upload`, `update` and `uploadToSignedUrl` succeed and record their
- * arguments so cache-maintenance tests can assert the wrapper forwarded them; [onWrite] can make
- * them fail. Every other [BucketApi] member is [unsupported].
+ * Scriptable [BucketApi] for the offline bucket's tests: every download returns [onDownload]'s
+ * bytes, and every write records its arguments after [onWrite]. [setHeader] records its header,
+ * [bucketId] is served, and every other member fails. It sees no image transform; a test that needs
+ * one uses [RecordingStorageServer] and the real bucket.
  *
  * @property bucketId Bucket identifier the wrapper reads via `BucketApi by delegate`.
- * @property onDownload Suspending behavior invoked for every download; defaults to a failure so a
- *   test must opt into success explicitly.
+ * @property onDownload what every download, of every kind, returns or throws: a transport error, a
+ *   `NotFoundRestException` or `awaitCancellation()` scripts a failure. It fails by default, so a
+ *   test opts into success.
  */
 internal class FakeBucketApi(
     override val bucketId: String = "test-bucket",
@@ -55,7 +45,10 @@ internal class FakeBucketApi(
     /** Size of the pieces a channel download writes. */
     var channelChunkSize: Int = 4
 
-    /** Runs after each piece a channel download writes, with the count of bytes written so far. */
+    /**
+     * Runs after each piece a channel download writes, with the count of bytes written so far; a
+     * test parks or fails the download here.
+     */
     var onChannelChunk: suspend (bytesWritten: Int) -> Unit = {}
 
     /** Runs before every write operation (upload, update, delete, move, copy); throw to fail it. */
@@ -129,8 +122,8 @@ internal class FakeBucketApi(
     }
 
     /**
-     * Runs the request overrides in [options] against the request supabase-kt would send for an
-     * untransformed download of [path], as the real bucket does before it sends anything.
+     * Runs the overrides in [options] on the request supabase-kt would send for an untransformed
+     * download of [path], as the real bucket does.
      */
     private fun runRequestOverrides(
         path: String,
@@ -147,6 +140,7 @@ internal class FakeBucketApi(
         overrides.forEach { override -> request.override() }
     }
 
+    /** Writes [onDownload]'s bytes in [channelChunkSize] pieces, then closes the channel. */
     private suspend fun writeToChannel(path: String, channel: ByteWriteChannel) {
         channelDownloadPaths += path
         val bytes = onDownload(path)

@@ -30,9 +30,12 @@ import kotlinx.coroutines.withContext
  */
 internal class ClientOperationGate {
 
+    /** Whether the gate is closed, and how many calls are in flight, changed together. */
     private data class State(val closed: Boolean, val inFlight: Int)
 
     private val state = MutableStateFlow(State(closed = false, inFlight = 0))
+
+    /** Completes at [close], which ends every flow [callCollecting] is running. */
     private val closing = CompletableDeferred<Unit>()
 
     /** Whether [close] has run. */

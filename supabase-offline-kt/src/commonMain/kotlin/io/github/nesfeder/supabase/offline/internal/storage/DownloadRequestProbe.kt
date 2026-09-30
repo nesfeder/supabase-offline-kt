@@ -41,14 +41,19 @@ internal class DownloadRequestProbe(
     private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH
 ) {
 
+    /** What the probe saw of the request. */
     private sealed interface Observation {
+        /** No request was built. */
         data object None : Observation
 
+        /** The request fetched the untransformed object. */
         data object Original : Observation
 
+        /** The request fetched the image transform whose canonical query is [query]. */
         class Transformed(val query: String) : Observation
     }
 
+    /** What the probe saw, recorded on whichever thread supabase-kt builds the request. */
     private val observation = AtomicReference<Observation>(Observation.None)
 
     /**
@@ -104,6 +109,10 @@ internal class DownloadRequestProbe(
         )
     }
 
+    /**
+     * The transform's canonical query: the parameters that change the bytes, sorted by name, or
+     * `render` when there are none.
+     */
     private fun canonicalTransform(url: Url): String =
         url.parameters
             .names()

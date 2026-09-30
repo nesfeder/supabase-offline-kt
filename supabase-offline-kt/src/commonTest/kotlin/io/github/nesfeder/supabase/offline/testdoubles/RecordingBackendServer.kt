@@ -23,8 +23,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.io.IOException
 
 /**
- * One server answering PostgREST and Storage, for tests that drive a whole client: every reply and
- * every stored object carries [marker], and it counts what reaches it.
+ * One server answering PostgREST and Storage for tests that drive a whole client. Every reply and
+ * stored object carries [marker], and it counts what reaches it.
  *
  * @property marker the string every row and object it serves contains.
  */

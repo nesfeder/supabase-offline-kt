@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.withContext
 
 /**
- * An upstream that emits 1, then — deaf to cancellation, signalling [betweenValues] — waits for
+ * An upstream that emits 1, then — deaf to cancellation, signaling [betweenValues] — waits for
  * [closeReturned] and emits 2. A `flow {}` would refuse that second emission once cancelled.
  */
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class)

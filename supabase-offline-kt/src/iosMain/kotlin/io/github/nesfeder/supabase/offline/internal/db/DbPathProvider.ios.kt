@@ -10,8 +10,8 @@ import platform.Foundation.NSFileManager
 import platform.Foundation.NSUserDomainMask
 
 /**
- * iOS implementation of [DbPathProvider] that resolves to the same database file path used by the
- * Room builder.
+ * The default database location on iOS: [OFFLINE_DATABASE_FILE_NAME] in the app's Documents
+ * directory.
  */
 internal class IosDbPathProvider : DbPathProvider {
 

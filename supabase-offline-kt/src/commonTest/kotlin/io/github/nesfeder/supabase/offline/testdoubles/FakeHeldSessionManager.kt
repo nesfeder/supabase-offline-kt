@@ -8,9 +8,9 @@ import io.github.jan.supabase.auth.user.UserSession
 import kotlinx.coroutines.CompletableDeferred
 
 /**
- * A session store holding [stored], whose first load — the Auth plugin's own, as it starts — waits
- * until [release], so the plugin stays `Initializing` for as long as a test needs: a session still
- * restoring. Every later load answers at once, as a real store would while that one is in flight.
+ * A session store whose first load, the Auth plugin's own, waits for [release], keeping the plugin
+ * `Initializing` as long as a test needs. Every load answers [stored], and each after the first
+ * answers at once, as a real store would while the first is in flight.
  */
 internal class FakeHeldSessionManager(private val stored: UserSession?) : SessionManager {
 

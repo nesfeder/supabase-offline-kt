@@ -14,9 +14,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 
 /**
- * A wrapper around [PostgrestQueryBuilder] that provides a consistent interface for PostgREST
- * operations, facilitating testing and decoupling. It is also the [DryRunProbe] for the writes it
- * issues and the [ReadShapeProbe] for its reads.
+ * The engine's handle on one table's PostgREST requests, which tests replace with a scripted one.
+ * It is also the [DryRunProbe] for its writes and the [ReadShapeProbe] for its reads.
  */
 internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
 
@@ -29,66 +28,36 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
     /** The underlying [Postgrest] client instance. */
     val postgrest: Postgrest
 
-    /**
-     * Performs a SELECT query.
-     *
-     * @param columns The columns to retrieve.
-     * @param request Configuration block for the [SelectRequestBuilder].
-     * @return The result of the query.
-     */
+    /** Sends a SELECT of [columns] that [request] configures. */
     suspend fun select(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult
 
-    /**
-     * Performs an INSERT query.
-     *
-     * @param body The JSON array of items to insert.
-     * @param request Configuration block for the [InsertRequestBuilder].
-     * @return The result of the query.
-     */
+    /** Sends an INSERT of the rows in [body] that [request] configures. */
     suspend fun insert(
         body: JsonArray,
         request: InsertRequestBuilder.() -> Unit,
     ): PostgrestResult
 
-    /**
-     * Performs an UPSERT query.
-     *
-     * @param body The JSON array of items to upsert.
-     * @param request Configuration block for the [UpsertRequestBuilder].
-     * @return The result of the query.
-     */
+    /** Sends an UPSERT of the rows in [body] that [request] configures. */
     suspend fun upsert(
         body: JsonArray,
         request: UpsertRequestBuilder.() -> Unit,
     ): PostgrestResult
 
-    /**
-     * Performs an UPDATE query.
-     *
-     * @param body The JSON element representing the updates.
-     * @param request Configuration block for the [PostgrestRequestBuilder].
-     * @return The result of the query.
-     */
+    /** Sends an UPDATE that sets [body] on the rows [request] filters. */
     suspend fun update(
         body: JsonElement,
         request: PostgrestRequestBuilder.() -> Unit,
     ): PostgrestResult
 
-    /**
-     * Performs a DELETE query.
-     *
-     * @param request Configuration block for the [PostgrestRequestBuilder].
-     * @return The result of the query.
-     */
+    /** Sends a DELETE of the rows [request] filters. */
     suspend fun delete(request: PostgrestRequestBuilder.() -> Unit): PostgrestResult
 }
 
 /**
- * Default implementation of [PostgrestQueryBuilderWrapper] that delegates to a real
- * [PostgrestQueryBuilder].
+ * The [PostgrestQueryBuilderWrapper] over a real [PostgrestQueryBuilder].
  *
  * @property builder The underlying [PostgrestQueryBuilder] instance.
  * @param readShapePostgrest the instance the read-shape check builds reads through; see
