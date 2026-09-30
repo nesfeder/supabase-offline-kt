@@ -25,12 +25,10 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Part B substrate + materialize-on-write semantics that replace the old fabricated empty-array
- * cache seed. Covers: the in-memory overlay substrate ([OfflineStore.overlaidPayloadFlow]) making a
- * queued-offline INSERT visible without a Room write; materialize-on-write making an online-success
- * mutation visible to a live cache-less subscriber (the fix for the "save then stale UI" bug,
- * re-expressed without the seed); and the self-GC guarantee that nothing is written when no
- * subscriber is live.
+ * An empty cache is never seeded with `[]`. The overlay substrate,
+ * [OfflineStore.overlaidPayloadFlow], shows a queued INSERT without a cache write; a write that
+ * succeeds online becomes a real cache row for a live reader with nothing cached; and nothing is
+ * written when no reader is live.
  */
 class OfflineStoreEmptyCacheReactivityTest {
 
