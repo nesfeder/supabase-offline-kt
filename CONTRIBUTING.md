@@ -302,14 +302,19 @@ A job can fail because something it downloads is briefly unavailable. Each of th
 - **The formatter.** The Formatting job keeps kempt's release archive and the ktfmt jar in the
   Actions cache, keyed by their pinned SHA-256 digests, and downloads them only when the cache
   has no entry for those digests. A failed download is tried three more times, after 10, 30 and
-  60 seconds, so the job fails only when all four attempts do: a `429 Too Many Requests` from
-  Maven Central, a `5xx`, a timeout or a network error.
+  60 seconds, and each attempt is given 60 seconds. So the job fails only when all four attempts
+  do: a `429 Too Many Requests` from Maven Central, a `5xx`, a server that stops answering, or a
+  network error. One file gives up after at most 340 seconds, and the job's 15-minute timeout
+  leaves room for both files to use every retry.
 - **An action, before the first step.** The runner downloads every action a job uses in its "Set up
   job" step, on GitHub's runners and on a self-hosted one alike. That download is the runner's own,
   and nothing in the workflow controls it. Each attempt has 100 seconds, and the runner makes three
-  attempts, 10 to 30 seconds apart. The error reads "Failed to download archive" or "The request was
-  canceled due to the configured HttpClient.Timeout of 100 seconds elapsing". The job's own timeout
-  is far longer, so it does not cut this short.
+  attempts, 10 to 30 seconds apart, with a warning for each one that fails. After the third, the
+  job fails with "Failed to download archive … after 3 attempts". That is at most about six minutes
+  for each action; only if several of a job's actions stall at once can it reach the job's
+  timeout, which is then a download failure too. A job whose only error is "The request was
+  canceled due to the configured HttpClient.Timeout of 100 seconds elapsing" was cancelled while it
+  waited, so the runner never retried: re-run it.
 - **Other downloads in a step:** `setup-java`'s JDK, the Gradle wrapper's distribution, the build's
   dependencies and the documentation toolchain, when one of them fails with the same kinds of
   error.
@@ -324,6 +329,12 @@ or something replaced it in transit. The job stops at once for that reason, with
 without caching the file. Find out which it is before anything runs again. If a new release really
 did replace the file, update the version and its digest together in `ci.yml`.
 
+If the step that failed its checksum ran after "Restore the formatter downloads" said
+`Cache restored`, the bad file came from the Actions cache, and a re-run restores it again. Delete
+that entry first (the repository's Actions → Caches page, or `gh cache delete <key>` with the key
+the restore step printed), then find out how it got there: the job saves the files only after both
+have passed their checksums.
+
 ### The self-hosted runner, while the repository is private
 
 While the repository is private, the iOS tests may run on a self-hosted Mac instead of GitHub's
@@ -337,6 +348,12 @@ and what it cannot see, is in
 changed it or something else running as the same user did. If the path is not one the job writes,
 re-run the job; if the same path comes back, it belongs in the snapshot's exclusion list, with its
 reason.
+
+Two kinds of red come from the runners themselves, and are read, not excluded. A red that names
+only a runner's directory with its `.runner_migrated` or `.credentials_migrated` is GitHub
+refreshing that runner's settings; one that names a runner's new `bin.*`, `externals.*` or
+`update.finished` is the runner updating itself. The runner's `_diag` log records either. Re-run the
+job.
 
 **A job killed before its last two steps** (the Mac restarted or slept, or the runner service
 stopped) cleans up nothing itself. What the next job on the runner does about it:
