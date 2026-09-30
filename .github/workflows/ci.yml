@@ -4,7 +4,7 @@ name: CI
 #
 #   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules and their
 #            │                   │                    coverage; the public API records (Android
-#            │                   │                    and iOS)
+#            │                   │                    and iOS); the build-tool floors check
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
 #            │                                        SQLite; iOS device framework link
 #            └─ docs                           Linux  docs-check.yml
@@ -14,9 +14,10 @@ name: CI
 #                   blocks a merge
 #
 #   formatting     kempt check; skipped until .kempt.toml exists
-#   static-checks  API visibility and the classifier of API changes (each self-test first); when
-#                  the workflows changed, zizmor, the CI scripts' self-tests and the workflow
-#                  structure check
+#   static-checks  API visibility and the classifier of API changes (each self-test first), and
+#                  the build-tool floors check's self-test (the check itself needs Gradle, so it
+#                  runs in jvm-tests); when the workflows changed, zizmor, the CI scripts'
+#                  self-tests and the workflow structure check
 #
 # Why a fan-in: branch protection names one check instead of a list that must change with the
 # jobs, and no workflow is path-filtered, so no required check waits for a run that never starts.
