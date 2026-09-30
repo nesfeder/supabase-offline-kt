@@ -1,8 +1,8 @@
 # Contributing
 
 Thank you for helping. Instructions for building, testing and releasing the library itself will
-follow; for now, this file covers formatting, the documentation site and how dependency updates
-are handled.
+follow; for now, this file covers formatting, changing the public API, the documentation site and
+how dependency updates are handled.
 
 ## Formatting
 
@@ -54,6 +54,78 @@ request:
 1. The version in `gradle/libs.versions.toml`.
 2. `KTFMT_VERSION` and `KTFMT_SHA256` in the Formatting job of `.github/workflows/ci.yml`.
 3. The result of `kempt format` on that branch, in a commit of its own.
+
+## Changing the public API
+
+The library promises what its
+[compatibility policy](https://nesfeder.github.io/supabase-offline-kt/project/compatibility/)
+describes: before 1.0, a patch release changes nothing in the contract. These steps keep every pull
+request honest about what it changes, and CI checks each one.
+
+### 1. Update the API records
+
+Each published module commits a record of its public API, which the Kotlin Gradle plugin writes:
+
+| File | What it covers |
+| --- | --- |
+| `<module>/api/android/<module>.api` | The Android target, as JVM signatures |
+| `<module>/api/<module>.klib.api` | The `iosArm64` and `iosSimulatorArm64` targets, as Kotlin signatures |
+
+`./gradlew check` runs `checkKotlinAbi`, which fails when the code's public API no longer matches
+the records. After changing the API, write the records again and commit them with the change:
+
+```bash
+./gradlew updateKotlinAbi
+git add supabase-offline-kt/api supabase-offline-kt-testing/api
+```
+
+Then read the diff of `api/` as a reviewer will. Every line added is a new promise; every line
+removed or changed breaks someone.
+
+### 2. Say what kind of change it is
+
+CI rates each pull request as none, patch, additive or breaking, from the committed records, the
+Room schemas, the tests that pin stored formats and the version catalog. To see the rating before
+you push, commit and run:
+
+```bash
+python3 scripts/api-compat.py classify --base origin/main
+```
+
+Then add a line under `## Unreleased` in `CHANGELOG.md`, under the heading the rating needs:
+
+| Rating | Heading |
+| --- | --- |
+| breaking | `### Breaking`, saying what a user has to do |
+| a stored format, a supabase-kt minor, or a raised minimum version | `### Breaking` or `### Changed` |
+| additive | `### Added` or `### Changed` |
+| none or patch | nothing is required; `### Fixed` for a fix |
+
+`python3 scripts/api-compat.py check-pr --base origin/main` runs the same check CI does.
+
+The script cannot see everything. If your change alters documented behaviour, such as a default,
+the order of replay, or what is kept after a sign-out, put it under `### Breaking` yourself. The
+release check treats a Breaking line as breaking whatever the records say.
+
+The script errs towards breaking. If it calls a change breaking that is not, copy its finding into
+`compat/overrides.txt`, followed by two spaces, `# ` and the reason. The reviewer judges the reason,
+and the file is emptied after each release.
+
+### 3. What is never allowed
+
+- **Editing an exported Room schema** (`supabase-offline-kt/schemas/`). A shipped schema is what
+  devices have on disk. A schema change is a new version with a migration and a migration test, and
+  it waits for a minor release.
+- **Changing a stored name or format without saying so.** The tests that pin the reserved rows, the
+  persisted names and JSON keys, and the file-cache layout are listed in `compat/policy.json`.
+  Changing one of them is reported, and needs a changelog line that says what happens to data
+  already on a device.
+- **Hiding API from the records.** Only declarations gated by an error-level opt-in marker listed in
+  `compat/abi-exclusions.txt` are left out. `scripts/check-api-visibility.sh` fails when a marker is
+  missing from that file or the file names anything else. A public declaration in an internal
+  package also has to be listed in `compat/gated-declarations.txt`, so it shows in the pull
+  request; regenerate that file with
+  `bash scripts/check-api-visibility.sh --list-gated > compat/gated-declarations.txt`.
 
 ## Documentation site
 

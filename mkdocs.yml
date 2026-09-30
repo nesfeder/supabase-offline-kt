@@ -166,6 +166,7 @@ nav:
       - Changelog: project/changelog.md
       - Contributing: project/contributing.md
       - Releasing: project/releasing.md
+      - Compatibility: project/compatibility.md
       - Internals: project/internals.md
   # A placeholder page until the Dokka reference is generated into docs/api/. That change replaces
   # this entry with `api/index.html`, deletes docs/api/index.md and gitignores docs/api/.
