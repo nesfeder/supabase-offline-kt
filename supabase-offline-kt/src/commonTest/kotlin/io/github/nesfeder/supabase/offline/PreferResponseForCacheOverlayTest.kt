@@ -103,6 +103,32 @@ class PreferResponseForCacheOverlayTest {
     }
 
     @Test
+    fun matches_returned_rows_to_written_rows_by_key_when_they_come_back_in_another_order() {
+        // Given — both written rows come back, the second first
+        val requestBody = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("id", 1)
+                    put("title", "a")
+                }
+            )
+            add(
+                buildJsonObject {
+                    put("id", 2)
+                    put("title", "b")
+                }
+            )
+        }
+        val serverResponse = """[{"id":2},{"id":1}]"""
+
+        // When
+        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+
+        // Then — each keeps its own title
+        assertEquals("""[{"id":2,"title":"b"},{"id":1,"title":"a"}]""", chosen)
+    }
+
+    @Test
     fun wraps_the_one_object_a_single_response_returns() {
         // Given — `select(); single()` returns the row as an object
         val requestBody = buildJsonArray { add(buildJsonObject { put("user_id", "u-1") }) }
