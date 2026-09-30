@@ -1,24 +1,14 @@
-## What type of PR is this? (check all applicable)
+## What and why
 
-- [ ] Refactor
-- [ ] Feature
-- [ ] Bug Fix
-- [ ] Optimization
-- [ ] Documentation Update
+<!-- What this changes, and the reason. Say what a user of the library will notice, or "nothing". -->
 
-## Description
+## Checks run
 
-## Related Issues
+<!-- Each command, its result, and where it ran (macOS, Linux, a simulator). -->
 
-- Closes #
+- [ ] `./gradlew check`
+- [ ] `kempt check`
+- [ ] A line under `## Unreleased` in `CHANGELOG.md`, under the heading the change needs, or none
+      because nothing a user sees changes (CONTRIBUTING.md, "Changing the public API")
 
-## Test Plan
-
-_Describe how to test the change, the platforms/devices it was tested on,
-and any relevant screenshots for UI changes._
-
-## Added/updated tests?
-
-- [ ] Yes
-- [ ] No, and this is why: _replace with the reason_
-- [ ] I need help with writing tests
+Closes #

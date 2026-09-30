@@ -1,0 +1,33 @@
+# How GitHub groups the merged pull requests in a release's generated notes, by label. The release
+# body is the version's section of CHANGELOG.md; these notes list the pull requests beneath it.
+#
+# A pull request goes in the first category it matches, and one with none of these labels goes
+# under "Other changes". Dependabot labels every update `dependencies`, so its pull requests skip
+# the first Dependencies group, which excludes it by author, and land in their own.
+changelog:
+  categories:
+    - title: Features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: CI
+      labels:
+        - ci
+    - title: Dependencies
+      labels:
+        - dependencies
+      exclude:
+        authors:
+          - dependabot
+          - "dependabot[bot]"
+    - title: Dependabot updates
+      labels:
+        - dependencies
+    - title: Other changes
+      labels:
+        - "*"

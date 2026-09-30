@@ -1,0 +1,90 @@
+name: Bug report
+description: The library does something other than what its documentation says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting it. A minimal reproduction is the quickest way to a fix.
+
+        A security vulnerability never goes in an issue: report it privately, as the [security policy](https://github.com/nesfeder/supabase-offline-kt/security/policy) describes.
+  - type: input
+    id: library-version
+    attributes:
+      label: Library version
+      description: The version of supabase-offline-kt, or of the Swift package.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: supabase-kt-version
+    attributes:
+      label: supabase-kt version
+      description: The version your Gradle build resolves. If you use the Swift package, write "Swift package".
+      placeholder: "3.8.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Every platform you have seen it on.
+      multiple: true
+      options:
+        - Android
+        - iOS, from Kotlin
+        - iOS, from the Swift package
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: And whether it was a device, an emulator or a simulator.
+      placeholder: "Android 16 on a device, iOS 26.0 in a simulator"
+    validations:
+      required: true
+  - type: dropdown
+    id: connectivity
+    attributes:
+      label: When does it happen?
+      multiple: true
+      options:
+        - Online
+        - Offline
+        - On reconnect, when the network comes back
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: what-was-expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The smallest code that shows it, in a code block, with the table definition if it matters. Leave out your project URL and keys.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: With the library's logging at debug level, if you can. Logs must carry no tokens, keys or personal data, row contents included; remove them before you paste.
+      render: text
+  - type: checkboxes
+    id: nothing-private
+    attributes:
+      label: Before you submit
+      options:
+        - label: The code and logs above carry no tokens, keys or personal data.
+          required: true

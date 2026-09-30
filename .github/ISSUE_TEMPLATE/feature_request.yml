@@ -1,0 +1,39 @@
+name: Feature request
+description: Something the library should do that it does not.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A question about how to use the library goes to [Discussions](https://github.com/nesfeder/supabase-offline-kt/discussions) instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does the library get in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: How it could work. If supabase-kt, supabase-swift or another offline library already does it, say how.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: A workaround, if you have one.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Reads and the cache
+        - Writes and the mutation queue
+        - Sync status and replay
+        - Storage
+        - The Swift package
+        - Documentation
+        - Something else

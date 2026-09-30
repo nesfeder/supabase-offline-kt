@@ -1,9 +1,23 @@
 # Contributing
 
 Thank you for helping. Instructions for building, testing and releasing the library itself will
-follow; for now, this file covers formatting, changing the public API, test coverage, the
-documentation site, how dependency updates are handled, and what to do when CI fails for a reason
-outside the change.
+follow; for now, this file covers reporting a problem, formatting, changing the public API, test
+coverage, the documentation site, how dependency updates are handled, and what to do when CI fails
+for a reason outside the change.
+
+## Reporting a problem
+
+Open an issue from one of the
+[forms](https://github.com/nesfeder/supabase-offline-kt/issues/new/choose): a bug report asks for
+the versions, the platform, whether it happens online, offline or on reconnect, and a minimal
+reproduction; a feature request asks for the problem you want solved. Questions go to
+[Discussions](https://github.com/nesfeder/supabase-offline-kt/discussions).
+
+**A security vulnerability is never reported in an issue.** Report it privately, as
+[SECURITY.md](https://github.com/nesfeder/supabase-offline-kt/blob/main/SECURITY.md) describes.
+
+Everyone taking part in issues, discussions and pull requests follows the
+[code of conduct](https://github.com/nesfeder/supabase-offline-kt/blob/main/CODE_OF_CONDUCT.md).
 
 ## Formatting
 
