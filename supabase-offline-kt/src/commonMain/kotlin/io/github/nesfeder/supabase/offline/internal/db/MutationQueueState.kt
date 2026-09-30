@@ -510,18 +510,21 @@ internal class MutationQueueState(
                 entry.id == removeId || entry.id in removeIds || entry.id == add?.id
             }
         if (add != null) entries = entries + bounded(add)
+        // Each entry is measured once; the oldest leave while the list is over either bound
+        val sizes = entries.map(::charactersOf)
+        var total = sizes.sum()
+        var first = 0
         var droppedCount = current.droppedCount
-        while (
-            entries.size > MAX_REJECTED_MUTATIONS || charactersOf(entries) > MAX_REJECTED_LIST_CHARS
-        ) {
-            val dropped = entries.first()
+        while (entries.size - first > MAX_REJECTED_MUTATIONS || total > MAX_REJECTED_LIST_CHARS) {
+            val dropped = entries[first]
             logger().warning {
                 "Rejected list full: dropped rejected ${dropped.operation} ${dropped.id} on ${dropped.table}"
             }
-            entries = entries.drop(1)
+            total -= sizes[first]
+            first++
             droppedCount++
         }
-        val list = StoredRejectionList(entries = entries, droppedCount = droppedCount)
+        val list = StoredRejectionList(entries = entries.drop(first), droppedCount = droppedCount)
         return rejectedRow(list) to list
     }
 
@@ -657,9 +660,9 @@ internal class MutationQueueState(
         return bounded
     }
 
-    private fun charactersOf(entries: List<StoredRejection>): Int = entries.sumOf { entry ->
+    /** How many characters [entry] takes in the persisted list. */
+    private fun charactersOf(entry: StoredRejection): Int =
         json.encodeToString(StoredRejection.serializer(), entry).length
-    }
 
     private fun decodeOwners(payload: String?): MutationOwners {
         if (payload == null) return MutationOwners.Known(emptyMap())

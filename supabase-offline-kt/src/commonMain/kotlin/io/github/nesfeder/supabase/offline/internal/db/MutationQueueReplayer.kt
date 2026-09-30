@@ -622,6 +622,14 @@ internal class MutationQueueReplayer(
     private fun prepare(mutation: MutationRow, earlierSendUnconfirmed: Boolean): Prepared {
         val json = store.json
         val filter = decodeOrNull(mutation.filterJson, json)
+        // A stored filter that no longer decodes is not a missing one: sending without it would
+        // reach rows the write never targeted
+        if (mutation.filterJson != null && filter == null)
+            return refuse(
+                mutation,
+                "has a filter that can no longer be read",
+                "The queued filter can no longer be read",
+            )
         return when (mutation.operation) {
             MutationOperation.INSERT -> {
                 val body =
