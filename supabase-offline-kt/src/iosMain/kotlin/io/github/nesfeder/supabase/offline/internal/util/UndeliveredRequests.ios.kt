@@ -3,11 +3,11 @@
 package io.github.nesfeder.supabase.offline.internal.util
 
 /**
- * The `NSURLErrorDomain` codes that mean the request never left the device: host not found, could
- * not connect, name lookup failed, no internet connection, roaming off, cellular data not allowed.
- * The last three describe the network path, and iOS can also raise them for a request already under
- * way when the path drops; they are kept, since without them nearly every offline INSERT would
- * count as possibly delivered.
+ * The `NSURLErrorDomain` codes that mean the request never left the device. They are host not
+ * found, could not connect, name lookup failed, no internet connection, roaming off and cellular
+ * data not allowed. iOS can raise the last three for a request already under way when the network
+ * path drops; they are kept, since without them nearly every offline INSERT would count as possibly
+ * delivered.
  */
 private val NEVER_SENT_URL_ERROR_CODES: Set<Int> = setOf(-1003, -1004, -1006, -1009, -1018, -1020)
 

@@ -58,8 +58,8 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     var onAllForTableSnapshot: (suspend (table: String) -> Unit)? = null
 
     /**
-     * Runs inside [get] after the row is read and before it is returned, where a test parks a first
-     * load of a record while a clear runs. `null` returns at once.
+     * Runs inside [get] between reading the row and returning it; a test parks a first load of a
+     * record here while a clear runs. `null` returns at once.
      */
     var onGetSnapshot: (suspend (table: String, signature: String) -> Unit)? = null
 

@@ -6,8 +6,8 @@ import androidx.room.RoomDatabase
 import androidx.sqlite.SQLiteConnection
 
 /**
- * Records the lifecycle hooks Room fires while opening a database, so a test can prove an existing
- * file opened as it was: not created, not destructively migrated.
+ * Counts the lifecycle hooks Room fires as it opens a database. A test proves with it that an
+ * existing file opened as it was, neither created nor destructively migrated.
  */
 internal class RecordingRoomCallback : RoomDatabase.Callback() {
 

@@ -76,9 +76,9 @@ internal class StorageCacheEntry(
     val file: Path,
 ) {
     /**
-     * The cache row's `path`: the object path for the original, so its key keeps the persisted
-     * `"$bucket::$path"` format; for a variant, the object path, [VARIANT_SEPARATOR] and the
-     * transform.
+     * The cache row's `path`. For the original it is the object path, so the key keeps the
+     * persisted `"$bucket::$path"` format; for a variant, the object path, [VARIANT_SEPARATOR] and
+     * the transform.
      */
     val rowPath: String =
         if (transform == null) objectPath else "$objectPath$VARIANT_SEPARATOR$transform"
@@ -747,9 +747,9 @@ internal class StorageFileCache(
         withContext(NonCancellable) { withContext(Dispatchers.IO) { block() } }
 
     /**
-     * Deletes the temporary files a crash left behind, once per cache and under [lock]: those last
-     * modified [STALE_TEMPORARY_FILE_MILLIS] ago or more that no cache row names, since an object
-     * can be named like one.
+     * Deletes the temporary files a crash left behind, once per cache, under [lock]. It takes those
+     * last modified [STALE_TEMPORARY_FILE_MILLIS] ago or more that no cache row names, since an
+     * object can be named like one.
      */
     private suspend fun sweepTemporaryFilesOnce() {
         if (temporaryFilesSwept) return

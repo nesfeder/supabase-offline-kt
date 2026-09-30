@@ -5,8 +5,8 @@ package io.github.nesfeder.supabase.offline.internal
 import kotlinx.serialization.json.Json
 
 /**
- * The one [Json] the engine reads and writes cached payloads, overlays and filter descriptors with,
- * so the serializer cache is shared and the settings cannot drift. It ignores unknown keys and
- * coerces no values: coercion would change what the overlay decodes.
+ * The one [Json] for cached payloads, overlays and filter descriptors, so the serializer cache is
+ * shared and the settings cannot drift. It ignores unknown keys and coerces no values: coercion
+ * would change what the overlay decodes.
  */
 internal val OfflineJson: Json = Json { ignoreUnknownKeys = true }

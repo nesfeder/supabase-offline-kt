@@ -122,7 +122,7 @@ internal class FakeBucketApi(
 
     /**
      * Runs the overrides in [options] on the request supabase-kt would send for an untransformed
-     * download of [path], as the real bucket does before it sends anything.
+     * download of [path], as the real bucket does.
      */
     private fun runRequestOverrides(
         path: String,

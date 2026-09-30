@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.update
 
 /**
  * A scope's exception handler that records each exception reaching the scope uncaught, where an app
- * would crash, instead of leaving it for the test runner to report later.
+ * would crash. Without it, the test runner reports such an exception later.
  */
 internal class RecordingUncaughtExceptions :
     AbstractCoroutineContextElement(CoroutineExceptionHandler), CoroutineExceptionHandler {

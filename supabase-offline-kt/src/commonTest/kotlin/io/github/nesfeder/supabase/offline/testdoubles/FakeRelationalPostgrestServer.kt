@@ -20,9 +20,9 @@ import kotlinx.serialization.json.contentOrNull
 
 /**
  * A stateful PostgREST server over a [RecordingPostgrestServer] that keeps rows per table and
- * enforces primary and foreign keys, answering as PostgREST does: `409` with `23505` or `23503`. It
- * understands what replay sends, `POST`, `PATCH`, `DELETE` and `GET` scoped by `eq` filters, and
- * answers anything else `400`.
+ * enforces primary and foreign keys as PostgREST does, answering a violation `409` with `23505` or
+ * `23503`. It understands what replay sends, `POST`, `PATCH`, `DELETE` and `GET` scoped by `eq`
+ * filters, and answers anything else `400`.
  *
  * @property primaryKey the primary-key column every table shares.
  * @property foreignKeys child table → the foreign key it must satisfy.
