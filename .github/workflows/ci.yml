@@ -338,6 +338,12 @@ jobs:
             python3 scripts/api-compat.py check-pr --base HEAD^1 --head HEAD
           fi
 
+      # The build-tool floors' check proves it sees each kind of failure. The check itself needs
+      # the build's resolved classpaths, so it runs where Gradle is set up: the Android host tests.
+      - name: Test the build-tool floors check
+        if: needs.changes.outputs.kotlin == 'true'
+        run: python3 scripts/check-build-tool-floors.py --self-test
+
       # The scripts CI itself depends on, each proved by its own self-test, then the structure
       # of the workflows: the fan-in needs every job but the two coverage jobs, `$/` references
       # exist, only ios-tests may use the self-hosted runner, nothing Dependabot can trigger reaches
@@ -422,6 +428,12 @@ jobs:
           :supabase-offline-kt:checkKotlinAbi
           :supabase-offline-kt-testing:checkKotlinAbi
           --stacktrace
+
+      # The build-tool floors (gradle/libs.versions.toml) hold in every classpath the plugins and
+      # their tools resolve, and each still raises something (scripts/check-build-tool-floors.py).
+      - name: Check the build-tool floors
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-build-tool-floors.py
 
       - name: Upload the test reports
         if: failure()
