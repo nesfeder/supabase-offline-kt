@@ -88,30 +88,44 @@ internal class ClientOperationGate {
     }
 
     /**
-     * [flow] as a call for as long as it is collected. When [close] runs, [flow]'s collection is
-     * cancelled, so the call leaves once that work has stopped, however its collector is stuck; the
-     * collector reads the closed error next.
+     * [flow] as a call while collected, via a rendezvous channel. At [close] the channel ends with
+     * the closed error, then the upstream is cancelled, and the producer ends quietly. Upstream
+     * failures end it after their values; only the collector's cancellation propagates.
      */
     fun <T> callCollecting(flow: Flow<T>): Flow<T> = channelFlow {
-        call {
-            // Leaves the gate only once the collection has ended, even when the collector is
-            // cancelled
-            coroutineScope {
-                val upstream =
-                    launch(start = CoroutineStart.UNDISPATCHED) {
-                        flow.collect { value -> send(value) }
+        try {
+            call {
+                // Leaves the gate only once the upstream has ended, even when cancelled
+                coroutineScope {
+                    val upstream =
+                        launch(start = CoroutineStart.UNDISPATCHED) {
+                            try {
+                                flow.collect { value -> send(value) }
+                            } catch (failure: Throwable) {
+                                // Only ours (the collector's or close()'s) rethrows; the
+                                // upstream's own, a refused send included, ends the channel
+                                if (failure is CancellationException && !isActive) {
+                                    throw failure
+                                }
+                                this@channelFlow.close(failure)
+                            }
+                        }
+                    // The closed error first, or the cancelled upstream would end it first
+                    val onClose = closing.invokeOnCompletion {
+                        this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
+                        upstream.cancel()
                     }
-                val onClose = closing.invokeOnCompletion {
-                    // The error first: once cancelled, the collection may end the channel cleanly
-                    this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
-                    upstream.cancel()
-                }
-                try {
-                    upstream.join()
-                } finally {
-                    onClose.dispose()
+                    try {
+                        upstream.join()
+                    } finally {
+                        onClose.dispose()
+                    }
                 }
             }
+        } catch (refused: IllegalStateException) {
+            // Refused because closed: the channel carries the error, the producer ends quietly
+            if (refused is CancellationException) throw refused
+            close(refused)
         }
     }
         .buffer(Channel.RENDEZVOUS)

@@ -90,8 +90,11 @@ public interface OfflinePostgrestQueryBuilder {
      * affordance and may be ignored today.
      *
      * Every strategy ends the same way when the client closes: a collection live at
-     * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one made
-     * after it.
+     * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one collected
+     * after it, through the flow's own error channel (`catch` sees it). A read that fails for any
+     * other reason delivers every value before the failure, then the failure itself, a cancellation
+     * included. A slow collector can be handed a snapshot a newer one has already replaced (under
+     * `CacheFirstThenNetwork`, every one in turn), and the last it is handed is the latest.
      *
      * @param columns Columns to select.
      * @param readStrategy Flow read strategy.
@@ -374,8 +377,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> {
-        // Every strategy one way: refused once closed, counted while collected, ended by close()
-        operationGate.ensureOpen()
+        // Every strategy one way: counted while collected, refused in band once closed, and ended
+        // by close() however its collector is stuck
         return operationGate.callCollecting(
             selectResolver.selectAsFlow(columns, readStrategy, request)
         )

@@ -171,6 +171,17 @@ internal sealed interface MutationOwners {
 }
 
 /**
+ * A queue record's first read: its value, and what to write if the record must start afresh. That
+ * is the unreadable payload to keep aside, and the row to replace it or to stand in for a missing
+ * one.
+ */
+private class FirstRead<T>(
+    val value: T,
+    val unreadablePayload: String? = null,
+    val freshRow: ObjectRow? = null,
+)
+
+/**
  * The mutation queue's records kept in reserved `object_cache` rows (see [RESERVED_TABLE_NAME]) so
  * no schema change is needed: each mutation's owner, the rejected list, which cached payloads
  * already contain each synced mutation, and which INSERTs may already be on the server. Cached in
@@ -277,29 +288,33 @@ internal class MutationQueueState(
             return it
         }
         return loadLock.withLock {
-            // From empty only: a clear that ran while this read has already set it
             coverageCache.value
-                ?: loadSyncedMutationCoverage().let { loaded ->
-                    coverageCache.compareAndSet(null, loaded)
-                    coverageCache.value ?: loaded
-                }
+                ?: settleFirstRead(
+                    coverageCache,
+                    SYNCED_MUTATION_COVERAGE_SIGNATURE,
+                    readSyncedMutationCoverage(),
+                )
         }
     }
 
     /**
      * Reads the coverage row. A missing one covers nothing, so the overlay shows every synced
-     * mutation; an unreadable one is kept aside and replaced by an empty row.
+     * mutation; an unreadable one is to be kept aside and replaced by an empty row.
      */
-    private suspend fun loadSyncedMutationCoverage(): Map<Long, Set<String>> {
+    private suspend fun readSyncedMutationCoverage(): FirstRead<Map<Long, Set<String>>> {
         val payload =
             objectDao.get(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE)?.payload
-                ?: return emptyMap()
+                ?: return FirstRead(value = emptyMap())
         decodeOrNull(StoredSyncedMutationCoverage.serializer(), payload)?.let { stored ->
-            return stored.coveredSignatures.mapValues { (_, signatures) -> signatures.toSet() }
+            return FirstRead(
+                value = stored.coveredSignatures.mapValues { (_, signatures) -> signatures.toSet() }
+            )
         }
-        keepAsideUnreadable(SYNCED_MUTATION_COVERAGE_SIGNATURE, payload)
-        writeFreshRow(syncedMutationCoverageRow(emptyMap()))
-        return emptyMap()
+        return FirstRead(
+            value = emptyMap(),
+            unreadablePayload = payload,
+            freshRow = syncedMutationCoverageRow(emptyMap()),
+        )
     }
 
     /** [syncedMutationCoverage], re-emitted whenever it changes. */
@@ -349,32 +364,33 @@ internal class MutationQueueState(
             return it
         }
         return loadLock.withLock {
-            // From empty only: a clear that ran while this read has already set it
             unconfirmedCache.value
-                ?: loadUnconfirmedSends().let { loaded ->
-                    unconfirmedCache.compareAndSet(null, loaded)
-                    unconfirmedCache.value ?: loaded
-                }
+                ?: settleFirstRead(
+                    unconfirmedCache,
+                    UNCONFIRMED_SENDS_SIGNATURE,
+                    readUnconfirmedSends(),
+                )
         }
     }
 
     /**
      * Reads the unconfirmed-sends row. A missing or unreadable one cannot say which sends were
-     * never made, so every keyed INSERT queued so far counts as possibly delivered — the row is
-     * read before this process queues any (see [OfflineStore.enqueueOwnedBy]) — and that set is
-     * written in its place, so a later launch reads it rather than deciding again.
+     * never made, so every keyed INSERT queued before this process queues any
+     * ([OfflineStore.enqueueOwnedBy]) counts as possibly delivered, the set to write in its place.
      */
-    private suspend fun loadUnconfirmedSends(): Set<Long> {
+    private suspend fun readUnconfirmedSends(): FirstRead<Set<Long>> {
         val payload = objectDao.get(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload
         payload
             ?.let { decodeOrNull(StoredUnconfirmedSends.serializer(), it) }
             ?.let { stored ->
-                return stored.mutationIds.toSet()
+                return FirstRead(value = stored.mutationIds.toSet())
             }
-        if (payload != null) keepAsideUnreadable(UNCONFIRMED_SENDS_SIGNATURE, payload)
         val possiblyDelivered = pendingKeyedInsertIds()
-        writeFreshRow(unconfirmedSendsRow(possiblyDelivered))
-        return possiblyDelivered
+        return FirstRead(
+            value = possiblyDelivered,
+            unreadablePayload = payload,
+            freshRow = unconfirmedSendsRow(possiblyDelivered),
+        )
     }
 
     /**
@@ -551,6 +567,22 @@ internal class MutationQueueState(
         keepAsideUnreadable(REJECTED_MUTATIONS_SIGNATURE, payload)
         objectDao.upsert(rejectedRow(fresh))
         return fresh
+    }
+
+    /**
+     * Sets [cache] from [read] only while it is still empty. A clear that ran during the read has
+     * set it already; then nothing is written either, so no row lands after the clear.
+     */
+    private suspend fun <T : Any> settleFirstRead(
+        cache: MutableStateFlow<T?>,
+        signature: String,
+        read: FirstRead<T>,
+    ): T {
+        if (cache.compareAndSet(null, read.value)) {
+            read.unreadablePayload?.let { payload -> keepAsideUnreadable(signature, payload) }
+            read.freshRow?.let { row -> writeFreshRow(row) }
+        }
+        return cache.value ?: read.value
     }
 
     /**

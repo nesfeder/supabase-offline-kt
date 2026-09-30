@@ -8,11 +8,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -21,6 +25,8 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 
 /**
@@ -379,4 +385,83 @@ class CacheFirstWithParallelRefreshTest {
 
             collector.cancelAndJoin()
         }
+
+    // The cache's own failure reaches the collector intact ────────────────────
+
+    @Test
+    fun a_cache_that_fails_right_after_a_value_delivers_the_value_then_the_failure() = runTest {
+        // The failure races the collector's taking of the value, so run it enough times to see
+        // both orders of the two
+        repeat(FAILURE_ORDERINGS) { attempt ->
+            // Given: a cache that fails right after its first value, and a refresh that is done
+            val values = mutableListOf<String>()
+
+            // When
+            val failure =
+                withContext(Dispatchers.Default) {
+                    withTimeout(5.seconds) {
+                        runCatching {
+                            cacheFirstWithParallelRefresh(
+                                    cache =
+                                        flow {
+                                            emit("cached")
+                                            throw CacheFailed()
+                                        },
+                                    refresh = {},
+                                )
+                                .collect { value -> values += value }
+                        }
+                            .exceptionOrNull()
+                    }
+                }
+
+            // Then: the value, then the failure itself
+            assertEquals(
+                listOf("cached"),
+                values,
+                "attempt $attempt: the value before the failure was dropped",
+            )
+            assertTrue(failure is CacheFailed, "attempt $attempt ended with $failure")
+        }
+    }
+
+    @Test
+    fun a_cache_that_gives_up_with_a_cancellation_ends_the_flow_with_it() = runTest {
+        // Given: a cache that gives up with a cancellation of its own after a value, and a refresh
+        // that is done, so nothing else would end the flow
+        val values = mutableListOf<String>()
+
+        // When
+        val failure =
+            withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) {
+                    runCatching {
+                        cacheFirstWithParallelRefresh(
+                                cache =
+                                    flow {
+                                        emit("cached")
+                                        throw CancellationException(CACHE_GAVE_UP)
+                                    },
+                                refresh = {},
+                            )
+                            .collect { value -> values += value }
+                    }
+                        .exceptionOrNull()
+                }
+            }
+
+        // Then: the collector sees the cancellation, rather than waiting forever or a completion
+        assertEquals(listOf("cached"), values)
+        assertTrue(
+            failure is CancellationException && failure.message == CACHE_GAVE_UP,
+            "the flow ended with $failure",
+        )
+    }
+
+    private class CacheFailed : RuntimeException("the cache read failed")
+
+    private companion object {
+        const val FAILURE_ORDERINGS = 500
+        const val CACHE_GAVE_UP = "the cache read gave up"
+    }
 }
