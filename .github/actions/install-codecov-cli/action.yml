@@ -1,0 +1,24 @@
+name: Install the Codecov CLI
+description: >-
+  The Codecov CLI from its GitHub release, checked against the SHA-256 below before it runs, at
+  $RUNNER_TEMP/codecov. Codecov's own action would otherwise download the newest CLI at run time and
+  trust a signing key it also fetches at run time.
+
+runs:
+  using: composite
+  steps:
+    - name: Download and check the Codecov CLI
+      shell: bash
+      env:
+        CODECOV_CLI_VERSION: v11.3.1
+        # SHA-256 of the codecovcli_linux asset of that release: GitHub's recorded digest, and the
+        # SHA256SUM file Codecov signs. Change both together.
+        CODECOV_CLI_LINUX_X64_SHA256: ca1d64196d2d34771084afe76ea657d581bf628e31d993ff8e52ea09cc88a56d
+      run: |
+        set -euo pipefail
+        cli="$RUNNER_TEMP/codecov"
+        curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$cli" \
+          "https://github.com/codecov/codecov-cli/releases/download/$CODECOV_CLI_VERSION/codecovcli_linux"
+        echo "$CODECOV_CLI_LINUX_X64_SHA256  $cli" | sha256sum --check --strict
+        chmod +x "$cli"
+        "$cli" --version

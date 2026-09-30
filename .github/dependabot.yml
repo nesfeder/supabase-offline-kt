@@ -84,7 +84,9 @@ updates:
         patterns:
           - "gradle-wrapper"
           - "com.google.devtools.ksp"
+          # Kover's plugin and the library build-logic compiles against share one version.
           - "org.jetbrains.kotlinx.kover"
+          - "org.jetbrains.kotlinx:kover-gradle-plugin"
         update-types: ["minor", "patch"]
       test-libraries:
         patterns:

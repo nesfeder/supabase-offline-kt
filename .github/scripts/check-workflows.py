@@ -13,9 +13,13 @@ It fails when:
   3. any job but ci.yml's ios-tests names the self-hosted runner, anywhere in the job, or runs on
      anything but a literal GitHub-hosted label; a job calls a reusable workflow other than one of
      this repository's at the same commit (`$/`); or ios-tests' routing differs from the one below;
-  4. ci.yml's final-status does not need every other job, or its condition differs from the one
-     below;
-  5. a `uses: $/...` reference names an action or workflow that does not exist.
+  4. ci.yml's final-status does not need every other job but the coverage jobs, needs one of them
+     (a Codecov outage must never block a merge), or its condition differs from the one below;
+  5. a `uses: $/...` reference names an action or workflow that does not exist;
+  6. a job not listed below may mint an OIDC token (`id-token: write`, or `write-all`), or a
+     workflow's default permissions do; or a listed job holds other permissions than its own, or
+     its condition does not start with the Dependabot guard as a conjunct of its own, so a run
+     Dependabot pushed or started never holds the token.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -42,6 +46,17 @@ ROUTED_RUNS_ON = ("${{ needs.changes.outputs.ios-runner == 'local' && fromJSON('
 FAN_IN = ("ci.yml", "final-status")
 FAN_IN_IF = ("always() && (github.event.action != 'labeled'"
              " || github.event.label.name == 'full-ci')")
+# Jobs of ci.yml the fan-in must not need: a failure there must never block a merge.
+FAN_IN_EXEMPT = {"coverage-upload", "coverage-rehearsal"}
+# The jobs that may mint an OIDC token, each for one service, with exactly these permissions:
+# Codecov (a job that runs no project code; ci.yml says why) and GitHub Pages.
+OIDC_JOBS = {
+    ("ci.yml", "coverage-upload"): {"contents": "read", "id-token": "write"},
+    ("docs-publish.yml", "deploy"): {"pages": "write", "id-token": "write"},
+}
+# How every such job's condition begins; the rule for the iOS tests' runner is the same.
+DEPENDABOT_GUARD = ("github.actor != 'dependabot[bot]'"
+                    " && github.triggering_actor != 'dependabot[bot]'")
 CI_TRIGGERS = {"pull_request", "push", "merge_group", "schedule", "workflow_dispatch"}
 CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
 
@@ -115,13 +130,63 @@ def fan_in_problems(name: str, jobs: dict) -> list[str]:
         return [f"{name}: no {FAN_IN[1]} job"]
     needs = fan_in.get("needs")
     needs = [needs] if isinstance(needs, str) else (needs or [])
-    others = set(jobs) - {FAN_IN[1]}
+    others = set(jobs) - {FAN_IN[1]} - FAN_IN_EXEMPT
     problems = []
-    if set(needs) != others:
+    if set(needs) - FAN_IN_EXEMPT != others:
         problems.append(f"{name}: {FAN_IN[1]} needs {sorted(needs)}, not every other job"
                         f" {sorted(others)}")
+    for job_id in sorted(set(needs) & FAN_IN_EXEMPT):
+        problems.append(f"{name}: {FAN_IN[1]} needs {job_id}, which must never block a merge")
     if fan_in.get("if") != FAN_IN_IF:
         problems.append(f"{name}: {FAN_IN[1]} runs if {fan_in.get('if')!r}, not {FAN_IN_IF!r}")
+    return problems
+
+
+def grants_oidc(permissions: object) -> bool:
+    """Whether a `permissions` value lets the job mint an OIDC token."""
+    if isinstance(permissions, str):
+        return permissions == "write-all"
+    return isinstance(permissions, dict) and permissions.get("id-token") == "write"
+
+
+def starts_with_guard(condition: object) -> bool:
+    """Whether a job's `if` is the Dependabot guard alone or `guard && (...)`, one bracketed term."""
+    text = " ".join(str(condition or "").split())
+    if text.startswith("${{") and text.endswith("}}"):
+        text = " ".join(text[3:-2].split())
+    if text == DEPENDABOT_GUARD:
+        return True
+    prefix = DEPENDABOT_GUARD + " && ("
+    if not (text.startswith(prefix) and text.endswith(")")):
+        return False
+    term = text[len(prefix) - 1:]
+    depth = 0
+    for index, char in enumerate(term):
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth == 0:
+            return index == len(term) - 1
+    return False
+
+
+def oidc_problems(name: str, document: dict) -> list[str]:
+    """Rule 6."""
+    problems = []
+    if grants_oidc(document.get("permissions")):
+        problems.append(f"{name}: its default permissions can mint an OIDC token")
+    for job_id, job in (document.get("jobs") or {}).items():
+        if not isinstance(job, dict) or not grants_oidc(job.get("permissions")):
+            continue
+        allowed = OIDC_JOBS.get((name, job_id))
+        if allowed is None:
+            problems.append(f"{name}: job {job_id} can mint an OIDC token, and is not one of"
+                            " the jobs allowed to")
+            continue
+        if job.get("permissions") != allowed:
+            problems.append(f"{name}: job {job_id} holds {job.get('permissions')}, not exactly"
+                            f" {allowed}")
+        if not starts_with_guard(job.get("if")):
+            problems.append(f"{name}: job {job_id} can mint an OIDC token, and its condition"
+                            " does not start with the Dependabot guard")
     return problems
 
 
@@ -169,6 +234,7 @@ def check_tree(root: Path) -> list[str]:
             problems += runner_problems(path.name, job_id, job if isinstance(job, dict) else {})
         problems += fan_in_problems(path.name, jobs)
         problems += self_reference_problems(root, path.name, document)
+        problems += oidc_problems(path.name, document)
     for path in sorted((root / ".github" / "actions").glob("*/action.y*ml")):
         name = str(path.relative_to(root))
         document = load_yaml(path)
@@ -197,6 +263,19 @@ jobs:
       {ROUTED_RUNS_ON}
     steps: [{{run: echo}}]
   docs: {{needs: changes, uses: $/.github/workflows/docs-check.yml}}
+  coverage-upload:
+    needs: changes
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.event_name == 'push' || github.event.repository.visibility == 'public')
+    runs-on: ubuntu-latest
+    permissions: {{contents: read, id-token: write}}
+    steps: [{{run: echo}}]
+  coverage-rehearsal:
+    needs: changes
+    runs-on: ubuntu-latest
+    permissions: {{contents: read}}
+    steps: [{{run: echo}}]
   final-status:
     if: {FAN_IN_IF}
     needs: [changes, ios-tests, docs]
@@ -213,6 +292,9 @@ jobs:
 """
 COMPLIANT_ACTION = "runs: {using: composite, steps: [{run: echo, shell: bash}]}\n"
 ROUTING_LINE = "      ${{ needs.changes.outputs.ios-runner == 'local'"
+
+# The first line of the compliant coverage-upload condition, which several cases rewrite.
+GUARD_LINE = f"      {DEPENDABOT_GUARD}\n"
 
 # Each case: what it proves, the file it replaces or adds, its content, and a phrase the report
 # must contain. The later ones are the second review's counter-examples.
@@ -293,6 +375,49 @@ CASES: list[tuple[str, str, str, str]] = [
      "on: {pull_request: {}}\njobs:\n  ios-tests:\n    runs-on: ${{ needs.changes.outputs.ios-runner"
      " == 'local' && fromJSON('[\"offline-kt\"]') || 'macos-26' }}\n    steps: [{run: echo}]\n",
      "names the self-hosted runner"),
+    ("fan-in needs the coverage upload", "ci.yml",
+     COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]",
+                          "needs: [changes, ios-tests, docs, coverage-upload]"),
+     "which must never block a merge"),
+    ("another ci.yml job can mint an OIDC token", "ci.yml",
+     COMPLIANT_CI.replace("changes: {runs-on: ubuntu-slim,",
+                          "changes: {runs-on: ubuntu-slim, permissions: {id-token: write},"),
+     "job changes can mint an OIDC token"),
+    ("a job with write-all", "extra.yml",
+     "on: workflow_dispatch\njobs:\n  a:\n    runs-on: ubuntu-latest\n    permissions: write-all\n"
+     "    steps: [{run: echo}]\n", "job a can mint an OIDC token"),
+    ("a coverage-upload job in another workflow", "extra.yml",
+     "on: workflow_dispatch\njobs:\n  coverage-upload:\n    runs-on: ubuntu-latest\n"
+     "    permissions: {id-token: write}\n    steps: [{run: echo}]\n",
+     "job coverage-upload can mint an OIDC token"),
+    ("OIDC in a workflow's default permissions", "ci.yml",
+     COMPLIANT_CI.replace("jobs:\n", "permissions: {contents: read, id-token: write}\njobs:\n", 1),
+     "default permissions can mint an OIDC token"),
+    ("fan-in needs the coverage rehearsal", "ci.yml",
+     COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]",
+                          "needs: [changes, ios-tests, docs, coverage-rehearsal]"),
+     "needs coverage-rehearsal, which must never block a merge"),
+    ("the OIDC job without the Dependabot guard", "ci.yml",
+     COMPLIANT_CI.replace(GUARD_LINE + "      && (", "      (", 1),
+     "does not start with the Dependabot guard"),
+    ("the Dependabot guard only one side of an or", "ci.yml",
+     COMPLIANT_CI.replace(GUARD_LINE + "      && (",
+                          GUARD_LINE + "      || (", 1),
+     "does not start with the Dependabot guard"),
+    ("the guard's term followed by an unbracketed or", "ci.yml",
+     COMPLIANT_CI.replace("visibility == 'public')\n", "visibility == 'public') || (true)\n", 1),
+     "does not start with the Dependabot guard"),
+    ("the Dependabot guard missing its triggering-actor half", "ci.yml",
+     COMPLIANT_CI.replace(" && github.triggering_actor != 'dependabot[bot]'\n", "\n", 1),
+     "does not start with the Dependabot guard"),
+    ("the OIDC job gains a permission", "ci.yml",
+     COMPLIANT_CI.replace("permissions: {contents: read, id-token: write}",
+                          "permissions: {contents: read, id-token: write, pull-requests: write}", 1),
+     "not exactly"),
+    ("the rehearsal gains the OIDC permission", "ci.yml",
+     COMPLIANT_CI.replace("permissions: {contents: read}\n",
+                          "permissions: {contents: read, id-token: write}\n", 1),
+     "job coverage-rehearsal can mint an OIDC token"),
 ]
 
 
