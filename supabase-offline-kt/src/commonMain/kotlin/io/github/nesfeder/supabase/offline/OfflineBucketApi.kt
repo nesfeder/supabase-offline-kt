@@ -15,7 +15,9 @@ import io.github.jan.supabase.storage.BucketApi
  * copy is served instead, and when the server says the object no longer exists, the cached copy is
  * dropped and the error is rethrown. A download with an image transform is cached separately from
  * the original, per transform. Channel downloads stream through a file on disk and are never held
- * in memory whole.
+ * in memory whole. A download cancelled while it creates, commits or opens that file returns once
+ * the file operation is done and the file is deleted: behind a clear or an eviction holding the
+ * cache, that can take as long as they do. No partial file is left behind.
  *
  * **Writes** — uploads, updates, deletes, moves and copies — are online-only: offline they fail
  * with supabase-kt's own connectivity error, and nothing is queued. A write that reaches the server
@@ -51,7 +53,8 @@ public interface OfflineBucketApi : BucketApi {
     /**
      * The cached copy of the object at [path], downloading it into the cache first when none is
      * cached. The download streams to disk. A cached copy is returned as it is, however old; check
-     * [CachedFile.fetchedAt] against your own freshness rule.
+     * [CachedFile.fetchedAt] against your own freshness rule. Cancelled mid-download, it returns
+     * once its partial file is deleted (see [OfflineBucketApi] on how long that can take).
      *
      * @param path the object path within this bucket.
      * @param isPublic whether to download through the public URL rather than the authenticated one.

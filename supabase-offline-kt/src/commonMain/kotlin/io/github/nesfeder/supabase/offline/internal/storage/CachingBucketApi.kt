@@ -333,9 +333,9 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Streams [fetch] into a temporary file for the entry [entryProvider] names once bytes arrive
-     * and the variant is known. A failed download deletes the file and rethrows; a disk that
-     * refuses it cancels the download and reports [StreamedDownload.CacheRefused].
+     * Streams [fetch] into [file] for the entry [entryProvider] names, once bytes arrive. A failed
+     * or cancelled download leaves the file to [file]'s owner; a disk that refuses it deletes it
+     * now, cancels the download and reports [StreamedDownload.CacheRefused].
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
@@ -352,58 +352,54 @@ internal class CachingBucketApi(
                 throw failure
             }
         }
-        var completed = false
-        try {
-            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-            while (true) {
-                val read = readOrRethrow(pipe, buffer) { producer.await() }
-                if (read < 0) break
-                if (read == 0) continue
-                val target =
-                    file.temporary
-                        ?: file.open(entryProvider())
-                        ?: return@coroutineScope abandon(
-                            producer,
-                            pipe,
-                            cause = null,
-                            uncacheable = entryProvider() == null,
-                        )
-                try {
-                    withContext(Dispatchers.IO) { target.sink.write(buffer, 0, read) }
-                } catch (failure: IOException) {
-                    sdkLogger.warning {
-                        "Storage cache could not write a download (${failure::class.simpleName}); not caching"
-                    }
-                    return@coroutineScope abandon(
-                        producer,
-                        pipe,
-                        cause = failure,
-                        uncacheable = false,
-                    )
-                }
-            }
-            producer.await()
+        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+        while (true) {
+            val read = readOrRethrow(pipe, buffer) { producer.await() }
+            if (read < 0) break
+            if (read == 0) continue
             val target =
                 file.temporary
                     ?: file.open(entryProvider())
-                    ?: return@coroutineScope if (entryProvider() == null)
-                        StreamedDownload.Uncacheable
-                    else StreamedDownload.CacheRefused(null)
-            // The sink buffers; a full disk can surface only here. Past this point the temporary
-            // file holds every byte, so it can be served even if the rename that follows fails.
+                    ?: return@coroutineScope abandon(
+                        file,
+                        producer,
+                        pipe,
+                        cause = null,
+                        uncacheable = entryProvider() == null,
+                    )
             try {
-                withContext(Dispatchers.IO) { target.sink.flush() }
+                withContext(Dispatchers.IO) { target.sink.write(buffer, 0, read) }
             } catch (failure: IOException) {
                 sdkLogger.warning {
                     "Storage cache could not write a download (${failure::class.simpleName}); not caching"
                 }
-                return@coroutineScope StreamedDownload.CacheRefused(failure)
+                return@coroutineScope abandon(
+                    file,
+                    producer,
+                    pipe,
+                    cause = failure,
+                    uncacheable = false,
+                )
             }
-            completed = true
-            StreamedDownload.Written(target)
-        } finally {
-            if (!completed) file.discard()
         }
+        producer.await()
+        val target =
+            file.temporary
+                ?: file.open(entryProvider())
+                ?: return@coroutineScope if (entryProvider() == null) StreamedDownload.Uncacheable
+                else StreamedDownload.CacheRefused(null)
+        // The sink buffers; a full disk can surface only here. Past this point the temporary
+        // file holds every byte, so it can be served even if the rename that follows fails.
+        try {
+            withContext(Dispatchers.IO) { target.sink.flush() }
+        } catch (failure: IOException) {
+            sdkLogger.warning {
+                "Storage cache could not write a download (${failure::class.simpleName}); not caching"
+            }
+            file.discard()
+            return@coroutineScope StreamedDownload.CacheRefused(failure)
+        }
+        StreamedDownload.Written(target)
     }
 
     /**
@@ -429,7 +425,8 @@ internal class CachingBucketApi(
         }
     }
 
-    private fun abandon(
+    private suspend fun abandon(
+        file: OwnedTemporaryFile,
         producer: Deferred<Unit>,
         pipe: ByteChannel,
         cause: Throwable?,
@@ -437,6 +434,7 @@ internal class CachingBucketApi(
     ): StreamedDownload {
         producer.cancel()
         pipe.cancel(null)
+        file.discard()
         return if (uncacheable) StreamedDownload.Uncacheable
         else StreamedDownload.CacheRefused(cause)
     }
@@ -597,10 +595,9 @@ internal class CachingBucketApi(
         )
 
     /**
-     * Runs a Storage write that close() may stop; [applied] then brings the cache in line with it.
-     * One that timed out or was stopped may have been stored anyway, so [uncertain] drops what it
-     * touched; any other failure left the server, and the cache, as they were. Storage writes are
-     * never queued.
+     * Runs a Storage write that close() may stop, never queued; [applied] brings the cache in line.
+     * One that timed out or was stopped may have been applied anyway, so [uncertain] drops what it
+     * touched; any other failure left the server, and the cache, as they were.
      */
     private suspend fun <T> storageWrite(
         write: suspend () -> T,
