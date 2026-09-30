@@ -13,9 +13,12 @@ It fails when:
   3. any job but ci.yml's ios-tests names the self-hosted runner, anywhere in the job, or runs on
      anything but a literal GitHub-hosted label; a job calls a reusable workflow other than one of
      this repository's at the same commit (`$/`); or ios-tests' routing differs from the one below;
-  4. ci.yml's final-status does not need every other job, or its condition differs from the one
-     below;
-  5. a `uses: $/...` reference names an action or workflow that does not exist.
+  4. ci.yml's final-status does not need every other job but coverage-upload, needs
+     coverage-upload (a Codecov outage must never block a merge), or its condition differs from
+     the one below;
+  5. a `uses: $/...` reference names an action or workflow that does not exist;
+  6. a job not listed below may mint an OIDC token (`id-token: write`, or `write-all`), or a
+     workflow's default permissions do.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -42,6 +45,11 @@ ROUTED_RUNS_ON = ("${{ needs.changes.outputs.ios-runner == 'local' && fromJSON('
 FAN_IN = ("ci.yml", "final-status")
 FAN_IN_IF = ("always() && (github.event.action != 'labeled'"
              " || github.event.label.name == 'full-ci')")
+# Jobs of ci.yml the fan-in must not need: a failure there must never block a merge.
+FAN_IN_EXEMPT = {"coverage-upload"}
+# The jobs that may mint an OIDC token, each for one service: Codecov (a job that runs no project
+# code; ci.yml says why) and GitHub Pages.
+OIDC_JOBS = {("ci.yml", "coverage-upload"), ("docs-publish.yml", "deploy")}
 CI_TRIGGERS = {"pull_request", "push", "merge_group", "schedule", "workflow_dispatch"}
 CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
 
@@ -115,13 +123,36 @@ def fan_in_problems(name: str, jobs: dict) -> list[str]:
         return [f"{name}: no {FAN_IN[1]} job"]
     needs = fan_in.get("needs")
     needs = [needs] if isinstance(needs, str) else (needs or [])
-    others = set(jobs) - {FAN_IN[1]}
+    others = set(jobs) - {FAN_IN[1]} - FAN_IN_EXEMPT
     problems = []
-    if set(needs) != others:
+    if set(needs) - FAN_IN_EXEMPT != others:
         problems.append(f"{name}: {FAN_IN[1]} needs {sorted(needs)}, not every other job"
                         f" {sorted(others)}")
+    for job_id in sorted(set(needs) & FAN_IN_EXEMPT):
+        problems.append(f"{name}: {FAN_IN[1]} needs {job_id}, which must never block a merge")
     if fan_in.get("if") != FAN_IN_IF:
         problems.append(f"{name}: {FAN_IN[1]} runs if {fan_in.get('if')!r}, not {FAN_IN_IF!r}")
+    return problems
+
+
+def grants_oidc(permissions: object) -> bool:
+    """Whether a `permissions` value lets the job mint an OIDC token."""
+    if isinstance(permissions, str):
+        return permissions == "write-all"
+    return isinstance(permissions, dict) and permissions.get("id-token") == "write"
+
+
+def oidc_problems(name: str, document: dict) -> list[str]:
+    """Rule 6."""
+    problems = []
+    if grants_oidc(document.get("permissions")):
+        problems.append(f"{name}: its default permissions can mint an OIDC token")
+    for job_id, job in (document.get("jobs") or {}).items():
+        if (name, job_id) in OIDC_JOBS or not isinstance(job, dict):
+            continue
+        if grants_oidc(job.get("permissions")):
+            problems.append(f"{name}: job {job_id} can mint an OIDC token, and is not one of"
+                            " the jobs allowed to")
     return problems
 
 
@@ -169,6 +200,7 @@ def check_tree(root: Path) -> list[str]:
             problems += runner_problems(path.name, job_id, job if isinstance(job, dict) else {})
         problems += fan_in_problems(path.name, jobs)
         problems += self_reference_problems(root, path.name, document)
+        problems += oidc_problems(path.name, document)
     for path in sorted((root / ".github" / "actions").glob("*/action.y*ml")):
         name = str(path.relative_to(root))
         document = load_yaml(path)
@@ -197,6 +229,11 @@ jobs:
       {ROUTED_RUNS_ON}
     steps: [{{run: echo}}]
   docs: {{needs: changes, uses: $/.github/workflows/docs-check.yml}}
+  coverage-upload:
+    needs: changes
+    runs-on: ubuntu-latest
+    permissions: {{contents: read, id-token: write}}
+    steps: [{{run: echo}}]
   final-status:
     if: {FAN_IN_IF}
     needs: [changes, ios-tests, docs]
@@ -293,6 +330,24 @@ CASES: list[tuple[str, str, str, str]] = [
      "on: {pull_request: {}}\njobs:\n  ios-tests:\n    runs-on: ${{ needs.changes.outputs.ios-runner"
      " == 'local' && fromJSON('[\"offline-kt\"]') || 'macos-26' }}\n    steps: [{run: echo}]\n",
      "names the self-hosted runner"),
+    ("fan-in needs the coverage upload", "ci.yml",
+     COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]",
+                          "needs: [changes, ios-tests, docs, coverage-upload]"),
+     "which must never block a merge"),
+    ("another ci.yml job can mint an OIDC token", "ci.yml",
+     COMPLIANT_CI.replace("changes: {runs-on: ubuntu-slim,",
+                          "changes: {runs-on: ubuntu-slim, permissions: {id-token: write},"),
+     "job changes can mint an OIDC token"),
+    ("a job with write-all", "extra.yml",
+     "on: workflow_dispatch\njobs:\n  a:\n    runs-on: ubuntu-latest\n    permissions: write-all\n"
+     "    steps: [{run: echo}]\n", "job a can mint an OIDC token"),
+    ("a coverage-upload job in another workflow", "extra.yml",
+     "on: workflow_dispatch\njobs:\n  coverage-upload:\n    runs-on: ubuntu-latest\n"
+     "    permissions: {id-token: write}\n    steps: [{run: echo}]\n",
+     "job coverage-upload can mint an OIDC token"),
+    ("OIDC in a workflow's default permissions", "ci.yml",
+     COMPLIANT_CI.replace("jobs:\n", "permissions: {contents: read, id-token: write}\njobs:\n", 1),
+     "default permissions can mint an OIDC token"),
 ]
 
 
