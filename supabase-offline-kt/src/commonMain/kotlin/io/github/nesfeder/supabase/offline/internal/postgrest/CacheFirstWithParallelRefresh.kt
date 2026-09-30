@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.RefreshState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -10,6 +11,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -100,7 +102,14 @@ internal fun <T> cacheFirstWithParallelRefresh(
 ): Flow<T> = channelFlow {
     // Forward cache emissions immediately — not gated on the network.
     launch {
-        cache.collect { value -> send(value) }
+        try {
+            cache.collect { value -> send(value) }
+        } catch (failure: Throwable) {
+            // The collector's cancellation rethrows; the cache's own failure, a cancellation
+            // included, ends the flow after the values it sent
+            if (failure is CancellationException && !isActive) throw failure
+            this@channelFlow.close(failure)
+        }
     }
     // In parallel, refresh the cache with self-healing backoff for the life of the subscription.
     launch {
