@@ -291,7 +291,7 @@ pattern in the workflow's `resolve` step.
 
 ## Continuous integration
 
-Every pull request runs `.github/workflows/ci.yml`. Its last job, **Final status**, is the one check
+Every pull request runs `.github/workflows/ci.yml`. Its last job, **All Green**, is the one check
 a pull request needs. Most failures are the change's own. This section covers two kinds that are
 not.
 
