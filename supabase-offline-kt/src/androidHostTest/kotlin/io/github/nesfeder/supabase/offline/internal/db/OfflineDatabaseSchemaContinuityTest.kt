@@ -14,13 +14,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Pins the exported Room schema that existing installs are on.
- *
- * Every device that ran the engine before it moved here holds `supabase_offline.db` at schema
- * version 2 with identity hash `5a519d822fb8c3ead14608102c6846d9`, and that file holds users'
- * unsent writes. Any change to a table, column, index or the version number changes the hash, and
- * Room then takes the destructive fallback on the device — deleting those writes. The exported
- * schema is the record of what the build compiles; these cases fail the build if it drifts.
+ * Pins the exported Room schema the library ships: version 1, identity hash
+ * `b6a7e9150b888e5e54cb2be30f46a734`, and no other version. Any change to a table, column or index
+ * changes the hash, and Room then takes the destructive fallback on a device — deleting the unsent
+ * writes the file holds. The exported schema is the record of what the build compiles; these cases
+ * fail the build if it drifts.
  *
  * Reads the checked-in `schemas/` directory (its location is passed in by the build), so it runs on
  * the JVM host only.
@@ -47,34 +45,7 @@ class OfflineDatabaseSchemaContinuityTest {
     }
 
     @Test
-    fun exported_schema_2_has_the_shipped_identity_hash() {
-        // Given
-        val schema = exportedSchema(version = 2)
-
-        // When
-        val version = schema.getValue("version").jsonPrimitive.int
-        val identityHash = schema.getValue("identityHash").jsonPrimitive.content
-
-        // Then
-        assertEquals(2, version)
-        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, identityHash)
-    }
-
-    @Test
-    fun the_current_schema_version_is_the_shipped_one() {
-        // Given / When — the version the database class compiles with
-        val current = OFFLINE_DB_VERSION
-
-        // Then — raising it is a deliberate schema change that needs its own migration
-        assertEquals(ShippedDatabaseFixture.VERSION.toInt(), current)
-        assertTrue(
-            File(schemaDirectory, "$current.json").isFile,
-            "the current version must be exported",
-        )
-    }
-
-    @Test
-    fun exported_schema_1_is_kept_for_the_1_to_2_migration() {
+    fun exported_schema_1_has_the_pinned_identity_hash() {
         // Given
         val schema = exportedSchema(version = 1)
 
@@ -84,35 +55,30 @@ class OfflineDatabaseSchemaContinuityTest {
 
         // Then
         assertEquals(1, version)
-        assertEquals(ShippedDatabaseFixture.VERSION_1_IDENTITY_HASH, identityHash)
+        assertEquals(ShippedDatabaseFixture.IDENTITY_HASH, identityHash)
     }
 
     @Test
-    fun the_open_in_place_fixture_is_the_exported_schema_2_verbatim() {
-        // Given
-        val schema = exportedSchema(version = 2)
+    fun the_current_schema_version_is_the_exported_one_and_the_only_one() {
+        // Given / When — the version the database class compiles with, and the exported files
+        val current = OFFLINE_DB_VERSION
+        val exported = schemaDirectory.list().orEmpty().sorted()
 
-        // When — every statement Room would run to create schema version 2
+        // Then — raising it is a deliberate schema change that needs its own migration
+        assertEquals(ShippedDatabaseFixture.VERSION.toInt(), current)
+        assertEquals(listOf("$current.json"), exported)
+    }
+
+    @Test
+    fun the_open_in_place_fixture_is_the_exported_schema_verbatim() {
+        // Given
+        val schema = exportedSchema(version = 1)
+
+        // When — every statement Room would run to create schema version 1
         val statements = creationStatements(schema)
 
         // Then — the fixture that the open-in-place tests write is exactly this schema
         assertEquals(statements, ShippedDatabaseFixture.SCHEMA_STATEMENTS)
-    }
-
-    @Test
-    fun the_version_1_fixture_is_the_exported_schema_1_verbatim() {
-        // Given
-        val schema = exportedSchema(version = 1)
-
-        // When
-        val statements = creationStatements(schema)
-
-        // Then
-        assertEquals(statements, ShippedDatabaseFixture.VERSION_1_SCHEMA_STATEMENTS)
-        assertEquals(
-            ShippedDatabaseFixture.VERSION_1_IDENTITY_HASH,
-            schema.getValue("identityHash").jsonPrimitive.content,
-        )
     }
 
     /**

@@ -519,8 +519,7 @@ internal class SupabaseOfflineClientImpl(
         clientScope.launch {
             auth.sessionStatus.collect { status ->
                 val identity = replayIdentityFor(status) ?: return@collect
-                if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true)
-                    backgroundSync.request()
+                if (store.hasPendingMutationsOf(identity.storedValue)) backgroundSync.request()
             }
         }
     }

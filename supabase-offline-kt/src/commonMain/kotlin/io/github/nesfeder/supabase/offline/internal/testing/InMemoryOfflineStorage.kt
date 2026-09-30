@@ -55,6 +55,12 @@ internal open class InMemoryObjectDao : ObjectDao {
     override suspend fun allForTable(table: String): List<ObjectRow> =
         rows.values.filter { it.table == table }
 
+    override suspend fun maxSyncedThrough(): Long =
+        rows.values.maxOfOrNull { it.syncedThrough } ?: 0L
+
+    override suspend fun minSyncedThroughForTable(table: String): Long? =
+        rows.values.filter { it.table == table }.minOfOrNull { it.syncedThrough }
+
     override suspend fun signaturesForTable(table: String): List<String> =
         rows.values.filter { it.table == table }.map { it.signature }
 
@@ -200,28 +206,77 @@ internal open class InMemoryMutationDao : MutationDao {
         all.filter { it.syncedAtMs == null }.sortedBy { it.id }
     }
 
-    override suspend fun pendingIdsBefore(id: Long): List<Long> =
+    override suspend fun pendingOwnedBy(
+        owner: String,
+        includeOwnerless: Boolean,
+    ): List<MutationRow> =
+        mutations.value.filter { it.isPendingOf(owner, includeOwnerless) }.sortedBy { it.id }
+
+    override suspend fun pendingOwnedByInTable(
+        owner: String,
+        includeOwnerless: Boolean,
+        table: String,
+    ): List<MutationRow> =
         mutations.value
-            .filter { it.syncedAtMs == null && it.id < id }
+            .filter { it.table == table && it.isPendingOf(owner, includeOwnerless) }
             .sortedBy { it.id }
-            .map { it.id }
+
+    override suspend fun hasPendingOwnedBy(
+        owner: String,
+        includeOwnerless: Boolean,
+        beforeId: Long,
+    ): Boolean = mutations.value.any { it.id < beforeId && it.isPendingOf(owner, includeOwnerless) }
+
+    override suspend fun hasPendingBefore(beforeId: Long): Boolean =
+        mutations.value.any { it.syncedAtMs == null && it.id < beforeId }
+
+    override suspend fun setOwner(id: Long, owner: String) {
+        mutations.update { current ->
+            current.map { if (it.id == id) it.copy(owner = owner) else it }
+        }
+    }
+
+    override suspend fun adoptOwnerless(owner: String): Int {
+        val adopted = mutations.value.count { it.owner == null && it.syncedAtMs == null }
+        if (adopted > 0) {
+            mutations.update { current ->
+                current.map {
+                    if (it.owner == null && it.syncedAtMs == null) it.copy(owner = owner) else it
+                }
+            }
+        }
+        return adopted
+    }
+
+    /** Whether this row is pending and [owner]'s, or ownerless when [includeOwnerless]. */
+    private fun MutationRow.isPendingOf(owner: String, includeOwnerless: Boolean): Boolean =
+        syncedAtMs == null && (this.owner == owner || (includeOwnerless && this.owner == null))
 
     override suspend fun isPending(id: Long): Boolean =
         mutations.value.any { it.id == id && it.syncedAtMs == null }
 
     override suspend fun byId(id: Long): MutationRow? = mutations.value.firstOrNull { it.id == id }
 
-    override suspend fun syncedIdsForTable(table: String): List<Long> =
-        mutations.value.filter { it.table == table && it.syncedAtMs != null }.map { it.id }
+    override suspend fun syncedForTable(table: String): List<MutationRow> =
+        mutations.value
+            .filter { it.table == table && it.syncedAtMs != null }
+            .sortedWith(compareBy({ it.syncSequence ?: Long.MIN_VALUE }, { it.id }))
+
+    override suspend fun tablesWithSyncedMutations(): List<String> =
+        mutations.value.filter { it.syncedAtMs != null }.map { it.table }.distinct()
+
+    override suspend fun maxSyncSequence(): Long =
+        mutations.value.maxOfOrNull { it.syncSequence ?: 0L } ?: 0L
+
+    override suspend fun recordSchemaCacheMiss(id: Long) {
+        mutations.update { current ->
+            current.map {
+                if (it.id == id) it.copy(schemaCacheMisses = it.schemaCacheMisses + 1) else it
+            }
+        }
+    }
 
     override suspend fun countAll(): Int = mutations.value.size
-
-    override suspend fun allIds(): List<Long> = mutations.value.map { it.id }
-
-    override suspend fun syncedBefore(syncedBeforeMs: Long): List<MutationRow> =
-        mutations.value
-            .filter { it.syncedAtMs != null && it.syncedAtMs < syncedBeforeMs }
-            .sortedBy { it.id }
 
     override suspend fun countPending(): Int = mutations.value.count { it.syncedAtMs == null }
 
@@ -250,9 +305,12 @@ internal open class InMemoryMutationDao : MutationDao {
         all.filter { it.table == table }.sortedBy { it.id }
     }
 
-    override suspend fun markSynced(id: Long, syncedAtMs: Long) {
+    override suspend fun markSynced(id: Long, syncedAtMs: Long, syncSequence: Long) {
         mutations.update { current ->
-            current.map { if (it.id == id) it.copy(syncedAtMs = syncedAtMs) else it }
+            current.map {
+                if (it.id == id) it.copy(syncedAtMs = syncedAtMs, syncSequence = syncSequence)
+                else it
+            }
         }
     }
 

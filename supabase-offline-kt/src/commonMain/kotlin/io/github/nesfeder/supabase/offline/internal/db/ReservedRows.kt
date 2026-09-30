@@ -3,10 +3,9 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 /**
- * The `object_cache` table name under which the engine keeps its own state — the rejected-mutation
- * list, the owner of each queued mutation, which cached payloads already contain each synced
- * mutation, which INSERTs may already be on the server, each cached query's shape and whose the
- * cache is — without a schema change.
+ * The `object_cache` table name under which the engine keeps its own small records — the
+ * rejected-mutation list, which INSERTs may already be on the server, each cached query's shape and
+ * whose the cache is — beside the cache.
  *
  * It cannot collide with a table reachable through PostgREST: Postgres truncates identifiers to
  * `NAMEDATALEN - 1` = 63 bytes, so no table can be *named* anything longer, and this name is far
@@ -15,26 +14,15 @@ package io.github.nesfeder.supabase.offline.internal.db
  *
  * Rows under this name are never evicted, never counted towards the cache size, never returned by a
  * read and never touched by an overlay; `clearAll` removes them with everything else, and a drop of
- * the cache for a new owner removes the query shapes and keeps the rest. An older build of the
- * engine that opens the database sees them as cache rows for a table nobody queries.
+ * the cache for a new owner removes the query shapes and keeps the rest.
  *
- * Changing this value orphans every installed device's rejected list and owner records, so it never
- * changes.
+ * Changing this value orphans every installed device's records, so it never changes.
  */
 internal const val RESERVED_TABLE_NAME: String =
     "__supabase_offline_kt__.reserved_engine_state.this_name_is_longer_than_any_postgres_identifier"
 
 /** Signature, within [RESERVED_TABLE_NAME], of the persisted rejected-mutation list. */
 internal const val REJECTED_MUTATIONS_SIGNATURE: String = "rejected_mutations"
-
-/** Signature, within [RESERVED_TABLE_NAME], of the owner recorded for each queued mutation. */
-internal const val MUTATION_OWNERS_SIGNATURE: String = "mutation_owners"
-
-/**
- * Signature, within [RESERVED_TABLE_NAME], of the cache keys whose payload a network response wrote
- * after each synced mutation replayed — the payloads that already contain it.
- */
-internal const val SYNCED_MUTATION_COVERAGE_SIGNATURE: String = "synced_mutation_coverage"
 
 /**
  * Signature, within [RESERVED_TABLE_NAME], of the INSERT mutations whose send started and whose

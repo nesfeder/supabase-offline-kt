@@ -69,7 +69,6 @@ internal data class StoredServerError(
  * @property defaultToNull [MutationRow.defaultToNull].
  * @property onConflict [MutationRow.onConflict].
  * @property ignoreDuplicates [MutationRow.ignoreDuplicates].
- * @property deltaJson [MutationRow.deltaJson].
  * @property owner The identity that made the write, or `null` when none was recorded.
  * @property rejectedAtMs When it was refused, by the device clock.
  * @property message A human-readable reason.
@@ -88,7 +87,6 @@ internal data class StoredRejection(
     val defaultToNull: Boolean? = null,
     val onConflict: String? = null,
     val ignoreDuplicates: Boolean? = null,
-    val deltaJson: String? = null,
     val owner: String? = null,
     val rejectedAtMs: Long,
     val message: String,
@@ -97,12 +95,13 @@ internal data class StoredRejection(
 ) {
     /**
      * The mutation row this rejection re-queues as: every stored field, a fresh id (`0`, so the
-     * queue assigns the next one and the write goes to the tail) and a new creation time.
+     * queue assigns the next one and the write goes to the tail), a new creation time and [owner].
      *
      * @param createdAtMs When it is re-queued.
+     * @param owner The identity it is re-queued for, or `null` to record none.
      * @return A pending row, or `null` when the body was not kept.
      */
-    fun toRequeuedRow(createdAtMs: Long): MutationRow? {
+    fun toRequeuedRow(createdAtMs: Long, owner: String?): MutationRow? {
         if (bodyOmittedChars != null) return null
         return MutationRow(
             table = table,
@@ -114,7 +113,7 @@ internal data class StoredRejection(
             defaultToNull = defaultToNull,
             onConflict = onConflict,
             ignoreDuplicates = ignoreDuplicates,
-            deltaJson = deltaJson,
+            owner = owner,
         )
     }
 }
@@ -132,43 +131,12 @@ internal data class StoredRejectionList(
     val droppedCount: Long = 0,
 )
 
-/** The persisted owner of each queued mutation, by mutation id. */
-@Serializable
-private data class StoredMutationOwners(
-    @EncodeDefault val version: Int = MUTATION_QUEUE_STATE_FORMAT_VERSION,
-    val owners: Map<Long, String> = emptyMap(),
-)
-
-/** For each synced mutation, the cache keys whose payload already contains it. */
-@Serializable
-private data class StoredSyncedMutationCoverage(
-    @EncodeDefault val version: Int = MUTATION_QUEUE_STATE_FORMAT_VERSION,
-    val coveredSignatures: Map<Long, List<String>> = emptyMap(),
-)
-
 /** The INSERT mutations whose send started and whose outcome is unknown. */
 @Serializable
 private data class StoredUnconfirmedSends(
     @EncodeDefault val version: Int = MUTATION_QUEUE_STATE_FORMAT_VERSION,
     val mutationIds: List<Long> = emptyList(),
 )
-
-/** Who owns each queued mutation, as far as the engine can read it. */
-internal sealed interface MutationOwners {
-
-    /**
-     * The recorded owners. A pending mutation with no entry was queued by an earlier build of the
-     * engine and has no recorded owner yet.
-     *
-     * @property byId Mutation id → the owner's stored identity value.
-     */
-    data class Known(val byId: Map<Long, String>) : MutationOwners
-
-    /**
-     * The owners row exists but cannot be decoded. Nothing is replayed until local data is cleared.
-     */
-    data object Unreadable : MutationOwners
-}
 
 /**
  * A queue record's first read: its value, and what to write if the record must start afresh. That
@@ -182,15 +150,13 @@ private class FirstRead<T>(
 )
 
 /**
- * The mutation queue's records kept in reserved `object_cache` rows (see [RESERVED_TABLE_NAME]) so
- * no schema change is needed: each mutation's owner, the rejected list, which cached payloads
- * already contain each synced mutation, and which INSERTs may already be on the server. Cached in
- * memory after the first read.
+ * The mutation queue's two records kept in reserved `object_cache` rows (see
+ * [RESERVED_TABLE_NAME]): the rejected list, and which INSERTs may already be on the server. Each
+ * is small and rarely written; they are cached in memory after the first read.
  *
  * Callers hold the store's mutation-queue lock, and build each row here before opening a
- * transaction, so no transaction waits on a coroutine lock. An unreadable owner row stops replay
- * ([MutationOwners.Unreadable]); any other unreadable row is kept aside, logged, and started
- * afresh.
+ * transaction, so no transaction waits on a coroutine lock. An unreadable row is kept aside,
+ * logged, and started afresh.
  *
  * @property pendingKeyedInsertIds The pending INSERTs whose rows all carry their table's primary
  *   key: what a missing or unreadable unconfirmed-sends row starts from.
@@ -204,154 +170,13 @@ internal class MutationQueueState(
 ) {
 
     /**
-     * Held while the coverage or unconfirmed-sends row is first read, and written back when it has
-     * to start afresh, so that write cannot overwrite a change made meanwhile. Innermost of every
-     * lock.
+     * Held while the unconfirmed-sends row is first read, and written back when it has to start
+     * afresh, so that write cannot overwrite a change made meanwhile. Innermost of every lock.
      */
     private val loadLock = Mutex()
 
-    private val ownersCache = MutableStateFlow<MutationOwners?>(null)
     private val rejectedCache = MutableStateFlow<StoredRejectionList?>(null)
-    private val coverageCache = MutableStateFlow<Map<Long, Set<String>>?>(null)
     private val unconfirmedCache = MutableStateFlow<Set<Long>?>(null)
-
-    /* ─────────────────────────────── Owners ─────────────────────────────── */
-
-    /**
-     * Who owns each queued mutation.
-     *
-     * @return The owners, or [MutationOwners.Unreadable].
-     */
-    suspend fun owners(): MutationOwners {
-        ownersCache.value?.let {
-            return it
-        }
-        val loaded =
-            decodeOwners(objectDao.get(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE)?.payload)
-        ownersCache.compareAndSet(null, loaded)
-        return ownersCache.value ?: loaded
-    }
-
-    /**
-     * [owners], re-emitted whenever they change.
-     *
-     * @return A flow of the owners.
-     */
-    fun ownersFlow(): Flow<MutationOwners> = flow {
-        owners()
-        emitAll(ownersCache.filterNotNull())
-    }
-
-    /**
-     * The owners row with [changes] applied, ready to write in the caller's transaction; commit it
-     * with [ownersWritten] afterwards. Caller holds the store's mutation-queue lock.
-     *
-     * @param changes Turns the current map into the new one.
-     * @return The row and the new owners, or `null` when the owners cannot be read.
-     */
-    suspend fun ownersRowWith(
-        changes: (Map<Long, String>) -> Map<Long, String>
-    ): Pair<ObjectRow, MutationOwners.Known>? {
-        val current = owners() as? MutationOwners.Known ?: return null
-        val next = MutationOwners.Known(changes(current.byId))
-        val row =
-            ObjectRow(
-                table = RESERVED_TABLE_NAME,
-                signature = MUTATION_OWNERS_SIGNATURE,
-                payload =
-                    json.encodeToString(
-                        StoredMutationOwners.serializer(),
-                        StoredMutationOwners(owners = next.byId),
-                    ),
-                updatedAt = nowMillis(),
-            )
-        return row to next
-    }
-
-    /**
-     * Records that [owners] was written.
-     *
-     * @param owners The owners the committed row holds.
-     */
-    fun ownersWritten(owners: MutationOwners.Known) {
-        ownersCache.value = owners
-    }
-
-    /* ─────────────────────── Synced-mutation coverage ─────────────────────── */
-
-    /**
-     * For each synced mutation, the cache keys whose payload a network response wrote after it
-     * replayed. Such a payload already holds the mutation, so the overlay leaves it out there.
-     */
-    suspend fun syncedMutationCoverage(): Map<Long, Set<String>> {
-        coverageCache.value?.let {
-            return it
-        }
-        return loadLock.withLock {
-            coverageCache.value
-                ?: settleFirstRead(
-                    coverageCache,
-                    SYNCED_MUTATION_COVERAGE_SIGNATURE,
-                    readSyncedMutationCoverage(),
-                )
-        }
-    }
-
-    /**
-     * Reads the coverage row. A missing one covers nothing, so the overlay shows every synced
-     * mutation; an unreadable one is to be kept aside and replaced by an empty row.
-     */
-    private suspend fun readSyncedMutationCoverage(): FirstRead<Map<Long, Set<String>>> {
-        val payload =
-            objectDao.get(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE)?.payload
-                ?: return FirstRead(value = emptyMap())
-        decodeOrNull(StoredSyncedMutationCoverage.serializer(), payload)?.let { stored ->
-            return FirstRead(
-                value = stored.coveredSignatures.mapValues { (_, signatures) -> signatures.toSet() }
-            )
-        }
-        return FirstRead(
-            value = emptyMap(),
-            unreadablePayload = payload,
-            freshRow = syncedMutationCoverageRow(emptyMap()),
-        )
-    }
-
-    /** [syncedMutationCoverage], re-emitted whenever it changes. */
-    fun syncedMutationCoverageFlow(): Flow<Map<Long, Set<String>>> = flow {
-        syncedMutationCoverage()
-        emitAll(coverageCache.filterNotNull())
-    }
-
-    /**
-     * The coverage row with [changes] applied, for the caller's transaction, or `null` when nothing
-     * changes; commit it with [syncedMutationCoverageWritten]. Caller holds the mutation-queue
-     * lock.
-     */
-    suspend fun syncedMutationCoverageRowWith(
-        changes: (Map<Long, Set<String>>) -> Map<Long, Set<String>>
-    ): Pair<ObjectRow, Map<Long, Set<String>>>? {
-        val current = syncedMutationCoverage()
-        val next = changes(current).filterValues { signatures -> signatures.isNotEmpty() }
-        if (next == current) return null
-        return syncedMutationCoverageRow(next) to next
-    }
-
-    private fun syncedMutationCoverageRow(coverage: Map<Long, Set<String>>): ObjectRow {
-        val stored =
-            StoredSyncedMutationCoverage(
-                coveredSignatures = coverage.mapValues { (_, signatures) -> signatures.sorted() }
-            )
-        return reservedRow(
-            SYNCED_MUTATION_COVERAGE_SIGNATURE,
-            json.encodeToString(StoredSyncedMutationCoverage.serializer(), stored),
-        )
-    }
-
-    /** Records that [coverage] was written. */
-    fun syncedMutationCoverageWritten(coverage: Map<Long, Set<String>>) {
-        coverageCache.value = coverage
-    }
 
     /* ─────────────────────────── Unconfirmed sends ─────────────────────────── */
 
@@ -542,9 +367,7 @@ internal class MutationQueueState(
      * deleted them. The records then read empty without a row, so no reader writes one back.
      */
     fun resetCaches() {
-        ownersCache.value = MutationOwners.Known(emptyMap())
         rejectedCache.value = StoredRejectionList()
-        coverageCache.value = emptyMap()
         unconfirmedCache.value = emptySet()
     }
 
@@ -663,18 +486,6 @@ internal class MutationQueueState(
     /** How many characters [entry] takes in the persisted list. */
     private fun charactersOf(entry: StoredRejection): Int =
         json.encodeToString(StoredRejection.serializer(), entry).length
-
-    private fun decodeOwners(payload: String?): MutationOwners {
-        if (payload == null) return MutationOwners.Known(emptyMap())
-        val decoded = decodeOrNull(StoredMutationOwners.serializer(), payload)
-        if (decoded == null) {
-            logger().error {
-                "The queue's owner records could not be read; nothing is queued or replayed until local data is cleared"
-            }
-            return MutationOwners.Unreadable
-        }
-        return MutationOwners.Known(decoded.owners)
-    }
 
     private fun <T> decodeOrNull(serializer: KSerializer<T>, payload: String): T? =
         try {

@@ -333,7 +333,7 @@ internal class MutationQueueReplayer(
     private suspend fun remainingFor(identity: QueueIdentity?, table: String?): Int {
         if (identity == null)
             return store.allPendingMutations().count { row -> table == null || row.table == table }
-        return store.pendingMutationsOf(identity.storedValue, table)?.size ?: 0
+        return store.pendingMutationsOf(identity.storedValue, table).size
     }
 
     /** The next step of a pass, chosen under [sendLock]. */
@@ -371,20 +371,13 @@ internal class MutationQueueReplayer(
             sdkLogger.warning { "The session's identity cannot be told; not replaying" }
             return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.IdentityUnknown)
         }
-        val ready = sendLock.withLock {
+        sendLock.withLock {
             if (clearGeneration.value != generation)
                 return SyncReport(0, emptyList(), 0, SyncStop.LocalDataCleared)
-            store.retireAgedSyncedMutations()
+            store.retireUnneededSyncedMutations()
             store.adoptOwnerlessMutations(identity.storedValue)
         }
-        val queue = if (ready) store.pendingMutationsOf(identity.storedValue, table) else null
-        if (queue == null)
-            return SyncReport(
-                0,
-                emptyList(),
-                remainingFor(null, table),
-                SyncStop.OwnershipUnreadable,
-            )
+        val queue = store.pendingMutationsOf(identity.storedValue, table)
         if (queue.isEmpty()) return SyncReport(0, emptyList(), 0, null)
         sdkLogger.info {
             if (table == null) "Syncing ${queue.size} pending mutations"

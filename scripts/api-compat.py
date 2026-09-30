@@ -549,9 +549,14 @@ def read_digester_report(path: Optional[str], report: Report) -> None:
 
 
 def classify_schema(git: Git, base: str, head: str, policy: dict, report: Report) -> None:
+    """A new schema version is a format change. Once a release is tagged an edited or deleted one
+    is an error nothing overrides; before it, the one schema the first release ships may change."""
+    released = latest_release_tag(git) is not None
     for status, path in git.changed(base, head, policy.get("schemaDirectories", [])):
         if status == "A":
             report.add(Finding("additive", "room-schema-version-added", path, flag="format"))
+        elif not released:
+            report.add(Finding("additive", "room-schema-changed-before-release", f"{path} ({status})", flag="format"))
         else:
             report.add(Finding("breaking", "room-schema-edited", f"{path} ({status})", flag="error"))
 
@@ -1496,6 +1501,21 @@ def self_test() -> int:
         head = repository.commit("stale override")
         _, problems = classify(repository.git, base, head)
         expect(any("matches no finding" in problem for problem in problems), "an override that matches nothing is refused", failures)
+
+    # Before the first release the one schema may change, edited or deleted: a format change.
+    with fixture() as (repository, base):
+        repository.git.run("tag", "-d", "0.1.0")
+        repository.write("lib/schemas/2.json", '{"version": 2, "edited": true}')
+        head = repository.commit("edited before the first release")
+        report, problems = classify(repository.git, base, head)
+        expect(report.level() == "additive" and "format" in report.flags() and "error" not in report.flags()
+               and not problems, "before the first release an edited schema is a format change", failures)
+        os.remove(os.path.join(repository.directory, "lib/schemas/2.json"))
+        repository.write("lib/schemas/1.json", '{"version": 1}')
+        head = repository.commit("the schemas replaced by one version 1 before the first release")
+        report, problems = classify(repository.git, base, head)
+        expect(report.level() == "additive" and "error" not in report.flags() and not problems,
+               "before the first release a deleted schema is a format change", failures)
 
     # An edited schema can never be overridden.
     with fixture() as (repository, base):

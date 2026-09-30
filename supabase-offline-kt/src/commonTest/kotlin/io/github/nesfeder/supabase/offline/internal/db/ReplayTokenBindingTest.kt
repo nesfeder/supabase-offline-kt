@@ -76,7 +76,7 @@ class ReplayTokenBindingTest {
         assertEquals(emptyList(), postsCarrying("user-b"))
         assertEquals(SyncStop.SessionChanged, report.stop)
         assertEquals(0, report.syncedCount)
-        assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.ownerOf() })
+        assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.owner })
 
         // When — A signs in again and a pass runs
         supabase.signInForTest("user-a")
@@ -124,7 +124,7 @@ class ReplayTokenBindingTest {
         // Then — the write stays queued as A's, and nothing went out under B's token
         assertEquals(MutationOutcome.Queued, outcome)
         assertEquals(emptyList(), postsCarrying("user-b"))
-        assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.ownerOf() })
+        assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.owner })
 
         // When — A is back
         supabase.signInForTest("user-a")
@@ -151,9 +151,6 @@ class ReplayTokenBindingTest {
         assertEquals(SyncStop.SessionChanged, report.stop)
         assertEquals(1, store.allPendingMutations().size)
     }
-
-    private suspend fun MutationRow.ownerOf(): String? =
-        (store.mutationQueueState.owners() as MutationOwners.Known).byId[id]
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
 

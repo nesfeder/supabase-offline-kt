@@ -62,7 +62,7 @@ internal val SHIPPED_QUEUE_REPLAY: List<RecordedRequest> =
             prefer = "return=minimal",
             contentProfile = "public",
             acceptProfile = null,
-            body = """{"title":"Walk the dog twice","done_count":5,"minutes_spent":45}""",
+            body = """{"title":"Walk the dog twice","done":true}""",
         ),
         RecordedRequest(
             method = "DELETE",

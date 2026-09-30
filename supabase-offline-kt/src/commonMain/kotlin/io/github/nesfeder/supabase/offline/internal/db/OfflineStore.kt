@@ -133,11 +133,6 @@ internal sealed interface EnqueueOutcome {
      */
     data class Queued(val id: Long) : EnqueueOutcome
 
-    /**
-     * The owner records cannot be read, so no owner could be recorded; the write was not queued.
-     */
-    data object OwnershipUnreadable : EnqueueOutcome
-
     /** Local data was cleared after the write started; it was not queued. */
     data object LocalDataCleared : EnqueueOutcome
 }
@@ -237,8 +232,8 @@ internal class OfflineStore(
     internal var sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO)
 
     /**
-     * The mutation queue's persisted state: the owner of each queued write, the rejected list, the
-     * synced-mutation coverage and the unconfirmed sends.
+     * The mutation queue's records kept beside the rows: the rejected list and the unconfirmed
+     * sends.
      */
     internal val mutationQueueState: MutationQueueState =
         MutationQueueState(
@@ -266,6 +261,20 @@ internal class OfflineStore(
      * [teardownMutex].
      */
     private val mutationQueueMutex = Mutex()
+
+    /**
+     * The highest [MutationRow.syncSequence] handed out, read from the database once; guarded by
+     * [mutationQueueMutex]. It never goes back, so a payload's [ObjectRow.syncedThrough] never
+     * covers a mutation that syncs after the payload was written.
+     */
+    private var latestSyncSequence: Long? = null
+
+    /** [latestSyncSequence], read once. Caller holds [mutationQueueMutex]. */
+    private suspend fun latestSyncSequence(): Long =
+        latestSyncSequence
+            ?: maxOf(mutationDao.maxSyncSequence(), objectDao.maxSyncedThrough()).also { loaded ->
+                latestSyncSequence = loaded
+            }
 
     /**
      * Makes a teardown and every cache write it must not be followed by one step: [clearAll] stamps
@@ -307,19 +316,15 @@ internal class OfflineStore(
     private val unclassifiableWriteReported = MutableStateFlow(false)
 
     /**
-     * Whether the synced [mutation] still belongs on the payload cached for [signature]: a synced
-     * mutation stands in for its write only on payloads that do not already contain it — those no
-     * network response wrote after it replayed (see [MutationQueueState.syncedMutationCoverage]). A
-     * pending mutation always belongs; so does any mutation when [signature] is not known.
+     * Whether [mutation] belongs on a payload that holds the synced mutations through
+     * [payloadSyncedThrough] (see [ObjectRow.syncedThrough]): a pending one always does, a synced
+     * one only when it replayed after them. Without a sequence it is taken as held by none.
      */
-    private fun belongsOnPayload(
-        mutation: MutationRow,
-        signature: String?,
-        coverage: Map<Long, Set<String>>,
-    ): Boolean =
-        mutation.syncedAtMs == null ||
-            signature == null ||
-            signature !in coverage[mutation.id].orEmpty()
+    private fun belongsOnPayload(mutation: MutationRow, payloadSyncedThrough: Long): Boolean {
+        if (mutation.syncedAtMs == null) return true
+        val sequence = mutation.syncSequence ?: return true
+        return sequence > payloadSyncedThrough
+    }
 
     /**
      * Per-table locks serializing every write to the object cache — [addPayload] and the
@@ -544,8 +549,8 @@ internal class OfflineStore(
      * dropped for it after the request started, [AddPayloadOutcome.DROPPED_STALE] when it started
      * before the table's last local write (it would roll that write back), and
      * [AddPayloadOutcome.DROPPED_EMPTY] for an empty payload that is not [authoritativeEmpty]. A
-     * payload written with a start tick is recorded as containing the table's synced mutations.
-     * Runs under the table's write lock.
+     * payload written with a start tick is recorded as holding the synced mutations so far
+     * ([ObjectRow.syncedThrough]). Runs under the table's write lock.
      *
      * @param authoritativeEmpty Whether an empty [payload] is the server's real answer (the request
      *   went out signed in), so it may replace cached rows or seed a cold slot.
@@ -607,15 +612,19 @@ internal class OfflineStore(
                                 AddPayloadOutcome.DROPPED_EMPTY
 
                             else -> {
-                                writePayloadAndCoverage(
-                                    row =
-                                        ObjectRow(
-                                            table = table,
-                                            signature = signature,
-                                            payload = payload,
-                                            updatedAt = nowMillis(),
-                                        ),
-                                    coversSyncedMutations = requestStartedAtTick != null,
+                                // A response whose request started after the table's last local
+                                // write holds every mutation synced so far; a payload with no
+                                // request behind it holds none for certain
+                                objectDao.upsert(
+                                    ObjectRow(
+                                        table = table,
+                                        signature = signature,
+                                        payload = payload,
+                                        updatedAt = nowMillis(),
+                                        syncedThrough =
+                                            if (requestStartedAtTick != null) latestSyncSequence()
+                                            else 0L,
+                                    )
                                 )
                                 // Before the lock is released, so no patch finds the payload
                                 // without the shape that says which rows it admits
@@ -633,33 +642,6 @@ internal class OfflineStore(
             enforceDbSizeLimitIfNeeded()
         }
         return outcome
-    }
-
-    /**
-     * Writes a cached payload, and records in the same transaction whether it contains the table's
-     * synced mutations. A network response whose request started after the table's last local write
-     * — the only kind [addPayload] accepts with a start tick — holds every mutation already synced;
-     * a payload with no request behind it holds none for certain. Caller holds the table, mutation
-     * queue and teardown locks.
-     */
-    private suspend fun writePayloadAndCoverage(row: ObjectRow, coversSyncedMutations: Boolean) {
-        val synced = mutationDao.syncedIdsForTable(row.table)
-        val coverage = mutationQueueState.syncedMutationCoverageRowWith { current ->
-            if (coversSyncedMutations) {
-                current + synced.associateWith { id -> current[id].orEmpty() + row.signature }
-            } else {
-                current.mapValues { (_, signatures) -> signatures - row.signature }
-            }
-        }
-        if (coverage == null) {
-            objectDao.upsert(row)
-            return
-        }
-        mutationDao.runInTransaction {
-            objectDao.upsert(row)
-            objectDao.upsert(coverage.first)
-        }
-        mutationQueueState.syncedMutationCoverageWritten(coverage.second)
     }
 
     /**
@@ -997,9 +979,9 @@ internal class OfflineStore(
      * The queue is kept per identity: each write records who made it, a replay pass sends only the
      * current identity's writes, and another identity's writes neither block it nor are sent by it.
      *
-     * The write is refused when [clearAll] has run since [startedAtTick] — it belongs to the
-     * identity that was torn down — and when the owner records cannot be read. The teardown check
-     * and the insert share [clearAll]'s lock, so no teardown can fall between them.
+     * The write is refused when [clearAll] has run since [startedAtTick]: it belongs to the
+     * identity that was torn down. The teardown check and the insert share [clearAll]'s lock, so no
+     * teardown can fall between them.
      *
      * @param identity The stored value of the identity making the write, or `null` to record none
      *   (a store driven directly, with no session model).
@@ -1016,21 +998,11 @@ internal class OfflineStore(
         if (predatesQueueTeardown(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
         // Outside the transaction below: the first read of the unconfirmed sends may write.
         mutationQueueState.unconfirmedSends()
-        if (identity == null) return@withLock EnqueueOutcome.Queued(enqueue())
-        if (mutationQueueState.owners() !is MutationOwners.Known)
-            return@withLock EnqueueOutcome.OwnershipUnreadable
         var id = 0L
-        var owners: MutationOwners.Known? = null
         mutationDao.runInTransaction {
             id = enqueue()
-            val (row, next) =
-                checkNotNull(
-                    mutationQueueState.ownersRowWith { current -> current + (id to identity) }
-                )
-            objectDao.upsert(row)
-            owners = next
+            if (identity != null) mutationDao.setOwner(id, identity)
         }
-        owners?.let(mutationQueueState::ownersWritten)
         EnqueueOutcome.Queued(id)
     }
 
@@ -1039,79 +1011,56 @@ internal class OfflineStore(
      * recorded owner when [identity] may adopt them (see [mayAdoptOwnerlessMutations]).
      *
      * @param table The table to look in, or `null` for every table.
-     * @return The mutations, or `null` when the owner records cannot be read.
      */
-    suspend fun pendingMutationsOf(identity: String, table: String? = null): List<MutationRow>? {
-        val owners = mutationQueueState.owners() as? MutationOwners.Known ?: return null
-        val pending =
-            if (table == null) mutationDao.pendingAll() else mutationDao.pendingForTable(table)
-        return pending.filter { row -> belongsTo(owners.byId[row.id], identity) }
+    suspend fun pendingMutationsOf(identity: String, table: String? = null): List<MutationRow> {
+        val adopts = mayAdoptOwnerlessMutations(identity)
+        return if (table == null) mutationDao.pendingOwnedBy(identity, adopts)
+        else mutationDao.pendingOwnedByInTable(identity, adopts, table)
+    }
+
+    /** Whether [identity] has a mutation to replay, in any table. Reads the owner index only. */
+    suspend fun hasPendingMutationsOf(identity: String): Boolean =
+        mutationDao.hasPendingOwnedBy(
+            identity,
+            mayAdoptOwnerlessMutations(identity),
+            beforeId = Long.MAX_VALUE,
+        )
+
+    /**
+     * Records [identity] as the owner of every pending mutation that has none — rows queued with no
+     * session model — when [identity] may adopt them; otherwise leaves them untouched.
+     */
+    suspend fun adoptOwnerlessMutations(identity: String) {
+        if (!mayAdoptOwnerlessMutations(identity)) return
+        mutationQueueMutex.withLock { mutationDao.adoptOwnerless(identity) }
     }
 
     /**
-     * Records [identity] as the owner of every pending mutation that has none — rows an earlier
-     * build queued — when [identity] may adopt them; otherwise leaves them untouched. Also drops
-     * owner records of mutations that no longer exist.
-     *
-     * @return `false` when the owner records cannot be read.
-     */
-    suspend fun adoptOwnerlessMutations(identity: String): Boolean = mutationQueueMutex.withLock {
-        val owners = mutationQueueState.owners() as? MutationOwners.Known ?: return@withLock false
-        val unowned =
-            if (mayAdoptOwnerlessMutations(identity)) {
-                mutationDao.pendingAll().map { row -> row.id }.toSet() - owners.byId.keys
-            } else {
-                emptySet()
-            }
-        val stale = owners.byId.keys - mutationDao.allIds().toSet()
-        if (unowned.isEmpty() && stale.isEmpty()) return@withLock true
-        val (row, next) =
-            checkNotNull(
-                mutationQueueState.ownersRowWith { current ->
-                    (current - stale) + unowned.associateWith { identity }
-                }
-            )
-        objectDao.upsert(row)
-        mutationQueueState.ownersWritten(next)
-        true
-    }
-
-    /**
-     * Whether a mutation owned by [owner] — `null` for one an earlier build queued — is
+     * Whether a mutation owned by [owner] — `null` for one queued with no recorded owner — is
      * [identity]'s.
      */
     private fun belongsTo(owner: String?, identity: String): Boolean =
         owner == identity || (owner == null && mayAdoptOwnerlessMutations(identity))
 
     /**
-     * Whether [identity] may adopt mutations an earlier build queued without an owner. That build
-     * replayed only while signed in when the Auth plugin was installed, so its mutations are a
-     * signed-in user's: the anonymous identity adopts them only when there is no Auth plugin.
+     * Whether [identity] may adopt mutations queued with no recorded owner. With the Auth plugin
+     * installed they are a signed-in user's, so the anonymous identity adopts them only without it.
      */
     private fun mayAdoptOwnerlessMutations(identity: String): Boolean =
         identity != QueueIdentity.Anonymous.storedValue || ownerlessMutationsAreAnonymous
 
     /**
-     * Whether [id] is the first of [identity]'s pending mutations, in any table. Reads ids only.
+     * Whether [id] is the first of [identity]'s pending mutations, in any table. Reads the owner
+     * index only.
      *
-     * @return `false` behind another of [identity]'s mutations, when [id] is not pending, or when
-     *   the owner records cannot be read.
+     * @return `false` behind another of [identity]'s mutations, or when [id] is not pending.
      */
     suspend fun isAtHead(id: Long, identity: String): Boolean =
-        mutationQueueState.owners() is MutationOwners.Known &&
-            mutationDao.isPending(id) &&
-            !hasEarlierPendingMutation(id, identity)
+        mutationDao.isPending(id) && !hasEarlierPendingMutation(id, identity)
 
-    /**
-     * Whether any of [identity]'s mutations queued before [id], in any table, is still pending.
-     * When the owner records cannot be read, any earlier pending mutation counts.
-     */
-    suspend fun hasEarlierPendingMutation(id: Long, identity: String): Boolean {
-        val earlier = mutationDao.pendingIdsBefore(id)
-        val owners =
-            mutationQueueState.owners() as? MutationOwners.Known ?: return earlier.isNotEmpty()
-        return earlier.any { earlierId -> belongsTo(owners.byId[earlierId], identity) }
-    }
+    /** Whether any of [identity]'s mutations queued before [id], in any table, is still pending. */
+    suspend fun hasEarlierPendingMutation(id: Long, identity: String): Boolean =
+        mutationDao.hasPendingOwnedBy(identity, mayAdoptOwnerlessMutations(identity), id)
 
     /** Whether the mutation [id] is queued and not yet synced. */
     suspend fun isPending(id: Long): Boolean = mutationDao.isPending(id)
@@ -1146,28 +1095,20 @@ internal class OfflineStore(
      * @return `true` when it was pending and [identity]'s to discard.
      */
     suspend fun discardPendingMutation(id: Long, identity: String?): Boolean {
-        if (!mutationDao.isPending(id)) return false
-        if (identity != null) {
-            val owners = mutationQueueState.owners() as? MutationOwners.Known ?: return false
-            if (!belongsTo(owners.byId[id], identity)) return false
-        }
+        val pending = mutationDao.byId(id)?.takeIf { row -> row.syncedAtMs == null } ?: return false
+        if (identity != null && !belongsTo(pending.owner, identity)) return false
         removeMutations(listOf(id), clearRejections = false)
         return true
     }
 
     /**
-     * Deletes the mutation rows [ids] with everything the bookkeeping holds for them — owner,
-     * coverage, unconfirmed send and, when [clearRejections], a rejected entry — in one
-     * transaction.
+     * Deletes the mutation rows [ids] with what the records hold for them — an unconfirmed send
+     * and, when [clearRejections], a rejected entry — in one transaction.
      */
     private suspend fun removeMutations(ids: Collection<Long>, clearRejections: Boolean) {
         if (ids.isEmpty()) return
         mutationQueueMutex.withLock {
             val idSet = ids.toSet()
-            val owners = mutationQueueState.ownersRowWith { current -> current - idSet }
-            val coverage = mutationQueueState.syncedMutationCoverageRowWith { current ->
-                current - idSet
-            }
             val unconfirmed = mutationQueueState.unconfirmedSendsRowWith { current ->
                 current - idSet
             }
@@ -1179,11 +1120,10 @@ internal class OfflineStore(
                 }
             mutationDao.runInTransaction {
                 idSet.forEach { id -> mutationDao.deleteById(id) }
-                listOfNotNull(owners?.first, coverage?.first, unconfirmed?.first, rejected?.first)
-                    .forEach { row -> objectDao.upsert(row) }
+                listOfNotNull(unconfirmed?.first, rejected?.first).forEach { row ->
+                    objectDao.upsert(row)
+                }
             }
-            owners?.let { (_, next) -> mutationQueueState.ownersWritten(next) }
-            coverage?.let { (_, next) -> mutationQueueState.syncedMutationCoverageWritten(next) }
             unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
             rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
             loggedOverlaySkips.update { logged -> logged - idSet }
@@ -1192,7 +1132,7 @@ internal class OfflineStore(
 
     /**
      * Moves [mutation] out of the queue and onto the rejected list, in one transaction: the list
-     * entry, the mutation row and its owner record change together or not at all.
+     * entry, the mutation row and its unconfirmed send change together or not at all.
      *
      * @param mutation The refused write.
      * @param message Why it was refused.
@@ -1204,7 +1144,6 @@ internal class OfflineStore(
         message: String,
         serverError: StoredServerError?,
     ): StoredRejection = mutationQueueMutex.withLock {
-        val owner = (mutationQueueState.owners() as? MutationOwners.Known)?.byId?.get(mutation.id)
         val entry =
             StoredRejection(
                 id = mutation.id,
@@ -1216,38 +1155,33 @@ internal class OfflineStore(
                 defaultToNull = mutation.defaultToNull,
                 onConflict = mutation.onConflict,
                 ignoreDuplicates = mutation.ignoreDuplicates,
-                deltaJson = mutation.deltaJson,
-                owner = owner,
+                owner = mutation.owner,
                 rejectedAtMs = nowMillis(),
                 message = message,
                 serverError = serverError,
             )
         val (rejectedRow, list) = mutationQueueState.rejectedRowWith(add = entry)
-        val owners = mutationQueueState.ownersRowWith { current -> current - mutation.id }
         val unconfirmed = mutationQueueState.unconfirmedSendsRowWith { current ->
             current - mutation.id
         }
         mutationDao.runInTransaction {
             objectDao.upsert(rejectedRow)
             mutationDao.deleteById(mutation.id)
-            listOfNotNull(owners?.first, unconfirmed?.first).forEach { row ->
-                objectDao.upsert(row)
-            }
+            unconfirmed?.let { (row, _) -> objectDao.upsert(row) }
         }
         mutationQueueState.rejectedWritten(list)
-        owners?.let { (_, next) -> mutationQueueState.ownersWritten(next) }
         unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
         list.entries.firstOrNull { stored -> stored.id == mutation.id } ?: entry
     }
 
     /**
-     * Puts the rejected mutation [id] back at the tail of the queue, under a new id, in one
-     * transaction with its owner record and the list entry's removal.
+     * Puts the rejected mutation [id] back at the tail of the queue, under a new id and owned by
+     * [identity], in one transaction with the list entry's removal.
      *
      * @param id The rejected mutation's id.
      * @param identity The stored value of the identity asking, or `null` to skip ownership checks.
      * @return The new pending mutation's id, or `null` when there is no such rejection, its body
-     *   was too long to keep, it belongs to another identity, or the owner records cannot be read.
+     *   was too long to keep, or it belongs to another identity.
      */
     suspend fun retryRejectedMutation(id: Long, identity: String?): Long? =
         mutationQueueMutex.withLock {
@@ -1256,30 +1190,18 @@ internal class OfflineStore(
                     ?: return@withLock null
             if (identity != null && entry.owner != null && entry.owner != identity)
                 return@withLock null
-            if (identity != null && mutationQueueState.owners() !is MutationOwners.Known)
-                return@withLock null
-            val row = entry.toRequeuedRow(createdAtMs = nowMillis()) ?: return@withLock null
+            val row =
+                entry.toRequeuedRow(createdAtMs = nowMillis(), owner = identity)
+                    ?: return@withLock null
             // Read before the re-queued write exists: it has never been sent under its new id.
             mutationQueueState.unconfirmedSends()
             val (rejectedRow, list) = mutationQueueState.rejectedRowWith(removeId = id)
             var newId = 0L
-            var owners: MutationOwners.Known? = null
             mutationDao.runInTransaction {
                 newId = mutationDao.insert(row)
                 objectDao.upsert(rejectedRow)
-                if (identity != null) {
-                    val (ownersRow, next) =
-                        checkNotNull(
-                            mutationQueueState.ownersRowWith { current ->
-                                current + (newId to identity)
-                            }
-                        )
-                    objectDao.upsert(ownersRow)
-                    owners = next
-                }
             }
             mutationQueueState.rejectedWritten(list)
-            owners?.let(mutationQueueState::ownersWritten)
             newId
         }
 
@@ -1309,11 +1231,8 @@ internal class OfflineStore(
      * @return A flow of pending mutation rows.
      */
     fun pendingMutationsFlow(table: String?): Flow<List<MutationRow>> =
-        combine(mutationDao.pendingAllFlow(), mutationQueueState.ownersFlow(), identityChanges) {
-                rows,
-                owners,
-                _ ->
-                visibleTo(identityProvider(), owners, rows).filter { row ->
+        combine(mutationDao.pendingAllFlow(), identityChanges) { rows, _ ->
+                visibleTo(identityProvider(), rows).filter { row ->
                     table == null || row.table == table
                 }
             }
@@ -1321,26 +1240,21 @@ internal class OfflineStore(
 
     /** The current identity's pending mutations across all tables. */
     suspend fun pendingMutationCount(): Int =
-        visibleTo(identityProvider(), mutationQueueState.owners(), mutationDao.pendingAll()).size
+        visibleTo(identityProvider(), mutationDao.pendingAll()).size
 
     /** Flow of the current identity's pending mutations across all tables. */
     fun pendingMutationCountFlow(): Flow<Int> = pendingMutationsFlow(null).map { rows -> rows.size }
 
     /** The current identity's pending mutations for a specific [table]. */
     suspend fun pendingMutationCountForTable(table: String): Int =
-        visibleTo(
-                identityProvider(),
-                mutationQueueState.owners(),
-                mutationDao.pendingForTable(table),
-            )
-            .size
+        visibleTo(identityProvider(), mutationDao.pendingForTable(table)).size
 
     /** Flow of the current identity's pending mutations for a specific [table]. */
     fun pendingMutationCountForTableFlow(table: String): Flow<Int> =
         pendingMutationsFlow(table).map { rows -> rows.size }
 
     /**
-     * Deletes the mutation row [id] and its owner record.
+     * Deletes the mutation row [id] and what the records hold for it.
      *
      * @param id The mutation's id.
      */
@@ -1350,15 +1264,11 @@ internal class OfflineStore(
 
     /**
      * The mutations of [rows] visible to [identity] — its own, and ownerless ones it may adopt — or
-     * all of them when there is no identity to filter by, or the owner records cannot be read.
+     * all of them when there is no identity to filter by.
      */
-    private fun visibleTo(
-        identity: String?,
-        owners: MutationOwners,
-        rows: List<MutationRow>,
-    ): List<MutationRow> {
-        if (identity == null || owners !is MutationOwners.Known) return rows
-        return rows.filter { row -> belongsTo(owners.byId[row.id], identity) }
+    private fun visibleTo(identity: String?, rows: List<MutationRow>): List<MutationRow> {
+        if (identity == null) return rows
+        return rows.filter { row -> belongsTo(row.owner, identity) }
     }
 
     /**
@@ -1418,12 +1328,7 @@ internal class OfflineStore(
         shape: QueryShape? = null,
     ): String {
         if (isReservedTable(table)) return serverJson
-        val pending =
-            visibleTo(
-                identityProvider(),
-                mutationQueueState.owners(),
-                mutationDao.pendingForTable(table),
-            )
+        val pending = visibleTo(identityProvider(), mutationDao.pendingForTable(table))
         if (pending.isEmpty()) return serverJson
 
         return overlayMutations(
@@ -1452,14 +1357,12 @@ internal class OfflineStore(
         if (isReservedTable(table)) return cachedJson
         if (signature != null && shape != null)
             queryShapes.remember(table, signature, shape, persist = true)
-        val coverage = mutationQueueState.syncedMutationCoverage()
-        val all =
-            visibleTo(
-                    identityProvider(),
-                    mutationQueueState.owners(),
-                    mutationDao.allForTable(table),
-                )
-                .filter { mutation -> belongsOnPayload(mutation, signature, coverage) }
+        val visible = visibleTo(identityProvider(), mutationDao.allForTable(table))
+        // The stored payload's coverage, read only when a synced mutation may be held by it
+        val syncedThrough =
+            if (signature == null || visible.all { mutation -> mutation.syncedAtMs == null }) 0L
+            else objectDao.get(table, signature)?.syncedThrough ?: 0L
+        val all = visible.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
         if (all.isEmpty()) return cachedJson
 
         val admission = signature?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
@@ -1479,7 +1382,9 @@ internal class OfflineStore(
      * The cached payload of [table]/[signature] with the current identity's mutations overlaid, as
      * it changes; `null` while nothing is known. With no payload but mutations that produce rows,
      * the overlay onto an empty list is emitted without being stored. A cache that is not the
-     * current identity's counts as no payload. Inputs and output are de-duplicated.
+     * current identity's counts as no payload. The overlay is recomputed only when the payload
+     * served, or the mutations of [table] visible to the identity, change: a write to another
+     * table, or another identity's, costs a comparison.
      */
     fun overlaidPayloadFlow(
         table: String,
@@ -1491,68 +1396,83 @@ internal class OfflineStore(
             // A payload received before the cache was emptied may reach this reader after the new
             // owner does: until what it receives matches the database, the database is read
             var trustedEmptiedCount = cacheOwner.emptiedCount()
+            var last: OverlaidInputs? = null
+            var lastOverlaid: String? = null
             combine(
-                    observePayload(table, signature).distinctUntilChanged(),
-                    mutationDao.allForTableFlow(table).distinctUntilChanged(),
-                    mutationQueueState.ownersFlow(),
+                    objectDao
+                        .observe(table, signature)
+                        .map { row -> row?.let(::StoredPayload) }
+                        .distinctUntilChanged(),
+                    mutationDao.allForTableFlow(table),
                     identityChanges,
-                    mutationQueueState.syncedMutationCoverageFlow(),
-                ) { storedJson, allMutations, owners, _, coverage ->
+                ) { stored, rows, _ ->
                     // Owner first: the count moves before it, so a new owner comes with a new count
                     val served = cacheServesCurrentIdentity()
                     val emptiedCount = cacheOwner.emptiedCount()
-                    val currentJson =
+                    val current =
                         if (emptiedCount == trustedEmptiedCount) {
-                            storedJson
+                            stored
                         } else {
-                            objectDao.get(table, signature)?.payload.also { current ->
-                                if (current == storedJson) trustedEmptiedCount = emptiedCount
+                            objectDao.get(table, signature)?.let(::StoredPayload).also { read ->
+                                if (read == stored) trustedEmptiedCount = emptiedCount
                             }
                         }
-                    overlaidOrNull(
-                        table,
-                        signature,
-                        shape,
-                        currentJson.takeIf { served },
-                        allMutations,
-                        owners,
-                        coverage,
-                    )
+                    val inputs =
+                        OverlaidInputs(
+                            current.takeIf { served },
+                            visibleTo(identityProvider(), rows),
+                        )
+                    if (inputs != last) {
+                        lastOverlaid =
+                            overlaidOrNull(table, signature, shape, inputs.stored, inputs.mutations)
+                        last = inputs
+                    }
+                    lastOverlaid
                 }
                 .distinctUntilChanged()
                 .collect { payload -> emit(payload) }
         }
     }
 
+    /** A cached payload's text and what it holds of the synced mutations. */
+    private data class StoredPayload(val payload: String, val syncedThrough: Long) {
+        constructor(row: ObjectRow) : this(row.payload, row.syncedThrough)
+    }
+
     /**
-     * [overlaidPayloadFlow]'s value for [cachedJson], the payload the current identity is served
-     * (`null` for none), with [allMutations] overlaid as [owners] and [coverage] say.
+     * What a reader's overlay is a function of: the payload it is served, `null` for none, and the
+     * mutations of its table visible to the identity, in order.
+     */
+    private data class OverlaidInputs(
+        val stored: StoredPayload?,
+        val mutations: List<MutationRow>,
+    )
+
+    /**
+     * [overlaidPayloadFlow]'s value for [stored], the payload the current identity is served
+     * (`null` for none), with those of [mutations] it does not hold overlaid.
      */
     private suspend fun overlaidOrNull(
         table: String,
         signature: String,
         shape: QueryShape?,
-        cachedJson: String?,
-        allMutations: List<MutationRow>,
-        owners: MutationOwners,
-        coverage: Map<Long, Set<String>>,
+        stored: StoredPayload?,
+        mutations: List<MutationRow>,
     ): String? {
         // A live query's shape is known for as long as it is read; it is written once a payload
         // exists
-        if (shape != null)
-            queryShapes.remember(table, signature, shape, persist = cachedJson != null)
-        val mutations =
-            visibleTo(identityProvider(), owners, allMutations).filter { mutation ->
-                belongsOnPayload(mutation, signature, coverage)
-            }
-        if (mutations.isEmpty()) return cachedJson
+        if (shape != null) queryShapes.remember(table, signature, shape, persist = stored != null)
+        val cachedJson = stored?.payload
+        val syncedThrough = stored?.syncedThrough ?: 0L
+        val applicable = mutations.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
+        if (applicable.isEmpty()) return cachedJson
         val overlaid =
             overlayMutations(
                 cachedJson ?: EMPTY_JSON_ARRAY,
-                mutations,
+                applicable,
                 admissionOf(table, signature, shape),
                 mutationQueueState.unconfirmedSends(),
-                sameSelectRowsFor(table, signature, shape, mutations, ownJson = cachedJson),
+                sameSelectRowsFor(table, signature, shape, applicable, ownJson = cachedJson),
             )
         return if (cachedJson == null && isEmptyJsonArrayPayload(overlaid)) null else overlaid
     }
@@ -2187,18 +2107,8 @@ internal class OfflineStore(
                     payload = overlay.encode(created),
                     updatedAt = staleStampOf(nowMillis()),
                 )
-            // A created payload is not a network response: it contains no synced mutation
-            val written = mutationQueueMutex.withLock {
-                teardownMutex.withLock {
-                    if (predatesCacheTeardown(guardTick)) {
-                        false
-                    } else {
-                        writePayloadAndCoverage(row, coversSyncedMutations = false)
-                        true
-                    }
-                }
-            }
-            if (!written) return toFetchAgain
+            // A created payload is not a network response: it holds no synced mutation
+            if (!writeUnlessTornDown(guardTick, row)) return toFetchAgain
             if (shape != null) queryShapes.remember(table, signature, shape, persist = true)
         }
         return toFetchAgain
@@ -2289,13 +2199,14 @@ internal class OfflineStore(
         }
 
     /**
-     * Marks mutation [id] replayed, clears its unconfirmed send and any stale rejected entry in the
-     * same transaction, and advances [table]'s stale-refresh watermark so a refresh that started
-     * before the replay cannot land after it.
+     * Marks mutation [id] replayed with the next sync sequence, clears its unconfirmed send and any
+     * stale rejected entry in the same transaction, and advances [table]'s stale-refresh watermark
+     * so a refresh that started before the replay cannot land after it.
      */
     suspend fun markMutationSynced(id: Long, table: String) {
         recordLocalMutation(table)
         mutationQueueMutex.withLock {
+            val sequence = latestSyncSequence() + 1
             // Its outcome is known now. And a crash between recording a rejection and removing its
             // mutation row leaves both: once the write has synced, the stale entry must go, or a
             // retry would re-send an accepted write.
@@ -2305,11 +2216,12 @@ internal class OfflineStore(
                     mutationQueueState.rejectedRowWith(removeId = id)
                 else null
             mutationDao.runInTransaction {
-                mutationDao.markSynced(id = id, syncedAtMs = nowMillis())
+                mutationDao.markSynced(id = id, syncedAtMs = nowMillis(), syncSequence = sequence)
                 listOfNotNull(unconfirmed?.first, rejected?.first).forEach { row ->
                     objectDao.upsert(row)
                 }
             }
+            latestSyncSequence = sequence
             unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
             rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
         }
@@ -2370,51 +2282,55 @@ internal class OfflineStore(
         }
 
     /**
-     * Retires [table]'s synced mutations that no cached query needs any more — every cached payload
-     * already contains them and no live query is waiting for its first — and those older than a
-     * day. Skipped when [requestStartedAtTick] predates the table's last local write.
+     * Retires [table]'s synced mutations that no cached query needs any more, and those beyond the
+     * newest [MAX_RETAINED_SYNCED_PER_TABLE]; see [retireSyncedMutationsOf]. Skipped when
+     * [requestStartedAtTick] predates the table's last local write.
      */
     suspend fun retireCoveredSyncedMutations(table: String, requestStartedAtTick: Long? = null) {
         if (isReservedTable(table)) return
         if (isStaleRelativeToLocalWrite(table, requestStartedAtTick)) return
-        tableWriteLock(table).withLock {
-            val synced = mutationDao.allForTable(table).filter { row -> row.syncedAtMs != null }
-            if (synced.isEmpty()) return@withLock
-            val agedOut = syncedRetentionCutoffMs()
-            val (aged, retained) =
-                synced.partition { mutation -> (mutation.syncedAtMs ?: Long.MAX_VALUE) < agedOut }
+        tableWriteLock(table).withLock { retireSyncedMutationsOf(table) }
+    }
 
-            val cachedSignatures = objectDao.signaturesForTable(table).toSet()
-            val retirable =
-                if ((liveSignatureProvider(table) - cachedSignatures).isNotEmpty()) {
-                    emptyList()
-                } else {
-                    val coverage = mutationQueueState.syncedMutationCoverage()
-                    retained.filter { mutation ->
-                        coverage[mutation.id].orEmpty().containsAll(cachedSignatures)
-                    }
-                }
-            removeMutations(
-                (aged + retirable).map { mutation -> mutation.id },
-                clearRejections = false,
-            )
+    /**
+     * Retires, in every table, the synced mutations no cached query needs any more and those beyond
+     * each table's bound: a table whose cached queries were dropped or evicted keeps none.
+     */
+    suspend fun retireUnneededSyncedMutations() {
+        mutationDao.tablesWithSyncedMutations().forEach { table ->
+            tableWriteLock(table).withLock { retireSyncedMutationsOf(table) }
         }
     }
 
     /**
-     * Retires every synced mutation older than [SYNCED_RETENTION_MS], whatever still depends on it.
-     *
-     * A cached query that is never refreshed again — a detail screen visited once — would otherwise
-     * keep a synced mutation, and its overlay, for as long as the query stays cached. After the
-     * bound such a payload shows the server state it was fetched with, without the write, until it
-     * is refreshed.
+     * Retires [table]'s synced mutations that every cached payload of the table already holds
+     * ([ObjectRow.syncedThrough]), when no live query is waiting for its first payload, and the
+     * oldest beyond the newest [MAX_RETAINED_SYNCED_PER_TABLE] whatever still shows them. No clock
+     * is read, so a clock set back or forward neither keeps one nor retires one. Caller holds the
+     * table's write lock.
      */
-    suspend fun retireAgedSyncedMutations() {
-        val aged = mutationDao.syncedBefore(syncedRetentionCutoffMs())
-        removeMutations(aged.map { mutation -> mutation.id }, clearRejections = false)
+    private suspend fun retireSyncedMutationsOf(table: String) {
+        val synced = mutationDao.syncedForTable(table)
+        if (synced.isEmpty()) return
+        val waiting =
+            (liveSignatureProvider(table) - objectDao.signaturesForTable(table).toSet())
+                .isNotEmpty()
+        val heldByEvery = objectDao.minSyncedThroughForTable(table)
+        val held =
+            if (waiting) {
+                emptyList()
+            } else {
+                synced.filter { mutation ->
+                    val sequence = mutation.syncSequence
+                    heldByEvery == null || (sequence != null && sequence <= heldByEvery)
+                }
+            }
+        val beyondBound = (synced - held.toSet()).dropLast(MAX_RETAINED_SYNCED_PER_TABLE)
+        removeMutations(
+            (held + beyondBound).map { mutation -> mutation.id },
+            clearRejections = false,
+        )
     }
-
-    private fun syncedRetentionCutoffMs(): Long = nowMillis() - SYNCED_RETENTION_MS
 
     /* ──────────────────────── Size-based eviction (DB) ──────────────────────── */
 
@@ -2488,10 +2404,10 @@ internal class OfflineStore(
 
     private companion object {
         /**
-         * How long a synced mutation may stand in for its write on cached queries that have not
-         * been refreshed since it replayed: a day, by the device clock.
+         * The most synced mutations a table keeps for cached queries fetched before they replayed;
+         * the oldest go first. A bound on work and space, read from no clock.
          */
-        const val SYNCED_RETENTION_MS = 24L * 60 * 60 * 1000
+        const val MAX_RETAINED_SYNCED_PER_TABLE = 1_000
 
         /**
          * Run size enforcement once every this many [addPayload] writes. A cheap periodic backstop

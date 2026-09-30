@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "da81d9c688873737d807333f92e2e56d",
+    "identityHash": "b6a7e9150b888e5e54cb2be30f46a734",
     "entities": [
       {
         "tableName": "object_cache",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`table_name` TEXT NOT NULL, `signature` TEXT NOT NULL, `payload` TEXT NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`table_name`, `signature`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`table_name` TEXT NOT NULL, `signature` TEXT NOT NULL, `payload` TEXT NOT NULL, `updated_at` INTEGER NOT NULL, `synced_through` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`table_name`, `signature`))",
         "fields": [
           {
             "fieldPath": "table",
@@ -31,6 +31,13 @@
             "columnName": "updated_at",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "syncedThrough",
+            "columnName": "synced_through",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
           }
         ],
         "primaryKey": {
@@ -107,7 +114,7 @@
       },
       {
         "tableName": "mutation_cache",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `table_name` TEXT NOT NULL, `operation` TEXT NOT NULL, `body_json` TEXT NOT NULL, `filter_json` TEXT, `created_at_ms` INTEGER NOT NULL, `synced_at_ms` INTEGER, `default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `table_name` TEXT NOT NULL, `operation` TEXT NOT NULL, `body_json` TEXT NOT NULL, `filter_json` TEXT, `created_at_ms` INTEGER NOT NULL, `synced_at_ms` INTEGER, `default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER, `owner` TEXT, `sync_sequence` INTEGER, `schema_cache_misses` INTEGER NOT NULL DEFAULT 0)",
         "fields": [
           {
             "fieldPath": "id",
@@ -163,6 +170,23 @@
             "fieldPath": "ignoreDuplicates",
             "columnName": "ignore_duplicates",
             "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "owner",
+            "columnName": "owner",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "syncSequence",
+            "columnName": "sync_sequence",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "schemaCacheMisses",
+            "columnName": "schema_cache_misses",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
           }
         ],
         "primaryKey": {
@@ -170,12 +194,33 @@
           "columnNames": [
             "id"
           ]
-        }
+        },
+        "indices": [
+          {
+            "name": "index_mutation_cache_owner_synced_at_ms",
+            "unique": false,
+            "columnNames": [
+              "owner",
+              "synced_at_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mutation_cache_owner_synced_at_ms` ON `${TABLE_NAME}` (`owner`, `synced_at_ms`)"
+          },
+          {
+            "name": "index_mutation_cache_table_name",
+            "unique": false,
+            "columnNames": [
+              "table_name"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mutation_cache_table_name` ON `${TABLE_NAME}` (`table_name`)"
+          }
+        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'da81d9c688873737d807333f92e2e56d')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b6a7e9150b888e5e54cb2be30f46a734')"
     ]
   }
 }

@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -16,14 +17,18 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 
 /**
- * Every name and key the mutation queue writes to disk, as exact literals. Once an app has written
- * them they are frozen: a later build reads them back from devices that ran this one. A rename of a
- * constant or a property must fail here rather than pass as a refactor.
+ * Every name, key and stored value the mutation queue and the cache write to disk, as exact
+ * literals. Once an app has written them they are frozen: a later build reads them back from
+ * devices that ran this one. A rename of a constant or a property must fail here rather than pass
+ * as a refactor. The table, column and index names are pinned by the exported schema
+ * (`OfflineDatabaseSchemaContinuityTest`).
  */
 class PersistedNamesTest {
 
     private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao, nowMillis = { NOW })
+    private val mutationDao = FakeMutationDao()
+    private val store =
+        newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao, nowMillis = { NOW })
 
     @Test
     fun the_reserved_table_and_its_signatures_are_these() {
@@ -34,8 +39,6 @@ class PersistedNamesTest {
         // Postgres truncates identifiers to NAMEDATALEN - 1 = 63 bytes, so no table has this name.
         assertTrue(RESERVED_TABLE_NAME.encodeToByteArray().size > 63)
         assertEquals("rejected_mutations", REJECTED_MUTATIONS_SIGNATURE)
-        assertEquals("mutation_owners", MUTATION_OWNERS_SIGNATURE)
-        assertEquals("synced_mutation_coverage", SYNCED_MUTATION_COVERAGE_SIGNATURE)
         assertEquals("unconfirmed_sends", UNCONFIRMED_SENDS_SIGNATURE)
         assertEquals("cache_owner", CACHE_OWNER_SIGNATURE)
     }
@@ -130,7 +133,6 @@ class PersistedNamesTest {
                 defaultToNull = false,
                 onConflict = "id",
                 ignoreDuplicates = true,
-                deltaJson = "d",
                 owner = "user:user-a",
                 rejectedAtMs = 2,
                 message = "refused",
@@ -150,7 +152,7 @@ class PersistedNamesTest {
         assertEquals(
             """{"version":1,"entries":[{"id":7,"table":"todos","operation":"UPDATE","bodyJson":"{}",""" +
                 """"filterJson":"f","createdAtMs":1,"defaultToNull":false,"onConflict":"id",""" +
-                """"ignoreDuplicates":true,"deltaJson":"d","owner":"user:user-a","rejectedAtMs":2,""" +
+                """"ignoreDuplicates":true,"owner":"user:user-a","rejectedAtMs":2,""" +
                 """"message":"refused","serverError":{"status":409,"code":"23505","message":"duplicate",""" +
                 """"details":"x","hint":"y"},"bodyOmittedChars":5}]}""",
             assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
@@ -183,7 +185,7 @@ class PersistedNamesTest {
     }
 
     @Test
-    fun the_owner_records_are_written_with_these_keys_and_values() = runTest {
+    fun a_mutations_owner_is_stored_as_these_values() = runTest {
         // Given / When — one write by a user, one by nobody signed in
         store.enqueueOwnedBy(QueueIdentity.User("user-a").storedValue) {
             enqueueDelete(table = "todos", filter = null)
@@ -193,21 +195,21 @@ class PersistedNamesTest {
         }
 
         // Then
-        assertEquals(
-            """{"version":1,"owners":{"1":"user:user-a","2":"anonymous"}}""",
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE)).payload,
-        )
+        assertEquals(listOf("user:user-a", "anonymous"), mutationDao.inserted.map { it.owner })
     }
 
     @Test
-    fun synced_mutation_coverage_is_written_with_these_keys() = runTest {
-        // Given — a replayed mutation, then a network response for a cached query of its table
-        store.enqueueUpdate(
-            table = "todos",
-            body = Json.parseToJsonElement("""{"title":"x"}"""),
-            filter = null,
-        )
+    fun a_replay_and_a_payload_that_holds_it_store_one_sequence() = runTest {
+        // Given — two replayed mutations, then a network response for a cached query of their table
+        repeat(2) {
+            store.enqueueUpdate(
+                table = "todos",
+                body = Json.parseToJsonElement("""{"title":"x"}"""),
+                filter = null,
+            )
+        }
         store.markMutationSynced(id = 1, table = "todos")
+        store.markMutationSynced(id = 2, table = "todos")
 
         // When
         store.addPayload(
@@ -217,12 +219,9 @@ class PersistedNamesTest {
             requestStartedAtTick = store.monotonicTickNow(),
         )
 
-        // Then
-        assertEquals(
-            """{"version":1,"coveredSignatures":{"1":["todos?id=eq.1"]}}""",
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, SYNCED_MUTATION_COVERAGE_SIGNATURE))
-                .payload,
-        )
+        // Then — the replays are numbered from 1 in order, and the payload holds both
+        assertEquals(listOf(1L, 2L), mutationDao.inserted.map { it.syncSequence })
+        assertEquals(2L, objectDao.getRow("todos", "todos?id=eq.1")?.syncedThrough)
     }
 
     @Test

@@ -33,6 +33,11 @@ internal data class ObjectRow(
      * fetched again when the network allows. See [isStaleStamp] and [fetchedAtOf].
      */
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    /**
+     * The [MutationRow.syncSequence] through which the payload already holds every synced mutation
+     * of its table: a network response written after they replayed. `0` holds none for certain.
+     */
+    @ColumnInfo(name = "synced_through", defaultValue = "0") val syncedThrough: Long = 0,
 )
 
 /** Whether a payload stamped [updatedAt] is stale: served, but fetched again when it can be. */
@@ -66,6 +71,17 @@ internal interface ObjectDao {
      */
     @Query("SELECT * FROM object_cache WHERE table_name = :table")
     suspend fun allForTable(table: String): List<ObjectRow>
+
+    /** The highest [ObjectRow.syncedThrough] of any row; `0` when there is none. */
+    @Query("SELECT COALESCE(MAX(synced_through), 0) FROM object_cache")
+    suspend fun maxSyncedThrough(): Long
+
+    /**
+     * The lowest [ObjectRow.syncedThrough] of [table]'s cached payloads: the synced mutations at or
+     * below it are held by every one. `null` when the table has no cached payload.
+     */
+    @Query("SELECT MIN(synced_through) FROM object_cache WHERE table_name = :table")
+    suspend fun minSyncedThroughForTable(table: String): Long?
 
     /**
      * The signature of every cached SELECT payload for [table], without loading the payloads.
@@ -231,18 +247,14 @@ internal interface StorageDao {
 /* ───────────────────────── Mutation queue ───────────────────────── */
 
 /**
- * A queued mutation (INSERT / UPSERT / UPDATE / DELETE) for a given PostgREST table.
- *
- * - [bodyJson] is the raw JSON payload string (array or object) we will send to PostgREST.
- * - [filterJson] is an optional serialized filter descriptor that describes which rows are targeted
- *   by the mutation (e.g. "WHERE id = '123'").
- * - [defaultToNull], [onConflict], and [ignoreDuplicates] mirror the options from supabase-kt's
- *   [InsertRequestBuilder] / [UpsertRequestBuilder] so that when we replay the mutation online we
- *   preserve the original semantics.
- *
- * We *overlay* these on top of cached SELECT payloads when offline using [FilterEngine].
+ * A queued mutation (INSERT / UPSERT / UPDATE / DELETE) for a given PostgREST table, with the
+ * options of supabase-kt's request builders it replays with, the identity that made it, and where
+ * its send and its replay stand. The overlay shows it on cached reads until it is retired.
  */
-@Entity(tableName = "mutation_cache")
+@Entity(
+    tableName = "mutation_cache",
+    indices = [Index(value = ["owner", "synced_at_ms"]), Index(value = ["table_name"])],
+)
 internal data class MutationRow(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     @ColumnInfo(name = "table_name") val table: String,
@@ -256,16 +268,7 @@ internal data class MutationRow(
      */
     @ColumnInfo(name = "body_json") val bodyJson: String,
 
-    /**
-     * Optional JSON-encoded filter descriptor:
-     *
-     * { "mode": "AND" | "OR", "conditions":
-     * [ { "column": "id", "operatorId": "eq", "value": "123" }, ... ] }
-     *
-     * Here "operatorId" is the FilterOperator.identifier (e.g. "eq", "lt", "ilike", ...).
-     *
-     * Only used for UPDATE / DELETE. INSERT / UPSERT typically don't carry filters.
-     */
+    /** The JSON encoding of the `FilterDescriptor` the write targets rows by; `null` for none. */
     @ColumnInfo(name = "filter_json") val filterJson: String?,
 
     /**
@@ -275,46 +278,37 @@ internal data class MutationRow(
     @ColumnInfo(name = "created_at_ms") val createdAtMs: Long,
 
     /**
-     * Timestamp (epoch millis) when this mutation was successfully synced to the server. A `null`
-     * value means the mutation is still *pending*.
-     *
-     * We keep synced mutations around so they can still participate in local overlays when we have
-     * to fall back to cached SELECT data while offline.
+     * When the mutation replayed, by the device clock; `null` while it is pending. Informational:
+     * which cached payloads already hold it is decided by [syncSequence].
      */
     @ColumnInfo(name = "synced_at_ms") val syncedAtMs: Long? = null,
 
-    /**
-     * Mirrors InsertRequestBuilder.defaultToNull / UpsertRequestBuilder.defaultToNull.
-     *
-     * - If true, missing fields default to `null`.
-     * - If false, missing fields use the column's default value in Postgres.
-     *
-     * Only meaningful for INSERT / UPSERT; ignored for UPDATE / DELETE. Nullable for backward
-     * compatibility and for non-INSERT/UPSERT rows.
-     */
+    /** Mirrors the INSERT and UPSERT builders' `defaultToNull`; ignored for UPDATE and DELETE. */
     @ColumnInfo(name = "default_to_null") val defaultToNull: Boolean? = null,
 
-    /**
-     * Mirrors UpsertRequestBuilder.onConflict.
-     *
-     * Comma-separated UNIQUE column(s) that define how duplicate rows are detected during UPSERT.
-     *
-     * Only meaningful for UPSERT; ignored for other operations.
-     */
+    /** Mirrors the UPSERT builder's `onConflict`: its comma-separated conflict columns. */
     @ColumnInfo(name = "on_conflict") val onConflict: String? = null,
 
-    /**
-     * Mirrors UpsertRequestBuilder.ignoreDuplicates.
-     *
-     * - If true, duplicate rows are ignored on UPSERT.
-     * - If false, duplicate rows are merged with existing rows.
-     *
-     * Only meaningful for UPSERT; ignored for other operations.
-     */
+    /** Mirrors the UPSERT builder's `ignoreDuplicates`; ignored for other operations. */
     @ColumnInfo(name = "ignore_duplicates") val ignoreDuplicates: Boolean? = null,
 
-    /** Unused: nothing writes or reads it. */
-    @ColumnInfo(name = "delta_json") val deltaJson: String? = null,
+    /**
+     * The stored value of the identity that made the write; `null` when none was recorded, for a
+     * write the engine queued with no session model.
+     */
+    @ColumnInfo(name = "owner") val owner: String? = null,
+
+    /**
+     * The order in which the mutation replayed among all synced mutations, from a sequence that
+     * never goes back; `null` while it is pending.
+     */
+    @ColumnInfo(name = "sync_sequence") val syncSequence: Long? = null,
+
+    /**
+     * How many replays PostgREST refused because its schema cache did not know the table or a
+     * column yet; the write is rejected once they reach the bound.
+     */
+    @ColumnInfo(name = "schema_cache_misses", defaultValue = "0") val schemaCacheMisses: Int = 0,
 )
 
 @Dao
@@ -355,10 +349,59 @@ internal interface MutationDao {
     fun pendingAllFlow(): Flow<List<MutationRow>>
 
     /**
-     * The ids of the mutations queued before [id], in any table, that are still pending, in order.
+     * The pending mutations of [owner] — and with [includeOwnerless] those with no recorded owner —
+     * in insertion order.
      */
-    @Query("SELECT id FROM mutation_cache WHERE synced_at_ms IS NULL AND id < :id ORDER BY id ASC")
-    suspend fun pendingIdsBefore(id: Long): List<Long>
+    @Query(
+        "SELECT * FROM mutation_cache WHERE synced_at_ms IS NULL " +
+            "AND (owner = :owner OR (:includeOwnerless AND owner IS NULL)) ORDER BY id ASC"
+    )
+    suspend fun pendingOwnedBy(owner: String, includeOwnerless: Boolean): List<MutationRow>
+
+    /** [pendingOwnedBy], of [table] only. */
+    @Query(
+        "SELECT * FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NULL " +
+            "AND (owner = :owner OR (:includeOwnerless AND owner IS NULL)) ORDER BY id ASC"
+    )
+    suspend fun pendingOwnedByInTable(
+        owner: String,
+        includeOwnerless: Boolean,
+        table: String,
+    ): List<MutationRow>
+
+    /**
+     * Whether any mutation of [owner], or with [includeOwnerless] any with no recorded owner, is
+     * pending with an id below [beforeId]. Reads the owner index only.
+     */
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM mutation_cache WHERE owner = :owner " +
+            "AND synced_at_ms IS NULL AND id < :beforeId) OR (:includeOwnerless AND EXISTS(" +
+            "SELECT 1 FROM mutation_cache WHERE owner IS NULL AND synced_at_ms IS NULL " +
+            "AND id < :beforeId))"
+    )
+    suspend fun hasPendingOwnedBy(
+        owner: String,
+        includeOwnerless: Boolean,
+        beforeId: Long,
+    ): Boolean
+
+    /** Whether any mutation is pending with an id below [beforeId], whoever owns it. */
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM mutation_cache WHERE synced_at_ms IS NULL AND id < :beforeId)"
+    )
+    suspend fun hasPendingBefore(beforeId: Long): Boolean
+
+    /** Records [owner] as the owner of mutation [id]. */
+    @Query("UPDATE mutation_cache SET owner = :owner WHERE id = :id")
+    suspend fun setOwner(id: Long, owner: String)
+
+    /**
+     * Records [owner] for every pending mutation that has none.
+     *
+     * @return How many it adopted.
+     */
+    @Query("UPDATE mutation_cache SET owner = :owner WHERE owner IS NULL AND synced_at_ms IS NULL")
+    suspend fun adoptOwnerless(owner: String): Int
 
     /** Whether the mutation [id] is queued and not yet synced. */
     @Query("SELECT EXISTS(SELECT 1 FROM mutation_cache WHERE id = :id AND synced_at_ms IS NULL)")
@@ -367,25 +410,26 @@ internal interface MutationDao {
     /** The mutation [id], pending or synced, or `null` when it is not queued. */
     @Query("SELECT * FROM mutation_cache WHERE id = :id") suspend fun byId(id: Long): MutationRow?
 
-    /** The ids of [table]'s synced mutations still retained for the overlay. */
-    @Query("SELECT id FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NOT NULL")
-    suspend fun syncedIdsForTable(table: String): List<Long>
+    /** [table]'s synced mutations still retained for the overlay, oldest replay first. */
+    @Query(
+        "SELECT * FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NOT NULL " +
+            "ORDER BY sync_sequence ASC, id ASC"
+    )
+    suspend fun syncedForTable(table: String): List<MutationRow>
+
+    /** Every table with a synced mutation retained for the overlay. */
+    @Query("SELECT DISTINCT table_name FROM mutation_cache WHERE synced_at_ms IS NOT NULL")
+    suspend fun tablesWithSyncedMutations(): List<String>
+
+    /** The highest [MutationRow.syncSequence] of any row; `0` when there is none. */
+    @Query("SELECT COALESCE(MAX(sync_sequence), 0) FROM mutation_cache")
+    suspend fun maxSyncSequence(): Long
+
+    /** Counts one more schema-cache miss for mutation [id]. */
+    @Query("UPDATE mutation_cache SET schema_cache_misses = schema_cache_misses + 1 WHERE id = :id")
+    suspend fun recordSchemaCacheMiss(id: Long)
 
     @Query("SELECT COUNT(*) FROM mutation_cache") suspend fun countAll(): Int
-
-    /** The id of every queued mutation, pending or synced. */
-    @Query("SELECT id FROM mutation_cache") suspend fun allIds(): List<Long>
-
-    /**
-     * Synced mutations marked synced before [syncedBeforeMs], by the device clock.
-     *
-     * @param syncedBeforeMs The cut-off, in epoch milliseconds.
-     * @return The rows, in insertion order.
-     */
-    @Query(
-        "SELECT * FROM mutation_cache WHERE synced_at_ms IS NOT NULL AND synced_at_ms < :syncedBeforeMs ORDER BY id ASC"
-    )
-    suspend fun syncedBefore(syncedBeforeMs: Long): List<MutationRow>
 
     @Query("SELECT COUNT(*) FROM mutation_cache WHERE synced_at_ms IS NULL")
     suspend fun countPending(): Int
@@ -415,9 +459,14 @@ internal interface MutationDao {
     @Query("SELECT * FROM mutation_cache WHERE table_name = :table ORDER BY id ASC")
     fun allForTableFlow(table: String): Flow<List<MutationRow>>
 
-    /** Mark a single mutation as synced by setting [MutationRow.syncedAtMs]. */
-    @Query("UPDATE mutation_cache SET synced_at_ms = :syncedAtMs WHERE id = :id")
-    suspend fun markSynced(id: Long, syncedAtMs: Long)
+    /**
+     * Marks mutation [id] synced: when, by the device clock, and its [MutationRow.syncSequence].
+     */
+    @Query(
+        "UPDATE mutation_cache SET synced_at_ms = :syncedAtMs, sync_sequence = :syncSequence " +
+            "WHERE id = :id"
+    )
+    suspend fun markSynced(id: Long, syncedAtMs: Long, syncSequence: Long)
 
     /** Deletes every queued mutation (pending + already-synced) across all tables. */
     @Query("DELETE FROM mutation_cache") suspend fun deleteAll()

@@ -137,12 +137,6 @@ internal sealed interface SyncStop {
     data object SessionChanged : SyncStop
 
     /**
-     * The record of which identity made each write could not be read, so no write was sent: sending
-     * one could send it as someone who did not make it. They stay until local data is cleared.
-     */
-    data object OwnershipUnreadable : SyncStop
-
-    /**
      * The next write is being sent right now by the call that made it, so the pass stopped rather
      * than send it twice or overtake it. That call asks for another pass when it lands with more
      * pending.

@@ -138,28 +138,67 @@ class SyncedOverlayScopeTest {
         }
 
     @Test
-    fun a_synced_write_is_retired_after_a_day_even_if_a_query_that_needs_it_is_never_refreshed() =
-        runTest {
-            // Given — a detail query cached once and never refreshed, and a replayed insert it
-            // shows
-            objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
-            store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
-            store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
-            store.retireCoveredSyncedMutations(TABLE)
-            val keptWhileNeeded = mutationDao.inserted.size
-
-            // When — a day passes
-            clock += ONE_DAY_MS + 1
-            store.retireAgedSyncedMutations()
-
-            // Then — kept while the query needed it, retired once it aged out
-            assertEquals(1, keptWhileNeeded)
-            assertEquals(0, mutationDao.inserted.size)
-            assertEquals(
-                """[{"id":"a","list_id":"L"}]""",
-                store.overlaidPayloadFlow(TABLE, LIST_L).first(),
+    fun a_clock_set_back_or_forward_neither_keeps_nor_retires_a_synced_write() = runTest {
+        // Given — a detail query cached once and not refreshed since, and a replayed insert it
+        // shows
+        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        val replayer =
+            MutationQueueReplayer(
+                store = store,
+                supabase = RecordingPostgrestServer().supabaseClient(),
             )
+
+        // When — the clock jumps forward two days, then back four, with a pass after each
+        clock += 2 * ONE_DAY_MS
+        replayer.sync()
+        val afterForward = mutationDao.inserted.size
+        clock -= 4 * ONE_DAY_MS
+        replayer.sync()
+        store.retireCoveredSyncedMutations(TABLE)
+        val afterBack = mutationDao.inserted.size
+
+        // Then — kept while the query needs it, whatever the clock says
+        assertEquals(1, afterForward)
+        assertEquals(1, afterBack)
+        assertEquals(
+            """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
+            store.overlaidPayloadFlow(TABLE, LIST_L).first(),
+        )
+
+        // When — the query refreshes after the replay
+        tick = 50L
+        val started = store.monotonicTickNow()
+        store.addPayload(
+            TABLE,
+            LIST_L,
+            """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
+            requestStartedAtTick = started,
+        )
+        store.retireCoveredSyncedMutations(TABLE, started)
+
+        // Then — it is retired: every cached query holds it
+        assertEquals(0, mutationDao.inserted.size)
+    }
+
+    @Test
+    fun a_table_keeps_the_newest_synced_writes_up_to_its_bound() = runTest {
+        // Given — a query never refreshed, and one more replayed insert than a table keeps
+        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        repeat(RETAINED_BOUND + 1) { index ->
+            val id = store.enqueueInsert(TABLE, rows("""[{"id":"x$index","list_id":"L"}]"""))
+            store.markMutationSynced(id = id, table = TABLE)
         }
+
+        // When
+        store.retireCoveredSyncedMutations(TABLE)
+
+        // Then — the oldest went; the newest stay for the query that needs them
+        val kept = mutationDao.inserted.map { row -> row.bodyJson }
+        assertEquals(RETAINED_BOUND, kept.size)
+        assertEquals("""[{"id":"x1","list_id":"L"}]""", kept.first())
+    }
 
     @Test
     fun a_refreshed_query_keeps_the_servers_version_after_a_restart() = runTest {
@@ -204,12 +243,12 @@ class SyncedOverlayScopeTest {
     }
 
     @Test
-    fun a_pass_retires_synced_mutations_older_than_a_day() = runTest {
-        // Given — a replayed update a never-refreshed query still shows, a day old
+    fun a_pass_retires_the_synced_writes_of_a_table_nothing_caches() = runTest {
+        // Given — a replayed update a cached query showed, and then that query's payload dropped
         objectDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
         store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
-        clock += ONE_DAY_MS + 1
+        store.deleteTablePayload(TABLE, ORPHAN)
 
         // When — a pass runs, with nothing left to send
         MutationQueueReplayer(store = store, supabase = RecordingPostgrestServer().supabaseClient())
@@ -235,5 +274,8 @@ class SyncedOverlayScopeTest {
         const val ALL = "tasks"
         const val ORPHAN = "tasks?id=eq.a"
         const val ONE_DAY_MS = 24L * 60 * 60 * 1000
+
+        /** The most synced mutations a table keeps; see `MAX_RETAINED_SYNCED_PER_TABLE`. */
+        const val RETAINED_BOUND = 1_000
     }
 }

@@ -21,61 +21,9 @@ internal class ReservedRowsDatabaseScenarios(
 ) {
 
     /**
-     * An older build of the engine opens a database that holds reserved rows: its table reads never
-     * see them, its size and eviction queries treat them as ordinary rows, and nothing fails. This
-     * build then reopens the file in place with every app row intact.
+     * The queue's state — owners in the rows, and the reserved rows — survives a close and reopen,
+     * and leaves every fixture row as it was.
      */
-    suspend fun anOlderBuildReadsAroundReservedRows(path: String) {
-        // Given — the shipped database, with this build's reserved rows added
-        ShippedDatabaseFixture.writeTo(path)
-        val writer = open(path, RecordingRoomCallback())
-        try {
-            writer.writeReservedRows()
-        } finally {
-            writer.close()
-        }
-
-        // When — the older build's own queries run over it
-        val appRows = PreviousEngineQueries.signaturesForTable(path, "todos")
-        val sizeWithReservedRows = PreviousEngineQueries.totalPayloadBytes(path)
-        PreviousEngineQueries.deleteOldest(path, limit = 2)
-
-        // Then — table reads saw only app rows; its eviction took the reserved rows, being oldest
-        assertEquals(
-            ShippedDatabaseFixture.OBJECT_ROWS.map { row -> row.signature }.toSet(),
-            appRows.toSet(),
-        )
-        assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, appRows.size)
-        assertTrue(
-            sizeWithReservedRows >
-                ShippedDatabaseFixture.OBJECT_ROWS.sumOf { row -> row.payload.length.toLong() }
-        )
-        assertEquals(0L, PreviousEngineQueries.reservedRowCount(path))
-
-        // And — this build reopens it in place, and reads the now-missing rows as nothing recorded
-        val callback = RecordingRoomCallback()
-        val reopened = open(path, callback)
-        try {
-            assertEquals(SHIPPED_FIXTURE_CONTENTS, reopened.readShippedFixtureContents())
-            val store =
-                newTestOfflineStore(
-                    objectDao = reopened.objectDao(),
-                    mutationDao = reopened.mutationDao(),
-                )
-            assertEquals(emptyList(), store.mutationQueueState.rejections())
-            assertEquals(MutationOwners.Known(emptyMap()), store.mutationQueueState.owners())
-        } finally {
-            reopened.close()
-        }
-        assertEquals(0, callback.creates)
-        assertEquals(0, callback.destructiveMigrations)
-        assertEquals(
-            ShippedDatabaseFixture.IDENTITY_HASH,
-            ShippedDatabaseFixture.readIdentityHash(path),
-        )
-    }
-
-    /** Reserved rows survive a close and reopen, and leave every shipped row as it was. */
     suspend fun reservedRowsPersistAcrossReopening(path: String) {
         // Given
         ShippedDatabaseFixture.writeTo(path)
@@ -99,16 +47,16 @@ internal class ReservedRowsDatabaseScenarios(
                 Triple(
                     reopened.readShippedFixtureContents(),
                     store.mutationQueueState.rejections(),
-                    store.mutationQueueState.owners(),
+                    reopened.pendingOwners(),
                 )
             } finally {
                 reopened.close()
             }
 
         // Then
-        assertEquals(SHIPPED_FIXTURE_CONTENTS, contents)
+        assertEquals(SHIPPED_FIXTURE_CONTENTS.withOwners(), contents)
         assertEquals(listOf(ON_DISK_REJECTION), rejections)
-        assertEquals(MutationOwners.Known(ON_DISK_OWNERS), owners)
+        assertEquals(ON_DISK_PENDING_OWNERS, owners)
         assertEquals(0, callback.creates)
         assertEquals(0, callback.destructiveMigrations)
         assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(path))
@@ -138,7 +86,7 @@ internal class ReservedRowsDatabaseScenarios(
                 size,
             )
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, evicted)
-            assertEquals(2L, PreviousEngineQueries.reservedRowCount(path))
+            assertEquals(2L, RawDatabaseQueries.reservedRowCount(path))
         } finally {
             database.close()
         }
@@ -154,9 +102,9 @@ internal class ReservedRowsDatabaseScenarios(
         val database = open(path, RecordingRoomCallback())
         try {
             val objectDao = database.objectDao()
-            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{}", 0))
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE, "{}", 0))
             objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE, "{}", 0))
-            val reservedBefore = PreviousEngineQueries.reservedRowCount(path)
+            val reservedBefore = RawDatabaseQueries.reservedRowCount(path)
 
             // When
             objectDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
@@ -165,7 +113,7 @@ internal class ReservedRowsDatabaseScenarios(
             ShippedDatabaseFixture.OBJECT_ROWS.map { row -> row.table }
                 .distinct()
                 .forEach { table -> assertEquals(emptyList(), objectDao.signaturesForTable(table)) }
-            assertEquals(reservedBefore, PreviousEngineQueries.reservedRowCount(path))
+            assertEquals(reservedBefore, RawDatabaseQueries.reservedRowCount(path))
             assertEquals(2L, reservedBefore)
         } finally {
             database.close()
@@ -237,11 +185,11 @@ internal class ReservedRowsDatabaseScenarios(
     }
 
     /**
-     * The pending writes of the shipped database, which recorded no owners, are adopted in place by
-     * the identity of the first pass that sees them, and keep their order.
+     * Pending writes that recorded no owner are adopted in place by the identity of the first pass
+     * that sees them, and keep their order.
      */
-    suspend fun anEarlierBuildsQueueIsAdoptedInPlace(path: String) {
-        // Given — the shipped database, whose pending writes have no owners
+    suspend fun aQueueWithoutOwnersIsAdoptedInPlace(path: String) {
+        // Given — the fixture, whose pending writes have no owners
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
         try {
@@ -252,7 +200,7 @@ internal class ReservedRowsDatabaseScenarios(
                 )
 
             // When
-            assertTrue(store.adoptOwnerlessMutations("user:user-a"))
+            store.adoptOwnerlessMutations("user:user-a")
         } finally {
             database.close()
         }
@@ -266,24 +214,14 @@ internal class ReservedRowsDatabaseScenarios(
                     mutationDao = reopened.mutationDao(),
                 )
             assertEquals(
-                MutationOwners.Known(
-                    mapOf(
-                        1L to "user:user-a",
-                        2L to "user:user-a",
-                        3L to "user:user-a",
-                        4L to "user:user-a",
-                    )
-                ),
-                store.mutationQueueState.owners(),
+                listOf(1L, 2L, 3L, 4L).map { id -> id to "user:user-a" },
+                reopened.pendingOwners(),
             )
             assertEquals(
                 listOf(1L, 2L, 3L, 4L),
-                store.pendingMutationsOf("user:user-a")?.map { row -> row.id },
+                store.pendingMutationsOf("user:user-a").map { row -> row.id },
             )
-            assertEquals(
-                emptyList(),
-                store.pendingMutationsOf("user:user-b")?.map { row -> row.id },
-            )
+            assertEquals(emptyList(), store.pendingMutationsOf("user:user-b").map { row -> row.id })
         } finally {
             reopened.close()
         }
@@ -291,7 +229,7 @@ internal class ReservedRowsDatabaseScenarios(
 
     /**
      * The mutation queue's multi-row changes run in one Room transaction: when one fails part-way,
-     * none of its writes land — the rejected list, the queue and the owners stay as they were.
+     * none of its writes land — the rejected list and the queue stay as they were.
      */
     suspend fun aFailedMutationQueueTransactionChangesNothing(path: String) {
         // Given
@@ -322,7 +260,7 @@ internal class ReservedRowsDatabaseScenarios(
     }
 
     /**
-     * Clearing local data is one transaction: when its mutation delete fails, the owner records,
+     * Clearing local data is one transaction: when its mutation delete fails, the queue's state,
      * the mutations and the cache are all still there on disk.
      */
     suspend fun aClearWhoseMutationDeleteFailsChangesNothing(path: String) {
@@ -336,8 +274,8 @@ internal class ReservedRowsDatabaseScenarios(
     }
 
     /**
-     * Clearing local data is one transaction: when its object-cache delete fails, the owner
-     * records, the mutations and the cache are all still there on disk.
+     * Clearing local data is one transaction: when its object-cache delete fails, the queue's
+     * state, the mutations and the cache are all still there on disk.
      */
     suspend fun aClearWhoseObjectCacheDeleteFailsChangesNothing(path: String) {
         aClearThatFailsPartWayChangesNothing(path) { database ->
@@ -353,7 +291,7 @@ internal class ReservedRowsDatabaseScenarios(
         path: String,
         storeFailingIn: (OfflineDatabase) -> OfflineStore,
     ) {
-        // Given — the shipped database with owner records, and a clear that fails part-way
+        // Given — the fixture with the queue's state written, and a clear that fails part-way
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
         val cleared =
@@ -375,8 +313,11 @@ internal class ReservedRowsDatabaseScenarios(
 
             // Then — nothing was cleared: every mutation still has the owner it had
             assertTrue(cleared.isFailure)
-            assertEquals(SHIPPED_FIXTURE_CONTENTS, reopened.readShippedFixtureContents())
-            assertEquals(MutationOwners.Known(ON_DISK_OWNERS), store.mutationQueueState.owners())
+            assertEquals(
+                SHIPPED_FIXTURE_CONTENTS.withOwners(),
+                reopened.readShippedFixtureContents(),
+            )
+            assertEquals(ON_DISK_PENDING_OWNERS, reopened.pendingOwners())
             assertEquals(listOf(ON_DISK_REJECTION), store.mutationQueueState.rejections())
         } finally {
             reopened.close()
@@ -385,9 +326,9 @@ internal class ReservedRowsDatabaseScenarios(
 
     /** Room replays pending writes by id, whatever their wall-clock times say. */
     suspend fun roomReplaysPendingWritesInInsertionOrder(path: String) {
-        // Given — a write added after the shipped ones, stamped with a clock set back
+        // Given — a write added after the fixture's, stamped with a clock set back
         ShippedDatabaseFixture.writeTo(path)
-        PreviousEngineQueries.insertWriteWithEarlierClock(path, id = 10)
+        RawDatabaseQueries.insertWriteWithEarlierClock(path, id = 10)
 
         // When
         val database = open(path, RecordingRoomCallback())
@@ -398,8 +339,7 @@ internal class ReservedRowsDatabaseScenarios(
                 database.close()
             }
 
-        // Then — insertion order; the older build's clock order would have put it first
+        // Then — insertion order; the clock's order would have put it first
         assertEquals(listOf(1L, 2L, 3L, 4L, 10L), ids)
-        assertEquals(10L, PreviousEngineQueries.pendingIds(path).first())
     }
 }

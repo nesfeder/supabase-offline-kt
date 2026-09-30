@@ -853,10 +853,6 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     return direct.send(OfflineLogLevel.INFO) {
                         "Not queueing offline $verbLabel for $table: local data was cleared while it was in flight"
                     }
-                EnqueueOutcome.OwnershipUnreadable ->
-                    return direct.send(OfflineLogLevel.WARNING) {
-                        "Not queueing offline $verbLabel for $table: the queue's owner records cannot be read"
-                    }
             }
 
         val sent =
@@ -946,9 +942,10 @@ internal class OfflinePostgrestQueryBuilderImpl(
 
     /**
      * Asks for a pass when [identity] has mutations queued, which the head it just left held back.
+     * Reads the owner index only, whatever other identities have queued.
      */
     private suspend fun requestPassIfPending(identity: QueueIdentity) {
-        if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true) requestSync()
+        if (store.hasPendingMutationsOf(identity.storedValue)) requestSync()
     }
 
     /**
