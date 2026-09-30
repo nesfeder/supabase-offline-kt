@@ -1,7 +1,7 @@
 # Set up Supabase
 
-Creating a Supabase project for the sample apps and loading their schema into it. It takes about
-ten minutes, and a free project is enough.
+Creating a Supabase project for the sample apps and loading their schema into it. A free project
+is enough.
 
 The schema is one file, [`samples/supabase/schema.sql`](#the-schema). It creates two tables,
 `tasks` and `task_photos`, and a private Storage bucket, `task-photos`. Every row and every file
@@ -34,8 +34,8 @@ limits anonymous sign-ins to 30 an hour from each IP address by default.
 
 ## Apply the schema
 
-Either route applies the same file, and both can be repeated: a second run changes nothing. You
-can also switch routes, because the file checks what is already there before it changes anything.
+Either route applies the same file, and both can be repeated: a second run changes nothing. So the
+two also mix: a `db push` after the SQL Editor runs the file again, and nothing changes.
 
 ### In the SQL Editor
 
@@ -108,7 +108,8 @@ Settings**, then **API Keys**.
 
 Use the **publishable** key (`sb_publishable_…`), which is made to ship inside an app. Never put
 the secret key (`sb_secret_…`), or the legacy `service_role` key, in an app: it skips row-level
-security. The legacy `anon` key also works, until Supabase retires it.
+security. The legacy `anon` key also works, until Supabase retires it (planned for the end of
+2026).
 
 ## Where the URL and the key go
 
@@ -134,9 +135,9 @@ The publishable key is public: anyone can take it out of an app. With this schem
   changes nothing.
 - A file can be at most 5 MB and must be one of the four image types, and none has a public URL.
 
-An anonymous user cannot sign back in. Signing out, or deleting the app, leaves their tasks
-behind for good, and two devices are two users. The [guided tour](tour.md) plays the second
-writer from the Table Editor instead.
+An anonymous user cannot sign back in: after signing out, or deleting the app, their tasks stay on
+the server but nobody can reach them again. Two devices are two users, so the
+[guided tour](tour.md) plays the second writer from the Table Editor instead.
 
 ## If the project pauses
 
