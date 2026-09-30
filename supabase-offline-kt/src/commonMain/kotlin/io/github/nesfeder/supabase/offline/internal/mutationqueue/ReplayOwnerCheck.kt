@@ -17,35 +17,49 @@ import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 
 /**
- * Carried in a coroutine context while a queued mutation is sent: the identity that owns it. The
- * phase [installReplayOwnerCheck] adds stops a PostgREST request sent from that coroutine unless
- * its token is [owner]'s, and records here that it did.
+ * Carried in a coroutine context while a queued mutation is sent: the identity that owns it, and
+ * the replay pass sending it. The phase [installReplayOwnerCheck] adds stops a request sent from
+ * that coroutine once [sender] is cancelled, or, for a PostgREST request, unless its token is
+ * [owner]'s, and records here which it did.
+ *
+ * @property sender the pass sending the mutation, which runs the request whatever cancels it; a
+ *   request it has not sent yet is stopped instead. `null` for a send that cancellation stops.
  */
-internal class ReplayOwner(val owner: QueueIdentity) : AbstractCoroutineContextElement(Key) {
+internal class ReplayOwner(val owner: QueueIdentity, val sender: Job? = null) :
+    AbstractCoroutineContextElement(Key) {
 
     /** The key a replay owner is found under in a coroutine context. */
     companion object Key : CoroutineContext.Key<ReplayOwner>
 
-    private val stopped = AtomicBoolean(false)
+    private val stoppedForSession = AtomicBoolean(false)
+    private val stoppedWithSender = AtomicBoolean(false)
 
     /** Whether the check stopped a request because its token was not [owner]'s. */
     val stoppedForAnotherSession: Boolean
-        get() = stopped.load()
+        get() = stoppedForSession.load()
 
-    /** Records that the check stopped a request. */
+    /** Whether the check stopped a request because [sender] was cancelled before it was sent. */
+    val stoppedWithItsSender: Boolean
+        get() = stoppedWithSender.load()
+
+    /** Records that the check stopped a request for another session's token. */
     fun recordStop() {
-        stopped.store(true)
+        stoppedForSession.store(true)
+    }
+
+    /** Records that the check stopped a request because [sender] was cancelled. */
+    fun recordSenderStopped() {
+        stoppedWithSender.store(true)
     }
 }
 
 /** Thrown by the replay owner check to stop a request before it leaves the device. */
-private class ReplayOwnerCheckStop :
-    IllegalStateException(
-        "Request stopped by the offline engine: the session no longer belongs to the mutation's owner"
-    )
+private class ReplayOwnerCheckStop(reason: String) :
+    IllegalStateException("Request stopped by the offline engine: $reason")
 
 /** The request-pipeline phase the check runs in, after every plugin's own phases. */
 private val ReplayOwnerCheckPhase = PipelinePhase("SupabaseOfflineReplayOwnerCheck")
@@ -55,14 +69,15 @@ private val ReplayOwnerCheckInstallation =
     AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.ReplayOwnerCheck")
 
 /**
- * Installs, once per client and only when the Auth plugin is installed, the phase that binds a
- * queued mutation's send to its owner. It runs just before the request is sent, after supabase-kt
- * set the `Authorization` header, and stops a PostgREST request made under a [ReplayOwner] whose
- * token names another identity. Without Auth the session never changes identity.
+ * Installs, once per client, the phase that binds a queued mutation's send to its owner and its
+ * pass. It runs just before the request is sent, after supabase-kt set the `Authorization` header,
+ * and stops a request made under a [ReplayOwner] whose [ReplayOwner.sender] was cancelled, or, when
+ * the Auth plugin is installed, a PostgREST request whose token names another identity. Without
+ * Auth the session never changes identity.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installReplayOwnerCheck() {
-    if (pluginManager.getPluginOrNull(Auth) == null) return
+    val checksIdentity = pluginManager.getPluginOrNull(Auth) != null
     val client = httpClient.httpClient
     val installation =
         client.attributes.computeIfAbsent(ReplayOwnerCheckInstallation) { AtomicBoolean(false) }
@@ -70,10 +85,14 @@ internal fun SupabaseClient.installReplayOwnerCheck() {
     client.requestPipeline.insertPhaseBefore(HttpRequestPipeline.Send, ReplayOwnerCheckPhase)
     client.requestPipeline.intercept(ReplayOwnerCheckPhase) {
         val replay = currentCoroutineContext()[ReplayOwner] ?: return@intercept
-        if (!isPostgrestRequest(context)) return@intercept
+        if (replay.sender?.isActive == false) {
+            replay.recordSenderStopped()
+            throw ReplayOwnerCheckStop("the replay pass was stopped before it was sent")
+        }
+        if (!checksIdentity || !isPostgrestRequest(context)) return@intercept
         if (identityCarriedBy(context.headers[HttpHeaders.Authorization]) != replay.owner) {
             replay.recordStop()
-            throw ReplayOwnerCheckStop()
+            throw ReplayOwnerCheckStop("the session no longer belongs to the mutation's owner")
         }
     }
 }

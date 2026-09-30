@@ -151,16 +151,17 @@ class MutationQueueAcrossCloseTest {
         first.from(TABLE).insertJson(rowWithId(1))
         first.from(TABLE).insertJson(rowWithId(2))
 
-        // When — A's pass commits the first on the server, and A closes before the answer arrives
+        // When — A's pass commits the first on the server, and A closes before the answer
+        // arrives; the pass finishes that request once it does
         online.store(true)
         val pass = callerScope.async { runCatching { first.syncAllPendingMutations() } }
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) { while (server.rows(TABLE).isEmpty()) delay(5) }
         }
         first.close()
+        held.complete(Unit)
         val passOutcome =
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { pass.await() } }
-        held.complete(Unit)
         val reopened =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
@@ -175,8 +176,8 @@ class MutationQueueAcrossCloseTest {
             )
         reopened.syncAllPendingMutations()
 
-        // Then — A's pass was stopped; the reopened client sent the rest; each row is on the server
-        // once, and nothing was refused as a duplicate of itself
+        // Then — A's pass stopped after the first; the reopened client sent the rest; each row is
+        // on the server once, and nothing was refused as a duplicate of itself
         assertClientClosedError(passOutcome.exceptionOrNull(), "the pass in flight at close()")
         assertEquals(
             listOf(1, 2),

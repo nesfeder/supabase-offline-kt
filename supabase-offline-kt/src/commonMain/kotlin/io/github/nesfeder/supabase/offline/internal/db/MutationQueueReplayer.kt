@@ -42,6 +42,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -401,8 +402,13 @@ internal class MutationQueueReplayer(
         return Claim.Send(candidate)
     }
 
-    /** One pass. Reads the identity's queue once, then re-checks each mutation as it claims it. */
+    /**
+     * One pass. Reads the identity's queue once, then re-checks each mutation as it claims it.
+     * Cancelled, it stops between mutations: a request already sent finishes and its answer is
+     * recorded, since a write the server applied but the queue kept would be sent again.
+     */
     private suspend fun runPass(table: String?, schema: String, generation: Long): SyncReport {
+        val pass = currentCoroutineContext().job
         val identity = currentIdentity()
         if (identity == null) {
             sdkLogger.warning { "The session's identity cannot be told; not replaying" }
@@ -428,6 +434,7 @@ internal class MutationQueueReplayer(
         var stop: SyncStop? = null
 
         for (candidate in queue) {
+            pass.ensureActive()
             val mutation =
                 when (val claim = sendLock.withLock { claim(candidate, identity, generation) }) {
                     is Claim.Stop -> {
@@ -443,30 +450,34 @@ internal class MutationQueueReplayer(
             var released = false
             val (outcome, recorded) =
                 try {
-                    val outcome =
-                        try {
-                            val tableApi =
-                                tableApis.getOrPut(mutation.table) {
-                                    postgrestFactory(schema, mutation.table)
+                    // Runs to its outcome once sent; the owner check stops the request if the pass
+                    // is cancelled first
+                    withContext(NonCancellable) {
+                        val outcome =
+                            try {
+                                val tableApi =
+                                    tableApis.getOrPut(mutation.table) {
+                                        postgrestFactory(schema, mutation.table)
+                                    }
+                                replay(mutation, tableApi, identity, pass)
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
+                            } catch (localFailure: Exception) {
+                                // Request failures are outcomes already; this is the store failing
+                                // around one.
+                                sdkLogger.error {
+                                    "Replay of ${mutation.operation} on ${mutation.table} stopped by a local failure " +
+                                        "(${localFailure::class.simpleName}); keeping it for a later sync"
                                 }
-                            replay(mutation, tableApi, identity)
-                        } catch (cancellation: CancellationException) {
-                            throw cancellation
-                        } catch (localFailure: Exception) {
-                            // Request failures are outcomes already; this is the store failing
-                            // around one.
-                            sdkLogger.error {
-                                "Replay of ${mutation.operation} on ${mutation.table} stopped by a local failure " +
-                                    "(${localFailure::class.simpleName}); keeping it for a later sync"
+                                ReplayOutcome.Stopped(localFailure)
                             }
-                            ReplayOutcome.Stopped(localFailure)
+                        sendLock.withLock {
+                            inFlight -= mutation.id
+                            released = true
+                            outcome to
+                                if (clearGeneration.value != generation) SyncStop.LocalDataCleared
+                                else record(mutation, outcome, rejected, syncedTables)
                         }
-                    sendLock.withLock {
-                        inFlight -= mutation.id
-                        released = true
-                        outcome to
-                            if (clearGeneration.value != generation) SyncStop.LocalDataCleared
-                            else record(mutation, outcome, rejected, syncedTables)
                     }
                 } finally {
                     if (!released)
@@ -572,10 +583,15 @@ internal class MutationQueueReplayer(
         data class Stopped(val cause: Throwable) : ReplayOutcome
     }
 
+    /**
+     * Sends [mutation] as [identity], the pass [pass] running it: stopped before it leaves the
+     * device when the session is no longer [identity]'s or [pass] was cancelled.
+     */
     private suspend fun replay(
         mutation: MutationRow,
         tableApi: PostgrestQueryBuilderWrapper,
         identity: QueueIdentity,
+        pass: Job,
     ): ReplayOutcome {
         // Decided before this attempt is recorded: only an earlier attempt can have reached the
         // server.
@@ -584,14 +600,18 @@ internal class MutationQueueReplayer(
             is Prepared.Refused -> prepared.outcome
             is Prepared.Ready -> {
                 val newlyUnconfirmed = store.markSendUnconfirmed(mutation.id)
-                val owner = ReplayOwner(identity)
+                val owner = ReplayOwner(identity, sender = pass)
                 val sent = sendCapturingEngineFailure {
                     withContext(owner) { prepared.request(tableApi) }
                 }
                 when (sent) {
                     is SendOutcome.Succeeded -> ReplayOutcome.Synced
                     is SendOutcome.Failed ->
-                        if (owner.stoppedForAnotherSession) {
+                        if (owner.stoppedWithItsSender) {
+                            // It never left the device: the pass ends here, cancelled
+                            if (newlyUnconfirmed) store.clearUnconfirmedSend(mutation.id)
+                            throw CancellationException("The replay pass was stopped")
+                        } else if (owner.stoppedForAnotherSession) {
                             stoppedForAnotherSession(mutation.id, newlyUnconfirmed)
                             ReplayOutcome.SessionChanged
                         } else {
