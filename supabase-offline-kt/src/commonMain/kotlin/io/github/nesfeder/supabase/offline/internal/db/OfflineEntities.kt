@@ -455,10 +455,6 @@ internal interface MutationDao {
     @Query("SELECT * FROM mutation_cache WHERE table_name = :table ORDER BY id ASC")
     suspend fun allForTable(table: String): List<MutationRow>
 
-    /** [allForTable], re-emitted on every queue change. */
-    @Query("SELECT * FROM mutation_cache WHERE table_name = :table ORDER BY id ASC")
-    fun allForTableFlow(table: String): Flow<List<MutationRow>>
-
     /**
      * Marks mutation [id] synced: when, by the device clock, and its [MutationRow.syncSequence].
      */

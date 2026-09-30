@@ -301,10 +301,6 @@ internal open class InMemoryMutationDao : MutationDao {
     override suspend fun allForTable(table: String): List<MutationRow> =
         mutations.value.filter { it.table == table }.sortedBy { it.id }
 
-    override fun allForTableFlow(table: String): Flow<List<MutationRow>> = mutations.map { all ->
-        all.filter { it.table == table }.sortedBy { it.id }
-    }
-
     override suspend fun markSynced(id: Long, syncedAtMs: Long, syncSequence: Long) {
         mutations.update { current ->
             current.map {

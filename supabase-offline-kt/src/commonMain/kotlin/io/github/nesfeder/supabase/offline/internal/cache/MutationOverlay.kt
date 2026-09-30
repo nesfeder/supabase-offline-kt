@@ -40,6 +40,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * @param placesKeylessUpsertRows whether an UPSERT row without its conflict columns is added as a
  *   new row; without them nothing tells whether it replaces one.
  * @param onMutationFailure told of each skipped mutation, for logging; never its body.
+ * @param bodyOf a mutation's body, parsed; one parse may serve many overlays.
  */
 internal class MutationOverlay(
     private val json: Json,
@@ -48,6 +49,9 @@ internal class MutationOverlay(
     private val mayAlreadyHold: (MutationRow) -> Boolean,
     private val placesKeylessUpsertRows: Boolean = true,
     private val onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> },
+    private val bodyOf: (MutationRow) -> JsonElement = { mutation ->
+        json.parseToJsonElement(mutation.bodyJson)
+    },
 ) {
 
     /**
@@ -111,17 +115,25 @@ internal class MutationOverlay(
     /**
      * The rows as the mutations change them. Each change is journaled until [keep] or [undo], so a
      * mutation that fails half-way is taken back without copying every row for every mutation.
+     *
+     * A shown row lives in a slot that never moves: one that leaves the query empties its slot, so
+     * the rows can be found by key through an index built once per set of key columns and kept in
+     * step with every change. An undo reads no row: it drops the indexes, built again when next
+     * asked.
      */
     private inner class Working(start: OverlaidRows) {
-        private val visible = start.visible.toMutableList()
+        private val slots: MutableList<JsonElement?> = start.visible.toMutableList()
         private val held = start.held.toMutableList()
         private val written = start.written.toMutableList()
 
         /** How to take back each change of the current mutation, in the order made. */
         private val journal = mutableListOf<() -> Unit>()
 
+        /** Key columns → each shown row's [keyOf] under them → its slots, lowest first. */
+        private val keyIndexes = HashMap<List<String>, HashMap<List<String>, MutableList<Int>>>()
+
         fun snapshot(): OverlaidRows =
-            OverlaidRows(visible = visible, held = held, written = written)
+            OverlaidRows(visible = slots.filterNotNull(), held = held, written = written)
 
         /** Keeps the current mutation's changes. */
         fun keep() {
@@ -132,6 +144,66 @@ internal class MutationOverlay(
         fun undo() {
             journal.asReversed().forEach { change -> change() }
             journal.clear()
+            keyIndexes.clear()
+        }
+
+        /**
+         * The first slot showing a row with [row]'s values in [keyColumns], or `null` when none
+         * does or [row] lacks one; see [indexOfKey], whose answer this is.
+         */
+        private fun firstShownSlotOf(row: JsonObject, keyColumns: List<String>): Int? {
+            val key = keyOf(row, keyColumns) ?: return null
+            return keyIndexOf(keyColumns)[key]?.firstOrNull()
+        }
+
+        /** The index of the shown rows under [keyColumns], built whole on first use. */
+        private fun keyIndexOf(keyColumns: List<String>): HashMap<List<String>, MutableList<Int>> {
+            keyIndexes[keyColumns]?.let { index ->
+                return index
+            }
+            val index = HashMap<List<String>, MutableList<Int>>()
+            slots.forEachIndexed { slot, element ->
+                val key = (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
+                if (key != null) index.getOrPut(key) { mutableListOf() } += slot
+            }
+            keyIndexes[keyColumns] = index
+            return index
+        }
+
+        /**
+         * Puts [element] in [slot], `null` to empty it, keeping every built index in step. Reads
+         * the key columns of the rows leaving and entering the slot.
+         */
+        private fun setSlot(slot: Int, element: JsonElement?) {
+            val old = slots[slot]
+            keyIndexes.forEach { (keyColumns, index) ->
+                (old as? JsonObject)
+                    ?.let { row -> keyOf(row, keyColumns) }
+                    ?.let { key ->
+                        val holders = index.getValue(key)
+                        holders.remove(slot)
+                        if (holders.isEmpty()) index.remove(key)
+                    }
+                (element as? JsonObject)
+                    ?.let { row -> keyOf(row, keyColumns) }
+                    ?.let { key -> index.getOrPut(key) { mutableListOf() }.insertInOrder(slot) }
+            }
+            slots[slot] = element
+        }
+
+        /** Shows [element] after every row, to be removed on [undo]. */
+        private fun show(element: JsonElement) {
+            slots.add(null)
+            val slot = slots.lastIndex
+            journal += { slots.removeAt(slot) }
+            setSlot(slot, element)
+        }
+
+        /** Shows [element] in [slot] instead, to be put back on [undo]. */
+        private fun replaceSlot(slot: Int, element: JsonElement?) {
+            val old = slots[slot]
+            journal += { slots[slot] = old }
+            setSlot(slot, element)
         }
 
         /** Adds [element] at the end, to be removed on [undo]. */
@@ -167,10 +239,10 @@ internal class MutationOverlay(
             bodyRowsOf(mutation).forEach { element ->
                 val row = element as? JsonObject
                 if (row == null) {
-                    visible.append(element)
+                    show(element)
                     return@forEach
                 }
-                if (dedupe && indexOfKey(visible, row, keyColumns) != null) return@forEach
+                if (dedupe && firstShownSlotOf(row, keyColumns) != null) return@forEach
                 place(row)
             }
         }
@@ -181,19 +253,19 @@ internal class MutationOverlay(
             bodyRowsOf(mutation).forEach { element ->
                 val row = element as? JsonObject
                 if (row == null) {
-                    visible.append(element)
+                    show(element)
                     return@forEach
                 }
                 if (primaryKeyOf(row, keyColumns) == null) {
                     if (placesKeylessUpsertRows) place(row)
                     return@forEach
                 }
-                val shown = indexOfKey(visible, row, keyColumns)
+                val shown = firstShownSlotOf(row, keyColumns)
                 val kept = if (shown == null) indexOfKey(held, row, keyColumns) else null
                 when {
                     shown != null ->
                         if (!ignoreDuplicates)
-                            replaceShown(shown, merge(visible[shown] as JsonObject, row))
+                            replaceShown(shown, merge(slots[shown] as JsonObject, row))
                     kept != null -> if (!ignoreDuplicates) replaceHeld(kept, merge(held[kept], row))
                     else -> place(row)
                 }
@@ -203,14 +275,14 @@ internal class MutationOverlay(
         private fun update(mutation: MutationRow) {
             val filter =
                 RowFilter(filterOf(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
-            val patch = json.parseToJsonElement(mutation.bodyJson) as? JsonObject ?: return
+            val patch = bodyOf(mutation) as? JsonObject ?: return
             // No row can match: none is visited
             if (!filter.canMatch) return
             // Rows the loop below moves aside land after these, and are not visited twice
             val heldBefore = held.size
-            visible.indices.reversed().forEach { index ->
-                val row = visible[index] as? JsonObject ?: return@forEach
-                if (filter.match(row) == RowMatch.MATCHES) replaceShown(index, merge(row, patch))
+            slots.indices.reversed().forEach { slot ->
+                val row = slots[slot] as? JsonObject ?: return@forEach
+                if (filter.match(row) == RowMatch.MATCHES) replaceShown(slot, merge(row, patch))
             }
             (0 until heldBefore).reversed().forEach { index ->
                 val row = held[index]
@@ -223,10 +295,10 @@ internal class MutationOverlay(
                 RowFilter(filterOf(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
             // No row can match: none is visited
             if (!filter.canMatch) return
-            visible.indices.reversed().forEach { index ->
-                val row = visible[index]
+            slots.indices.reversed().forEach { slot ->
+                val row = slots[slot]
                 if (row is JsonObject && filter.match(row) == RowMatch.MATCHES)
-                    visible.removeWithUndo(index)
+                    replaceSlot(slot, null)
             }
             held.indices.reversed().forEach { index ->
                 if (filter.match(held[index]) == RowMatch.MATCHES) held.removeWithUndo(index)
@@ -236,19 +308,19 @@ internal class MutationOverlay(
         /** Adds a row the mutation wrote: shown when the query admits it, held otherwise. */
         private fun place(row: JsonObject) {
             written.append(row)
-            if (admission.admits(row)) visible.append(row) else held.append(row)
+            if (admission.admits(row)) show(row) else held.append(row)
         }
 
         /**
-         * Replaces the shown row at [index] with [row], moving it aside when the query no longer
+         * Replaces the row shown in [slot] with [row], moving it aside when the query no longer
          * admits it.
          */
-        private fun replaceShown(index: Int, row: JsonObject) {
+        private fun replaceShown(slot: Int, row: JsonObject) {
             written.append(row)
             if (admission.admits(row)) {
-                visible.replace(index, row)
+                replaceSlot(slot, row)
             } else {
-                visible.removeWithUndo(index)
+                replaceSlot(slot, null)
                 held.append(row)
             }
         }
@@ -261,7 +333,7 @@ internal class MutationOverlay(
             written.append(row)
             if (!admission.admits(held[index]) && admission.admits(row)) {
                 held.removeWithUndo(index)
-                visible.append(row)
+                show(row)
             } else {
                 held.replace(index, row)
             }
@@ -270,7 +342,7 @@ internal class MutationOverlay(
 
     /** An INSERT or UPSERT body's rows: an array, or a single object. */
     private fun bodyRowsOf(mutation: MutationRow): List<JsonElement> =
-        when (val body = json.parseToJsonElement(mutation.bodyJson)) {
+        when (val body = bodyOf(mutation)) {
             is JsonArray -> body
             is JsonObject -> listOf(body)
             else -> emptyList()
@@ -411,3 +483,10 @@ private val UUID_KEY_LENGTHS: IntRange = 32..48
 
 /** [base] with [patch]'s columns written over it. */
 private fun merge(base: JsonObject, patch: JsonObject): JsonObject = JsonObject(base + patch)
+
+/** Adds [value] where it keeps this ascending list ascending. */
+private fun MutableList<Int>.insertInOrder(value: Int) {
+    var position = size
+    while (position > 0 && this[position - 1] > value) position--
+    add(position, value)
+}

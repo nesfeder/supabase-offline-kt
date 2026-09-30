@@ -173,6 +173,12 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     var pendingListReads: Int = 0
         private set
 
+    /** How many times each table's mutation rows, pending and synced, were read as one list. */
+    val tableListReads: Map<String, Int>
+        get() = tableListReadCounts.toMap()
+
+    private val tableListReadCounts = mutableMapOf<String, Int>()
+
     /** When set, the next [deleteAll] fails, as a process dying part-way through clearing would. */
     var failNextDeleteAll: Boolean = false
 
@@ -195,6 +201,11 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     override suspend fun pendingForTable(table: String): List<MutationRow> {
         pendingListReads++
         return super.pendingForTable(table)
+    }
+
+    override suspend fun allForTable(table: String): List<MutationRow> {
+        tableListReadCounts[table] = (tableListReadCounts[table] ?: 0) + 1
+        return super.allForTable(table)
     }
 
     override suspend fun deleteAll() {

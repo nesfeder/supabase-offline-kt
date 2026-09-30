@@ -759,6 +759,8 @@ internal class OfflineStore(
                 queryShapes.forgetAll()
                 parsedPayloads.value = emptyMap()
                 loggedOverlaySkips.value = emptySet()
+                lastTableMutations.value = emptyMap()
+                noteEveryTableChanged()
             }
         }
     }
@@ -870,39 +872,15 @@ internal class OfflineStore(
 
     /* ────────────────────────────── Mutation queue ────────────────────────────── */
 
-    /**
-     * Queue an INSERT.
-     *
-     * @return The mutation's id — the mutation row's autoincrement id, stable across restarts.
-     */
+    /** Queues an INSERT with no recorded owner; see [MutationWriter.enqueueInsert]. */
     suspend fun enqueueInsert(
         table: String,
         body: JsonArray,
         filter: FilterDescriptor? = null,
         defaultToNull: Boolean = true,
-    ): Long {
-        requireUserTable(table)
-        // Read before the first INSERT this process queues, so a missing record is started from the
-        // INSERTs queued before it only. Under [enqueueOwnedBy] it is read already.
-        mutationQueueState.unconfirmedSends()
-        return mutationDao.insert(
-            MutationRow(
-                table = table,
-                operation = MutationOperation.INSERT,
-                bodyJson = body.toString(),
-                filterJson = filter?.let { encode(it, json) },
-                createdAtMs = nowMillis(),
-                syncedAtMs = null,
-                defaultToNull = defaultToNull,
-            )
-        )
-    }
+    ): Long = MutationWriter(owner = null).enqueueInsert(table, body, filter, defaultToNull)
 
-    /**
-     * Queue an UPSERT.
-     *
-     * @return The mutation's id.
-     */
+    /** Queues an UPSERT with no recorded owner; see [MutationWriter.enqueueUpsert]. */
     suspend fun enqueueUpsert(
         table: String,
         bodyJson: JsonArray,
@@ -910,71 +888,139 @@ internal class OfflineStore(
         onConflict: String? = null,
         ignoreDuplicates: Boolean = false,
         defaultToNull: Boolean = true,
-    ): Long {
-        requireUserTable(table)
-        return mutationDao.insert(
-            MutationRow(
-                table = table,
-                operation = MutationOperation.UPSERT,
-                bodyJson = bodyJson.toString(),
-                filterJson = filter?.let { encode(it, json) },
-                createdAtMs = nowMillis(),
-                syncedAtMs = null,
-                defaultToNull = defaultToNull,
-                onConflict = onConflict,
-                ignoreDuplicates = ignoreDuplicates,
-            )
-        )
-    }
+    ): Long =
+        MutationWriter(owner = null)
+            .enqueueUpsert(table, bodyJson, filter, onConflict, ignoreDuplicates, defaultToNull)
 
-    /**
-     * Enqueue an UPDATE mutation, with an optional [filter] describing the targeted rows.
-     *
-     * @return The mutation's id.
-     */
+    /** Queues an UPDATE with no recorded owner; see [MutationWriter.enqueueUpdate]. */
     suspend fun enqueueUpdate(
         table: String,
         body: JsonElement,
         filter: FilterDescriptor? = null,
-    ): Long {
-        requireUserTable(table)
-        return mutationDao.insert(
-            MutationRow(
+    ): Long = MutationWriter(owner = null).enqueueUpdate(table, body, filter)
+
+    /** Queues a DELETE with no recorded owner; see [MutationWriter.enqueueDelete]. */
+    suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): Long =
+        MutationWriter(owner = null).enqueueDelete(table, filter)
+
+    /**
+     * Queues writes for [owner]: each row is stored with its owner in one insert, and the readers
+     * of its table are told.
+     *
+     * @property owner The stored value of the identity making the writes, or `null` to record none
+     *   (a store driven directly, with no session model).
+     */
+    internal inner class MutationWriter(private val owner: String?) {
+
+        /**
+         * Queues an INSERT.
+         *
+         * @return The mutation's id — the mutation row's autoincrement id, stable across restarts.
+         */
+        suspend fun enqueueInsert(
+            table: String,
+            body: JsonArray,
+            filter: FilterDescriptor? = null,
+            defaultToNull: Boolean = true,
+        ): Long {
+            // Read before the first INSERT this process queues, so a missing record is started from
+            // the INSERTs queued before it only. Under [enqueueOwnedBy] it is read already.
+            mutationQueueState.unconfirmedSends()
+            return insert(
+                table = table,
+                operation = MutationOperation.INSERT,
+                bodyJson = body.toString(),
+                filter = filter,
+                defaultToNull = defaultToNull,
+            )
+        }
+
+        /**
+         * Queues an UPSERT.
+         *
+         * @return The mutation's id.
+         */
+        suspend fun enqueueUpsert(
+            table: String,
+            bodyJson: JsonArray,
+            filter: FilterDescriptor? = null,
+            onConflict: String? = null,
+            ignoreDuplicates: Boolean = false,
+            defaultToNull: Boolean = true,
+        ): Long =
+            insert(
+                table = table,
+                operation = MutationOperation.UPSERT,
+                bodyJson = bodyJson.toString(),
+                filter = filter,
+                defaultToNull = defaultToNull,
+                onConflict = onConflict,
+                ignoreDuplicates = ignoreDuplicates,
+            )
+
+        /**
+         * Queues an UPDATE, with an optional [filter] describing the targeted rows.
+         *
+         * @return The mutation's id.
+         */
+        suspend fun enqueueUpdate(
+            table: String,
+            body: JsonElement,
+            filter: FilterDescriptor? = null,
+        ): Long =
+            insert(
                 table = table,
                 operation = MutationOperation.UPDATE,
                 bodyJson = body.toString(),
-                filterJson = filter?.let { encode(it, json) },
-                createdAtMs = nowMillis(),
-                syncedAtMs = null,
+                filter = filter,
             )
-        )
-    }
 
-    /**
-     * Enqueue a DELETE mutation. [filter] describes which rows are removed.
-     *
-     * @return The mutation's id.
-     */
-    suspend fun enqueueDelete(
-        table: String,
-        filter: FilterDescriptor? = null,
-    ): Long {
-        requireUserTable(table)
-        return mutationDao.insert(
-            MutationRow(
+        /**
+         * Queues a DELETE. [filter] describes which rows are removed.
+         *
+         * @return The mutation's id.
+         */
+        suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): Long =
+            insert(
                 table = table,
                 operation = MutationOperation.DELETE,
-                bodyJson = "{}", // no body for delete
-                filterJson = filter?.let { encode(it, json) },
-                createdAtMs = nowMillis(),
-                syncedAtMs = null,
+                bodyJson = "{}",
+                filter = filter,
             )
-        )
+
+        /** Stores one pending mutation of [owner]'s and tells [table]'s readers. */
+        private suspend fun insert(
+            table: String,
+            operation: String,
+            bodyJson: String,
+            filter: FilterDescriptor?,
+            defaultToNull: Boolean? = null,
+            onConflict: String? = null,
+            ignoreDuplicates: Boolean? = null,
+        ): Long {
+            requireUserTable(table)
+            val id =
+                mutationDao.insert(
+                    MutationRow(
+                        table = table,
+                        operation = operation,
+                        bodyJson = bodyJson,
+                        filterJson = filter?.let { encode(it, json) },
+                        createdAtMs = nowMillis(),
+                        syncedAtMs = null,
+                        defaultToNull = defaultToNull,
+                        onConflict = onConflict,
+                        ignoreDuplicates = ignoreDuplicates,
+                        owner = owner,
+                    )
+                )
+            noteMutationsChanged(table)
+            return id
+        }
     }
 
     /**
-     * Runs [enqueue] and records [identity] as the owner of the write it queues, in one
-     * transaction.
+     * Runs [enqueue], which queues one write with [identity] recorded as its owner.
      *
      * The queue is kept per identity: each write records who made it, a replay pass sends only the
      * current identity's writes, and another identity's writes neither block it nor are sent by it.
@@ -987,23 +1033,140 @@ internal class OfflineStore(
      *   (a store driven directly, with no session model).
      * @param startedAtTick [monotonicTickNow] as read before the write started, or `null` to skip
      *   the teardown check.
-     * @param enqueue Inserts the mutation row and returns its id. Must make DAO calls only.
+     * @param enqueue Queues the write and returns its id. Must make DAO calls only.
      * @return What happened.
      */
     suspend fun enqueueOwnedBy(
         identity: String?,
         startedAtTick: Long? = null,
-        enqueue: suspend OfflineStore.() -> Long,
+        enqueue: suspend MutationWriter.() -> Long,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
         if (predatesQueueTeardown(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
-        // Outside the transaction below: the first read of the unconfirmed sends may write.
+        // Before the insert: the first read of the unconfirmed sends may write.
         mutationQueueState.unconfirmedSends()
-        var id = 0L
-        mutationDao.runInTransaction {
-            id = enqueue()
-            if (identity != null) mutationDao.setOwner(id, identity)
+        EnqueueOutcome.Queued(MutationWriter(owner = identity).enqueue())
+    }
+
+    /**
+     * How many changes this store made to each table's mutation rows, each counted once committed.
+     * A reader of a table reads its mutations again only when its count moves; see
+     * [mutationsOfTableFlow]. Only one store is open on a database (see [OpenDatabaseRegistry]), so
+     * these are every change its rows see.
+     */
+    private val mutationChanges = MutableStateFlow(MutationChangeCounts())
+
+    /**
+     * Counts of committed changes to mutation rows.
+     *
+     * @property everyTable changes that may reach every table's rows, such as a clear.
+     * @property byTable changes to one table's rows, by table.
+     */
+    private data class MutationChangeCounts(
+        val everyTable: Long = 0L,
+        val byTable: Map<String, Long> = emptyMap(),
+    ) {
+        /** What a reader of [table] watches: both counts that reach it. */
+        fun of(table: String): Pair<Long, Long> = everyTable to (byTable[table] ?: 0L)
+    }
+
+    /** Tells the readers of [tables] that their mutation rows changed; call once committed. */
+    private fun noteMutationsChanged(vararg tables: String) {
+        noteMutationsChanged(tables.asList())
+    }
+
+    /** Tells the readers of [tables] that their mutation rows changed; call once committed. */
+    private fun noteMutationsChanged(tables: Collection<String>) {
+        if (tables.isEmpty()) return
+        mutationChanges.update { counts ->
+            counts.copy(
+                byTable =
+                    counts.byTable +
+                        tables.associateWith { table -> (counts.byTable[table] ?: 0L) + 1 }
+            )
         }
-        EnqueueOutcome.Queued(id)
+    }
+
+    /** Tells every table's readers that their mutation rows may have changed. */
+    private fun noteEveryTableChanged() {
+        mutationChanges.update { counts -> counts.copy(everyTable = counts.everyTable + 1) }
+    }
+
+    /**
+     * [table]'s mutation rows, pending and synced, in order: read once, and again each time this
+     * store changes them. Another table's changes cost this reader a comparison, not a read, and
+     * the table's readers share one read, and each body's parse, per change.
+     */
+    private fun mutationsOfTableFlow(table: String): Flow<TableMutations> =
+        mutationChanges
+            .map { counts -> counts.of(table) }
+            .distinctUntilChanged()
+            .map { counts -> tableMutationsAt(table, counts) }
+
+    /**
+     * Each table's mutation rows as last read for its readers, with the counts they were read at.
+     */
+    private val lastTableMutations = MutableStateFlow<Map<String, TableMutations>>(emptyMap())
+
+    /** Held while a table's mutation rows are read for its readers, so they share one read. */
+    private val tableReadLocksMutex = Mutex()
+    private val tableReadLocks = mutableMapOf<String, Mutex>()
+
+    /**
+     * [table]'s rows as read at [counts]: the last read when it was at them, or a new read that
+     * keeps the bodies the last one parsed, for rows it still holds unchanged.
+     */
+    private suspend fun tableMutationsAt(table: String, counts: Pair<Long, Long>): TableMutations {
+        val lock = tableReadLocksMutex.withLock { tableReadLocks.getOrPut(table) { Mutex() } }
+        return lock.withLock {
+            val last = lastTableMutations.value[table]
+            if (last != null && last.counts == counts) return@withLock last
+            val read = TableMutations(counts, mutationDao.allForTable(table), json, last)
+            lastTableMutations.update { reads -> reads + (table to read) }
+            read
+        }
+    }
+
+    /**
+     * A table's mutation rows as read at [counts], shared by its readers, with each row's body
+     * parsed at most once for all of them and for the reads after, while the row is unchanged. Two
+     * readers parsing one body at once is harmless: both get equal values.
+     *
+     * @param earlier the table's previous read, whose parsed bodies this one keeps.
+     */
+    private class TableMutations(
+        val counts: Pair<Long, Long>,
+        val rows: List<MutationRow>,
+        private val json: Json,
+        earlier: TableMutations?,
+    ) {
+        private val positions = HashMap<Long, Int>(rows.size * 2)
+        private val bodies = arrayOfNulls<JsonElement>(rows.size)
+
+        init {
+            rows.forEachIndexed { position, row ->
+                positions[row.id] = position
+                bodies[position] = earlier?.parsedBodyOf(row)
+            }
+        }
+
+        /** The body this read parsed for a row with [row]'s id and body, or `null`. */
+        private fun parsedBodyOf(row: MutationRow): JsonElement? {
+            val position = positions[row.id] ?: return null
+            return bodies[position]?.takeIf { rows[position].bodyJson == row.bodyJson }
+        }
+
+        /** [mutation]'s body, parsed once when [mutation] is one of [rows]. */
+        fun bodyOf(mutation: MutationRow): JsonElement {
+            val position =
+                positions[mutation.id]?.takeIf { position -> rows[position] === mutation }
+                    ?: return json.parseToJsonElement(mutation.bodyJson)
+            bodies[position]?.let { parsed ->
+                return parsed
+            }
+            return json.parseToJsonElement(mutation.bodyJson).also { parsed ->
+                bodies[position] = parsed
+            }
+        }
     }
 
     /**
@@ -1032,7 +1195,8 @@ internal class OfflineStore(
      */
     suspend fun adoptOwnerlessMutations(identity: String) {
         if (!mayAdoptOwnerlessMutations(identity)) return
-        mutationQueueMutex.withLock { mutationDao.adoptOwnerless(identity) }
+        val adopted = mutationQueueMutex.withLock { mutationDao.adoptOwnerless(identity) }
+        if (adopted > 0) noteEveryTableChanged()
     }
 
     /**
@@ -1103,12 +1267,20 @@ internal class OfflineStore(
 
     /**
      * Deletes the mutation rows [ids] with what the records hold for them — an unconfirmed send
-     * and, when [clearRejections], a rejected entry — in one transaction.
+     * and, when [clearRejections], a rejected entry — in one transaction, and tells the readers of
+     * their tables.
+     *
+     * @param tables The tables of [ids], when the caller knows them; otherwise they are read.
      */
-    private suspend fun removeMutations(ids: Collection<Long>, clearRejections: Boolean) {
+    private suspend fun removeMutations(
+        ids: Collection<Long>,
+        clearRejections: Boolean,
+        tables: Collection<String>? = null,
+    ) {
         if (ids.isEmpty()) return
         mutationQueueMutex.withLock {
             val idSet = ids.toSet()
+            val touched = tables ?: idSet.mapNotNull { id -> mutationDao.byId(id)?.table }
             val unconfirmed = mutationQueueState.unconfirmedSendsRowWith { current ->
                 current - idSet
             }
@@ -1127,6 +1299,7 @@ internal class OfflineStore(
             unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
             rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
             loggedOverlaySkips.update { logged -> logged - idSet }
+            noteMutationsChanged(touched.toSet())
         }
     }
 
@@ -1171,6 +1344,7 @@ internal class OfflineStore(
         }
         mutationQueueState.rejectedWritten(list)
         unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
+        noteMutationsChanged(mutation.table)
         list.entries.firstOrNull { stored -> stored.id == mutation.id } ?: entry
     }
 
@@ -1202,6 +1376,7 @@ internal class OfflineStore(
                 objectDao.upsert(rejectedRow)
             }
             mutationQueueState.rejectedWritten(list)
+            noteMutationsChanged(row.table)
             newId
         }
 
@@ -1403,9 +1578,9 @@ internal class OfflineStore(
                         .observe(table, signature)
                         .map { row -> row?.let(::StoredPayload) }
                         .distinctUntilChanged(),
-                    mutationDao.allForTableFlow(table),
+                    mutationsOfTableFlow(table),
                     identityChanges,
-                ) { stored, rows, _ ->
+                ) { stored, tableMutations, _ ->
                     // Owner first: the count moves before it, so a new owner comes with a new count
                     val served = cacheServesCurrentIdentity()
                     val emptiedCount = cacheOwner.emptiedCount()
@@ -1420,11 +1595,18 @@ internal class OfflineStore(
                     val inputs =
                         OverlaidInputs(
                             current.takeIf { served },
-                            visibleTo(identityProvider(), rows),
+                            visibleTo(identityProvider(), tableMutations.rows),
                         )
                     if (inputs != last) {
                         lastOverlaid =
-                            overlaidOrNull(table, signature, shape, inputs.stored, inputs.mutations)
+                            overlaidOrNull(
+                                table,
+                                signature,
+                                shape,
+                                inputs.stored,
+                                inputs.mutations,
+                                tableMutations::bodyOf,
+                            )
                         last = inputs
                     }
                     lastOverlaid
@@ -1458,6 +1640,7 @@ internal class OfflineStore(
         shape: QueryShape?,
         stored: StoredPayload?,
         mutations: List<MutationRow>,
+        bodyOf: (MutationRow) -> JsonElement,
     ): String? {
         // A live query's shape is known for as long as it is read; it is written once a payload
         // exists
@@ -1473,6 +1656,7 @@ internal class OfflineStore(
                 admissionOf(table, signature, shape),
                 mutationQueueState.unconfirmedSends(),
                 sameSelectRowsFor(table, signature, shape, applicable, ownJson = cachedJson),
+                bodyOf,
             )
         return if (cachedJson == null && isEmptyJsonArrayPayload(overlaid)) null else overlaid
     }
@@ -1485,6 +1669,7 @@ internal class OfflineStore(
      *   [isSyncedOrUnconfirmed].
      * @param knownRows rows the table's other queries hold, read with the same columns: those a
      *   mutation makes start matching join.
+     * @param bodyOf a mutation's body, parsed.
      */
     private fun overlayMutations(
         serverJson: String,
@@ -1492,7 +1677,11 @@ internal class OfflineStore(
         admission: QueryAdmission,
         unconfirmedSends: Set<Long>,
         knownRows: List<JsonObject> = emptyList(),
-    ): String = overlayFor(admission, unconfirmedSends).overlay(serverJson, mutations, knownRows)
+        bodyOf: (MutationRow) -> JsonElement = { mutation ->
+            json.parseToJsonElement(mutation.bodyJson)
+        },
+    ): String =
+        overlayFor(admission, unconfirmedSends, bodyOf).overlay(serverJson, mutations, knownRows)
 
     /**
      * The rows the table's other cached queries hold, read with the same [Projection] as the query
@@ -1606,6 +1795,9 @@ internal class OfflineStore(
     private fun overlayFor(
         admission: QueryAdmission,
         unconfirmedSends: Set<Long>,
+        bodyOf: (MutationRow) -> JsonElement = { mutation ->
+            json.parseToJsonElement(mutation.bodyJson)
+        },
     ): MutationOverlay =
         MutationOverlay(
             json = json,
@@ -1613,6 +1805,7 @@ internal class OfflineStore(
             primaryKeys = primaryKeys,
             mayAlreadyHold = { mutation -> isSyncedOrUnconfirmed(mutation, unconfirmedSends) },
             onMutationFailure = ::logSkippedOverlay,
+            bodyOf = bodyOf,
         )
 
     /**
@@ -2224,6 +2417,7 @@ internal class OfflineStore(
             latestSyncSequence = sequence
             unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
             rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
+            noteMutationsChanged(table)
         }
     }
 
@@ -2329,6 +2523,7 @@ internal class OfflineStore(
         removeMutations(
             (held + beyondBound).map { mutation -> mutation.id },
             clearRejections = false,
+            tables = listOf(table),
         )
     }
 

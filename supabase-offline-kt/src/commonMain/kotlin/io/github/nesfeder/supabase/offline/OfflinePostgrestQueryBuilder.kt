@@ -695,7 +695,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
     private sealed interface QueueCapture {
 
         /** The write can be queued; [enqueue] inserts its mutation row and returns the id. */
-        class Queueable(val enqueue: suspend OfflineStore.() -> Long) : QueueCapture
+        class Queueable(val enqueue: suspend OfflineStore.MutationWriter.() -> Long) : QueueCapture
 
         /**
          * The write cannot be queued faithfully. [reason] carries no filter value and may be logged
@@ -712,7 +712,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      */
     private fun captureFilteredWrite(
         builder: PostgrestRequestBuilder,
-        enqueue: suspend OfflineStore.(FilterDescriptor) -> Long,
+        enqueue: suspend OfflineStore.MutationWriter.(FilterDescriptor) -> Long,
     ): QueueCapture {
         val descriptor =
             try {

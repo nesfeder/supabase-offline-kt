@@ -91,9 +91,9 @@ class OverlayUndoTest {
 
     @Test
     fun an_insert_failing_on_its_third_row_leaves_nothing_and_the_next_mutation_applies() {
-        // Given — two shown rows, one trapped; an insert the server may hold already reads every
-        // shown row's key for each of its rows, so the trapped row's third read fails after two
-        // rows are placed
+        // Given — two shown rows, one trapped; an insert the server may hold already looks each
+        // keyed row up among the shown rows, and its third row is the first with a key, so the
+        // lookup's first read of the trapped row fails after two rows are placed
         val trap = Trap()
         val trapped = JsonObject(TrappedColumns(row(1, "A"), trap))
         val rows = listOf<JsonElement>(trapped, row(2, "A"))
@@ -102,7 +102,7 @@ class OverlayUndoTest {
                 id = 1,
                 table = TABLE,
                 operation = MutationOperation.INSERT,
-                bodyJson = """[{"id":3,"list":"A"},{"id":4,"list":"A"},{"id":5,"list":"A"}]""",
+                bodyJson = """[{"list":"A"},{"list":"A"},{"id":5,"list":"A"}]""",
                 filterJson = null,
                 createdAtMs = 1,
             )
@@ -118,7 +118,7 @@ class OverlayUndoTest {
         val listA = QueryAdmission(listOf(FilterDescriptor.Condition("list", "eq", "A")))
 
         // When
-        trap.remaining = 3
+        trap.remaining = 1
         val (outcome, failed) = overlay(rows, emptyList(), listOf(insert, update), listA, setOf(1L))
 
         // Then — the insert left nothing, and the update applied as it does alone
