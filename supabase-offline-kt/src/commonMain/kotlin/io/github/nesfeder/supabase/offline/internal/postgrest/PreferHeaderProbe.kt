@@ -42,9 +42,8 @@ internal sealed interface DryRunVerdict {
 }
 
 /**
- * Tells a dry run (`dryRun()`) from an ordinary write before the write is queued, because the
- * mutation queue does not carry the `Prefer` header, and a queued dry run would replay as a real
- * write.
+ * Tells a dry run (`dryRun()`) from an ordinary write before the write is queued. The queue does
+ * not keep the `Prefer` header, so a queued dry run would replay as a real write.
  */
 internal fun interface DryRunProbe {
 
@@ -53,16 +52,11 @@ internal fun interface DryRunProbe {
 }
 
 /**
- * The [DryRunProbe] over supabase-kt's HTTP pipeline. supabase-kt keeps `dryRun()` private and
- * writes it only into the `Prefer` header, as `tx=rollback`, so the check reads that header: it
- * runs the write under a [PreferHeaderProbe], and the phase [installDryRunCheck] put ahead of every
- * other on the request pipeline records the header of the PostgREST write request and stops it. No
- * plugin the app installed runs for it, so no retry or logging plugin sees the stop. A subscriber
- * to the client's `HttpRequestCreated` monitor event does see the request: that event fires before
- * the pipeline runs.
+ * The [DryRunProbe] over supabase-kt's HTTP pipeline, which records `dryRun()` nowhere but the
+ * `Prefer` header, as `tx=rollback`. The write runs under a [PreferHeaderProbe], and the phase
+ * [installDryRunCheck] puts ahead of every plugin reads that header and stops the request.
  *
- * A dry run is never queued; whether the server rolled it back is read from its response
- * ([wasRolledBack]).
+ * A dry run is never queued; whether the server rolled it back is read from [wasRolledBack].
  */
 internal class PreferHeaderDryRunProbe(private val supabase: SupabaseClient) : DryRunProbe {
 
@@ -87,8 +81,8 @@ internal class PreferHeaderDryRunProbe(private val supabase: SupabaseClient) : D
 }
 
 /**
- * Carried in a coroutine context, it makes the phase [installDryRunCheck] installs record the
- * `Prefer` header of the PostgREST write request sent from that coroutine, and stop it.
+ * A coroutine-context element that makes the phase [installDryRunCheck] adds record the `Prefer`
+ * header of a PostgREST write sent from its coroutine, then stop the request.
  */
 internal class PreferHeaderProbe : AbstractCoroutineContextElement(Key) {
 
@@ -147,9 +141,10 @@ private val PreferProbeInstallation =
 
 /**
  * Installs the dry-run check on this client's request pipeline, in a phase ahead of every other,
- * exactly once however many threads call it: the flag is shared through the client's attributes and
- * claimed with a compare-and-set. It acts only on a PostgREST write sent under a
- * [PreferHeaderProbe].
+ * once however many threads call it. A flag in the client's attributes, claimed by
+ * compare-and-set, admits one installer. The check acts only on a PostgREST write sent under a
+ * [PreferHeaderProbe]; no plugin sees the request it stops, but an `HttpRequestCreated` monitor
+ * subscriber does, since that event fires before the pipeline runs.
  *
  * @return `true` when this call installed it.
  */
