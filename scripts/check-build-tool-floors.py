@@ -127,7 +127,7 @@ def read_floors(text: str) -> dict[str, str]:
 
 
 def parse_node(body: str) -> tuple[str, str | None, str | None, bool, bool] | None:
-    """One report line's package, requested and selected versions, and its constraint and failure marks."""
+    """A report line's package, requested and selected versions, and its (c) and FAILED marks."""
     constraint = "(c)" in body
     failed = body.endswith(" FAILED")
     body = MARKERS.sub("", body)
@@ -174,7 +174,7 @@ def read_report(text: str, floors: dict[str, str]) -> dict[str, dict[str, Resolu
                     resolution.requested_unknown = True
             continue
         header = CONFIGURATION.match(line)
-        if header and not line.startswith("No "):
+        if header:
             configuration = f"{task} {header.group('name')}"
             reports.setdefault(configuration, {})
     return reports
@@ -197,7 +197,7 @@ def checked_configurations(reports: dict[str, dict[str, Resolution]]) -> tuple[l
 
 def check(reports: dict[str, dict[str, Resolution]],
           floors: dict[str, str]) -> tuple[list[str], list[str], list[str]]:
-    """The problems, a table of every floored package in every checked configuration, and those configurations."""
+    """The problems, a table of each floored package in each checked configuration, and those."""
     problems: list[str] = []
     table: list[str] = []
     if not floors:
@@ -213,7 +213,8 @@ def check(reports: dict[str, dict[str, Resolution]],
         raises = False
         for key, resolution in found:
             lowest = min(resolution.requested, key=version_key) if resolution.requested else "?"
-            table.append(f"{package:45} {floor:9} {lowest:>9} -> {', '.join(sorted(resolution.resolved)):9} {key}")
+            resolved = ", ".join(sorted(resolution.resolved))
+            table.append(f"{package:45} {floor:9} {lowest:>9} -> {resolved:9} {key}")
             if resolution.failed:
                 problems.append(f"{key}: {package} failed to resolve (floor {floor})")
             for version in sorted(resolution.resolved):
@@ -303,21 +304,32 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
 # Each case: what it proves, the report, and a phrase the problems must contain (None: must pass).
 SELF_TEST_CASES: list[tuple[str, str, str | None]] = [
     ("every floor holds", self_test_report(), None),
-    ("a package below its floor", self_test_report(lib="+--- org.example:lib:1.79\n"),
+    ("a package below its floor",
+     self_test_report(lib="+--- org.example:lib:1.79\n"),
      "org.example:lib resolves to 1.79, below its floor 1.86"),
     ("a package below its floor in one configuration only",
      self_test_report(swift="\\--- org.example:other:2.0\n"),
      ":module:dependencies swiftExportClasspathResolvable: org.example:other resolves to 2.0"),
-    ("a floor that does not resolve", self_test_report(lib="+--- org.example:lib:1.79 -> 1.99 FAILED\n"),
+    ("a floor that does not resolve",
+     self_test_report(lib="+--- org.example:lib:1.79 -> 1.99 FAILED\n"),
      "org.example:lib failed to resolve (floor 1.86)"),
-    ("a qualifier sorts before the release", self_test_report(lib="+--- org.example:lib:1.79 -> 1.86-beta1\n"),
+    ("a qualifier sorts before the release",
+     self_test_report(lib="+--- org.example:lib:1.79 -> 1.86-beta1\n"),
      "resolves to 1.86-beta1, below its floor 1.86"),
-    ("a required configuration missing", self_test_report(accessors=False),
-     ":build-logic:dependencies precompiledScriptPluginAccessorsGenerationClasspath: not in the Gradle report"),
-    ("no module with the lint tool configuration", self_test_report(lint=False),
+    ("a required configuration missing",
+     self_test_report(accessors=False),
+     "precompiledScriptPluginAccessorsGenerationClasspath: not in the Gradle report"),
+    ("no module with the lint tool configuration",
+     self_test_report(lint=False),
      "<every module>:dependencies androidLintTool: not in the Gradle report"),
-    ("a floor nothing resolves", self_test_report(other=""), "org.example:other (floor 2.0.1) resolves in no"),
-    ("a floor that raises nothing", self_test_report(lib="+--- org.example:lib:1.86\n"),
+    ("a floor nothing resolves",
+     self_test_report(other=""),
+     "org.example:other (floor 2.0.1) resolves in no"),
+    ("a floor that raises nothing",
+     self_test_report(lib="+--- org.example:lib:1.86\n"),
+     "org.example:lib (floor 1.86): everything that asks for it already asks for 1.86 or later"),
+    ("a constraint is not a request",
+     self_test_report(lib="+--- org.example:lib:1.86\n+--- org.example:lib:1.79 -> 1.86 (c)\n"),
      "org.example:lib (floor 1.86): everything that asks for it already asks for 1.86 or later"),
     ("a newer version from a plugin still passes when another asks for less",
      self_test_report(lib="+--- org.example:lib:1.79 -> 1.90\n+--- org.example:lib:1.90\n"), None),
