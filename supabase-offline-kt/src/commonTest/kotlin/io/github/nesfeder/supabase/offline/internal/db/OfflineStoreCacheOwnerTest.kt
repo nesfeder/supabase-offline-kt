@@ -13,6 +13,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -183,6 +188,48 @@ class OfflineStoreCacheOwnerTest {
         assertNull(store.getPayload(TABLE, SIGNATURE))
     }
 
+    /**
+     * Seeds rows an earlier build left, with nobody signed in, runs [empty] and stops it once its
+     * transaction has committed, and asks whose the cache is meanwhile. Whoever is told the cache
+     * is theirs must also see the emptying counted, or a reader serves a payload it received
+     * before.
+     */
+    private suspend fun TestScope.assertTheOwnerComesWithTheEmptying(empty: suspend () -> Unit) {
+        // Given
+        objectDao.seedPayload(TABLE, SIGNATURE, ROWS)
+        identity = ANONYMOUS
+        val committed = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        mutationDao.afterTransaction = {
+            mutationDao.afterTransaction = null
+            committed.complete(Unit)
+            resume.await()
+        }
+        val countBefore = store.cacheOwner.emptiedCount()
+        val emptying = launch { empty() }
+        committed.await()
+
+        // When — a read asks whose the cache is before the emptying has recorded it
+        val check = async { store.cacheServesCurrentIdentity() to store.cacheOwner.emptiedCount() }
+        runCurrent()
+        resume.complete(Unit)
+        emptying.join()
+        val (served, countSeen) = check.await()
+
+        // Then
+        assertTrue(!served || countSeen > countBefore, "served=$served at count $countSeen")
+    }
+
+    @Test
+    fun a_read_during_a_drop_is_told_the_new_owner_only_with_the_drop_counted() = runTest {
+        assertTheOwnerComesWithTheEmptying { store.dropCacheFor(ANONYMOUS) }
+    }
+
+    @Test
+    fun a_read_during_a_clear_is_told_the_new_owner_only_with_the_clear_counted() = runTest {
+        assertTheOwnerComesWithTheEmptying { store.clearAll(owner = ANONYMOUS) }
+    }
+
     @Test
     fun a_clear_records_the_owner_it_is_given_and_none_otherwise() = runTest {
         // When / Then
@@ -209,6 +256,7 @@ class OfflineStoreCacheOwnerTest {
         }
 
     private companion object {
+        val ANONYMOUS = QueueIdentity.Anonymous.storedValue
         const val TABLE = "notes"
         const val SIGNATURE = "notes"
         const val ROWS = """[{"id":"n1"}]"""

@@ -171,6 +171,14 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     /** When set, the next [deleteById] fails, as a process dying before the delete would. */
     var failNextDeleteById: Boolean = false
 
+    /** When set, runs after each transaction has committed, before its caller goes on. */
+    var afterTransaction: (suspend () -> Unit)? = null
+
+    override suspend fun runInTransaction(block: suspend () -> Unit) {
+        super.runInTransaction(block)
+        afterTransaction?.invoke()
+    }
+
     override suspend fun pendingAll(): List<MutationRow> {
         pendingListReads++
         return super.pendingAll()
