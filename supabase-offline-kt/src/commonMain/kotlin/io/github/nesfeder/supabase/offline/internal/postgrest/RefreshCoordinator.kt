@@ -15,10 +15,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -96,9 +98,10 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
 
     /**
      * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A
-     * joining collector gets the latest value, and a slow one only the latest, so it never holds
-     * back the others; the upstream's failure reaches every collector in band; the last to leave
-     * ends the entry; once [scope] ends every collection fails with the client's closed error.
+     * joining collector gets the latest value. A slow one is handed only the latest, the first
+     * included when it is slow to take that, so it never holds back the others. The upstream's
+     * failure reaches every collector in band, after the latest value; the last to leave ends the
+     * entry; once [scope] ends every collection fails with the client's closed error.
      */
     fun sharedReadFlow(
         table: String,
@@ -115,12 +118,22 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
             this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
         }
         try {
-            entry.flow.collect { emission ->
-                when (emission) {
-                    is Emission.Value -> send(emission.result)
-                    is Emission.Failure -> throw emission.cause
+            entry.flow
+                .takeWhile { emission ->
+                    when (emission) {
+                        is Emission.Value -> {
+                            send(emission.result)
+                            true
+                        }
+                        is Emission.Failure -> {
+                            // Closed, not thrown: a throw cancels the collector, which can drop the
+                            // value just sent
+                            this@channelFlow.close(emission.cause)
+                            false
+                        }
+                    }
                 }
-            }
+                .collect()
         } finally {
             closedWatcher.cancel()
             withContext(NonCancellable) { release(key, entry) }

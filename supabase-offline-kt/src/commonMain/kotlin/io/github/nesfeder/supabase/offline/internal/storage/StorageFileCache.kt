@@ -18,6 +18,8 @@ import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -311,7 +313,8 @@ internal class StorageFileCache(
      * @param channel where the bytes go.
      */
     suspend fun copyFile(file: Path, channel: ByteWriteChannel) {
-        val source = withContext(Dispatchers.IO) { fileSystem.source(file).buffer() }
+        currentCoroutineContext().ensureActive()
+        val source = onIoHandingBackItsResult { fileSystem.source(file).buffer() }
         source.use { reader ->
             val buffer = ByteArray(STREAM_BUFFER_BYTES)
             while (true) {
@@ -327,40 +330,45 @@ internal class StorageFileCache(
      * Opens a temporary file for a download of [entry], in the directory of the entry's file.
      *
      * Runs under the lock, so a [clear] never finds a file appearing in a directory it is deleting.
+     * A caller cancelled while the file is being created still gets it back, to [discard].
      *
      * @param entry the entry.
      * @return the temporary download, or `null` when the file system refuses or the directory
      *   resolves outside the cache (logged).
      */
-    suspend fun openTemporaryDownload(entry: StorageCacheEntry): TemporaryDownload? =
-        withContext(Dispatchers.IO) {
-            lock.withLock {
-                sweepTemporaryFilesOnce()
-                val directory = entry.file.parent ?: return@withLock null
-                val temporary =
-                    directory /
-                        "$TEMPORARY_FILE_PREFIX${Random.nextLong().toULong().toString(16)}$TEMPORARY_FILE_SUFFIX"
-                try {
-                    fileSystem.createDirectories(dataDirectory)
-                    if (!resolvesInsideDataDirectory(directory)) {
-                        sdkLogger.warning {
-                            "Storage cache refused a directory that resolves outside the cache; not caching"
-                        }
-                        return@withLock null
-                    }
-                    fileSystem.createDirectories(directory)
-                    TemporaryDownload(
-                        entry,
-                        temporary,
-                        fileSystem.sink(temporary, mustCreate = true).buffer(),
-                    )
-                } catch (failure: IOException) {
-                    deleteQuietly(temporary)
+    suspend fun openTemporaryDownload(entry: StorageCacheEntry): TemporaryDownload? {
+        currentCoroutineContext().ensureActive()
+        return onIoHandingBackItsResult { createTemporaryDownload(entry) }
+    }
+
+    /** [openTemporaryDownload]'s body: creates the file under the lock. */
+    private suspend fun createTemporaryDownload(entry: StorageCacheEntry): TemporaryDownload? =
+        lock.withLock {
+            sweepTemporaryFilesOnce()
+            val directory = entry.file.parent ?: return@withLock null
+            val temporary =
+                directory /
+                    "$TEMPORARY_FILE_PREFIX${Random.nextLong().toULong().toString(16)}$TEMPORARY_FILE_SUFFIX"
+            try {
+                fileSystem.createDirectories(dataDirectory)
+                if (!resolvesInsideDataDirectory(directory)) {
                     sdkLogger.warning {
-                        "Storage cache could not create a file (${failure::class.simpleName}); not caching"
+                        "Storage cache refused a directory that resolves outside the cache; not caching"
                     }
-                    null
+                    return@withLock null
                 }
+                fileSystem.createDirectories(directory)
+                TemporaryDownload(
+                    entry,
+                    temporary,
+                    fileSystem.sink(temporary, mustCreate = true).buffer(),
+                )
+            } catch (failure: IOException) {
+                deleteQuietly(temporary)
+                sdkLogger.warning {
+                    "Storage cache could not create a file (${failure::class.simpleName}); not caching"
+                }
+                null
             }
         }
 
@@ -390,11 +398,11 @@ internal class StorageFileCache(
      * bound. The row goes first, so a database that refuses it leaves the old copy as it was.
      *
      * @param startedInGeneration [currentGeneration] as read before the download started.
-     * @return what happened; on anything but [CommitOutcome.COMMITTED] the caller reads, then
-     *   [discard]s, the temporary file.
+     * @return what happened, even to a caller cancelled meanwhile; on anything but
+     *   [CommitOutcome.COMMITTED] the caller reads, then [discard]s, the temporary file.
      */
     suspend fun commit(temporary: TemporaryDownload, startedInGeneration: Long): CommitOutcome =
-        withContext(Dispatchers.IO + NonCancellable) {
+        onIoHandingBackItsResult {
             lock.withLock {
                 val entry = temporary.entry
                 try {
@@ -715,6 +723,14 @@ internal class StorageFileCache(
         val file = entryForRow(row)?.file ?: return Long.MIN_VALUE
         return fileSystem.metadataOrNull(file)?.lastModifiedAtMillis ?: Long.MIN_VALUE
     }
+
+    /**
+     * Runs [block] on the IO dispatcher to the end, and hands its result back even to a caller
+     * cancelled meanwhile. A bare `withContext` would drop it, and with it a file only that caller
+     * can clean up.
+     */
+    private suspend fun <T> onIoHandingBackItsResult(block: suspend () -> T): T =
+        withContext(NonCancellable) { withContext(Dispatchers.IO) { block() } }
 
     /**
      * Deletes the temporary files a crash left behind, once per cache. It takes those a day old or

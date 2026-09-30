@@ -2,15 +2,21 @@ name: CI
 
 # One workflow, one required check: `Final status`.
 #
-#   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules
+#   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules and their
+#            │                   │                    coverage; the public API records (Android
+#            │                   │                    and iOS)
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
 #            │                                        SQLite; iOS device framework link
 #            └─ docs                           Linux  docs-check.yml
-#   final-status ── fans in every job above
+#   coverage-upload ──── after jvm-tests: sends the coverage report to Codecov (see the job)
+#   coverage-rehearsal ─ after jvm-tests: the upload as a dry run, when CI's configuration changed
+#   final-status ── fans in every job above but the two coverage jobs, so Codecov being down never
+#                   blocks a merge
 #
 #   formatting     kempt check; skipped until .kempt.toml exists
-#   static-checks  API visibility (its self-test first); when the workflows changed, zizmor, the
-#                  CI scripts' self-tests and the workflow structure check
+#   static-checks  API visibility and the classifier of API changes (each self-test first); when
+#                  the workflows changed, zizmor, the CI scripts' self-tests and the workflow
+#                  structure check
 #
 # Why a fan-in: branch protection names one check instead of a list that must change with the
 # jobs, and no workflow is path-filtered, so no required check waits for a run that never starts.
@@ -38,7 +44,9 @@ name: CI
 # `Final status (iOS tests held)`, so it can never satisfy the required `Final status`: that name
 # exists only on a run where every due job ran. A green held check means the Linux jobs passed.
 #
-# Forks: every job runs with a read-only token and no secrets; nothing here writes anything.
+# Forks: every job runs with a read-only token and no secrets, and nothing writes to the
+# repository. The one thing sent outside GitHub is coverage-upload's report to Codecov, with an
+# OIDC token that no fork's pull request and no run Dependabot started can obtain.
 
 on:
   # Every pull request, whatever its base, so a stacked pull request is checked the same way.
@@ -140,7 +148,8 @@ jobs:
           workflows=false
           while IFS= read -r file; do
             case "$file" in
-              .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/*)
+              .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/* \
+                | .github/codecov.yml)
                 kotlin=true; docs=true; workflows=true ;;
               .github/workflows/docs-check.yml | .github/workflows/docs-requirements.txt)
                 docs=true; workflows=true ;;
@@ -270,9 +279,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The commit being checked and its first parent, the base the classifier compares with,
+          # and the release tags, which decide the changelog rule it applies.
+          fetch-depth: 2
+          fetch-tags: true
           persist-credentials: false
 
-      # Internal code stays out of the public surface. The self-test runs first, so a check that
+      # Internal code stays out of the public surface, and compat/abi-exclusions.txt and
+      # compat/gated-declarations.txt match the sources. The self-test runs first, so a check that
       # has stopped seeing violations fails loudly instead of passing quietly.
       - name: Check API visibility
         if: needs.changes.outputs.kotlin == 'true'
@@ -280,14 +294,31 @@ jobs:
           bash scripts/check-api-visibility.sh --self-test
           bash scripts/check-api-visibility.sh
 
+      # What this change does to the public contract: none, patch, additive or breaking, from the
+      # committed API records, Room schemas, stored-format pins and version catalog. A change that
+      # needs one must add a matching line under `## Unreleased` in CHANGELOG.md. The rating goes to
+      # the job summary. On a push or a scheduled run there is no pull request to rate.
+      - name: Classify the change to the public contract
+        if: needs.changes.outputs.kotlin == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 scripts/api-compat.py self-test
+          if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" == merge_group ]]; then
+            python3 scripts/api-compat.py check-pr --base HEAD^1 --head HEAD
+          fi
+
       # The scripts CI itself depends on, each proved by its own self-test, then the structure
-      # of the workflows: the fan-in needs every job, `$/` references exist, only ios-tests may
-      # use the self-hosted runner, and nothing Dependabot can trigger reaches it.
+      # of the workflows: the fan-in needs every job but the two coverage jobs, `$/` references
+      # exist, only ios-tests may use the self-hosted runner, nothing Dependabot can trigger reaches
+      # it, and only the listed jobs may mint an OIDC token, with exact permissions, never on a run
+      # Dependabot started.
       - name: Check the CI scripts and the workflow structure
         if: needs.changes.outputs.workflows == 'true'
         run: |
           python3 .github/scripts/decide-ios-tests.py --self-test
           python3 .github/scripts/check-job-results.py --self-test
+          python3 .github/scripts/check-coverage-report.py --self-test
           python3 .github/scripts/check-workflows.py --self-test
           python3 .github/scripts/check-workflows.py
           shellcheck --shell=bash .github/scripts/*.sh
@@ -317,11 +348,16 @@ jobs:
       - uses: $/.github/actions/setup-project
 
       # Robolectric on the JVM; the host SQLite comes from the JVM driver's binary for this machine.
+      # The Kover tasks read the coverage these test runs record and never run a test again.
+      # koverVerify is what `check` runs: a 50% floor that fails only when measurement broke.
       - name: Run the Android host tests
         run: >-
           ./gradlew
           :supabase-offline-kt:testAndroidHostTest
           :supabase-offline-kt-testing:testAndroidHostTest
+          :supabase-offline-kt:koverXmlReport
+          :supabase-offline-kt:koverVerify
+          :supabase-offline-kt-testing:koverVerify
           --continue --stacktrace
 
       - name: Count the tests that ran
@@ -329,6 +365,33 @@ jobs:
         run: >-
           python3 .github/scripts/count-test-results.py "Android host tests" testAndroidHostTest
           supabase-offline-kt supabase-offline-kt-testing
+
+      # The core module's report: it covers some lines, and every file in it is one Codecov can
+      # place in the repository.
+      - name: Check the coverage report
+        run: >-
+          python3 .github/scripts/check-coverage-report.py
+          supabase-offline-kt/build/reports/kover/report.xml
+
+      # For the two coverage jobs; only coverage-upload can authenticate to Codecov, never this one.
+      - name: Keep the coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-kotlin
+          path: supabase-offline-kt/build/reports/kover/report.xml
+          if-no-files-found: error
+          retention-days: 1
+
+      # Each module's api/ records against what the code compiles to: the Android target, and the
+      # iOS klibs, which cross-compile on Linux. `check` would run these tasks, but this job names
+      # its tasks. On failure, run updateKotlinAbi and commit the records (CONTRIBUTING.md).
+      - name: Check the public API records
+        if: ${{ !cancelled() }}
+        run: >-
+          ./gradlew
+          :supabase-offline-kt:checkKotlinAbi
+          :supabase-offline-kt-testing:checkKotlinAbi
+          --stacktrace
 
       - name: Upload the test reports
         if: failure()
@@ -520,6 +583,107 @@ jobs:
       contents: read
     uses: $/.github/workflows/docs-check.yml
 
+  # Codecov. coverage-upload sends the report jvm-tests kept; coverage-rehearsal makes the same
+  # call with the CLI's dry run, which sends nothing. Neither is in final-status: Codecov being down
+  # must never block a merge.
+  #
+  # coverage-upload is the only job that can authenticate to Codecov. It runs no project code and
+  # signs in with OIDC, so there is no stored secret. It uploads on a push to main, and on every run
+  # once the repository is public: the free plan allows a private repository 250 uploads a month,
+  # and pull requests would pass that. A scheduled run has no event payload, so its visibility reads
+  # as not public. A run Dependabot pushed or started never holds the OIDC token, so an action
+  # update never runs with it before a maintainer has read the change; a fork's pull request is
+  # given none.
+  coverage-upload:
+    name: Coverage upload
+    needs: jvm-tests
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.event_name == 'push' || github.event.repository.visibility == 'public')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the checkout, whose file list the CLI maps the report's paths onto
+      id-token: write # the OIDC token Codecov accepts in place of an upload token
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the coverage report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-kotlin
+          path: supabase-offline-kt/build/reports/kover
+
+      - uses: $/.github/actions/install-codecov-cli
+
+      # A refused or throttled upload fails this step, but not the job or the run; the next step
+      # puts a warning on the run's page instead.
+      - name: Upload to Codecov
+        id: upload
+        continue-on-error: true
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          binary: ${{ runner.temp }}/codecov
+          use_oidc: true
+          files: supabase-offline-kt/build/reports/kover/report.xml
+          disable_search: true
+          plugins: noop
+          flags: kotlin
+          name: android-host-tests
+          disable_telem: true
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Warn that the upload failed
+        if: steps.upload.outcome == 'failure'
+        run: >-
+          echo "::warning title=Codecov upload failed::The coverage report did not reach Codecov;
+          the Upload to Codecov step's log says why."
+
+  # The upload's dry run, holding no token: it reads the report and maps its files onto the
+  # repository. It runs when CI's configuration changed, Codecov's settings included, and
+  # coverage-upload does not (its condition, negated), so a change to the upload is proved on its
+  # pull request, a Dependabot update of these actions included.
+  coverage-rehearsal:
+    name: Coverage upload rehearsal
+    needs: [changes, jvm-tests]
+    if: >-
+      needs.changes.outputs.workflows == 'true'
+      && !(github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.event_name == 'push' || github.event.repository.visibility == 'public'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the checkout, whose file list the CLI maps the report's paths onto
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the coverage report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-kotlin
+          path: supabase-offline-kt/build/reports/kover
+
+      - uses: $/.github/actions/install-codecov-cli
+
+      - name: Rehearse the upload without sending it
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          binary: ${{ runner.temp }}/codecov
+          dry_run: true
+          files: supabase-offline-kt/build/reports/kover/report.xml
+          disable_search: true
+          plugins: noop
+          flags: kotlin
+          name: android-host-tests
+          disable_telem: true
+          fail_ci_if_error: true
+          verbose: true
+
   final-status:
     # The required check is exactly `Final status`. A run that held iOS tests which were due, and a
     # label event that ran nothing, report under other names, so neither can satisfy it.
@@ -529,6 +693,7 @@ jobs:
       || needs.changes.outputs.ios-held == 'true' && 'Final status (iOS tests held)'
       || 'Final status' }}
     if: always() && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
+    # Every job but coverage-upload and coverage-rehearsal, left out on purpose (see them).
     needs: [changes, formatting, static-checks, jvm-tests, ios-tests, docs]
     runs-on: ubuntu-slim
     timeout-minutes: 5

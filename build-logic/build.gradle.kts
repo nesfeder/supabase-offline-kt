@@ -8,4 +8,5 @@ dependencies {
     compileOnly(libs.android.gradleApi)
     compileOnly(libs.androidx.room.gradlePlugin)
     compileOnly(libs.kotlin.gradlePlugin)
+    compileOnly(libs.kover.gradlePlugin)
 }

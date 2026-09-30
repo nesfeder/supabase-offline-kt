@@ -1,0 +1,337 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.github.nesfeder.supabase-offline:supabase-offline-kt>
+open annotation class io.github.nesfeder.supabase.offline/InternalOfflineTestingApi : kotlin/Annotation { // io.github.nesfeder.supabase.offline/InternalOfflineTestingApi|null[0]
+    constructor <init>() // io.github.nesfeder.supabase.offline/InternalOfflineTestingApi.<init>|<init>(){}[0]
+}
+
+final enum class io.github.nesfeder.supabase.offline/FlowReadStrategy : kotlin/Enum<io.github.nesfeder.supabase.offline/FlowReadStrategy> { // io.github.nesfeder.supabase.offline/FlowReadStrategy|null[0]
+    enum entry CacheFirstThenNetwork // io.github.nesfeder.supabase.offline/FlowReadStrategy.CacheFirstThenNetwork|null[0]
+    enum entry CacheOnly // io.github.nesfeder.supabase.offline/FlowReadStrategy.CacheOnly|null[0]
+    enum entry NetworkFirstThenCache // io.github.nesfeder.supabase.offline/FlowReadStrategy.NetworkFirstThenCache|null[0]
+
+    final val entries // io.github.nesfeder.supabase.offline/FlowReadStrategy.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.nesfeder.supabase.offline/FlowReadStrategy> // io.github.nesfeder.supabase.offline/FlowReadStrategy.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.nesfeder.supabase.offline/FlowReadStrategy // io.github.nesfeder.supabase.offline/FlowReadStrategy.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.nesfeder.supabase.offline/FlowReadStrategy> // io.github.nesfeder.supabase.offline/FlowReadStrategy.values|values#static(){}[0]
+}
+
+final enum class io.github.nesfeder.supabase.offline/MutationStrategy : kotlin/Enum<io.github.nesfeder.supabase.offline/MutationStrategy> { // io.github.nesfeder.supabase.offline/MutationStrategy|null[0]
+    enum entry OnlineOnly // io.github.nesfeder.supabase.offline/MutationStrategy.OnlineOnly|null[0]
+    enum entry QueueIfOffline // io.github.nesfeder.supabase.offline/MutationStrategy.QueueIfOffline|null[0]
+
+    final val entries // io.github.nesfeder.supabase.offline/MutationStrategy.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.nesfeder.supabase.offline/MutationStrategy> // io.github.nesfeder.supabase.offline/MutationStrategy.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.nesfeder.supabase.offline/MutationStrategy // io.github.nesfeder.supabase.offline/MutationStrategy.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.nesfeder.supabase.offline/MutationStrategy> // io.github.nesfeder.supabase.offline/MutationStrategy.values|values#static(){}[0]
+}
+
+final enum class io.github.nesfeder.supabase.offline/OfflineLogLevel : kotlin/Enum<io.github.nesfeder.supabase.offline/OfflineLogLevel> { // io.github.nesfeder.supabase.offline/OfflineLogLevel|null[0]
+    enum entry DEBUG // io.github.nesfeder.supabase.offline/OfflineLogLevel.DEBUG|null[0]
+    enum entry ERROR // io.github.nesfeder.supabase.offline/OfflineLogLevel.ERROR|null[0]
+    enum entry INFO // io.github.nesfeder.supabase.offline/OfflineLogLevel.INFO|null[0]
+    enum entry WARNING // io.github.nesfeder.supabase.offline/OfflineLogLevel.WARNING|null[0]
+
+    final val entries // io.github.nesfeder.supabase.offline/OfflineLogLevel.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.nesfeder.supabase.offline/OfflineLogLevel> // io.github.nesfeder.supabase.offline/OfflineLogLevel.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.nesfeder.supabase.offline/OfflineLogLevel // io.github.nesfeder.supabase.offline/OfflineLogLevel.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.nesfeder.supabase.offline/OfflineLogLevel> // io.github.nesfeder.supabase.offline/OfflineLogLevel.values|values#static(){}[0]
+}
+
+abstract fun interface io.github.nesfeder.supabase.offline/OfflineLogger { // io.github.nesfeder.supabase.offline/OfflineLogger|null[0]
+    abstract fun log(io.github.nesfeder.supabase.offline/OfflineLogLevel, kotlin/String) // io.github.nesfeder.supabase.offline/OfflineLogger.log|log(io.github.nesfeder.supabase.offline.OfflineLogLevel;kotlin.String){}[0]
+}
+
+abstract interface io.github.nesfeder.supabase.offline/OfflineBucketApi : io.github.jan.supabase.storage/BucketApi { // io.github.nesfeder.supabase.offline/OfflineBucketApi|null[0]
+    abstract fun setHeader(kotlin/String, kotlin/String): io.github.nesfeder.supabase.offline/OfflineBucketApi // io.github.nesfeder.supabase.offline/OfflineBucketApi.setHeader|setHeader(kotlin.String;kotlin.String){}[0]
+    abstract suspend fun cachedFile(kotlin/String): io.github.nesfeder.supabase.offline/CachedFile? // io.github.nesfeder.supabase.offline/OfflineBucketApi.cachedFile|cachedFile(kotlin.String){}[0]
+    abstract suspend fun ensureCachedFile(kotlin/String, kotlin/Boolean = ...): io.github.nesfeder.supabase.offline/CachedFile // io.github.nesfeder.supabase.offline/OfflineBucketApi.ensureCachedFile|ensureCachedFile(kotlin.String;kotlin.Boolean){}[0]
+}
+
+abstract interface io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder { // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder|null[0]
+    abstract fun selectAsFlow(io.github.jan.supabase.postgrest.query/Columns = ..., io.github.nesfeder.supabase.offline/FlowReadStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.request/SelectRequestBuilder, kotlin/Unit> = ...): kotlinx.coroutines.flow/Flow<io.github.nesfeder.supabase.offline/OfflineReadResult> // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.selectAsFlow|selectAsFlow(io.github.jan.supabase.postgrest.query.Columns;io.github.nesfeder.supabase.offline.FlowReadStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder,kotlin.Unit>){}[0]
+    abstract suspend fun <#A1: kotlin/Any> insertWith(kotlinx.serialization/KSerializer<#A1>, #A1, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.request/InsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.insertWith|insertWith(kotlinx.serialization.KSerializer<0:0>;0:0;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+    abstract suspend fun <#A1: kotlin/Any> insertWith(kotlinx.serialization/KSerializer<#A1>, kotlin.collections/List<#A1>, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.request/InsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.insertWith|insertWith(kotlinx.serialization.KSerializer<0:0>;kotlin.collections.List<0:0>;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+    abstract suspend fun <#A1: kotlin/Any> updateWith(kotlinx.serialization/KSerializer<#A1>, #A1, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin.collections/List<io.github.nesfeder.supabase.offline/NumericDeltaColumn> = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query/PostgrestRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.updateWith|updateWith(kotlinx.serialization.KSerializer<0:0>;0:0;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.collections.List<io.github.nesfeder.supabase.offline.NumericDeltaColumn>;kotlin.Function1<io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+    abstract suspend fun <#A1: kotlin/Any> upsertWith(kotlinx.serialization/KSerializer<#A1>, #A1, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.request/UpsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.upsertWith|upsertWith(kotlinx.serialization.KSerializer<0:0>;0:0;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+    abstract suspend fun <#A1: kotlin/Any> upsertWith(kotlinx.serialization/KSerializer<#A1>, kotlin.collections/List<#A1>, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.request/UpsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.upsertWith|upsertWith(kotlinx.serialization.KSerializer<0:0>;kotlin.collections.List<0:0>;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+    abstract suspend fun delete(io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query/PostgrestRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.delete|delete(io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder,kotlin.Unit>){}[0]
+    abstract suspend fun insertJson(kotlinx.serialization.json/JsonArray, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.request/InsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.insertJson|insertJson(kotlinx.serialization.json.JsonArray;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder,kotlin.Unit>){}[0]
+    abstract suspend fun select(io.github.jan.supabase.postgrest.query/Columns = ..., io.github.nesfeder.supabase.offline/ReadStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.request/SelectRequestBuilder, kotlin/Unit> = ...): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.select|select(io.github.jan.supabase.postgrest.query.Columns;io.github.nesfeder.supabase.offline.ReadStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder,kotlin.Unit>){}[0]
+    abstract suspend fun updateJson(kotlinx.serialization.json/JsonElement, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin.collections/List<io.github.nesfeder.supabase.offline/NumericDeltaColumn> = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query/PostgrestRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.updateJson|updateJson(kotlinx.serialization.json.JsonElement;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.collections.List<io.github.nesfeder.supabase.offline.NumericDeltaColumn>;kotlin.Function1<io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder,kotlin.Unit>){}[0]
+    abstract suspend fun upsertJson(kotlinx.serialization.json/JsonArray, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.request/UpsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.upsertJson|upsertJson(kotlinx.serialization.json.JsonArray;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder,kotlin.Unit>){}[0]
+}
+
+abstract interface io.github.nesfeder.supabase.offline/SupabaseOfflineClient { // io.github.nesfeder.supabase.offline/SupabaseOfflineClient|null[0]
+    abstract val supabase // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.supabase|{}supabase[0]
+        abstract fun <get-supabase>(): io.github.jan.supabase/SupabaseClient // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.supabase.<get-supabase>|<get-supabase>(){}[0]
+
+    abstract fun from(kotlin/String): io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.from|from(kotlin.String){}[0]
+    abstract fun from(kotlin/String, kotlin/String): io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.from|from(kotlin.String;kotlin.String){}[0]
+    abstract fun pendingMutationCountFlow(): kotlinx.coroutines.flow/Flow<kotlin/Int> // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.pendingMutationCountFlow|pendingMutationCountFlow(){}[0]
+    abstract fun pendingMutationCountFlow(kotlin/String): kotlinx.coroutines.flow/Flow<kotlin/Int> // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.pendingMutationCountFlow|pendingMutationCountFlow(kotlin.String){}[0]
+    abstract fun storage(kotlin/String): io.github.nesfeder.supabase.offline/OfflineBucketApi // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.storage|storage(kotlin.String){}[0]
+    abstract suspend fun applyServerDelete(kotlin/String, kotlinx.serialization.json/JsonObject, kotlin.collections/List<kotlin/String> = ...) // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.applyServerDelete|applyServerDelete(kotlin.String;kotlinx.serialization.json.JsonObject;kotlin.collections.List<kotlin.String>){}[0]
+    abstract suspend fun applyServerRecord(kotlin/String, kotlinx.serialization.json/JsonObject, kotlin.collections/List<kotlin/String> = ...) // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.applyServerRecord|applyServerRecord(kotlin.String;kotlinx.serialization.json.JsonObject;kotlin.collections.List<kotlin.String>){}[0]
+    abstract suspend fun clearAllCache() // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.clearAllCache|clearAllCache(){}[0]
+    abstract suspend fun close() // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.close|close(){}[0]
+    abstract suspend fun pendingMutationCount(): kotlin/Int // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.pendingMutationCount|pendingMutationCount(){}[0]
+    abstract suspend fun pendingMutationCount(kotlin/String): kotlin/Int // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.pendingMutationCount|pendingMutationCount(kotlin.String){}[0]
+    abstract suspend fun syncAllPendingMutations(): kotlin/Int // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.syncAllPendingMutations|syncAllPendingMutations(){}[0]
+    abstract suspend fun syncPendingMutations(kotlin/String): kotlin/Int // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.syncPendingMutations|syncPendingMutations(kotlin.String){}[0]
+    open fun get(kotlin/String): io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.get|get(kotlin.String){}[0]
+    open fun get(kotlin/String, kotlin/String): io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder // io.github.nesfeder.supabase.offline/SupabaseOfflineClient.get|get(kotlin.String;kotlin.String){}[0]
+}
+
+sealed interface io.github.nesfeder.supabase.offline/MutationOutcome { // io.github.nesfeder.supabase.offline/MutationOutcome|null[0]
+    open fun resultOrNull(): io.github.jan.supabase.postgrest.result/PostgrestResult? // io.github.nesfeder.supabase.offline/MutationOutcome.resultOrNull|resultOrNull(){}[0]
+
+    final class Applied : io.github.nesfeder.supabase.offline/MutationOutcome { // io.github.nesfeder.supabase.offline/MutationOutcome.Applied|null[0]
+        constructor <init>(io.github.jan.supabase.postgrest.result/PostgrestResult) // io.github.nesfeder.supabase.offline/MutationOutcome.Applied.<init>|<init>(io.github.jan.supabase.postgrest.result.PostgrestResult){}[0]
+
+        final val result // io.github.nesfeder.supabase.offline/MutationOutcome.Applied.result|{}result[0]
+            final fun <get-result>(): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/MutationOutcome.Applied.result.<get-result>|<get-result>(){}[0]
+
+        final fun component1(): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/MutationOutcome.Applied.component1|component1(){}[0]
+        final fun copy(io.github.jan.supabase.postgrest.result/PostgrestResult = ...): io.github.nesfeder.supabase.offline/MutationOutcome.Applied // io.github.nesfeder.supabase.offline/MutationOutcome.Applied.copy|copy(io.github.jan.supabase.postgrest.result.PostgrestResult){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/MutationOutcome.Applied.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/MutationOutcome.Applied.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/MutationOutcome.Applied.toString|toString(){}[0]
+    }
+
+    final object Queued : io.github.nesfeder.supabase.offline/MutationOutcome { // io.github.nesfeder.supabase.offline/MutationOutcome.Queued|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/MutationOutcome.Queued.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/MutationOutcome.Queued.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/MutationOutcome.Queued.toString|toString(){}[0]
+    }
+}
+
+sealed interface io.github.nesfeder.supabase.offline/ReadStrategy { // io.github.nesfeder.supabase.offline/ReadStrategy|null[0]
+    final class CacheFirst : io.github.nesfeder.supabase.offline/ReadStrategy { // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst|null[0]
+        constructor <init>(kotlin.time/Duration? = ...) // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.<init>|<init>(kotlin.time.Duration?){}[0]
+        constructor <init>(kotlin/Long?) // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.<init>|<init>(kotlin.Long?){}[0]
+
+        final val cacheDuration // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.cacheDuration|{}cacheDuration[0]
+            final fun <get-cacheDuration>(): kotlin.time/Duration? // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.cacheDuration.<get-cacheDuration>|<get-cacheDuration>(){}[0]
+
+        final fun component1(): kotlin.time/Duration? // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.component1|component1(){}[0]
+        final fun copy(kotlin.time/Duration? = ...): io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.copy|copy(kotlin.time.Duration?){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ReadStrategy.CacheFirst.toString|toString(){}[0]
+    }
+
+    final class CacheOnly : io.github.nesfeder.supabase.offline/ReadStrategy { // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly|null[0]
+        constructor <init>(kotlin.time/Duration? = ...) // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.<init>|<init>(kotlin.time.Duration?){}[0]
+        constructor <init>(kotlin/Long?) // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.<init>|<init>(kotlin.Long?){}[0]
+
+        final val cacheDuration // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.cacheDuration|{}cacheDuration[0]
+            final fun <get-cacheDuration>(): kotlin.time/Duration? // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.cacheDuration.<get-cacheDuration>|<get-cacheDuration>(){}[0]
+
+        final fun component1(): kotlin.time/Duration? // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.component1|component1(){}[0]
+        final fun copy(kotlin.time/Duration? = ...): io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.copy|copy(kotlin.time.Duration?){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ReadStrategy.CacheOnly.toString|toString(){}[0]
+    }
+
+    final class NetworkFirst : io.github.nesfeder.supabase.offline/ReadStrategy { // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst|null[0]
+        constructor <init>(kotlin.time/Duration? = ...) // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.<init>|<init>(kotlin.time.Duration?){}[0]
+        constructor <init>(kotlin/Long?) // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.<init>|<init>(kotlin.Long?){}[0]
+
+        final val cacheDuration // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.cacheDuration|{}cacheDuration[0]
+            final fun <get-cacheDuration>(): kotlin.time/Duration? // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.cacheDuration.<get-cacheDuration>|<get-cacheDuration>(){}[0]
+
+        final fun component1(): kotlin.time/Duration? // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.component1|component1(){}[0]
+        final fun copy(kotlin.time/Duration? = ...): io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.copy|copy(kotlin.time.Duration?){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkFirst.toString|toString(){}[0]
+    }
+
+    final object NetworkOnly : io.github.nesfeder.supabase.offline/ReadStrategy { // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkOnly|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkOnly.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkOnly.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkOnly.toString|toString(){}[0]
+    }
+}
+
+sealed interface io.github.nesfeder.supabase.offline/RefreshState { // io.github.nesfeder.supabase.offline/RefreshState|null[0]
+    final class Stalled : io.github.nesfeder.supabase.offline/RefreshState { // io.github.nesfeder.supabase.offline/RefreshState.Stalled|null[0]
+        constructor <init>(kotlin/Throwable) // io.github.nesfeder.supabase.offline/RefreshState.Stalled.<init>|<init>(kotlin.Throwable){}[0]
+
+        final val cause // io.github.nesfeder.supabase.offline/RefreshState.Stalled.cause|{}cause[0]
+            final fun <get-cause>(): kotlin/Throwable // io.github.nesfeder.supabase.offline/RefreshState.Stalled.cause.<get-cause>|<get-cause>(){}[0]
+
+        final fun component1(): kotlin/Throwable // io.github.nesfeder.supabase.offline/RefreshState.Stalled.component1|component1(){}[0]
+        final fun copy(kotlin/Throwable = ...): io.github.nesfeder.supabase.offline/RefreshState.Stalled // io.github.nesfeder.supabase.offline/RefreshState.Stalled.copy|copy(kotlin.Throwable){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RefreshState.Stalled.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RefreshState.Stalled.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RefreshState.Stalled.toString|toString(){}[0]
+    }
+
+    final object Idle : io.github.nesfeder.supabase.offline/RefreshState { // io.github.nesfeder.supabase.offline/RefreshState.Idle|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RefreshState.Idle.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RefreshState.Idle.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RefreshState.Idle.toString|toString(){}[0]
+    }
+
+    final object InFlight : io.github.nesfeder.supabase.offline/RefreshState { // io.github.nesfeder.supabase.offline/RefreshState.InFlight|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RefreshState.InFlight.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RefreshState.InFlight.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RefreshState.InFlight.toString|toString(){}[0]
+    }
+}
+
+final class io.github.nesfeder.supabase.offline/CachedFile { // io.github.nesfeder.supabase.offline/CachedFile|null[0]
+    final val fetchedAt // io.github.nesfeder.supabase.offline/CachedFile.fetchedAt|{}fetchedAt[0]
+        final fun <get-fetchedAt>(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/CachedFile.fetchedAt.<get-fetchedAt>|<get-fetchedAt>(){}[0]
+    final val path // io.github.nesfeder.supabase.offline/CachedFile.path|{}path[0]
+        final fun <get-path>(): kotlin/String // io.github.nesfeder.supabase.offline/CachedFile.path.<get-path>|<get-path>(){}[0]
+    final val sizeBytes // io.github.nesfeder.supabase.offline/CachedFile.sizeBytes|{}sizeBytes[0]
+        final fun <get-sizeBytes>(): kotlin/Long // io.github.nesfeder.supabase.offline/CachedFile.sizeBytes.<get-sizeBytes>|<get-sizeBytes>(){}[0]
+
+    final fun component1(): kotlin/String // io.github.nesfeder.supabase.offline/CachedFile.component1|component1(){}[0]
+    final fun component2(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/CachedFile.component2|component2(){}[0]
+    final fun component3(): kotlin/Long // io.github.nesfeder.supabase.offline/CachedFile.component3|component3(){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/CachedFile.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/CachedFile.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/CachedFile.toString|toString(){}[0]
+}
+
+final class io.github.nesfeder.supabase.offline/NumericDeltaColumn { // io.github.nesfeder.supabase.offline/NumericDeltaColumn|null[0]
+    constructor <init>(kotlin/String, kotlin/Double, kotlin/Double? = ...) // io.github.nesfeder.supabase.offline/NumericDeltaColumn.<init>|<init>(kotlin.String;kotlin.Double;kotlin.Double?){}[0]
+
+    final val column // io.github.nesfeder.supabase.offline/NumericDeltaColumn.column|{}column[0]
+        final fun <get-column>(): kotlin/String // io.github.nesfeder.supabase.offline/NumericDeltaColumn.column.<get-column>|<get-column>(){}[0]
+    final val minValue // io.github.nesfeder.supabase.offline/NumericDeltaColumn.minValue|{}minValue[0]
+        final fun <get-minValue>(): kotlin/Double? // io.github.nesfeder.supabase.offline/NumericDeltaColumn.minValue.<get-minValue>|<get-minValue>(){}[0]
+    final val snapshotValue // io.github.nesfeder.supabase.offline/NumericDeltaColumn.snapshotValue|{}snapshotValue[0]
+        final fun <get-snapshotValue>(): kotlin/Double // io.github.nesfeder.supabase.offline/NumericDeltaColumn.snapshotValue.<get-snapshotValue>|<get-snapshotValue>(){}[0]
+
+    final fun component1(): kotlin/String // io.github.nesfeder.supabase.offline/NumericDeltaColumn.component1|component1(){}[0]
+    final fun component2(): kotlin/Double // io.github.nesfeder.supabase.offline/NumericDeltaColumn.component2|component2(){}[0]
+    final fun component3(): kotlin/Double? // io.github.nesfeder.supabase.offline/NumericDeltaColumn.component3|component3(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/Double = ..., kotlin/Double? = ...): io.github.nesfeder.supabase.offline/NumericDeltaColumn // io.github.nesfeder.supabase.offline/NumericDeltaColumn.copy|copy(kotlin.String;kotlin.Double;kotlin.Double?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/NumericDeltaColumn.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/NumericDeltaColumn.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/NumericDeltaColumn.toString|toString(){}[0]
+
+    final object $serializer : kotlinx.serialization.internal/GeneratedSerializer<io.github.nesfeder.supabase.offline/NumericDeltaColumn> { // io.github.nesfeder.supabase.offline/NumericDeltaColumn.$serializer|null[0]
+        final val descriptor // io.github.nesfeder.supabase.offline/NumericDeltaColumn.$serializer.descriptor|{}descriptor[0]
+            final fun <get-descriptor>(): kotlinx.serialization.descriptors/SerialDescriptor // io.github.nesfeder.supabase.offline/NumericDeltaColumn.$serializer.descriptor.<get-descriptor>|<get-descriptor>(){}[0]
+
+        final fun childSerializers(): kotlin/Array<kotlinx.serialization/KSerializer<*>> // io.github.nesfeder.supabase.offline/NumericDeltaColumn.$serializer.childSerializers|childSerializers(){}[0]
+        final fun deserialize(kotlinx.serialization.encoding/Decoder): io.github.nesfeder.supabase.offline/NumericDeltaColumn // io.github.nesfeder.supabase.offline/NumericDeltaColumn.$serializer.deserialize|deserialize(kotlinx.serialization.encoding.Decoder){}[0]
+        final fun serialize(kotlinx.serialization.encoding/Encoder, io.github.nesfeder.supabase.offline/NumericDeltaColumn) // io.github.nesfeder.supabase.offline/NumericDeltaColumn.$serializer.serialize|serialize(kotlinx.serialization.encoding.Encoder;io.github.nesfeder.supabase.offline.NumericDeltaColumn){}[0]
+    }
+
+    final object Companion { // io.github.nesfeder.supabase.offline/NumericDeltaColumn.Companion|null[0]
+        final fun serializer(): kotlinx.serialization/KSerializer<io.github.nesfeder.supabase.offline/NumericDeltaColumn> // io.github.nesfeder.supabase.offline/NumericDeltaColumn.Companion.serializer|serializer(){}[0]
+    }
+}
+
+final class io.github.nesfeder.supabase.offline/OfflineReadResult { // io.github.nesfeder.supabase.offline/OfflineReadResult|null[0]
+    constructor <init>(io.github.jan.supabase.postgrest.result/PostgrestResult?, io.github.nesfeder.supabase.offline/RefreshState) // io.github.nesfeder.supabase.offline/OfflineReadResult.<init>|<init>(io.github.jan.supabase.postgrest.result.PostgrestResult?;io.github.nesfeder.supabase.offline.RefreshState){}[0]
+
+    final val refresh // io.github.nesfeder.supabase.offline/OfflineReadResult.refresh|{}refresh[0]
+        final fun <get-refresh>(): io.github.nesfeder.supabase.offline/RefreshState // io.github.nesfeder.supabase.offline/OfflineReadResult.refresh.<get-refresh>|<get-refresh>(){}[0]
+    final val result // io.github.nesfeder.supabase.offline/OfflineReadResult.result|{}result[0]
+        final fun <get-result>(): io.github.jan.supabase.postgrest.result/PostgrestResult? // io.github.nesfeder.supabase.offline/OfflineReadResult.result.<get-result>|<get-result>(){}[0]
+
+    final fun component1(): io.github.jan.supabase.postgrest.result/PostgrestResult? // io.github.nesfeder.supabase.offline/OfflineReadResult.component1|component1(){}[0]
+    final fun component2(): io.github.nesfeder.supabase.offline/RefreshState // io.github.nesfeder.supabase.offline/OfflineReadResult.component2|component2(){}[0]
+    final fun copy(io.github.jan.supabase.postgrest.result/PostgrestResult? = ..., io.github.nesfeder.supabase.offline/RefreshState = ...): io.github.nesfeder.supabase.offline/OfflineReadResult // io.github.nesfeder.supabase.offline/OfflineReadResult.copy|copy(io.github.jan.supabase.postgrest.result.PostgrestResult?;io.github.nesfeder.supabase.offline.RefreshState){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/OfflineReadResult.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/OfflineReadResult.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/OfflineReadResult.toString|toString(){}[0]
+}
+
+final class io.github.nesfeder.supabase.offline/SupabaseOfflineConfig { // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig|null[0]
+    constructor <init>(kotlin/Long = ..., okio/Path? = ..., io.github.nesfeder.supabase.offline/OfflineLogger? = ..., io.github.nesfeder.supabase.offline/OfflineLogLevel = ..., kotlinx.coroutines.flow/Flow<kotlin/Boolean>? = ..., kotlin/Long = ...) // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.<init>|<init>(kotlin.Long;okio.Path?;io.github.nesfeder.supabase.offline.OfflineLogger?;io.github.nesfeder.supabase.offline.OfflineLogLevel;kotlinx.coroutines.flow.Flow<kotlin.Boolean>?;kotlin.Long){}[0]
+
+    final val cacheSizeBytes // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.cacheSizeBytes|{}cacheSizeBytes[0]
+        final fun <get-cacheSizeBytes>(): kotlin/Long // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.cacheSizeBytes.<get-cacheSizeBytes>|<get-cacheSizeBytes>(){}[0]
+    final val fileCacheSizeBytes // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.fileCacheSizeBytes|{}fileCacheSizeBytes[0]
+        final fun <get-fileCacheSizeBytes>(): kotlin/Long // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.fileCacheSizeBytes.<get-fileCacheSizeBytes>|<get-fileCacheSizeBytes>(){}[0]
+    final val logger // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.logger|{}logger[0]
+        final fun <get-logger>(): io.github.nesfeder.supabase.offline/OfflineLogger? // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.logger.<get-logger>|<get-logger>(){}[0]
+    final val minLogLevel // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.minLogLevel|{}minLogLevel[0]
+        final fun <get-minLogLevel>(): io.github.nesfeder.supabase.offline/OfflineLogLevel // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.minLogLevel.<get-minLogLevel>|<get-minLogLevel>(){}[0]
+    final val networkAvailability // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.networkAvailability|{}networkAvailability[0]
+        final fun <get-networkAvailability>(): kotlinx.coroutines.flow/Flow<kotlin/Boolean>? // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.networkAvailability.<get-networkAvailability>|<get-networkAvailability>(){}[0]
+    final val offlineStoragePath // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.offlineStoragePath|{}offlineStoragePath[0]
+        final fun <get-offlineStoragePath>(): okio/Path? // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.offlineStoragePath.<get-offlineStoragePath>|<get-offlineStoragePath>(){}[0]
+
+    final fun component1(): kotlin/Long // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.component1|component1(){}[0]
+    final fun component2(): okio/Path? // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.component2|component2(){}[0]
+    final fun component3(): io.github.nesfeder.supabase.offline/OfflineLogger? // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.component3|component3(){}[0]
+    final fun component4(): io.github.nesfeder.supabase.offline/OfflineLogLevel // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.component4|component4(){}[0]
+    final fun component5(): kotlinx.coroutines.flow/Flow<kotlin/Boolean>? // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.component5|component5(){}[0]
+    final fun component6(): kotlin/Long // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.component6|component6(){}[0]
+    final fun copy(kotlin/Long = ..., okio/Path? = ..., io.github.nesfeder.supabase.offline/OfflineLogger? = ..., io.github.nesfeder.supabase.offline/OfflineLogLevel = ..., kotlinx.coroutines.flow/Flow<kotlin/Boolean>? = ..., kotlin/Long = ...): io.github.nesfeder.supabase.offline/SupabaseOfflineConfig // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.copy|copy(kotlin.Long;okio.Path?;io.github.nesfeder.supabase.offline.OfflineLogger?;io.github.nesfeder.supabase.offline.OfflineLogLevel;kotlinx.coroutines.flow.Flow<kotlin.Boolean>?;kotlin.Long){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.toString|toString(){}[0]
+
+    final object Companion { // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion|null[0]
+        final const val CACHE_SIZE_UNLIMITED // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED|{}CACHE_SIZE_UNLIMITED[0]
+            final fun <get-CACHE_SIZE_UNLIMITED>(): kotlin/Long // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED.<get-CACHE_SIZE_UNLIMITED>|<get-CACHE_SIZE_UNLIMITED>(){}[0]
+        final const val DEFAULT_CACHE_SIZE_BYTES // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion.DEFAULT_CACHE_SIZE_BYTES|{}DEFAULT_CACHE_SIZE_BYTES[0]
+            final fun <get-DEFAULT_CACHE_SIZE_BYTES>(): kotlin/Long // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion.DEFAULT_CACHE_SIZE_BYTES.<get-DEFAULT_CACHE_SIZE_BYTES>|<get-DEFAULT_CACHE_SIZE_BYTES>(){}[0]
+        final const val DEFAULT_FILE_CACHE_SIZE_BYTES // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion.DEFAULT_FILE_CACHE_SIZE_BYTES|{}DEFAULT_FILE_CACHE_SIZE_BYTES[0]
+            final fun <get-DEFAULT_FILE_CACHE_SIZE_BYTES>(): kotlin/Long // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion.DEFAULT_FILE_CACHE_SIZE_BYTES.<get-DEFAULT_FILE_CACHE_SIZE_BYTES>|<get-DEFAULT_FILE_CACHE_SIZE_BYTES>(){}[0]
+        final const val MIN_CACHE_SIZE_BYTES // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion.MIN_CACHE_SIZE_BYTES|{}MIN_CACHE_SIZE_BYTES[0]
+            final fun <get-MIN_CACHE_SIZE_BYTES>(): kotlin/Long // io.github.nesfeder.supabase.offline/SupabaseOfflineConfig.Companion.MIN_CACHE_SIZE_BYTES.<get-MIN_CACHE_SIZE_BYTES>|<get-MIN_CACHE_SIZE_BYTES>(){}[0]
+    }
+}
+
+final object io.github.nesfeder.supabase.offline/SupabaseFactory { // io.github.nesfeder.supabase.offline/SupabaseFactory|null[0]
+    final fun offlineClientKt(kotlin/String, kotlin/String, kotlin.coroutines/SuspendFunction0<kotlin/String?>? = ..., okio/Path? = ..., kotlin/Long? = ..., io.github.nesfeder.supabase.offline/OfflineLogger? = ..., io.github.nesfeder.supabase.offline/OfflineLogLevel = ...): io.github.nesfeder.supabase.offline/SupabaseOfflineClient // io.github.nesfeder.supabase.offline/SupabaseFactory.offlineClientKt|offlineClientKt(kotlin.String;kotlin.String;kotlin.coroutines.SuspendFunction0<kotlin.String?>?;okio.Path?;kotlin.Long?;io.github.nesfeder.supabase.offline.OfflineLogger?;io.github.nesfeder.supabase.offline.OfflineLogLevel){}[0]
+}
+
+final val io.github.nesfeder.supabase.offline/SwiftJson // io.github.nesfeder.supabase.offline/SwiftJson|{}SwiftJson[0]
+    final fun <get-SwiftJson>(): kotlinx.serialization.json/Json // io.github.nesfeder.supabase.offline/SwiftJson.<get-SwiftJson>|<get-SwiftJson>(){}[0]
+
+final fun (io.github.jan.supabase.postgrest.query.request/InsertRequestBuilder).io.github.nesfeder.supabase.offline/applySwiftOptions(kotlin/String?, io.github.jan.supabase.postgrest.query/Count?, kotlin/Boolean?) // io.github.nesfeder.supabase.offline/applySwiftOptions|applySwiftOptions@io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder(kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?){}[0]
+final fun (io.github.jan.supabase.postgrest.query.request/UpsertRequestBuilder).io.github.nesfeder.supabase.offline/applySwiftOptions(kotlin/String?, kotlin/Boolean, kotlin/String?, io.github.jan.supabase.postgrest.query/Count?, kotlin/Boolean?) // io.github.nesfeder.supabase.offline/applySwiftOptions|applySwiftOptions@io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder(kotlin.String?;kotlin.Boolean;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?){}[0]
+final fun (io.github.jan.supabase.postgrest.query/PostgrestRequestBuilder).io.github.nesfeder.supabase.offline/applySwiftOptions(kotlin/String?, io.github.jan.supabase.postgrest.query/Count?, kotlin/Function1<io.github.jan.supabase.postgrest.query.filter/PostgrestFilterBuilder, kotlin/Unit>?) // io.github.nesfeder.supabase.offline/applySwiftOptions|applySwiftOptions@io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder(kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Function1<io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder,kotlin.Unit>?){}[0]
+final fun (kotlin/Throwable).io.github.nesfeder.supabase.offline/isNetworkOrConnectivityFailure(): kotlin/Boolean // io.github.nesfeder.supabase.offline/isNetworkOrConnectivityFailure|isNetworkOrConnectivityFailure@kotlin.Throwable(){}[0]
+final fun io.github.nesfeder.supabase.offline/createSupabaseOfflineClient(io.github.jan.supabase/SupabaseClient, io.github.nesfeder.supabase.offline/SupabaseOfflineConfig): io.github.nesfeder.supabase.offline/SupabaseOfflineClient // io.github.nesfeder.supabase.offline/createSupabaseOfflineClient|createSupabaseOfflineClient(io.github.jan.supabase.SupabaseClient;io.github.nesfeder.supabase.offline.SupabaseOfflineConfig){}[0]
+final fun io.github.nesfeder.supabase.offline/singleElementArray(kotlinx.serialization.json/JsonElement): kotlinx.serialization.json/JsonArray // io.github.nesfeder.supabase.offline/singleElementArray|singleElementArray(kotlinx.serialization.json.JsonElement){}[0]
+final inline fun <#A: reified kotlin/Any?> io.github.nesfeder.supabase.offline/encodeListToJsonArray(kotlin.collections/List<#A>): kotlinx.serialization.json/JsonArray // io.github.nesfeder.supabase.offline/encodeListToJsonArray|encodeListToJsonArray(kotlin.collections.List<0:0>){0§<kotlin.Any?>}[0]
+final inline fun <#A: reified kotlin/Any?> io.github.nesfeder.supabase.offline/encodeListToJsonString(kotlin.collections/List<#A>): kotlin/String // io.github.nesfeder.supabase.offline/encodeListToJsonString|encodeListToJsonString(kotlin.collections.List<0:0>){0§<kotlin.Any?>}[0]
+final inline fun <#A: reified kotlin/Any?> io.github.nesfeder.supabase.offline/encodeToJsonElement(#A): kotlinx.serialization.json/JsonElement // io.github.nesfeder.supabase.offline/encodeToJsonElement|encodeToJsonElement(0:0){0§<kotlin.Any?>}[0]
+final inline fun <#A: reified kotlin/Any?> io.github.nesfeder.supabase.offline/encodeToJsonString(#A): kotlin/String // io.github.nesfeder.supabase.offline/encodeToJsonString|encodeToJsonString(0:0){0§<kotlin.Any?>}[0]
+final suspend fun (io.github.jan.supabase.storage/BucketApi).io.github.nesfeder.supabase.offline/ensureLocalFileUrl(kotlin/String, kotlin/Boolean): kotlin/String? // io.github.nesfeder.supabase.offline/ensureLocalFileUrl|ensureLocalFileUrl@io.github.jan.supabase.storage.BucketApi(kotlin.String;kotlin.Boolean){}[0]
+final suspend fun (io.github.jan.supabase.storage/BucketApi).io.github.nesfeder.supabase.offline/ensureLocalPath(kotlin/String, kotlin/Boolean = ...): kotlin/String? // io.github.nesfeder.supabase.offline/ensureLocalPath|ensureLocalPath@io.github.jan.supabase.storage.BucketApi(kotlin.String;kotlin.Boolean){}[0]
+final suspend fun (io.github.jan.supabase.storage/BucketApi).io.github.nesfeder.supabase.offline/localFileUrlIfCached(kotlin/String): kotlin/String? // io.github.nesfeder.supabase.offline/localFileUrlIfCached|localFileUrlIfCached@io.github.jan.supabase.storage.BucketApi(kotlin.String){}[0]
+final suspend fun (io.github.jan.supabase.storage/BucketApi).io.github.nesfeder.supabase.offline/localPathIfCached(kotlin/String): kotlin/String? // io.github.nesfeder.supabase.offline/localPathIfCached|localPathIfCached@io.github.jan.supabase.storage.BucketApi(kotlin.String){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/deleteWhereKt(kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.filter/PostgrestFilterBuilder, kotlin/Unit>? = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/deleteWhereKt|deleteWhereKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder,kotlin.Unit>?){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/insertJsonKt(kotlinx.serialization.json/JsonArray, kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Boolean? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/insertJsonKt|insertJsonKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlinx.serialization.json.JsonArray;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?;io.github.nesfeder.supabase.offline.MutationStrategy){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/insertJsonStringKt(kotlin/String, kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Boolean? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/insertJsonStringKt|insertJsonStringKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.String;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?;io.github.nesfeder.supabase.offline.MutationStrategy){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/selectAllKt(io.github.nesfeder.supabase.offline/ReadStrategy = ..., kotlin/String? = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/String? = ..., kotlin/Int? = ..., kotlin/Int? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.filter/PostgrestFilterBuilder, kotlin/Unit>? = ...): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/selectAllKt|selectAllKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(io.github.nesfeder.supabase.offline.ReadStrategy;kotlin.String?;kotlin.Boolean;kotlin.Boolean;kotlin.String?;kotlin.Int?;kotlin.Int?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Function1<io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder,kotlin.Unit>?){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/selectColumnsKt(kotlin.collections/List<kotlin/String>, io.github.nesfeder.supabase.offline/ReadStrategy = ..., kotlin/String? = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/String? = ..., kotlin/Int? = ..., kotlin/Int? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.filter/PostgrestFilterBuilder, kotlin/Unit>? = ...): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/selectColumnsKt|selectColumnsKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.collections.List<kotlin.String>;io.github.nesfeder.supabase.offline.ReadStrategy;kotlin.String?;kotlin.Boolean;kotlin.Boolean;kotlin.String?;kotlin.Int?;kotlin.Int?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Function1<io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder,kotlin.Unit>?){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/selectRawKt(kotlin/String, io.github.nesfeder.supabase.offline/ReadStrategy = ..., kotlin/String? = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/String? = ..., kotlin/Int? = ..., kotlin/Int? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.filter/PostgrestFilterBuilder, kotlin/Unit>? = ...): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/selectRawKt|selectRawKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.String;io.github.nesfeder.supabase.offline.ReadStrategy;kotlin.String?;kotlin.Boolean;kotlin.Boolean;kotlin.String?;kotlin.Int?;kotlin.Int?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Function1<io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder,kotlin.Unit>?){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/updateJsonKt(kotlinx.serialization.json/JsonElement, kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.filter/PostgrestFilterBuilder, kotlin/Unit>? = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/updateJsonKt|updateJsonKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlinx.serialization.json.JsonElement;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder,kotlin.Unit>?){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/updateJsonStringKt(kotlin/String, kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin/Function1<io.github.jan.supabase.postgrest.query.filter/PostgrestFilterBuilder, kotlin/Unit>? = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/updateJsonStringKt|updateJsonStringKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.String;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder,kotlin.Unit>?){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/upsertJsonKt(kotlinx.serialization.json/JsonArray, kotlin/String? = ..., kotlin/Boolean = ..., kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Boolean? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/upsertJsonKt|upsertJsonKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlinx.serialization.json.JsonArray;kotlin.String?;kotlin.Boolean;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?;io.github.nesfeder.supabase.offline.MutationStrategy){}[0]
+final suspend fun (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/upsertJsonStringKt(kotlin/String, kotlin/String? = ..., kotlin/Boolean = ..., kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Boolean? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/upsertJsonStringKt|upsertJsonStringKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.String;kotlin.String?;kotlin.Boolean;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?;io.github.nesfeder.supabase.offline.MutationStrategy){}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/insert(#A, io.github.nesfeder.supabase.offline/MutationStrategy = ..., noinline kotlin/Function1<io.github.jan.supabase.postgrest.query.request/InsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/insert|insert@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(0:0;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/insert(kotlin.collections/List<#A>, io.github.nesfeder.supabase.offline/MutationStrategy = ..., noinline kotlin/Function1<io.github.jan.supabase.postgrest.query.request/InsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/insert|insert@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.collections.List<0:0>;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/insertManyKt(kotlin.collections/List<#A>, kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Boolean? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ..., crossinline kotlin/Function1<io.github.jan.supabase.postgrest.query.request/InsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/insertManyKt|insertManyKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.collections.List<0:0>;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/insertOneKt(#A, kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Boolean? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ..., crossinline kotlin/Function1<io.github.jan.supabase.postgrest.query.request/InsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/insertOneKt|insertOneKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(0:0;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/update(#A, io.github.nesfeder.supabase.offline/MutationStrategy = ..., kotlin.collections/List<io.github.nesfeder.supabase.offline/NumericDeltaColumn> = ..., noinline kotlin/Function1<io.github.jan.supabase.postgrest.query/PostgrestRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/update|update@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(0:0;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.collections.List<io.github.nesfeder.supabase.offline.NumericDeltaColumn>;kotlin.Function1<io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/updateOneKt(#A, kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ..., crossinline kotlin/Function1<io.github.jan.supabase.postgrest.query/PostgrestRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/updateOneKt|updateOneKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(0:0;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/upsert(#A, io.github.nesfeder.supabase.offline/MutationStrategy = ..., noinline kotlin/Function1<io.github.jan.supabase.postgrest.query.request/UpsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/upsert|upsert@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(0:0;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/upsert(kotlin.collections/List<#A>, io.github.nesfeder.supabase.offline/MutationStrategy = ..., noinline kotlin/Function1<io.github.jan.supabase.postgrest.query.request/UpsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/upsert|upsert@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.collections.List<0:0>;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/upsertManyKt(kotlin.collections/List<#A>, kotlin/String? = ..., kotlin/Boolean = ..., kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Boolean? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ..., crossinline kotlin/Function1<io.github.jan.supabase.postgrest.query.request/UpsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/upsertManyKt|upsertManyKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(kotlin.collections.List<0:0>;kotlin.String?;kotlin.Boolean;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]
+final suspend inline fun <#A: reified kotlin/Any> (io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder).io.github.nesfeder.supabase.offline/upsertOneKt(#A, kotlin/String? = ..., kotlin/Boolean = ..., kotlin/String? = ..., io.github.jan.supabase.postgrest.query/Count? = ..., kotlin/Boolean? = ..., io.github.nesfeder.supabase.offline/MutationStrategy = ..., crossinline kotlin/Function1<io.github.jan.supabase.postgrest.query.request/UpsertRequestBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/MutationOutcome // io.github.nesfeder.supabase.offline/upsertOneKt|upsertOneKt@io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder(0:0;kotlin.String?;kotlin.Boolean;kotlin.String?;io.github.jan.supabase.postgrest.query.Count?;kotlin.Boolean?;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder,kotlin.Unit>){0§<kotlin.Any>}[0]

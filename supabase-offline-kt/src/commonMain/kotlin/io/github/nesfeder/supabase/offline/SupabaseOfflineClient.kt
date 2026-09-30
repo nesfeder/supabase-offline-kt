@@ -184,7 +184,8 @@ public interface SupabaseOfflineClient {
 
     /**
      * Returns a [Flow] that emits the number of the current session's pending mutations across all
-     * tables whenever it — or the session — changes.
+     * tables whenever it — or the session — changes. Collected after [close], or live at it, it
+     * fails with [IllegalStateException].
      *
      * Useful for:
      * - Showing "N changes to sync" badges
@@ -201,7 +202,8 @@ public interface SupabaseOfflineClient {
 
     /**
      * Returns a [Flow] that emits the number of the current session's pending mutations for [table]
-     * whenever it — or the session — changes.
+     * whenever it — or the session — changes. Collected after [close], or live at it, it fails with
+     * [IllegalStateException].
      *
      * Useful for table-specific UI ("this screen has unsynced edits").
      */
@@ -290,27 +292,35 @@ public interface SupabaseOfflineClient {
      * - At once, every new call fails with [IllegalStateException] ("This SupabaseOfflineClient is
      *   closed"): on the client, and on a builder, bucket or flow obtained from it.
      * - At once, every flow being collected stops, whatever its read strategy: its collector reads
-     *   that error next, even one stuck in its own body or one that has stopped reading.
-     * - At once, the client's own work stops (refreshes, replay passes), and so do the calls that
-     *   only wait on the network: syncs, downloads, uploads, signed URLs, list, info and exists.
-     *   Their callers get the same error, never a cancellation. A stopped upload may still have
-     *   been stored, so the cached copy it would have replaced is dropped.
-     * - Every other call already running is left to finish: a clear, a PostgREST write, a read of
-     *   the cache, a Storage delete, move or copy. A clear that has begun always completes, and a
-     *   write whose answer arrives is applied and never sent again. The database is closed only
-     *   once none of them is using it.
+     *   that error next, even one stuck in its own body or one that has stopped reading. A channel
+     *   the app holds through `produceIn` and no longer reads ends with it quietly, failing no
+     *   scope.
+     * - At once, the client's own work stops (refreshes, replay passes), and so does every Storage
+     *   call and sync: syncs, downloads, uploads, updates, deletes, moves, copies, signed URLs,
+     *   list, info and exists. Their callers get the same error, never a cancellation. A stopped
+     *   write may still have been applied, so the cached copies it touched are dropped: one extra
+     *   download later, never a stale copy.
+     * - Every other call already running is left to finish, and each of these can hold `close()` up
+     *   to its bound: a PostgREST write, a clear, a one-shot `select` that goes to the network (its
+     *   retries while a session restores included), a read of the cache, and the start or
+     *   continuation of a resumable upload. A clear that has begun always completes, and a write
+     *   whose answer arrives is applied and never sent again. The database is closed only once none
+     *   of them is using it.
      *
      * Every call to `close()` returns once the database is released, or after 10 seconds of real
      * time at most, even under a test's virtual clock. Past that, the database is released as soon
      * as the last of those calls finishes; until then, creating a client on it fails with an error
-     * saying it is still closing.
+     * saying it is still closing, and another `close()` waits for the release, up to the same
+     * bound.
      *
      * A resumable upload obtained before `close()` is supabase-kt's own object and keeps uploading.
      * If it finishes after `close()`, the cached copy it replaced stays for the next client.
      *
-     * Safe to call more than once, and from inside a collector of one of the client's flows. A
-     * wrapper must forward it (delegation with `by` does), or the database stays claimed and the
-     * wrapped client's work keeps running.
+     * Safe to call more than once, and from inside a collector of one of the client's flows, which
+     * it ends at once. Called from inside a call it leaves to finish (an interceptor or token
+     * provider of a PostgREST write, say), it waits out its full bound, since that call cannot end
+     * first. A wrapper must forward it (delegation with `by` does), or the database stays claimed
+     * and the wrapped client's work keeps running.
      */
     @Throws(Exception::class) public suspend fun close()
 }
@@ -622,19 +632,15 @@ internal class SupabaseOfflineClientImpl(
         store.pendingMutationCount()
     }
 
-    override fun pendingMutationCountFlow(): Flow<Int> {
-        ensureOpen()
-        return operationGate.callCollecting(store.pendingMutationCountFlow())
-    }
+    override fun pendingMutationCountFlow(): Flow<Int> =
+        operationGate.callCollecting(store.pendingMutationCountFlow())
 
     override suspend fun pendingMutationCount(table: String): Int = operationGate.call {
         store.pendingMutationCountForTable(table)
     }
 
-    override fun pendingMutationCountFlow(table: String): Flow<Int> {
-        ensureOpen()
-        return operationGate.callCollecting(store.pendingMutationCountForTableFlow(table))
-    }
+    override fun pendingMutationCountFlow(table: String): Flow<Int> =
+        operationGate.callCollecting(store.pendingMutationCountForTableFlow(table))
 
     override suspend fun applyServerRecord(
         table: String,
@@ -738,17 +744,15 @@ internal class SupabaseOfflineClientImpl(
             withContext(NonCancellable + Dispatchers.Default) {
                 withTimeoutOrNull(closeWait) { releaseOnceIdle() } != null
             }
-        if (
-            releasedInTime ||
-                released.isCompleted ||
-                !reportedStillClosing.compareAndSet(false, true)
-        )
-            return
+        if (releasedInTime || released.isCompleted) return
+        // Each close() that gives up marks the database before it returns; only the first also
+        // warns and schedules the release
+        onStillClosing { operationGate.inFlight }
+        if (!reportedStillClosing.compareAndSet(false, true)) return
         sdkLogger.warning {
             "close() waited $closeWait for ${operationGate.inFlight} call(s) still using the database; " +
                 "it is released when they finish"
         }
-        onStillClosing { operationGate.inFlight }
         // A child of the scope the client was given, which close() never cancels
         if (parentScope.isActive)
             parentScope.launch { withContext(NonCancellable) { releaseOnceIdle() } }
@@ -796,7 +800,6 @@ internal class SupabaseOfflineClientImpl(
      * @return A flow of pending mutations.
      */
     internal fun pendingMutations(table: String? = null): Flow<List<PendingMutation>> {
-        ensureOpen()
         return operationGate.callCollecting(
             store.pendingMutationsFlow(table).map { rows ->
                 rows.mapNotNull { row -> row.toPendingMutation(store.json, primaryKeys) }
@@ -811,7 +814,6 @@ internal class SupabaseOfflineClientImpl(
      * @return A flow of rejected mutations; it fails if the persisted list cannot be decoded.
      */
     internal fun rejectedMutations(): Flow<List<RejectedMutation>> {
-        ensureOpen()
         return operationGate.callCollecting(
             store.mutationQueueState.rejectionsFlow().map { entries ->
                 entries.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) }
