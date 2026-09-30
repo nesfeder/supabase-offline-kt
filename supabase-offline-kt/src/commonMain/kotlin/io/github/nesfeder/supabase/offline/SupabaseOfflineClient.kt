@@ -225,7 +225,9 @@ public interface SupabaseOfflineClient {
      * patching the wrong rows.
      *
      * It acts on the cached queries of [table] in the client's default schema. A table in another
-     * schema, whose queries are cached apart, cannot be named here yet.
+     * schema, whose queries are cached apart, cannot be named here yet: a name written
+     * `schema.table` may reach that schema's cached queries today, but is not a way to name one,
+     * and stops reaching them once a schema can be named.
      *
      * @param table The Supabase table name (e.g. `"todos"`), in the client's default schema.
      * @param record The full row object as delivered by the Realtime event.
@@ -551,7 +553,9 @@ internal class SupabaseOfflineClientImpl(
      * Makes the cache [identity]'s. A cache no identity owns is adopted by a user, and by nobody
      * signed in while it holds nothing; anything else another identity cached is dropped — the
      * cached queries and the Storage file cache, never the mutation queue — under [clearAllCache]'s
-     * locks in its order, and live queries fetch again.
+     * locks in its order, and live queries fetch again. A crash after the rows are dropped and
+     * before the files are deleted leaves those files on disk with no row: no call reaches them,
+     * and the next clear or drop deletes them.
      */
     private suspend fun settleCacheOwner(identity: QueueIdentity) {
         if (

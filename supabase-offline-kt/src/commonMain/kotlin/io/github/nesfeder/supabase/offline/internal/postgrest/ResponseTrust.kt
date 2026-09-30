@@ -101,7 +101,12 @@ internal enum class ResponseTrustPolicy {
                 }
         }
 
-    /** Whether a reactive read's refresh takes such a response as a failure and tries again. */
+    /**
+     * Whether a reactive read's refresh takes such a response as a failure and tries again. Under
+     * the authenticated-only rule an empty answer that crossed a change of user is not retried
+     * here: the store refuses it, the cache being no longer that user's, and the refresh retries on
+     * that.
+     */
     fun refreshRetries(before: RequestSession, after: RequestSession, isEmpty: Boolean): Boolean =
         when (this) {
             SETTLED_SESSION -> !mayCache(before, after, isEmpty)
