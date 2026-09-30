@@ -63,8 +63,11 @@ EXCLUDED=(
     '.dropbox'
     # The GitHub CLI's cache, used by every session.
     '.cache/gh'
-    # The Supabase CLI rewrites it on every command, in any session.
-    '.supabase/telemetry.json'
+    # The Supabase CLI writes under it on every command, in any session: it rewrites
+    # telemetry.json and creates traces/, and a new child moves the folder's own modification
+    # time, so the folder is excluded whole. A run went red on 2026-09-30 when another session
+    # ran the CLI during a job; the job itself never runs it.
+    '.supabase'
     # npm writes a debug log here for every command, in any session.
     '.npm/_logs'
     # Interactive shells write these when they exit.
