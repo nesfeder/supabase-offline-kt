@@ -3,7 +3,7 @@ name: Docs check
 # Strict build, link checks, and the built site uploaded as the `docs-site` artifact so it can be
 # downloaded and previewed. Nothing is published: publishing is docs-publish.yml, which CI never
 # calls. ci.yml calls this workflow when the documentation changed and folds its result into the
-# single required `Final status` check.
+# single required `All Green` check.
 
 on:
   workflow_call:

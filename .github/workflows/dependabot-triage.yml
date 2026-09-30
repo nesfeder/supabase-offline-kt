@@ -101,7 +101,7 @@ jobs:
           <!-- dependabot-triage -->
           This pull request moves a held dependency. A passing build is necessary but not sufficient; check these before merging.
 
-          While the repository is private, CI holds this pull request's iOS tests, and its check reads `Final status (iOS tests held)`. To run them, read the push, then add the `full-ci` label: that event runs everything. After Dependabot pushes again, remove the label and add it again.
+          While the repository is private, CI holds this pull request's iOS tests, and its check reads `All Green (iOS tests held)`. To run them, read the push, then add the `full-ci` label: that event runs everything. After Dependabot pushes again, remove the label and add it again.
           MARKDOWN
             if [[ "$security_update" == true ]]; then
               cat <<'MARKDOWN'
