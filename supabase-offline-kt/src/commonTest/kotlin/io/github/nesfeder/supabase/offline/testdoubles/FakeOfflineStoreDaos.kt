@@ -127,7 +127,15 @@ internal class FakeObjectDao : InMemoryObjectDao() {
         return snapshot
     }
 
+    /**
+     * Optional suspension point inside [upsert], invoked with the row before it is written: the
+     * seam where a store's write can be parked inside its locks while another writer queues on
+     * them. `null` (the default) writes at once.
+     */
+    var onUpsert: (suspend (row: ObjectRow) -> Unit)? = null
+
     override suspend fun upsert(row: ObjectRow) {
+        onUpsert?.invoke(row)
         check(failUpsertOf?.invoke(row) != true) { "Scripted write failure" }
         writes++
         super.upsert(row)
