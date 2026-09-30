@@ -1241,8 +1241,19 @@ internal class OfflineStore(
     }
 
     /**
+     * Counts one more replay of mutation [id] that PostgREST refused because its schema cache did
+     * not know the table or a column.
+     *
+     * @return The misses counted so far; `0` when the mutation is gone.
+     */
+    suspend fun recordSchemaCacheMiss(id: Long): Int = mutationQueueMutex.withLock {
+        mutationDao.recordSchemaCacheMiss(id)
+        mutationDao.byId(id)?.schemaCacheMisses ?: 0
+    }
+
+    /**
      * Removes a write sent at the head of the queue that the server refused, or that local data was
-     * cleared under: its mutation row and owner record.
+     * cleared under: its mutation row.
      *
      * @param id The mutation's id.
      */

@@ -32,6 +32,7 @@ import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.util.isPermanentMutationFailure
 import io.ktor.client.plugins.ResponseException
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -87,6 +88,13 @@ internal class MutationQueueReplayer(
 
     /** Passes in flight, so [clearLocalData] can cancel them. */
     private val activePasses = MutableStateFlow<Set<Job>>(emptySet())
+
+    /**
+     * When this process last counted a schema-cache miss of each mutation, as a
+     * [OfflineStore.monotonicTickNow] tick; see [schemaCacheMissReachesBound]. Guarded by
+     * [sendLock].
+     */
+    private val schemaCacheMissesCountedAt = mutableMapOf<Long, Long>()
 
     init {
         // Before anything is sent: a mutation goes out with its owner's token, or not at all
@@ -162,7 +170,10 @@ internal class MutationQueueReplayer(
         activePasses.value.forEach { pass ->
             pass.cancel(CancellationException("Local data cleared"))
         }
-        sendLock.withLock { clear() }
+        sendLock.withLock {
+            clear()
+            schemaCacheMissesCountedAt.clear()
+        }
     }
 
     /**
@@ -278,6 +289,11 @@ internal class MutationQueueReplayer(
         return when {
             clearGeneration.value != generation ->
                 HeadSendOutcome.Cleared(result = null, cause = cause)
+            postgrestCodeOf(cause) in SCHEMA_CACHE_MISS_CODES &&
+                !schemaCacheMissReachesBound(mutationId) -> {
+                if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+                HeadSendOutcome.StaysQueued(cause)
+            }
             cause.isNetworkOrConnectivityFailure() ||
                 cause.httpStatusOrNull() in STAYS_QUEUED_STATUSES -> {
                 if (newlyUnconfirmed && failure.provesWriteNotApplied())
@@ -296,7 +312,28 @@ internal class MutationQueueReplayer(
      * PostgREST itself answered that it could not reach the database.
      */
     private fun SendOutcome.Failed.provesWriteNotApplied(): Boolean =
-        neverReachedServer || postgrestCodeOf(thrown) in POSTGREST_DID_NOT_RUN_CODES
+        neverReachedServer ||
+            postgrestCodeOf(thrown).let { code ->
+                code in POSTGREST_DID_NOT_RUN_CODES || code in SCHEMA_CACHE_MISS_CODES
+            }
+
+    /**
+     * Counts a schema-cache miss of mutation [mutationId], unless this process counted one less
+     * than [SCHEMA_CACHE_MISS_SPACING] ago, and says whether its misses reached
+     * [SCHEMA_CACHE_MISS_BOUND]. Caller holds [sendLock].
+     */
+    private suspend fun schemaCacheMissReachesBound(mutationId: Long): Boolean {
+        val now = store.monotonicTickNow()
+        val last = schemaCacheMissesCountedAt[mutationId]
+        if (last != null && now - last < SCHEMA_CACHE_MISS_SPACING.inWholeNanoseconds) return false
+        schemaCacheMissesCountedAt[mutationId] = now
+        val misses = store.recordSchemaCacheMiss(mutationId)
+        sdkLogger.warning {
+            "PostgREST's schema cache does not know a table or column yet; " +
+                "miss $misses of $SCHEMA_CACHE_MISS_BOUND before the write is rejected"
+        }
+        return misses >= SCHEMA_CACHE_MISS_BOUND
+    }
 
     /** The PostgREST error code [failure] or a cause carries, or `null`. */
     private fun postgrestCodeOf(failure: Throwable): String? {
@@ -473,6 +510,7 @@ internal class MutationQueueReplayer(
     ): SyncStop? =
         when (outcome) {
             ReplayOutcome.Synced -> {
+                schemaCacheMissesCountedAt -= mutation.id
                 store.markMutationSynced(id = mutation.id, table = mutation.table)
                 syncedTables += mutation.table
                 sdkLogger.debug { "Synced ${mutation.operation} mutation for ${mutation.table}" }
@@ -494,6 +532,23 @@ internal class MutationQueueReplayer(
                     SyncStop.TransientFailure(unrecorded)
                 }
 
+            is ReplayOutcome.SchemaCacheMiss ->
+                if (schemaCacheMissReachesBound(mutation.id)) {
+                    schemaCacheMissesCountedAt -= mutation.id
+                    val serverError = serverErrorOf(outcome.cause)
+                    record(
+                        mutation,
+                        ReplayOutcome.Rejected(
+                            message = serverError?.message ?: SCHEMA_CACHE_MISS_REASON,
+                            serverError = serverError,
+                        ),
+                        rejected,
+                        syncedTables,
+                    )
+                } else {
+                    SyncStop.TransientFailure(outcome.cause)
+                }
+
             is ReplayOutcome.Held -> SyncStop.HeldBehindEarlierMutations(mutation.id, outcome.cause)
             is ReplayOutcome.Stopped -> SyncStop.TransientFailure(outcome.cause)
             ReplayOutcome.SessionChanged -> SyncStop.SessionChanged
@@ -510,6 +565,9 @@ internal class MutationQueueReplayer(
             ReplayOutcome
 
         data class Held(val cause: Throwable) : ReplayOutcome
+
+        /** PostgREST's schema cache did not know the table or a column; the write did not run. */
+        data class SchemaCacheMiss(val cause: Exception) : ReplayOutcome
 
         data class Stopped(val cause: Throwable) : ReplayOutcome
     }
@@ -556,6 +614,9 @@ internal class MutationQueueReplayer(
                 sdkLogger.warning { "Network unavailable, pausing sync for ${mutation.table}" }
                 ReplayOutcome.Stopped(failure)
             }
+
+            postgrestCodeOf(failure) in SCHEMA_CACHE_MISS_CODES ->
+                ReplayOutcome.SchemaCacheMiss(failure)
 
             failure.isPermanentMutationFailure() -> {
                 val status = failure.httpStatusOrNull()
@@ -870,6 +931,25 @@ internal class MutationQueueReplayer(
          * connection broke during the request, which may have committed.
          */
         val POSTGREST_DID_NOT_RUN_CODES = setOf("PGRST000", "PGRST002")
+
+        /**
+         * PostgREST's codes for a table (PGRST205) or column (PGRST204) its schema cache does not
+         * know: the statement never ran, and the cache may not have caught up with a migration.
+         */
+        val SCHEMA_CACHE_MISS_CODES = setOf("PGRST204", "PGRST205")
+
+        /**
+         * Schema-cache misses after which a write is rejected: at [SCHEMA_CACHE_MISS_SPACING]
+         * apart, minutes of misses, where a migration's cache reload takes seconds.
+         */
+        const val SCHEMA_CACHE_MISS_BOUND = 10
+
+        /** How long after a counted schema-cache miss the next one counts, in one process. */
+        val SCHEMA_CACHE_MISS_SPACING = 30.seconds
+
+        /** Why a write is rejected at the bound, when the server's answer carries no message. */
+        const val SCHEMA_CACHE_MISS_REASON =
+            "The server's schema does not have the table or a column this write needs"
 
         /** Postgres: `ON CONFLICT` names columns with no unique or exclusion constraint. */
         const val NO_MATCHING_CONFLICT_TARGET = "42P10"
