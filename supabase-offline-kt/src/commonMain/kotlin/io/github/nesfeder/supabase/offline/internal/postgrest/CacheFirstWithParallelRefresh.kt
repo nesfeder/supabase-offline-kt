@@ -10,6 +10,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -19,9 +20,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * Number of attempts in the fast retry ladder before a refresh is reported as
  * [RefreshState.Stalled].
  *
- * Internal rather than private because the one-shot restore-window ladder in
- * [OfflineSelectResolver] derives its wait budget from this: the two ladders are deliberately the
- * same shape, and deriving one from the other keeps them from drifting apart if this is retuned.
+ * Internal rather than private because the one-shot restore-window ladder in [QueryReader] derives
+ * its wait budget from this: the two ladders are deliberately the same shape, and deriving one from
+ * the other keeps them from drifting apart if this is retuned.
  */
 internal const val FAST_LADDER_ATTEMPTS: Int = 4
 
@@ -50,8 +51,8 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long =
 /**
  * Combinator that forwards emissions from [cache] to the downstream collector while running a
  * self-healing network [refresh] in parallel. Used by
- * [OfflineSelectResolver][io.github.nesfeder.supabase.offline.internal.postgrest.OfflineSelectResolver]
- * to refresh the cache from the network without blocking cached emissions.
+ * [QueryReader][io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader] to refresh the
+ * cache from the network without blocking cached emissions.
  *
  * Why this exists as a separate helper: the original implementation wrapped the network refresh in
  * `onStart { coroutineScope { launch { ... } } }`. [kotlinx.coroutines.coroutineScope] suspends
@@ -92,6 +93,7 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long =
  * @param accelerator Edge-triggered wake-ups that short-circuit the current backoff sleep.
  * @param onRefreshState Callback invoked on each refresh lifecycle transition.
  * @param backoffMillis Backoff schedule; injectable so tests can shrink or reshape delays.
+ * @param refreshRequests Each emission after the first success runs the refresh again.
  */
 internal fun <T> cacheFirstWithParallelRefresh(
     cache: Flow<T>,
@@ -99,6 +101,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
     accelerator: Flow<Unit> = emptyFlow(),
     onRefreshState: (RefreshState) -> Unit = {},
     backoffMillis: (failures: Int) -> Long = ::defaultRefreshBackoffMillis,
+    refreshRequests: Flow<Unit> = emptyFlow(),
 ): Flow<T> = channelFlow {
     // Forward cache emissions immediately — not gated on the network.
     launch {
@@ -111,7 +114,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
             this@channelFlow.close(failure)
         }
     }
-    // In parallel, refresh the cache with self-healing backoff for the life of the subscription.
+    // In parallel, refresh the cache with self-healing backoff, and again on each later request.
     launch {
         runSelfHealingRefresh(
             refresh = refresh,
@@ -119,6 +122,14 @@ internal fun <T> cacheFirstWithParallelRefresh(
             onRefreshState = onRefreshState,
             backoffMillis = backoffMillis,
         )
+        refreshRequests.conflate().collect {
+            runSelfHealingRefresh(
+                refresh = refresh,
+                accelerator = accelerator,
+                onRefreshState = onRefreshState,
+                backoffMillis = backoffMillis,
+            )
+        }
     }
 }
 

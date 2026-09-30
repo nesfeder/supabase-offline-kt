@@ -55,16 +55,16 @@ class SyncedOverlayScopeTest {
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
             requestStartedAtTick = started,
         )
-        store.clearSyncedMutationsForTable(TABLE, started)
+        store.retireCoveredSyncedMutations(TABLE, started)
 
         // Then — ALL shows x once, and L (fetched before the replay) still shows it
         assertEquals(
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, ALL).first(),
+            store.overlaidPayloadFlow(TABLE, ALL).first(),
         )
         assertEquals(
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, LIST_L).first(),
+            store.overlaidPayloadFlow(TABLE, LIST_L).first(),
         )
     }
 
@@ -88,12 +88,12 @@ class SyncedOverlayScopeTest {
             """[{"id":"a","list_id":"L","title":"C"}]""",
             requestStartedAtTick = started,
         )
-        store.clearSyncedMutationsForTable(TABLE, started)
+        store.retireCoveredSyncedMutations(TABLE, started)
 
         // Then — ALL shows the server's C
         assertEquals(
             """[{"id":"a","list_id":"L","title":"C"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, ALL).first(),
+            store.overlaidPayloadFlow(TABLE, ALL).first(),
         )
     }
 
@@ -124,13 +124,9 @@ class SyncedOverlayScopeTest {
 
             // When — a one-shot read falls back to the cache for each query
             val all =
-                store.applyAllMutationsForOfflineFallback(
-                    TABLE,
-                    ALL,
-                    """[{"id":"a","list_id":"L","title":"C"}]""",
-                )
+                store.overlayCachedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"C"}]""")
             val listL =
-                store.applyAllMutationsForOfflineFallback(
+                store.overlayCachedPayload(
                     TABLE,
                     LIST_L,
                     """[{"id":"a","list_id":"L","title":"orig"}]""",
@@ -149,7 +145,7 @@ class SyncedOverlayScopeTest {
             objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
             store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
             store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
-            store.clearSyncedMutationsForTable(TABLE)
+            store.retireCoveredSyncedMutations(TABLE)
             val keptWhileNeeded = mutationDao.inserted.size
 
             // When — a day passes
@@ -161,15 +157,15 @@ class SyncedOverlayScopeTest {
             assertEquals(0, mutationDao.inserted.size)
             assertEquals(
                 """[{"id":"a","list_id":"L"}]""",
-                store.cachePayloadWithOverlayFlow(TABLE, LIST_L).first(),
+                store.overlaidPayloadFlow(TABLE, LIST_L).first(),
             )
         }
 
     @Test
     fun a_refreshed_query_keeps_the_servers_version_after_a_restart() = runTest {
         // Given — a keyless insert and an update replayed; ALL refreshed afterwards with the
-        // server's
-        // rows, while another query stays unrefreshed and so keeps the synced mutations around
+        // server's rows, while another query stays unrefreshed and so keeps the synced mutations
+        // around
         objectDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
         objectDao.seedPayload(TABLE, ALL, """[{"id":"a","title":"orig"}]""")
         tick = 10L
@@ -188,8 +184,8 @@ class SyncedOverlayScopeTest {
             """[{"id":"a","title":"C"},{"id":"srv","title":"keyless"}]""",
             requestStartedAtTick = started,
         )
-        store.clearSyncedMutationsForTable(TABLE, started)
-        val beforeRestart = store.cachePayloadWithOverlayFlow(TABLE, ALL).first()
+        store.retireCoveredSyncedMutations(TABLE, started)
+        val beforeRestart = store.overlaidPayloadFlow(TABLE, ALL).first()
 
         // When — the app starts again an hour later
         clock += 60 * 60 * 1000
@@ -199,7 +195,7 @@ class SyncedOverlayScopeTest {
                     mutationDao = mutationDao,
                     nowMillis = { clock },
                 )
-                .cachePayloadWithOverlayFlow(TABLE, ALL)
+                .overlaidPayloadFlow(TABLE, ALL)
                 .first()
 
         // Then — ALL still shows the server's version: C, and the keyless row once

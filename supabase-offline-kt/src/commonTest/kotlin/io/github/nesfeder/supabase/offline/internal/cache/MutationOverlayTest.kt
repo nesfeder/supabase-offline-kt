@@ -1,10 +1,13 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline.internal.db
+package io.github.nesfeder.supabase.offline.internal.cache
 
-import io.github.nesfeder.supabase.offline.internal.db.OfflineMutationOverlay.applyPendingMutations
+import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -23,18 +26,28 @@ import kotlinx.serialization.json.put
  * Direct unit coverage of the pure overlay function that patches queued mutations onto a cached
  * SELECT payload: INSERT appends, UPSERT merges, UPDATE patches matching rows, DELETE removes them.
  */
-class OfflineMutationOverlayTest {
+class MutationOverlayTest {
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Overlays [pending] onto [serverJson] for a query that admits every row. */
+    private fun overlay(json: Json, serverJson: String, pending: List<MutationRow>): String =
+        MutationOverlay(
+                json,
+                QueryAdmission.EVERY_ROW,
+                DefaultPrimaryKeys,
+                mayAlreadyHold = { true },
+            )
+            .overlay(serverJson, pending)
+
     @Test
-    fun applyPendingMutations_noPending_returnsServerJson() {
+    fun overlay_noPending_returnsServerJson() {
         // Given
         val serverJson = """[{"id":"1"}]"""
         val pending = emptyList<MutationRow>()
 
         // When
-        val result = applyPendingMutations(json, serverJson, pending)
+        val result = overlay(json, serverJson, pending)
 
         // Then
         assertEquals(serverJson, result)
@@ -57,7 +70,7 @@ class OfflineMutationOverlayTest {
         val serverJson = """[{"id":"1"}]"""
 
         // When
-        val result = applyPendingMutations(json, serverJson, pending)
+        val result = overlay(json, serverJson, pending)
 
         // Then
         val arr = json.parseToJsonElement(result) as JsonArray
@@ -106,7 +119,7 @@ class OfflineMutationOverlayTest {
         val serverJson = """[{"id":"1","name":"original"}]"""
 
         // When
-        val result = applyPendingMutations(json, serverJson, pending)
+        val result = overlay(json, serverJson, pending)
 
         // Then
         val arr = json.parseToJsonElement(result) as JsonArray
@@ -148,7 +161,7 @@ class OfflineMutationOverlayTest {
         val serverJson = """[{"id":"1","status":"old"},{"id":"2","status":"old"}]"""
 
         // When
-        val result = applyPendingMutations(json, serverJson, pending)
+        val result = overlay(json, serverJson, pending)
 
         // Then
         val arr = json.parseToJsonElement(result) as JsonArray
@@ -180,7 +193,7 @@ class OfflineMutationOverlayTest {
         val serverJson = """[{"id":"1"},{"id":"2"}]"""
 
         // When
-        val result = applyPendingMutations(json, serverJson, pending)
+        val result = overlay(json, serverJson, pending)
 
         // Then
         val arr = json.parseToJsonElement(result) as JsonArray
@@ -199,7 +212,7 @@ class OfflineMutationOverlayTest {
         val pending = mutationDao.pendingForTable("assets")
 
         // When
-        val result = applyPendingMutations(json, serverJson, pending)
+        val result = overlay(json, serverJson, pending)
 
         // Then
         assertEquals(serverJson, result)
@@ -248,7 +261,7 @@ class OfflineMutationOverlayTest {
             )
 
         // When
-        val result = applyPendingMutations(json, server, pending)
+        val result = overlay(json, server, pending)
 
         // Then
         assertEquals(server, result)

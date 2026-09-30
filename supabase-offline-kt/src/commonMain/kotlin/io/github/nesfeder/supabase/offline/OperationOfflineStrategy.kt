@@ -15,6 +15,10 @@ public sealed interface ReadStrategy {
      * Try to fetch from the network first. If the network is unavailable, fall back to the local
      * cache.
      *
+     * When the cache holds the query, a transport failure falls back at once: supabase-kt's retries
+     * of it are skipped, while a 503 or 520 is still retried on its schedule. With nothing cached,
+     * the read retries as a [NetworkOnly] read does.
+     *
      * @param cacheDuration If provided, the cached data is only used if it's newer than this
      *   duration. If the cache is expired, the network error is thrown instead.
      */
@@ -37,6 +41,9 @@ public sealed interface ReadStrategy {
 
     /**
      * Only fetch from the local cache. If the data is not in the cache, throw an error.
+     *
+     * No request is ever sent. A read of a shape the cache does not hold (`single()`, `head`, a
+     * count, `csv()`, …) throws [NoSuchElementException] saying so.
      *
      * @param cacheDuration If provided, the cached data is only used if it's newer than this
      *   duration. If the cache is expired, it's treated as a cache miss and an error is thrown.
@@ -75,22 +82,26 @@ public enum class FlowReadStrategy {
      *
      * Once the response is stored in the cache, start observing the cache for future changes.
      *
-     * If the network request fails, the Flow fails.
+     * If the network is unavailable and the cache holds the query, the Flow observes the cache as
+     * [ReadStrategy.NetworkFirst] falls back to it, at once. With nothing cached, or when the
+     * server answers with an error, the Flow fails.
      *
-     * The bootstrap request is the only refresh this strategy performs — there is no self-healing
-     * loop behind it — so it waits out the auth session-restore window before accepting an empty
-     * response, on the same bounded ladder the one-shot reads use (roughly 3.6s worst case). That
-     * keeps a cold-start subscription from bootstrapping off an RLS-filtered `[]` and then
-     * observing an empty cache indefinitely. Once the ladder is spent the empty is accepted; a
-     * genuinely-empty table therefore delays this strategy's first emission when the subscription
-     * starts mid-restore.
+     * The bootstrap waits out the auth session-restore window before accepting an answer that may
+     * not be the user's, on the same bounded ladder the one-shot reads use (roughly 3.6s worst
+     * case). When it could not get the user's answer — the network was unavailable, or the session
+     * never settled — the cache it shows is not confirmed: the refresh state is
+     * [RefreshState.Stalled], and the Flow fetches again, on the same schedule
+     * [CacheFirstThenNetwork] retries on, until it succeeds and is [RefreshState.Idle]. After that
+     * it fetches nothing more.
      */
     NetworkFirstThenCache,
 
     /**
      * Only observe the local cache.
      *
-     * No network request is performed. The Flow emits only cached data and future cache updates.
+     * No network request is performed. The Flow emits only cached data and future cache updates. A
+     * read of a shape the cache does not hold (`single()`, `head`, a count, `csv()`, …) fails with
+     * [NoSuchElementException] saying so.
      */
     CacheOnly,
 }
@@ -124,6 +135,12 @@ public enum class MutationStrategy {
      * A few writes cannot be queued faithfully and are sent directly, as with [OnlineOnly]: a
      * `dryRun()` write, an UPDATE or DELETE whose filter the queue cannot record exactly, and a
      * write whose identity cannot be read from the stored session.
+     *
+     * A write to a schema other than the client's default is never queued: the queue replays to the
+     * default schema only. It is sent at once, without waiting for writes that are queued, so it
+     * can reach the server before them; that schema's cached queries of the table are fetched
+     * again. When it cannot be sent for want of a connection it throws an `IOException` naming the
+     * schema.
      */
     QueueIfOffline,
 }

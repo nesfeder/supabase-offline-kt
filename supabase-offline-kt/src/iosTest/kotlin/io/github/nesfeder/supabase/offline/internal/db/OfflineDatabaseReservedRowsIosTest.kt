@@ -52,6 +52,21 @@ class OfflineDatabaseReservedRowsIosTest {
     }
 
     @Test
+    fun room_eviction_keeps_the_listed_signatures() = runTest {
+        scenarios.roomEvictionKeepsTheListedSignatures(dbPath)
+    }
+
+    @Test
+    fun room_finds_and_drops_query_shape_records() = runTest {
+        scenarios.roomFindsAndDropsQueryShapeRecords(dbPath)
+    }
+
+    @Test
+    fun room_drops_the_cached_queries_and_keeps_the_engines_rows() = runTest {
+        scenarios.roomDropsTheCachedQueriesAndKeepsTheEnginesRows(dbPath)
+    }
+
+    @Test
     fun room_replays_pending_writes_in_insertion_order() = runTest {
         scenarios.roomReplaysPendingWritesInInsertionOrder(dbPath)
     }

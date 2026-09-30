@@ -43,6 +43,39 @@ release.
 
 ### Changed
 
+- A locally written row shows only in the cached lists whose filters it matches, leaves a list it
+  stops matching, and joins one it starts matching when another cached list read with the same
+  columns holds it. `eq`, `neq`, `in` and `is` are evaluated with Postgres's null rules; a
+  condition the library cannot evaluate admits the row, and a pending update or delete filtered by
+  one changes nothing shown until it is sent. A queued row is still appended past a list's order
+  and limit.
+- An upsert is shown merged by its conflict columns, or by the table's key (`id` unless configured
+  otherwise), and every row of a multi-row upsert shows once.
+- Without the Auth plugin, with the app's own token provider, or signed out, an empty answer is
+  cached and reactive reads settle on it. A response received while a stored session restores or
+  refreshes is never cached.
+- With the Auth plugin, the cached rows and cached files belong to one identity at a time: when the
+  session settles into another, they are dropped. Queued mutations are kept for their owners.
+- `single()`, `maybeSingle()`, `head`, counts (a list with a count included), `csv()`, `geojson()`,
+  `stripNulls()` and `explain()` are never cached: they go to the network, and under `CacheOnly`
+  throw `NoSuchElementException` without sending anything.
+- A table in another schema is cached apart. A write to it with the default strategy is sent at
+  once and never queued; offline it throws.
+- Offline, a `NetworkFirst` read with a warm cache answers at once instead of after supabase-kt's
+  retries; `NetworkFirstThenCache` with a warm cache shows it as `Stalled` and keeps fetching
+  instead of failing; a `CacheFirstThenNetwork` refresh reports `Stalled` after about 3.6 s.
+- A slow collector of a `CacheFirstThenNetwork` read is handed the latest snapshot, not each one in
+  turn, and never holds back the query's other collectors.
+- The request lambda passed to a read or a write may run more than once, so it must configure the
+  same request every time.
+
 ### Deprecated
 
 ### Fixed
+
+- Rows a write returns (`select()`) are cached with the columns the caller wrote, matched by key;
+  an update that asks for rows back changes only the rows returned.
+- A write the cache cannot follow marks the cached lists it may reach stale, and they are fetched
+  again, instead of showing values the server no longer holds.
+- A cached list a live reader shows is never evicted, for up to 500 live readers.
+- A patched list keeps the time it was fetched, and a list made only of local writes is stale.

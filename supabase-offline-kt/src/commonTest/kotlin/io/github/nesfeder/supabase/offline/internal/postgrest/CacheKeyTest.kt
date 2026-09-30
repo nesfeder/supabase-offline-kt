@@ -13,11 +13,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 /**
- * The cache-key format. [SignatureBuilder]'s output is the `signature` column of every cached
- * SELECT, so a change here strands every row already cached on a device (it is never matched
- * again). These cases pin the format.
+ * The cache-key format. [cacheKeyOf]'s output is the `signature` column of every cached SELECT, so
+ * a change here strands every row already cached on a device (it is never matched again). These
+ * cases pin the format.
  */
-class SignatureBuilderTest {
+class CacheKeyTest {
 
     private fun dummyConversionMethod(): PropertyConversionMethod =
         PropertyConversionMethod { prop ->
@@ -31,7 +31,7 @@ class SignatureBuilderTest {
 
         // When
         val signature =
-            SignatureBuilder.build(
+            cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
                 request = { /* no params or headers */ },
@@ -48,7 +48,7 @@ class SignatureBuilderTest {
 
         // When
         val signature =
-            SignatureBuilder.build(
+            cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
                 request = {
@@ -69,7 +69,7 @@ class SignatureBuilderTest {
 
         // When
         val signature =
-            SignatureBuilder.build(
+            cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
                 request = {
@@ -89,7 +89,7 @@ class SignatureBuilderTest {
 
         // When
         val signature =
-            SignatureBuilder.build(
+            cacheKeyOf(
                 table = table,
                 columns = columns,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
@@ -109,7 +109,7 @@ class SignatureBuilderTest {
 
         // When
         val signature =
-            SignatureBuilder.build(
+            cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
                 request = {
@@ -128,7 +128,7 @@ class SignatureBuilderTest {
 
         // When
         val signature =
-            SignatureBuilder.build(
+            cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
                 request = {
@@ -183,12 +183,12 @@ class SignatureBuilderTest {
             }
 
         // We don't rely on the real builderFactory used in production;
-        // we just give SignatureBuilder a preconfigured builder.
+        // we just give cacheKeyOf a preconfigured builder.
         val builderFactory = { builder }
 
         // When
         val signature =
-            SignatureBuilder.build(
+            cacheKeyOf(
                 table = table,
                 builderFactory = builderFactory,
             ) {

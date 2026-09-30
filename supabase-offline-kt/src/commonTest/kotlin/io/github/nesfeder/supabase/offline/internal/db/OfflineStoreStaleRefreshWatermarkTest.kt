@@ -33,11 +33,10 @@ import kotlinx.serialization.json.jsonPrimitive
  * network SELECT response whose request went out *before* the table's most recent local write.
  *
  * The hazard is ordering, not emptiness. A refresh starts at t0 against server state S0; at t1 a
- * local mutation succeeds online and [OfflineStore.applyLocalMutationToCache] patches every cached
- * payload to S0+M; at t2 the refresh's S0 response arrives and overwrites that patch. Nothing
- * replays M — the online-success path uses an ephemeral overlay carrier and never enqueues — so the
- * row stays gone until some later SELECT happens to run. The user sees "I saved it and it
- * vanished".
+ * local mutation succeeds online and [OfflineStore.patchCachedQueries] patches every cached payload
+ * to S0+M; at t2 the refresh's S0 response arrives and overwrites that patch. Nothing replays M —
+ * the online-success path uses an ephemeral overlay carrier and never enqueues — so the row stays
+ * gone until some later SELECT happens to run. The user sees "I saved it and it vanished".
  *
  * The guard keys purely on **when the request started** relative to the write, which is what makes
  * it compose with the authoritative-empty accept rather than fight it: an in-flight refresh's
@@ -385,7 +384,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         tick = 20L
         store.markMutationSynced(id = queued.id, table = "projects")
         tick = 25L
-        store.clearSyncedMutationsForTable("projects", requestStartedAtTick)
+        store.retireCoveredSyncedMutations("projects", requestStartedAtTick)
 
         // Then — retirement is refused. The cached payload predates the replay, so dropping the
         // mutation row here would erase the write from the cache and the overlay at once.
@@ -415,7 +414,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             payload = bothProjects,
             requestStartedAtTick = requestStartedAtTick,
         )
-        store.clearSyncedMutationsForTable("projects", requestStartedAtTick)
+        store.retireCoveredSyncedMutations("projects", requestStartedAtTick)
 
         // Then — the ordinary retirement still happens; the queue does not grow without bound
         assertEquals(emptyList(), mutationDao.inserted)
@@ -486,7 +485,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
                 payload = oneProject,
                 requestStartedAtTick = requestStartedAtTick,
             )
-        store.clearSyncedMutationsForTable("projects", requestStartedAtTick)
+        store.retireCoveredSyncedMutations("projects", requestStartedAtTick)
 
         // Then — a delta-rebased replay establishes new server truth exactly like an absolute one:
         // it stamps the watermark, so the stale response is refused and its retirement suppressed.
@@ -519,7 +518,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
      * Applies the online-success insert of `project-2` — the write the stale response would erase.
      */
     private suspend fun OfflineStore.insertProjectTwo(liveSignatures: Set<String>? = null) {
-        applyLocalMutationToCache(
+        patchCachedQueries(
             table = "projects",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"project-2"}]""",

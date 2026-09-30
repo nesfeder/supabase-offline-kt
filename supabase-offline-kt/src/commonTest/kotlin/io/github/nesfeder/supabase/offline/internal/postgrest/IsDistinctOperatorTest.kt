@@ -7,6 +7,7 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
@@ -21,9 +22,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -81,7 +79,7 @@ class IsDistinctOperatorTest {
         val replayed = SelectRequestBuilder(SCHEMA, CONVERSION)
 
         // When
-        val matches = FilterEngine.matchesRow(row, descriptor)
+        val match = rowMatch(row, descriptor)
         val applied = FilterEngine.applyTo(replayed, descriptor)
 
         // Then — replayed through the generic filter call, exactly as the caller wrote it
@@ -89,18 +87,25 @@ class IsDistinctOperatorTest {
         assertEquals(1, applied)
         assertEquals(mapOf("status" to listOf("isdistinct.done")), replayed.params)
         assertTrue(FilterEngine.replaysFully(descriptor))
-        // And — the overlay still cannot evaluate it, so it never claims a match
-        assertFalse(matches)
+        // And — the overlay does not evaluate it, so it never claims a match
+        assertEquals(RowMatch.UNKNOWN, match)
     }
 
     @Test
-    fun a_cached_query_filtered_on_isdistinct_is_not_exhaustive() {
+    fun a_cached_query_filtered_on_isdistinct_admits_any_row() {
         // Given / When
-        val filters = assertNotNull(parseSignatureFilters("todos?status=isdistinct.done"))
+        val builder =
+            SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply {
+                filter { filter("status", FilterOperator.ISDISTINCT, "done") }
+            }
+        val admission = queryShapeOf(Columns.ALL, builder).admission
 
-        // Then — the admit gate falls back to appending rather than hiding a row
-        assertFalse(filters.exhaustive)
-        assertNull(filters.descriptor)
+        // Then — the condition is not evaluated, so it never hides a row
+        assertEquals(
+            RowMatch.UNKNOWN,
+            rowMatch(buildJsonObject { put("status", "done") }, admission.conditions.single()),
+        )
+        assertTrue(admission.admits(buildJsonObject { put("status", "done") }))
     }
 
     @Test

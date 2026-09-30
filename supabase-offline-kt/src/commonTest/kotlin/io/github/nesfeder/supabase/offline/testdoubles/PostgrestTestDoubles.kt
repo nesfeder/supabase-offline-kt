@@ -11,6 +11,7 @@ import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.internal.postgrest.ReadShape
 import io.ktor.http.HeadersBuilder
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -106,6 +107,15 @@ internal class FakePostgrestQueryBuilderWrapper(
             false -> DryRunVerdict.NotDryRun
             null -> DryRunVerdict.Unavailable
         }
+
+    /**
+     * Every read is a row list: a scripted handle builds no HTTP request whose shape could be read.
+     */
+    override suspend fun shapeOf(
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+        onBuilt: (SelectRequestBuilder) -> Unit,
+    ): ReadShape = ReadShape.RowList
 }
 
 /**

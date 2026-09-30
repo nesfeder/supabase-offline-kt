@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
@@ -49,15 +50,17 @@ import kotlinx.serialization.json.put
 
 /**
  * Integration tests across the real resolver stack:
- * [OfflineSelectResolver] + [cacheFirstWithParallelRefresh] + a real [OfflineStore] (in-memory DAO
- * fakes) + a real [RefreshCoordinator]. Only the network SELECT is scripted.
+ * [QueryReader] + [cacheFirstWithParallelRefresh] + a real [OfflineStore] (in-memory DAO fakes) + a
+ * real [RefreshCoordinator]. Only the network SELECT is scripted.
  *
  * These pin the junctions the isolated unit tests can't: the resolver wiring the accelerator and
  * coordinator into the combinator, the per-query [OfflineReadResult] surface, single-flight
- * sharing, and the Part B removal of the empty-array cache seed.
+ * sharing, and the Part B removal of the empty-array cache seed. They run under
+ * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], the rule the engine followed before the settled
+ * session became the default, to pin that it still behaves exactly as it did.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class OfflineSelectResolverRecoveryTest {
+class QueryReaderRecoveryTest {
 
     private val freshPayload = """[{"id":"project-1"}]"""
 
@@ -92,8 +95,7 @@ class OfflineSelectResolverRecoveryTest {
             runCurrent()
 
             // Then: the first emission is the typed no-data state, and the ladder exhaustion is
-            // Stalled —
-            // never a fabricated empty payload
+            // Stalled — never a fabricated empty payload
             assertNull(
                 reads.first().result,
                 "fresh cache-less subscription starts at no-data, not empty []",
@@ -237,8 +239,7 @@ class OfflineSelectResolverRecoveryTest {
             // Then: the memoized single-flight share did not replay the first subscription's stale
             // outcome — with replayExpirationMillis = 0 the replay cache was dropped when the last
             // collector left, so the re-subscription starts a genuinely fresh refresh (second
-            // network
-            // call) and observes the fresh payload rather than a stale replayed one.
+            // network call) and observes the fresh payload rather than a stale replayed one.
             assertEquals(2, networkCalls, "a re-subscription starts a fresh refresh, not a replay")
             assertEquals(
                 secondPayload,
@@ -253,8 +254,7 @@ class OfflineSelectResolverRecoveryTest {
     fun one_shot_cache_first_misses_cache_when_a_live_subscription_is_unpopulated() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a live CacheFirstThenNetwork subscription whose network is down — with the
-            // seed
-            // removed, it populates nothing
+            // seed removed, it populates nothing
             val postgrest = testPostgrest()
             var failing = true
             val wrapper =
@@ -280,8 +280,7 @@ class OfflineSelectResolverRecoveryTest {
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.CacheFirst()) {}
 
             // Then: it missed the (non-existent, un-seeded) cache and went to the network — a
-            // phantom
-            // "[]" seed would have short-circuited it to an empty cache hit instead
+            // phantom "[]" seed would have short-circuited it to an empty cache hit instead
             assertEquals(freshPayload, oneShot.data)
 
             live.cancelAndJoin()
@@ -349,7 +348,7 @@ class OfflineSelectResolverRecoveryTest {
             // server (legitimately or RLS-filtered, the client can't tell yet) returns []
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authState = AuthSessionState.AUTHENTICATED
+            var authState: RequestSession = SIGNED_IN
             val accelerator = MutableSharedFlow<Unit>()
             val wrapper =
                 FakePostgrestQueryBuilderWrapper(
@@ -370,7 +369,7 @@ class OfflineSelectResolverRecoveryTest {
             // a genuinely fresh refresh instead of attaching to the completed one.
             advanceUntilIdle()
             serverRows = "[]"
-            authState = AuthSessionState.RESTORING
+            authState = RequestSession.Restoring
 
             // When: a new subscription refreshes during the restore window
             val emissions = mutableListOf<String>()
@@ -390,7 +389,7 @@ class OfflineSelectResolverRecoveryTest {
 
             // When: session restore completes and fires the recovery accelerator (the
             // auth-restored edge), short-circuiting the current backoff sleep
-            authState = AuthSessionState.AUTHENTICATED
+            authState = SIGNED_IN
             accelerator.emit(Unit)
             runCurrent()
 
@@ -440,7 +439,7 @@ class OfflineSelectResolverRecoveryTest {
             // subscription torn down but the cache not yet cleared
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authState = AuthSessionState.AUTHENTICATED
+            var authState: RequestSession = SIGNED_IN
             val wrapper =
                 FakePostgrestQueryBuilderWrapper(
                     table = "plans",
@@ -465,7 +464,7 @@ class OfflineSelectResolverRecoveryTest {
 
             // When: a one-shot NetworkFirst read runs on the anon key and RLS filters every row
             serverRows = "[]"
-            authState = AuthSessionState.UNAUTHENTICATED
+            authState = RequestSession.SignedOut
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
             // Then: the caller still sees the server response, but the RLS-shaped empty says
@@ -484,14 +483,14 @@ class OfflineSelectResolverRecoveryTest {
             // flipping the session state from within onSelect.
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authState = AuthSessionState.AUTHENTICATED
+            var authState: RequestSession = SIGNED_IN
             var flipMidRequest = false
             val wrapper =
                 FakePostgrestQueryBuilderWrapper(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
-                        if (flipMidRequest) authState = AuthSessionState.UNAUTHENTICATED
+                        if (flipMidRequest) authState = RequestSession.SignedOut
                         postgrestResultOf(serverRows, postgrest)
                     },
                 )
@@ -533,7 +532,7 @@ class OfflineSelectResolverRecoveryTest {
             // snapshot instead, this attempt would wrongly accept the [] AND schedule a retry.
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authStateProvider: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED }
+            var authStateProvider: () -> RequestSession = { SIGNED_IN }
             val wrapper =
                 FakePostgrestQueryBuilderWrapper(
                     table = "plans",
@@ -554,8 +553,7 @@ class OfflineSelectResolverRecoveryTest {
             serverRows = "[]"
             var stateReads = 0
             authStateProvider = {
-                if (stateReads++ == 0) AuthSessionState.RESTORING
-                else AuthSessionState.AUTHENTICATED
+                if (stateReads++ == 0) RequestSession.Restoring else SIGNED_IN
             }
 
             // When: a new subscription runs its first refresh attempt (snapshot = RESTORING)
@@ -603,7 +601,7 @@ class OfflineSelectResolverRecoveryTest {
                 // data that exists
                 val postgrest = testPostgrest()
                 var serverRows = "[]"
-                var authState = AuthSessionState.RESTORING
+                var authState: RequestSession = RequestSession.Restoring
                 var networkCalls = 0
                 val accelerator = MutableSharedFlow<Unit>()
                 val wrapper =
@@ -639,7 +637,7 @@ class OfflineSelectResolverRecoveryTest {
 
                 // When: session restore completes and fires the recovery accelerator (the
                 // auth-restored edge), short-circuiting the current backoff sleep
-                authState = AuthSessionState.AUTHENTICATED
+                authState = SIGNED_IN
                 serverRows = freshPayload
                 accelerator.emit(Unit)
                 runCurrent()
@@ -677,7 +675,7 @@ class OfflineSelectResolverRecoveryTest {
                 buildResolver(
                     wrapper = wrapper,
                     scope = backgroundScope,
-                    authState = { AuthSessionState.RESTORING },
+                    authState = { RequestSession.Restoring },
                     objectDao = objectDao,
                 )
 
@@ -722,7 +720,7 @@ class OfflineSelectResolverRecoveryTest {
             // of it is simply never delivered — this test emits no edge at all to model that.
             val postgrest = testPostgrest()
             var serverRows = "[]"
-            var authState = AuthSessionState.RESTORING
+            var authState: RequestSession = RequestSession.Restoring
             var networkCalls = 0
             val wrapper =
                 FakePostgrestQueryBuilderWrapper(
@@ -744,7 +742,7 @@ class OfflineSelectResolverRecoveryTest {
             assertEquals(1, networkCalls)
 
             // When: the session finishes restoring mid-wait and nothing wakes the ladder
-            authState = AuthSessionState.AUTHENTICATED
+            authState = SIGNED_IN
             serverRows = freshPayload
 
             // Then: the very next step boundary observes it and fires — the missed edge costs one
@@ -764,7 +762,7 @@ class OfflineSelectResolverRecoveryTest {
             // result — rather than on the raw server body — would skip the ladder entirely.
             val postgrest = testPostgrest()
             var serverRows = "[]"
-            var authState = AuthSessionState.RESTORING
+            var authState: RequestSession = RequestSession.Restoring
             var networkCalls = 0
             val accelerator = MutableSharedFlow<Unit>()
             val wrapper =
@@ -810,7 +808,7 @@ class OfflineSelectResolverRecoveryTest {
             )
 
             // When: the session returns
-            authState = AuthSessionState.AUTHENTICATED
+            authState = SIGNED_IN
             serverRows = freshPayload
             accelerator.emit(Unit)
             runCurrent()
@@ -846,7 +844,7 @@ class OfflineSelectResolverRecoveryTest {
                 buildResolver(
                     wrapper = wrapper,
                     scope = backgroundScope,
-                    authState = { AuthSessionState.RESTORING },
+                    authState = { RequestSession.Restoring },
                     store = store,
                 )
             val oneShot = async { resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {} }
@@ -870,10 +868,10 @@ class OfflineSelectResolverRecoveryTest {
         }
 
     @Test
-    fun one_shot_non_empty_response_while_restoring_returns_without_waiting() =
+    fun one_shot_non_empty_response_while_restoring_waits_for_the_session_like_an_empty_one() =
         runTest(UnconfinedTestDispatcher()) {
-            // Given: the session is still restoring, but the request came back with rows — the
-            // restore window only matters when it actually shapes the answer
+            // Given: the session is still restoring, and the request came back with rows — the anon
+            // key's answer, narrowed by RLS whatever its size
             val postgrest = testPostgrest()
             var networkCalls = 0
             val wrapper =
@@ -889,16 +887,17 @@ class OfflineSelectResolverRecoveryTest {
                 buildResolver(
                     wrapper = wrapper,
                     scope = backgroundScope,
-                    authState = { AuthSessionState.RESTORING },
+                    authState = { RequestSession.Restoring },
                 )
 
             // When: a one-shot read runs
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
-            // Then: it returns on the first attempt, with no backoff spent
+            // Then: it waits out the restore window (300, 900 and 2,400 ms), asks once more, and
+            // returns that answer uncached when the session never settles
             assertEquals(freshPayload, oneShot.data)
-            assertEquals(1, networkCalls, "a non-empty response never enters the ladder")
-            assertEquals(0L, currentTime, "and never sleeps")
+            assertEquals(2, networkCalls, "a non-empty response waits for the session too")
+            assertEquals(3_600L, currentTime)
         }
 
     @Test
@@ -923,7 +922,7 @@ class OfflineSelectResolverRecoveryTest {
                 buildResolver(
                     wrapper = wrapper,
                     scope = backgroundScope,
-                    authState = { AuthSessionState.UNAUTHENTICATED },
+                    authState = { RequestSession.SignedOut },
                     objectDao = objectDao,
                 )
 
@@ -958,7 +957,7 @@ class OfflineSelectResolverRecoveryTest {
                 buildResolver(
                     wrapper = wrapper,
                     scope = backgroundScope,
-                    authState = { AuthSessionState.AUTHENTICATED },
+                    authState = { SIGNED_IN },
                     objectDao = objectDao,
                 )
 
@@ -981,7 +980,7 @@ class OfflineSelectResolverRecoveryTest {
             // been retired yet — its overlay is still standing in for server state
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            var authState = AuthSessionState.AUTHENTICATED
+            var authState: RequestSession = SIGNED_IN
             val wrapper =
                 FakePostgrestQueryBuilderWrapper(
                     table = "plans",
@@ -1023,7 +1022,7 @@ class OfflineSelectResolverRecoveryTest {
 
             // When: the next SELECT comes back RLS-shaped empty and the cache refuses it
             serverRows = "[]"
-            authState = AuthSessionState.UNAUTHENTICATED
+            authState = RequestSession.SignedOut
             resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
             // Then: the refused payload did not authorize retirement. Retiring the overlay while
@@ -1045,7 +1044,7 @@ class OfflineSelectResolverRecoveryTest {
             // refresh is failing — the anon-key request is RLS-filtered to []
             val postgrest = testPostgrest()
             var serverRows = "[]"
-            var authState = AuthSessionState.UNAUTHENTICATED
+            var authState: RequestSession = RequestSession.SignedOut
             val accelerator = MutableSharedFlow<Unit>()
             val wrapper =
                 FakePostgrestQueryBuilderWrapper(
@@ -1092,7 +1091,7 @@ class OfflineSelectResolverRecoveryTest {
             )
 
             // When: the session comes back and the auth-restored edge fires
-            authState = AuthSessionState.AUTHENTICATED
+            authState = SIGNED_IN
             serverRows = freshPayload
             accelerator.emit(Unit)
             runCurrent()
@@ -1121,8 +1120,7 @@ class OfflineSelectResolverRecoveryTest {
                     onSelect = {
                         networkCalls++
                         // Snapshot before parking: this request's answer is the server as it was
-                        // when
-                        // the request went out, not as it is when the response is finally
+                        // when the request went out, not as it is when the response is finally
                         // delivered.
                         val answer = serverRows
                         if (networkCalls == 2) inFlight.await()
@@ -1154,7 +1152,7 @@ class OfflineSelectResolverRecoveryTest {
             }
             runCurrent()
             assertEquals(2, networkCalls, "the second subscription's refresh must be in flight")
-            store.applyLocalMutationToCache(
+            store.patchCachedQueries(
                 table = "projects",
                 operation = MutationOperation.INSERT,
                 bodyJson = """[{"id":"project-2"}]""",
@@ -1245,14 +1243,15 @@ class OfflineSelectResolverRecoveryTest {
         wrapper: FakePostgrestQueryBuilderWrapper,
         scope: CoroutineScope,
         accelerator: MutableSharedFlow<Unit> = MutableSharedFlow(),
-        authState: () -> AuthSessionState = { AuthSessionState.AUTHENTICATED },
+        authState: () -> RequestSession = { SIGNED_IN },
         objectDao: FakeObjectDao = FakeObjectDao(),
         store: OfflineStore = buildStore(objectDao),
-    ): OfflineSelectResolver =
-        OfflineSelectResolver(
+    ): QueryReader =
+        QueryReader(
             delegate = wrapper,
             store = store,
-            authSessionState = authState,
+            requestSession = authState,
+            trustPolicy = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
             refreshCoordinator = RefreshCoordinator(scope),
             accelerator = accelerator,
         )
@@ -1272,4 +1271,9 @@ class OfflineSelectResolverRecoveryTest {
             objectDao = objectDao,
             mutationDao = mutationDao,
         )
+
+    private companion object {
+        /** A signed-in session, as the reader's session source reports one. */
+        val SIGNED_IN: RequestSession = RequestSession.SignedIn(QueueIdentity.User("u-1"))
+    }
 }

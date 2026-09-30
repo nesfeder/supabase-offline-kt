@@ -24,9 +24,9 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * Tests that the object cache's read-modify-write paths are serialized per table.
  *
- * [OfflineStore.applyLocalMutationToCache] snapshots every cached payload for a table, patches each
- * in memory, and writes each back whole. Two of those running at once on the same table — a batch
- * job persists its rows from several parallel workers, and two sync runs can drive that job
+ * [OfflineStore.patchCachedQueries] snapshots every cached payload for a table, patches each in
+ * memory, and writes each back whole. Two of those running at once on the same table — a batch job
+ * persists its rows from several parallel workers, and two sync runs can drive that job
  * concurrently — used to interleave freely: the second writer read the payload before the first had
  * written, appended its own row, and wrote the first's row back out. Nothing replays an
  * online-success overlay (it never enters the mutation queue), so the lost row stayed out of every
@@ -115,7 +115,7 @@ class OfflineStoreConcurrentWriteTest {
     }
 
     private suspend fun OfflineStore.insertRating(itemId: Int) {
-        applyLocalMutationToCache(
+        patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = ratingsPayload(itemId),

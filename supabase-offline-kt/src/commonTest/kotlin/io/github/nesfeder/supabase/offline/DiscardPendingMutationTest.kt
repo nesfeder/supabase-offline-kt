@@ -87,7 +87,7 @@ class DiscardPendingMutationTest {
         renameOffline(1, "renamed")
         assertEquals(
             """[{"id":1,"title":"renamed"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, SIGNATURE).first(),
+            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
         )
 
         // When
@@ -96,7 +96,7 @@ class DiscardPendingMutationTest {
         // Then
         assertEquals(
             """[{"id":1,"title":"original"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, SIGNATURE).first(),
+            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
         )
     }
 

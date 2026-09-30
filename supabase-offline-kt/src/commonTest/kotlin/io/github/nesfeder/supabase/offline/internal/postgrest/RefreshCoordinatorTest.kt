@@ -116,6 +116,56 @@ class RefreshCoordinatorTest {
         }
 
     @Test
+    fun a_slow_collector_is_handed_the_latest_value_before_the_failure() = runTest {
+        val oneThread = Dispatchers.Default.limitedParallelism(1)
+        repeat(SLOW_COLLECTOR_ATTEMPTS) { attempt ->
+            // Given — a shared read whose upstream sends two values and fails while its collector
+            // is still busy with the first
+            val dispatcher = if (attempt % 2 == 0) oneThread else Dispatchers.Default
+            val coordinator =
+                RefreshCoordinator(CoroutineScope(scope.coroutineContext + dispatcher))
+            val seen = mutableListOf<RefreshState>()
+
+            // When
+            val failure =
+                withContext(dispatcher) {
+                    withTimeout(5.seconds) {
+                        runCatching {
+                            coordinator
+                                .sharedReadFlow(TABLE, "todos?slow=$attempt") {
+                                    flow {
+                                        emit(
+                                            OfflineReadResult(
+                                                result = null,
+                                                refresh = RefreshState.InFlight,
+                                            )
+                                        )
+                                        emit(
+                                            OfflineReadResult(
+                                                result = null,
+                                                refresh = RefreshState.Idle,
+                                            )
+                                        )
+                                        throw IOException(MALFORMED)
+                                    }
+                                }
+                                .collect { value ->
+                                    seen += value.refresh
+                                    delay(SLOW_COLLECTOR_MILLIS)
+                                }
+                        }
+                            .exceptionOrNull()
+                    }
+                }
+
+            // Then — the latest value it had not taken yet, then the failure itself
+            assertEquals(RefreshState.Idle, seen.lastOrNull(), "attempt $attempt saw $seen")
+            assertIs<IOException>(failure, "attempt $attempt ended with $failure")
+            assertEquals(MALFORMED, failure.message)
+        }
+    }
+
+    @Test
     fun a_shared_upstream_that_gives_up_with_a_cancellation_ends_the_collection_with_it() =
         runTest {
             // Given — a shared read whose upstream gives up with a cancellation of its own
@@ -242,5 +292,9 @@ class RefreshCoordinatorTest {
         const val FAILURE_ORDERINGS = 500
         const val MALFORMED = "database disk image is malformed"
         const val UPSTREAM_GAVE_UP = "the shared upstream gave up"
+        const val SLOW_COLLECTOR_ATTEMPTS = 20
+
+        /** How long the slow collector takes over each value: long past the upstream's failure. */
+        const val SLOW_COLLECTOR_MILLIS = 20L
     }
 }

@@ -39,7 +39,7 @@ class OverlayPrimaryKeyTest {
         // Then
         assertEquals(
             """[{"id":"x","title":"from the server"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, TABLE).first(),
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -54,7 +54,7 @@ class OverlayPrimaryKeyTest {
         // Then
         assertEquals(
             """[{"id":"x","title":"new","done":false}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, TABLE).first(),
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -73,7 +73,7 @@ class OverlayPrimaryKeyTest {
         // Then
         assertEquals(
             """[{"id":"x","title":"old"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, TABLE).first(),
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -88,7 +88,7 @@ class OverlayPrimaryKeyTest {
         // Then — nothing on the server can be it, so it is shown
         assertEquals(
             """[{"list_id":"A","id":1,"title":"a1"},{"list_id":"B","id":1,"title":"b1"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, TABLE).first(),
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -103,7 +103,7 @@ class OverlayPrimaryKeyTest {
         // Then
         assertEquals(
             """[{"title":"same"},{"title":"same"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, TABLE).first(),
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 

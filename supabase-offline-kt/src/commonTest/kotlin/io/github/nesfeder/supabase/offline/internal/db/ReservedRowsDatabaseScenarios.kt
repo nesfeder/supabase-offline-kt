@@ -129,7 +129,8 @@ internal class ReservedRowsDatabaseScenarios(
 
             // When
             val size = objectDao.totalPayloadBytes()
-            val evicted = objectDao.deleteOldestPayloadRows(limit = 10)
+            val evicted =
+                objectDao.deleteOldestPayloadRows(limit = 10, keptSignatures = emptyList())
 
             // Then — only the cache rows counted and only they were evicted
             assertEquals(
@@ -138,6 +139,98 @@ internal class ReservedRowsDatabaseScenarios(
             )
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, evicted)
             assertEquals(2L, PreviousEngineQueries.reservedRowCount(path))
+        } finally {
+            database.close()
+        }
+    }
+
+    /**
+     * Room's delete of every table's rows but the engine's own: the cached queries go, and the
+     * reserved rows stay.
+     */
+    suspend fun roomDropsTheCachedQueriesAndKeepsTheEnginesRows(path: String) {
+        // Given — the shipped database's cache rows, and two rows of the engine's own
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val objectDao = database.objectDao()
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE, "{}", 0))
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE, "{}", 0))
+            val reservedBefore = PreviousEngineQueries.reservedRowCount(path)
+
+            // When
+            objectDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
+
+            // Then
+            ShippedDatabaseFixture.OBJECT_ROWS.map { row -> row.table }
+                .distinct()
+                .forEach { table -> assertEquals(emptyList(), objectDao.signaturesForTable(table)) }
+            assertEquals(reservedBefore, PreviousEngineQueries.reservedRowCount(path))
+            assertEquals(2L, reservedBefore)
+        } finally {
+            database.close()
+        }
+    }
+
+    /**
+     * Room's queries over query-shape records: found and deleted by prefix, and those whose payload
+     * is gone deleted as orphans, while the rest stay.
+     */
+    suspend fun roomFindsAndDropsQueryShapeRecords(path: String) {
+        // Given — one cached payload, its shape record, and a record whose payload is gone
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val objectDao = database.objectDao()
+            val payload = ShippedDatabaseFixture.OBJECT_ROWS.first()
+            val prefix = "$QUERY_SHAPE_SIGNATURE_PREFIX${payload.table}\u001F"
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, prefix + payload.signature, "{}", 0))
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, prefix + "gone?x=eq.1", "{}", 0))
+
+            // When / Then — both found by prefix; the orphan dropped; the rest by prefix
+            assertEquals(2, objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).size)
+            assertEquals(1, objectDao.deleteOrphanedQueryShapes())
+            assertEquals(
+                listOf(prefix + payload.signature),
+                objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).map { row ->
+                    row.signature
+                },
+            )
+            objectDao.deleteWithSignaturePrefix(RESERVED_TABLE_NAME, prefix)
+            assertEquals(
+                emptyList(),
+                objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix),
+            )
+            assertEquals(
+                ShippedDatabaseFixture.OBJECT_ROWS.size,
+                objectDao.signaturesForTable(payload.table).size,
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    /**
+     * Room's eviction query passes over the signatures it is told to keep, however old they are.
+     */
+    suspend fun roomEvictionKeepsTheListedSignatures(path: String) {
+        // Given — the shipped database's cache rows
+        ShippedDatabaseFixture.writeTo(path)
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val objectDao = database.objectDao()
+            val kept = ShippedDatabaseFixture.OBJECT_ROWS.first()
+
+            // When — every row is evicted but one a live reader shows
+            val evicted =
+                objectDao.deleteOldestPayloadRows(
+                    limit = 100,
+                    keptSignatures = listOf(kept.signature),
+                )
+
+            // Then
+            assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size - 1, evicted)
+            assertEquals(listOf(kept.signature), objectDao.signaturesForTable(kept.table))
         } finally {
             database.close()
         }

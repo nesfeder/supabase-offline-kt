@@ -44,7 +44,7 @@ class ClearLocalDataAtomicityTest {
         val next = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
         next.identityProvider = { USER_B.storedValue }
         objectDao.seedPayload(TABLE, TABLE, """[{"id":"1","title":"B's row"}]""")
-        val shownToB = next.cachePayloadWithOverlayFlow(TABLE, TABLE).first()
+        val shownToB = next.overlaidPayloadFlow(TABLE, TABLE).first()
         val server = RecordingPostgrestServer()
         MutationQueueReplayer(
                 store = next,

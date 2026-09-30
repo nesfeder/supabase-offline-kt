@@ -106,8 +106,9 @@ internal enum class CommitOutcome {
     COMMITTED,
 
     /**
-     * Local data was cleared while the file downloaded; it belongs to the outgoing session, so it
-     * was not kept. The temporary file is left for the caller to read and then [discard].
+     * Local data was cleared while the file downloaded, or the cache is another identity's; the
+     * file belongs to another session, so it was not kept. The temporary file is left for the
+     * caller to read and then [discard].
      */
     CLEARED,
 
@@ -222,13 +223,15 @@ internal class StorageFileCache(
      * The cached copy of [entry], marked as used now, or `null` when it is not cached.
      *
      * The file is [entry]'s own, wherever its row says it was written. A row recorded under a
-     * mapping this version no longer uses is dropped, and counts as not cached.
+     * mapping this version no longer uses is dropped, and counts as not cached; so does every entry
+     * while the cache is not the current identity's.
      *
      * @param entry the entry.
      * @return the cached file, reporting the size of the file on disk.
      */
     suspend fun lookup(entry: StorageCacheEntry): CachedFile? =
         withContext(Dispatchers.IO) {
+            if (!store.cacheServesCurrentIdentity()) return@withContext null
             val row =
                 store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return@withContext null
             if (row.recordsOutdatedPath(entry)) {
@@ -410,7 +413,10 @@ internal class StorageFileCache(
                     }
                     return@withLock CommitOutcome.FAILED
                 }
-                if (generation.load() != startedInGeneration) {
+                if (
+                    generation.load() != startedInGeneration ||
+                        !store.cacheTakesWritesOfCurrentIdentity()
+                ) {
                     sdkLogger.info {
                         "Storage download from ${entry.bucketId} finished after local data was cleared; not caching"
                     }

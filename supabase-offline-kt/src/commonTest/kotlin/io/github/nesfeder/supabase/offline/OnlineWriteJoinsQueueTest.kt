@@ -77,7 +77,7 @@ class OnlineWriteJoinsQueueTest {
         )
         assertEquals(
             """[{"id":1,"title":"B"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, SIGNATURE).first(),
+            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
         )
     }
 

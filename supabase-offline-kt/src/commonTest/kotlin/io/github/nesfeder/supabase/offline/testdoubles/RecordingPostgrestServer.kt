@@ -59,7 +59,25 @@ internal class RecordingPostgrestServer(
         val contentProfile: String?,
         val acceptProfile: String?,
         val body: String,
-    )
+    ) {
+        /**
+         * The `Accept` header values, comma-joined, or `null`: the shape a read asks for. Outside
+         * equality, so a test that pins a write's wire form need not spell the client's own value.
+         */
+        var accept: String? = null
+
+        /**
+         * The `Authorization` header, or `null`: whose token the request carried. Outside equality
+         * too.
+         */
+        var authorization: String? = null
+
+        /**
+         * The `x-retry-count` header, or `null`: the retry supabase-kt numbered it. Outside
+         * equality.
+         */
+        var retryCount: String? = null
+    }
 
     /** Every request received, in order. */
     val requests: MutableList<RecordedRequest> = mutableListOf()
@@ -72,17 +90,22 @@ internal class RecordingPostgrestServer(
                 addHandler { request ->
                     val recorded =
                         RecordedRequest(
-                            method = request.method.value,
-                            table = request.url.encodedPath.substringAfterLast('/'),
-                            query =
-                                request.url.parameters.names().associateWith { name ->
-                                    request.url.parameters[name].orEmpty()
-                                },
-                            prefer = request.headers["Prefer"],
-                            contentProfile = request.headers["Content-Profile"],
-                            acceptProfile = request.headers["Accept-Profile"],
-                            body = request.body.toByteArray().decodeToString(),
-                        )
+                                method = request.method.value,
+                                table = request.url.encodedPath.substringAfterLast('/'),
+                                query =
+                                    request.url.parameters.names().associateWith { name ->
+                                        request.url.parameters[name].orEmpty()
+                                    },
+                                prefer = request.headers["Prefer"],
+                                contentProfile = request.headers["Content-Profile"],
+                                acceptProfile = request.headers["Accept-Profile"],
+                                body = request.body.toByteArray().decodeToString(),
+                            )
+                            .apply {
+                                accept = request.headers.getAll("Accept")?.joinToString(",")
+                                authorization = request.headers["Authorization"]
+                                retryCount = request.headers["x-retry-count"]
+                            }
                     requests += recorded
                     answer(recorded)
                 }

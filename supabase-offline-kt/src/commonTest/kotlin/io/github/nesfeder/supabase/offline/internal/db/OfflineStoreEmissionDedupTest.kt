@@ -22,7 +22,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Emission-dedup contract of [OfflineStore.cachePayloadWithOverlayFlow]: identical payloads and
+ * Emission-dedup contract of [OfflineStore.overlaidPayloadFlow]: identical payloads and
  * unrelated-table mutation writes must not re-emit (and so must never fan out as re-decode work in
  * downstream repositories), while a genuinely-changed payload always propagates.
  *
@@ -40,10 +40,7 @@ class OfflineStoreEmissionDedupTest {
             val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { now })
             val emissions = mutableListOf<String?>()
             val collector = launch {
-                store
-                    .cachePayloadWithOverlayFlow("ratings", "sig-A")
-                    .onEach { emissions.add(it) }
-                    .collect()
+                store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
             now = 1L
             store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
@@ -70,10 +67,7 @@ class OfflineStoreEmissionDedupTest {
             val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { 1L })
             val emissions = mutableListOf<String?>()
             val collector = launch {
-                store
-                    .cachePayloadWithOverlayFlow("ratings", "sig-A")
-                    .onEach { emissions.add(it) }
-                    .collect()
+                store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
             store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
             val emissionsBeforeUnrelatedWrite = emissions.size
@@ -110,10 +104,7 @@ class OfflineStoreEmissionDedupTest {
             val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { now })
             val emissions = mutableListOf<String?>()
             val collector = launch {
-                store
-                    .cachePayloadWithOverlayFlow("ratings", "sig-A")
-                    .onEach { emissions.add(it) }
-                    .collect()
+                store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
             now = 1L
             store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)

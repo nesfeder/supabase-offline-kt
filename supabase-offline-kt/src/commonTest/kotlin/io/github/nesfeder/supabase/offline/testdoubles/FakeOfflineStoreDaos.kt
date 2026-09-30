@@ -61,12 +61,12 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * Optional suspension point inside [allForTable], invoked with the table name **after** the
      * snapshot the call will return has been taken and **before** it is returned.
      *
-     * `OfflineStore.applyLocalMutationToCache` is a read-modify-write — snapshot every cached
-     * payload for the table, patch each, write each back — and this is the seam between its read
-     * and its write. A test parks one writer here (`CompletableDeferred.await()`) so a second
-     * writer can run to completion against the *same* pre-write snapshot: the exact interleaving
-     * behind a lost update, reproduced deterministically instead of by timing. `null` (the default)
-     * makes [allForTable] return immediately, as Room would.
+     * `OfflineStore.patchCachedQueries` is a read-modify-write — snapshot every cached payload for
+     * the table, patch each, write each back — and this is the seam between its read and its write.
+     * A test parks one writer here (`CompletableDeferred.await()`) so a second writer can run to
+     * completion against the *same* pre-write snapshot: the exact interleaving behind a lost
+     * update, reproduced deterministically instead of by timing. `null` (the default) makes
+     * [allForTable] return immediately, as Room would.
      */
     var onAllForTableSnapshot: (suspend (table: String) -> Unit)? = null
 
@@ -127,7 +127,15 @@ internal class FakeObjectDao : InMemoryObjectDao() {
         return snapshot
     }
 
+    /**
+     * Optional suspension point inside [upsert], invoked with the row before it is written: the
+     * seam where a store's write can be parked inside its locks while another writer queues on
+     * them. `null` (the default) writes at once.
+     */
+    var onUpsert: (suspend (row: ObjectRow) -> Unit)? = null
+
     override suspend fun upsert(row: ObjectRow) {
+        onUpsert?.invoke(row)
         check(failUpsertOf?.invoke(row) != true) { "Scripted write failure" }
         writes++
         super.upsert(row)
@@ -136,13 +144,13 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     override suspend fun totalPayloadBytes(): Long =
         fixedTotalPayloadBytes ?: super.totalPayloadBytes()
 
-    override suspend fun deleteOldestPayloadRows(limit: Int): Int {
+    override suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int {
         deleteCallCount++
         forcedDeleteCount?.let { forced ->
             evictedRows += forced
             return forced
         }
-        val deleted = super.deleteOldestPayloadRows(limit)
+        val deleted = super.deleteOldestPayloadRows(limit, keptSignatures)
         evictedRows += deleted
         return deleted
     }
@@ -170,6 +178,14 @@ internal class FakeMutationDao : InMemoryMutationDao() {
 
     /** When set, the next [deleteById] fails, as a process dying before the delete would. */
     var failNextDeleteById: Boolean = false
+
+    /** When set, runs after each transaction has committed, before its caller goes on. */
+    var afterTransaction: (suspend () -> Unit)? = null
+
+    override suspend fun runInTransaction(block: suspend () -> Unit) {
+        super.runInTransaction(block)
+        afterTransaction?.invoke()
+    }
 
     override suspend fun pendingAll(): List<MutationRow> {
         pendingListReads++

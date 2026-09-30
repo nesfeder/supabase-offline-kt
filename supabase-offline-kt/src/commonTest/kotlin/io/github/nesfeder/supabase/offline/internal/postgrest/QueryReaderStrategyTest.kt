@@ -36,14 +36,14 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 
 /**
- * Read-strategy semantics of [OfflineSelectResolver], one strategy and one failure class at a time:
- * which strategies fall back to cache on a connectivity failure, which honour a cache duration,
- * which never touch the network, and what each one logs.
+ * Read-strategy semantics of [QueryReader], one strategy and one failure class at a time: which
+ * strategies fall back to cache on a connectivity failure, which honour a cache duration, which
+ * never touch the network, and what each one logs.
  *
  * Only the network SELECT is scripted (a [FakePostgrestQueryBuilderWrapper]); the cache is a real
  * `OfflineStore` over the in-memory DAO fakes.
  */
-class OfflineSelectResolverStrategyTest {
+class QueryReaderStrategyTest {
 
     private val postgrest: Postgrest = newTestSupabaseClient().postgrest
 
@@ -81,8 +81,8 @@ class OfflineSelectResolverStrategyTest {
     private fun resolver(
         scope: CoroutineScope,
         logger: RecordingOfflineLogger? = null,
-    ): OfflineSelectResolver =
-        OfflineSelectResolver(
+    ): QueryReader =
+        QueryReader(
             delegate = wrapper,
             store = store,
             sdkLogger = logger?.asSdkLogger() ?: SdkLogger(null, OfflineLogLevel.INFO),
@@ -92,7 +92,7 @@ class OfflineSelectResolverStrategyTest {
 
     /** The cache key the resolver uses for an unfiltered `SELECT *` on [TABLE]. */
     private fun signature(): String =
-        SignatureBuilder.build(
+        cacheKeyOf(
             table = TABLE,
             columns = Columns.ALL,
             builderFactory = {
@@ -270,6 +270,34 @@ class OfflineSelectResolverStrategyTest {
     }
 
     @Test
+    fun cacheFirst_expiredInCache_networkFailure_throws() = runTest {
+        // Given — an expired cache and no network
+        currentTime = 1_000L
+        store.addPayload(TABLE, signature(), CACHED_DATA)
+        currentTime = 1_000L + 2.hours.inWholeMilliseconds
+        failNetwork()
+        val resolver = resolver(backgroundScope)
+
+        // When / Then — no stale fallback
+        assertFailsWith<HttpRequestTimeoutException> {
+            resolver.select(Columns.ALL, ReadStrategy.CacheFirst(cacheDuration = 1.hours)) {}
+        }
+    }
+
+    @Test
+    fun cacheFirst_noCache_networkFailure_throws() = runTest {
+        // Given — nothing cached and no network
+        failNetwork()
+        val resolver = resolver(backgroundScope)
+
+        // When / Then
+        assertFailsWith<HttpRequestTimeoutException> {
+            resolver.select(Columns.ALL, ReadStrategy.CacheFirst()) {}
+        }
+        assertEquals(1, networkCalls)
+    }
+
+    @Test
     fun cacheOnly_foundInCache_returnsCache() = runTest {
         // Given
         store.addPayload(TABLE, signature(), CACHED_DATA)
@@ -313,8 +341,8 @@ class OfflineSelectResolverStrategyTest {
     }
 
     @Test
-    fun selectAsFlow_networkFirstThenCache_networkFailure_flowFails() = runTest {
-        // Given — cached data exists, but this strategy bootstraps from the network first
+    fun selectAsFlow_networkFirstThenCache_networkFailure_fallsBackToCache() = runTest {
+        // Given — cached data exists, and the network bootstrap fails
         store.addPayload(TABLE, signature(), CACHED_DATA)
         failNetwork()
         val flow =
@@ -323,10 +351,11 @@ class OfflineSelectResolverStrategyTest {
                 FlowReadStrategy.NetworkFirstThenCache,
             ) {}
 
-        // When / Then
-        assertFailsWith<HttpRequestTimeoutException> {
-            flow.first()
-        }
+        // When
+        val first = flow.first()
+
+        // Then
+        assertEquals(CACHED_DATA, first.result?.data)
     }
 
     @Test

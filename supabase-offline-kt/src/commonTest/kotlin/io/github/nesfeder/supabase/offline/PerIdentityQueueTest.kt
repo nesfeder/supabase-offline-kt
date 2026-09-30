@@ -156,7 +156,7 @@ class PerIdentityQueueTest {
         )
         assertEquals(
             """[{"title":"anonymous note"}]""",
-            store.cachePayloadWithOverlayFlow(TABLE, TABLE).first(),
+            store.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 

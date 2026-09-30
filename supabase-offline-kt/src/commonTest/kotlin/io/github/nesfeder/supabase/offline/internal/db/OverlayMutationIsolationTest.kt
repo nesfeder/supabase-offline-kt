@@ -4,8 +4,11 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -23,8 +26,7 @@ class OverlayMutationIsolationTest {
 
     @Test
     fun an_update_the_overlay_cannot_evaluate_leaves_the_other_pending_writes_visible() {
-        // Given — a pending insert, then an update filtered with `cs` on an array column. Reading
-        // that column as a primitive throws inside the filter evaluation.
+        // Given — a pending insert, an update filtered with `cs` on an array column, another insert
         val pending =
             listOf(
                 mutation(
@@ -49,14 +51,9 @@ class OverlayMutationIsolationTest {
             )
 
         // When
-        val overlaid =
-            OfflineMutationOverlay.applyPendingMutations(
-                json = OfflineJson,
-                serverJson = """[{"id":1,"tags":["a"]}]""",
-                pending = pending,
-            )
+        val overlaid = overlayOf().overlay("""[{"id":1,"tags":["a"]}]""", pending)
 
-        // Then — both inserts show; only the update that could not be applied is skipped
+        // Then — both inserts show; the update, which the engine cannot evaluate, touches nothing
         assertEquals(
             """[{"id":1,"tags":["a"]},{"id":2,"tags":["b"]},{"id":3,"tags":[]}]""",
             overlaid,
@@ -73,12 +70,7 @@ class OverlayMutationIsolationTest {
             )
 
         // When
-        val overlaid =
-            OfflineMutationOverlay.applyPendingMutations(
-                json = OfflineJson,
-                serverJson = """[{"id":1}]""",
-                pending = pending,
-            )
+        val overlaid = overlayOf().overlay("""[{"id":1}]""", pending)
 
         // Then
         assertEquals("""[{"id":1},{"id":2}]""", overlaid)
@@ -92,12 +84,8 @@ class OverlayMutationIsolationTest {
             listOf(mutation(id = 7, operation = MutationOperation.INSERT, body = "not json"))
 
         // When
-        OfflineMutationOverlay.applyPendingMutations(
-            json = OfflineJson,
-            serverJson = "[]",
-            pending = pending,
-            onMutationFailure = { mutation, _ -> skipped += mutation.id },
-        )
+        overlayOf(onMutationFailure = { mutation, _ -> skipped += mutation.id })
+            .overlay("[]", pending)
 
         // Then
         assertEquals(listOf(7L), skipped)
@@ -115,7 +103,7 @@ class OverlayMutationIsolationTest {
         )
 
         // When
-        store.applyAllMutationsForOfflineFallback("todos", "[]")
+        store.overlayCachedPayload("todos", "[]")
 
         // Then
         val warning = logger.entriesAt(OfflineLogLevel.WARNING).single().message
@@ -135,11 +123,22 @@ class OverlayMutationIsolationTest {
         )
 
         // When — the overlay is recomputed three times
-        repeat(3) { store.applyAllMutationsForOfflineFallback("todos", "[]") }
+        repeat(3) { store.overlayCachedPayload("todos", "[]") }
 
         // Then
         assertEquals(1, logger.entriesAt(OfflineLogLevel.WARNING).size)
     }
+
+    private fun overlayOf(
+        onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> }
+    ): MutationOverlay =
+        MutationOverlay(
+            json = OfflineJson,
+            admission = QueryAdmission.EVERY_ROW,
+            primaryKeys = DefaultPrimaryKeys,
+            mayAlreadyHold = { true },
+            onMutationFailure = onMutationFailure,
+        )
 
     private fun mutation(
         id: Long,

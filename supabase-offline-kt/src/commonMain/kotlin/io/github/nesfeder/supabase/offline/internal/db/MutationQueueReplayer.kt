@@ -161,6 +161,12 @@ internal class MutationQueueReplayer(
         sendLock.withLock { clear() }
     }
 
+    /**
+     * Runs [block] under the send lock, as [clearLocalData] runs its clear, but lets every pass and
+     * queued write go on: for a drop of the cache that keeps the mutation queue.
+     */
+    suspend fun <T> holdingSends(block: suspend () -> T): T = sendLock.withLock { block() }
+
     /** What happened to a mutation offered for sending at the head of its queue. */
     sealed interface HeadSendOutcome {
 
@@ -426,7 +432,7 @@ internal class MutationQueueReplayer(
 
         // A table nothing caches or observes has no use for its synced mutations; others keep them
         // until every cached query has refreshed past them.
-        syncedTables.forEach { syncedTable -> store.clearSyncedMutationsForTable(syncedTable) }
+        syncedTables.forEach { syncedTable -> store.retireCoveredSyncedMutations(syncedTable) }
 
         sdkLogger.info {
             if (table == null) "Sync complete: $syncedCount mutations synced"

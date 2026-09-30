@@ -5,7 +5,8 @@ package io.github.nesfeder.supabase.offline.internal.db
 /**
  * The `object_cache` table name under which the engine keeps its own state — the rejected-mutation
  * list, the owner of each queued mutation, which cached payloads already contain each synced
- * mutation, and which INSERTs may already be on the server — without a schema change.
+ * mutation, which INSERTs may already be on the server, each cached query's shape and whose the
+ * cache is — without a schema change.
  *
  * It cannot collide with a table reachable through PostgREST: Postgres truncates identifiers to
  * `NAMEDATALEN - 1` = 63 bytes, so no table can be *named* anything longer, and this name is far
@@ -13,8 +14,9 @@ package io.github.nesfeder.supabase.offline.internal.db
  * `SupabaseOfflineClientImpl.from` refuses this one.
  *
  * Rows under this name are never evicted, never counted towards the cache size, never returned by a
- * read and never touched by an overlay; `clearAll` removes them with everything else. An older
- * build of the engine that opens the database sees them as cache rows for a table nobody queries.
+ * read and never touched by an overlay; `clearAll` removes them with everything else, and a drop of
+ * the cache for a new owner removes the query shapes and keeps the rest. An older build of the
+ * engine that opens the database sees them as cache rows for a table nobody queries.
  *
  * Changing this value orphans every installed device's rejected list and owner records, so it never
  * changes.
@@ -39,6 +41,27 @@ internal const val SYNCED_MUTATION_COVERAGE_SIGNATURE: String = "synced_mutation
  * outcome is unknown: the server may already hold their rows.
  */
 internal const val UNCONFIRMED_SENDS_SIGNATURE: String = "unconfirmed_sends"
+
+/**
+ * Signature, within [RESERVED_TABLE_NAME], of the identity the query cache and the Storage file
+ * cache belong to.
+ */
+internal const val CACHE_OWNER_SIGNATURE: String = "cache_owner"
+
+/**
+ * The name that begins the signature of each query-shape record within [RESERVED_TABLE_NAME]: the
+ * name, a unit separator (U+001F), the cached query's table, another separator, and its cache key.
+ */
+internal const val QUERY_SHAPE_SIGNATURE_PREFIX_NAME: String = "query_shape"
+
+/**
+ * [QUERY_SHAPE_SIGNATURE_PREFIX_NAME] and the separator after it, as a record's signature begins.
+ */
+internal const val QUERY_SHAPE_SIGNATURE_PREFIX: String =
+    QUERY_SHAPE_SIGNATURE_PREFIX_NAME + "\u001F"
+
+/** The length of [QUERY_SHAPE_SIGNATURE_PREFIX]. */
+internal const val QUERY_SHAPE_SIGNATURE_PREFIX_LENGTH: Int = 12
 
 /**
  * Whether [table] is the engine's reserved state table rather than a table of the app's.

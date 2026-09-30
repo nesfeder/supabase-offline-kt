@@ -16,9 +16,9 @@ import kotlinx.serialization.json.JsonElement
 /**
  * A wrapper around [PostgrestQueryBuilder] that provides a consistent interface for PostgREST
  * operations, facilitating testing and decoupling. It is also the [DryRunProbe] for the writes it
- * issues.
+ * issues and the [ReadShapeProbe] for its reads.
  */
-internal interface PostgrestQueryBuilderWrapper : DryRunProbe {
+internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
 
     /** The name of the table this builder targets. */
     val table: String
@@ -91,18 +91,26 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe {
  * [PostgrestQueryBuilder].
  *
  * @property builder The underlying [PostgrestQueryBuilder] instance.
+ * @param readShapePostgrest the instance the read-shape check builds reads through; see
+ *   [readShapePostgrestOf]. The client shares one across its handles.
  */
-internal class PostgrestQueryBuilderWrapperImpl(private val builder: PostgrestQueryBuilder) :
-    PostgrestQueryBuilderWrapper {
+internal class PostgrestQueryBuilderWrapperImpl(
+    private val builder: PostgrestQueryBuilder,
+    readShapePostgrest: Postgrest = readShapePostgrestOf(builder.postgrest),
+) : PostgrestQueryBuilderWrapper {
 
     init {
         // The offline client installs these when it is built; a handle made directly installs them
         // here. Either way each is installed once per client.
         builder.postgrest.supabaseClient.installDryRunCheck()
+        builder.postgrest.supabaseClient.installReadShapeCheck()
         builder.postgrest.supabaseClient.installTransportFailureCapture()
     }
 
     private val dryRunProbe = PreferHeaderDryRunProbe(builder.postgrest.supabaseClient)
+
+    private val readShapeProbe =
+        PipelineReadShapeProbe(readShapePostgrest, builder.table, builder.schema)
 
     /** @see PostgrestQueryBuilderWrapper.table */
     override val table: String
@@ -156,4 +164,11 @@ internal class PostgrestQueryBuilderWrapperImpl(private val builder: PostgrestQu
     /** @see PreferHeaderDryRunProbe */
     override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict =
         dryRunProbe.classify(write)
+
+    /** @see PipelineReadShapeProbe */
+    override suspend fun shapeOf(
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+        onBuilt: (SelectRequestBuilder) -> Unit,
+    ): ReadShape = readShapeProbe.shapeOf(columns, request, onBuilt)
 }

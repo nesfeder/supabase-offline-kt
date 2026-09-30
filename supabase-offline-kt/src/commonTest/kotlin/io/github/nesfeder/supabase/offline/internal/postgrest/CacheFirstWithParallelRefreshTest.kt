@@ -30,11 +30,10 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 
 /**
- * Tests for [cacheFirstWithParallelRefresh] — the self-healing combinator that backs
- * [OfflineSelectResolver]. These lock in the contract the design depends on: cache forwards without
- * waiting on the network, the refresh survives exhaustion and keeps retrying on a capped schedule,
- * an accelerator edge short-circuits the current backoff, the first success ends the loop, and
- * cancellation propagates.
+ * Tests for [cacheFirstWithParallelRefresh] — the self-healing combinator that backs [QueryReader].
+ * These lock in the contract the design depends on: cache forwards without waiting on the network,
+ * the refresh survives exhaustion and keeps retrying on a capped schedule, an accelerator edge
+ * short-circuits the current backoff, the first success ends the loop, and cancellation propagates.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CacheFirstWithParallelRefreshTest {
@@ -138,7 +137,7 @@ class CacheFirstWithParallelRefreshTest {
                         refresh = {
                             attemptCount++
                             if (attemptCount == 1)
-                                throw TransientEmptyResponseException(table = "ratings")
+                                throw UntrustedResponseException(table = "ratings")
                             cache.emit("""[{"id":1}]""")
                         },
                     )

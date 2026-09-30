@@ -6,7 +6,10 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.SupabaseClientBuilder
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
@@ -18,8 +21,12 @@ import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
+import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
@@ -133,6 +140,28 @@ internal fun newTestSupabaseClient(
 internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 
 /**
+ * Records, as reading the query through the client would, that the query cached under [signature]
+ * has the shape of a SELECT of [columns] that [request] configures.
+ *
+ * @param persist whether to write the record to the object cache as well; by default it is kept in
+ *   memory only, so a test counting cache writes is not disturbed.
+ */
+internal suspend fun OfflineStore.recordQueryShape(
+    table: String,
+    signature: String,
+    columns: Columns = Columns.ALL,
+    persist: Boolean = false,
+    request: SelectRequestBuilder.() -> Unit,
+) {
+    val shape =
+        queryShapeOf(
+            columns,
+            SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply(request),
+        )
+    queryShapes.remember(table, signature, shape, persist)
+}
+
+/**
  * Builds the real [SupabaseOfflineClientImpl] over a test store and client.
  *
  * @param supabase the wrapped client.
@@ -149,6 +178,8 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  *   background work can never run (see [idleCoroutineScope]): its `close()` always waits it out.
  * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
  *   factories tell the registry; it is handed the count of calls still in flight.
+ * @param primaryKeys each table's primary-key columns; `id` for every table by default.
+ * @param responseTrust which read responses may replace what the cache holds.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -161,6 +192,8 @@ internal fun newTestOfflineClient(
     scrubDatabase: suspend () -> Unit = {},
     closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
+    primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
 ): SupabaseOfflineClientImpl =
     SupabaseOfflineClientImpl(
         supabase = supabase,
@@ -172,6 +205,8 @@ internal fun newTestOfflineClient(
         onClose = onClose,
         closeWait = closeWait,
         onStillClosing = onStillClosing,
+        primaryKeys = primaryKeys,
+        responseTrust = responseTrust,
     )
 
 /**

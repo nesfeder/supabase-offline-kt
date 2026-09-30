@@ -7,9 +7,11 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
+import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_SIGNATURE_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
 import io.github.nesfeder.supabase.offline.internal.db.StorageRow
+import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +58,30 @@ internal open class InMemoryObjectDao : ObjectDao {
     override suspend fun signaturesForTable(table: String): List<String> =
         rows.values.filter { it.table == table }.map { it.signature }
 
+    override suspend fun rowsWithSignaturePrefix(table: String, prefix: String): List<ObjectRow> =
+        rows.values.filter { it.table == table && it.signature.startsWith(prefix) }
+
+    override suspend fun deleteWithSignaturePrefix(table: String, prefix: String) {
+        rows.keys
+            .filter { (rowTable, signature) -> rowTable == table && signature.startsWith(prefix) }
+            .forEach { key -> rows.remove(key) }
+    }
+
+    override suspend fun deleteOrphanedQueryShapes(): Int {
+        val payloads =
+            rows.values
+                .filter { it.table != RESERVED_TABLE_NAME }
+                .mapTo(mutableSetOf()) { "${it.table}\u001F${it.signature}" }
+        val orphans =
+            rows.keys.filter { (table, signature) ->
+                table == RESERVED_TABLE_NAME &&
+                    signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) &&
+                    signature.removePrefix(QUERY_SHAPE_SIGNATURE_PREFIX) !in payloads
+            }
+        orphans.forEach { key -> rows.remove(key) }
+        return orphans.size
+    }
+
     override suspend fun upsert(row: ObjectRow) {
         rows[row.table to row.signature] = row
         observers
@@ -84,15 +110,24 @@ internal open class InMemoryObjectDao : ObjectDao {
         keys.forEach { observers[it]?.value = null }
     }
 
+    override suspend fun deleteAllExceptTable(table: String) {
+        rows.keys
+            .filter { (rowTable, _) -> rowTable != table }
+            .forEach { key ->
+                rows.remove(key)
+                observers[key]?.value = null
+            }
+    }
+
     override suspend fun totalPayloadBytes(): Long =
         rows.values.filter { it.table != RESERVED_TABLE_NAME }.sumOf { it.payload.length.toLong() }
 
-    override suspend fun deleteOldestPayloadRows(limit: Int): Int {
+    override suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int {
         if (limit <= 0) return 0
         val oldest =
             rows.values
-                .filter { it.table != RESERVED_TABLE_NAME }
-                .sortedBy { it.updatedAt }
+                .filter { it.table != RESERVED_TABLE_NAME && it.signature !in keptSignatures }
+                .sortedBy { fetchedAtOf(it.updatedAt) }
                 .take(limit)
         oldest.forEach { row ->
             rows.remove(row.table to row.signature)

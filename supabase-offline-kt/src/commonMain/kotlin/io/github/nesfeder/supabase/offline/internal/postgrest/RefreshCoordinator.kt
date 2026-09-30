@@ -8,14 +8,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.takeWhile
@@ -63,10 +65,43 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
     private val liveSignatures = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
 
     /**
+     * Queries that should fetch again, by table, `null` for all of it; only readers already waiting
+     * see a request.
+     */
+    private val refreshRequests =
+        MutableSharedFlow<RefreshRequest>(
+            extraBufferCapacity = REFRESH_REQUEST_BUFFER,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
+    /**
+     * A request that the live queries of [table] fetch again: those cached under [signatures], or
+     * every one when it is `null`.
+     */
+    private data class RefreshRequest(val table: String, val signatures: Set<String>?)
+
+    /**
+     * Asks every live `CacheFirstThenNetwork` query of [table] whose refresh has finished to run it
+     * again, or only those cached under [signatures] when given.
+     */
+    fun requestRefresh(table: String, signatures: Set<String>? = null) {
+        refreshRequests.tryEmit(RefreshRequest(table, signatures))
+    }
+
+    /** The refresh requests for the query of [table] cached under [signature], one [Unit] each. */
+    fun refreshRequestsFor(table: String, signature: String): Flow<Unit> =
+        refreshRequests
+            .filter { request ->
+                request.table == table && (request.signatures?.contains(signature) ?: true)
+            }
+            .map {}
+
+    /**
      * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A
-     * joining collector gets the latest value; the upstream's failure reaches every collector in
-     * band; the last to leave ends the entry; once [scope] ends every collection fails with the
-     * client's closed error.
+     * joining collector gets the latest value. A slow one is handed only the latest, the first
+     * included when it is slow to take that, so it never holds back the others. The upstream's
+     * failure reaches every collector in band, after the latest value; the last to leave ends the
+     * entry; once [scope] ends every collection fails with the client's closed error.
      */
     fun sharedReadFlow(
         table: String,
@@ -104,7 +139,7 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
             withContext(NonCancellable) { release(key, entry) }
         }
     }
-        .buffer(Channel.RENDEZVOUS)
+        .conflate()
 
     private suspend fun acquire(key: Key, upstream: () -> Flow<OfflineReadResult>): SharedEntry =
         sharedFlowsMutex.withLock {
@@ -166,14 +201,29 @@ internal class RefreshCoordinator(private val scope: CoroutineScope) {
 
     /**
      * Signatures of [table] that currently have at least one live collector. Consumed by
-     * `applyLocalMutationToCache` to decide which cache-less signatures to materialize a
-     * server-successful mutation into.
+     * `patchCachedQueries` to decide which cache-less signatures to materialize a server-successful
+     * mutation into.
      *
      * @param table Table to look up.
      * @return The set of live signatures for [table] (empty when none).
      */
     fun liveSignaturesFor(table: String): Set<String> =
         liveSignatures.value[table]?.keys ?: emptySet()
+
+    /** The signatures of every table that have a live collector: what eviction keeps. */
+    fun allLiveSignatures(): Set<String> =
+        liveSignatures.value.values.flatMapTo(mutableSetOf()) { perTable -> perTable.keys }
+
+    /** The tables with a live collector. */
+    fun liveTables(): Set<String> = liveSignatures.value.keys
+
+    private companion object {
+        /**
+         * Refresh requests kept for a slow reader; the oldest go first, which a conflated reader
+         * never misses.
+         */
+        const val REFRESH_REQUEST_BUFFER = 16
+    }
 
     private fun Map<String, Map<String, Int>>.adjustCount(
         table: String,

@@ -10,6 +10,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -30,10 +31,12 @@ import kotlinx.serialization.json.contentOrNull
  *
  * @property primaryKey the primary-key column every table shares.
  * @property foreignKeys child table → the foreign key it must satisfy.
+ * @param engineDispatcher where the engine runs requests; see [RecordingPostgrestServer].
  */
 internal class FakeRelationalPostgrestServer(
     private val primaryKey: String = "id",
     private val foreignKeys: Map<String, ForeignKey> = emptyMap(),
+    engineDispatcher: CoroutineDispatcher? = null,
 ) {
 
     /**
@@ -60,7 +63,10 @@ internal class FakeRelationalPostgrestServer(
 
     /** The recording server underneath; its `requests` list everything received. */
     val recorder: RecordingPostgrestServer =
-        RecordingPostgrestServer(answer = { request -> handle(request) })
+        RecordingPostgrestServer(
+            answer = { request -> handle(request) },
+            engineDispatcher = engineDispatcher,
+        )
 
     /** A supabase-kt client whose PostgREST requests reach this server. */
     fun supabaseClient(): SupabaseClient = recorder.supabaseClient()
@@ -188,7 +194,8 @@ internal class FakeRelationalPostgrestServer(
         else JsonObject(row + (primaryKey to JsonPrimitive(key) as JsonElement))
 
     private companion object {
-        val NON_FILTER_PARAMS = setOf("select", "columns", "on_conflict")
+        val NON_FILTER_PARAMS =
+            setOf("select", "columns", "on_conflict", "order", "limit", "offset")
         const val CONTENT_RANGE = "Content-Range"
     }
 }

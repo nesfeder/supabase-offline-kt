@@ -7,6 +7,7 @@ import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
@@ -20,32 +21,44 @@ import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.BackgroundSyncTrigger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
-import io.github.nesfeder.supabase.offline.internal.postgrest.AuthSessionState
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
+import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
+import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
+import io.github.nesfeder.supabase.offline.internal.postgrest.installReadShapeCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
+import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
+import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -211,7 +224,12 @@ public interface SupabaseOfflineClient {
      * value — the row can't be located, so the event is logged and dropped rather than risk
      * patching the wrong rows.
      *
-     * @param table The Supabase table name (e.g. `"todos"`).
+     * It acts on the cached queries of [table] in the client's default schema. A table in another
+     * schema, whose queries are cached apart, cannot be named here yet: a name written
+     * `schema.table` may reach that schema's cached queries today, but is not a way to name one,
+     * and stops reaching them once a schema can be named.
+     *
+     * @param table The Supabase table name (e.g. `"todos"`), in the client's default schema.
      * @param record The full row object as delivered by the Realtime event.
      * @param primaryKeys The column name(s) forming the row's identity; defaults to `["id"]`. Pass
      *   the table's actual primary key — e.g. `["team_id", "member_id"]` for a table whose primary
@@ -229,9 +247,10 @@ public interface SupabaseOfflineClient {
      * DELETE event).
      *
      * No-ops under the same conditions as [applyServerRecord]: no cached payloads for [table], or a
-     * [primaryKeys] column absent from [oldRecord] or non-primitive.
+     * [primaryKeys] column absent from [oldRecord] or non-primitive. Like it, it acts on [table] in
+     * the client's default schema only.
      *
-     * @param table The Supabase table name.
+     * @param table The Supabase table name, in the client's default schema.
      * @param oldRecord The deleted row's prior column values, carrying at least [primaryKeys].
      * @param primaryKeys The column name(s) forming the row's identity; defaults to `["id"]`.
      */
@@ -250,6 +269,12 @@ public interface SupabaseOfflineClient {
      * (logout, account switch, account deletion) must call this so one user's cached rows,
      * un-synced offline writes, and downloaded objects (e.g. avatars) never carry over to the next
      * user on the same device, and no personal data survives on disk after an account is deleted.
+     *
+     * With the Auth plugin, the cached queries and downloaded files also belong to one identity at
+     * a time without this call: once the session settles as another user, or signed out, what was
+     * cached before is no longer served, and is deleted and scrubbed from the database files as
+     * this call does. Queued writes are kept then, each for the identity that made it; only this
+     * call removes them. A session that is restoring, or whose refresh failed, keeps its cache.
      *
      * A replay pass in progress is cancelled first, and no queued write is sent once clearing has
      * begun. A write whose request was already in flight is neither overlaid onto the cache nor
@@ -270,8 +295,10 @@ public interface SupabaseOfflineClient {
      *   closed"): on the client, and on a builder, bucket or flow obtained from it.
      * - At once, every flow being collected stops, whatever its read strategy: its collector reads
      *   that error next, even one stuck in its own body or one that has stopped reading. A channel
-     *   the app holds through `produceIn` and no longer reads ends with it quietly, failing no
-     *   scope.
+     *   the app holds through `produceIn` applied directly to the flow, and no longer reads, ends
+     *   with it quietly, failing no scope. With an operator such as `map` between them, the closed
+     *   error fails the producer: a plain `Job` scope is cancelled, and under a `SupervisorJob` the
+     *   error stays in the unread channel.
      * - At once, the client's own work stops (refreshes, replay passes), and so does every Storage
      *   call and sync: syncs, downloads, uploads, updates, deletes, moves, copies, signed URLs,
      *   list, info and exists. Their callers get the same error, never a cancellation. A stopped
@@ -346,6 +373,10 @@ internal class SupabaseOfflineClientImpl(
     private val closeWait: Duration = CLOSE_WAIT,
     /** Told, with the count of calls still in flight, when [close] returns before the release. */
     private val onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
+    /** Each table's primary-key columns; `id` for every table unless the app says otherwise. */
+    private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    /** Which read responses may replace what the cache holds; see [ResponseTrustPolicy]. */
+    private val responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
 ) : SupabaseOfflineClient {
 
     /**
@@ -372,6 +403,12 @@ internal class SupabaseOfflineClientImpl(
     /** Taken by the one [close] that reports the release is late. */
     private val reportedStillClosing = MutableStateFlow(false)
 
+    /**
+     * The PostgREST instance every handle's read-shape check builds reads through, made on first
+     * use and let go by [close]; see [readShapePostgrestOf].
+     */
+    private val readShapePostgrest = MutableStateFlow<Postgrest?>(null)
+
     /** Where [storage]'s buckets see an image transform's requests go; resolved on first use. */
     private val renderImagePath: String by lazy { renderImagePathOf(supabase) }
 
@@ -385,7 +422,7 @@ internal class SupabaseOfflineClientImpl(
         )
 
     private val mutationQueueReplayer =
-        MutationQueueReplayer(store, supabase, sdkLogger = sdkLogger)
+        MutationQueueReplayer(store, supabase, sdkLogger = sdkLogger, primaryKeys = primaryKeys)
 
     /**
      * Runs the replay passes the engine starts on its own, in the client's scope so [close] stops
@@ -402,7 +439,7 @@ internal class SupabaseOfflineClientImpl(
     /**
      * Client-scoped coordinator shared by every builder this client creates: single-flight refresh
      * sharing per `(table, signature)` plus the live-signature registry that backs
-     * materialize-on-write in [OfflineStore.applyLocalMutationToCache].
+     * materialize-on-write in [OfflineStore.patchCachedQueries].
      */
     private val refreshCoordinator = RefreshCoordinator(clientScope)
 
@@ -411,26 +448,45 @@ internal class SupabaseOfflineClientImpl(
      * edges. Forwarded to every builder to short-circuit a stalled refresh's backoff.
      */
     private val refreshAccelerator: Flow<Unit> =
-        buildRefreshAccelerator(supabase, networkAvailability)
+        buildRefreshAccelerator(supabase, networkAvailability, responseTrust)
 
     /** The identity the overlay and counts are for, read once per session status. */
     private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
+
+    /**
+     * A read or write found the cache another identity's: [keepCacheWithTheSession] looks again.
+     */
+    private val cacheOwnerChecks =
+        MutableSharedFlow<Unit>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
 
     init {
         if (prepareFileCacheDirectories) fileCache.prepareDirectories()
         // Let the store see which signatures are live so a server-successful mutation materializes
         // into a real cache row for a cache-less-but-observed subscription.
         store.liveSignatureProvider = refreshCoordinator::liveSignaturesFor
+        store.allLiveSignaturesProvider = refreshCoordinator::allLiveSignatures
+        store.onQueriesMarkedStale = { table, signatures ->
+            refreshCoordinator.requestRefresh(table, signatures)
+        }
         store.sdkLogger = sdkLogger
+        store.primaryKeys = primaryKeys
         // Overlays and counts show the current session's queued writes only.
         store.identityProvider = ::overlayIdentityValue
         store.identityChanges = sessionChanges()
         store.ownerlessMutationsAreAnonymous = authPluginOrNull() == null
+        // The cache is one identity's at a time; without Auth there is only one
+        store.cacheOwnedPerIdentity = authPluginOrNull() != null
+        store.onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) }
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
         // and not added while requests may be walking it.
         supabase.installDryRunCheck()
+        supabase.installReadShapeCheck()
         supabase.installTransportFailureCapture()
         replayWhenTheSessionSettles()
+        keepCacheWithTheSession()
     }
 
     private fun authPluginOrNull(): Auth? = supabase.pluginManager.getPluginOrNull(Auth)
@@ -469,6 +525,58 @@ internal class SupabaseOfflineClientImpl(
         }
     }
 
+    /**
+     * Keeps the cache the settled identity's, in the client's scope so [close] stops it: when the
+     * session settles, or a read finds the cache another identity's, [settleCacheOwner] runs as a
+     * call through the gate. A session that restores or whose refresh failed is not settled.
+     */
+    private fun keepCacheWithTheSession() {
+        val auth = authPluginOrNull() ?: return
+        clientScope.launch {
+            merge(auth.sessionStatus.map {}, cacheOwnerChecks).conflate().collect {
+                val identity = replayIdentityFor(auth.sessionStatus.value) ?: return@collect
+                try {
+                    operationGate.call { settleCacheOwner(identity) }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    if (operationGate.isClosed) return@collect
+                    sdkLogger.error {
+                        "Could not drop the cache for the new session " +
+                            "(${failure::class.simpleName}); it is not served until it is"
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Makes the cache [identity]'s. A cache no identity owns is adopted by a user, and by nobody
+     * signed in while it holds nothing; anything else another identity cached is dropped — the
+     * cached queries and the Storage file cache, never the mutation queue — under [clearAllCache]'s
+     * locks in its order, and live queries fetch again. A crash after the rows are dropped and
+     * before the files are deleted leaves those files on disk with no row: no call reaches them,
+     * and the next clear or drop deletes them.
+     */
+    private suspend fun settleCacheOwner(identity: QueueIdentity) {
+        if (
+            store.cacheOwnerClaimingFor(identity.storedValue, claimsForUser = true) ==
+                identity.storedValue
+        )
+            return
+        // The send lock alone: no pass is stopped, as none of the queue goes
+        mutationQueueReplayer.holdingSends {
+            fileCache.clear {
+                store.dropCacheFor(identity.storedValue)
+                scrubDatabase()
+            }
+        }
+        sdkLogger.info { "The session settled into another identity; the cache was emptied for it" }
+        refreshCoordinator.liveTables().forEach { table ->
+            refreshCoordinator.requestRefresh(table)
+        }
+    }
+
     override fun from(table: String): OfflinePostgrestQueryBuilder =
         from(supabase.postgrest.config.defaultSchema, table)
 
@@ -477,51 +585,31 @@ internal class SupabaseOfflineClientImpl(
         ensurePostgrestInstalled()
         require(!isReservedTable(table)) { "The table name is reserved by the offline engine" }
         val delegate = supabase.postgrest.from(schema, table)
+        val readShape =
+            readShapePostgrest.value
+                ?: readShapePostgrestOf(supabase.postgrest).let { created ->
+                    if (readShapePostgrest.compareAndSet(null, created)) created
+                    else readShapePostgrest.value ?: created
+                }
         return OfflinePostgrestQueryBuilderImpl(
             delegate = delegate,
             store = store,
             sdkLogger = sdkLogger,
-            authSessionState = ::authSessionState,
+            requestSession = ::requestSession,
+            trustPolicy = responseTrust,
             refreshCoordinator = refreshCoordinator,
             accelerator = refreshAccelerator,
             queueIdentity = { supabase.currentQueueIdentity() },
             requestSync = backgroundSync::request,
             headSender = mutationQueueReplayer,
             operationGate = operationGate,
+            readShapePostgrest = readShape,
         )
     }
 
-    /**
-     * Maps the supabase-kt session status to the resolver's [AuthSessionState] snapshot, which
-     * decides how an empty SELECT response is treated:
-     *
-     * - `Initializing` → [AuthSessionState.RESTORING]: the cold-start window where session restore
-     *   from storage hasn't completed — a request may go out without a usable JWT, RLS filters
-     *   every row, and the server returns `200 OK` with `[]`; the resolver retries that via
-     *   [io.github.nesfeder.supabase.offline.internal.postgrest.TransientEmptyResponseException].
-     * - `Authenticated` → [AuthSessionState.AUTHENTICATED]: empties are the server's real answer
-     *   and may replace cached rows.
-     * - Anything else (signed out, refresh failure) → [AuthSessionState.UNAUTHENTICATED]:
-     *   supabase-kt attaches the user JWT only while `Authenticated` (its token resolution reads
-     *   `currentSessionOrNull()`, which is null for every other status), so requests in these
-     *   states go out on the anon key and their empties are RLS-shaped by construction — kept out
-     *   of the cache, no retry. Logout's `clearAllCache` owns removing cached data. This mapping is
-     *   exact, not conservative: `AUTHENTICATED` ⟺ user JWT on the wire. Do not relax it.
-     *
-     * Defensive in two ways: a) wraps the auth probe in `runCatching` so an SDK that hasn't
-     * installed the Auth plugin (no session-status notion at all) still works, b) maps any probe
-     * failure to `UNAUTHENTICATED` — the fail-safe value: reads are never blocked behind the
-     * restore-retry (that takes `RESTORING`), and the empty-clobber guard stays active exactly as
-     * it did before empties could be authoritative at all.
-     */
-    private fun authSessionState(): AuthSessionState = runCatching {
-        when (supabase.auth.sessionStatus.value) {
-            is SessionStatus.Initializing -> AuthSessionState.RESTORING
-            is SessionStatus.Authenticated -> AuthSessionState.AUTHENTICATED
-            else -> AuthSessionState.UNAUTHENTICATED
-        }
-    }
-        .getOrDefault(AuthSessionState.UNAUTHENTICATED)
+    /** The session a read sent now goes out under; the identity is the mutation queue's own. */
+    private fun requestSession(): RequestSession =
+        requestSessionFor(authPluginOrNull()?.sessionStatus?.value)
 
     override fun storage(bucket: String): OfflineBucketApi {
         ensureOpen()
@@ -573,7 +661,7 @@ internal class SupabaseOfflineClientImpl(
             }
             return@call
         }
-        store.applyLocalMutationToCache(
+        store.patchCachedQueries(
             table = table,
             operation = MutationOperation.UPSERT,
             bodyJson = JsonArray(listOf(record)).toString(),
@@ -595,7 +683,7 @@ internal class SupabaseOfflineClientImpl(
             }
             return@call
         }
-        store.applyLocalMutationToCache(
+        store.patchCachedQueries(
             table = table,
             operation = MutationOperation.DELETE,
             bodyJson = "{}",
@@ -631,13 +719,20 @@ internal class SupabaseOfflineClientImpl(
 
     /**
      * Clears once, locks outermost first: the replayer's send lock, after it cancels passes in
-     * flight; the file cache's lock; the store's, around [OfflineStore.clearAll]'s one transaction.
+     * flight; the file cache's lock; the store's, and innermost the cache-owner record's, around
+     * [OfflineStore.clearAll]'s one transaction. Signed out, that transaction records the emptied
+     * cache as nobody's; a user's first use claims it, so no user id is written back by the clear.
      * The scrub runs after that transaction, and the cache files go last.
      */
     override suspend fun clearAllCache(): Unit = operationGate.call {
+        val owner =
+            QueueIdentity.Anonymous.storedValue.takeIf {
+                authPluginOrNull() != null &&
+                    supabase.currentReplayIdentity() == QueueIdentity.Anonymous
+            }
         mutationQueueReplayer.clearLocalData {
             fileCache.clear {
-                store.clearAll()
+                store.clearAll(owner)
                 scrubDatabase()
             }
         }
@@ -649,6 +744,7 @@ internal class SupabaseOfflineClientImpl(
      */
     override suspend fun close() {
         if (operationGate.close()) clientScope.coroutineContext.job.cancel()
+        readShapePostgrest.value = null
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
         val releasedInTime =
             withContext(NonCancellable + Dispatchers.Default) {
@@ -712,7 +808,7 @@ internal class SupabaseOfflineClientImpl(
     internal fun pendingMutations(table: String? = null): Flow<List<PendingMutation>> {
         return operationGate.callCollecting(
             store.pendingMutationsFlow(table).map { rows ->
-                rows.mapNotNull { row -> row.toPendingMutation(store.json, DefaultPrimaryKeys) }
+                rows.mapNotNull { row -> row.toPendingMutation(store.json, primaryKeys) }
             }
         )
     }
@@ -726,7 +822,7 @@ internal class SupabaseOfflineClientImpl(
     internal fun rejectedMutations(): Flow<List<RejectedMutation>> {
         return operationGate.callCollecting(
             store.mutationQueueState.rejectionsFlow().map { entries ->
-                entries.map { entry -> entry.toRejectedMutation(store.json, DefaultPrimaryKeys) }
+                entries.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) }
             }
         )
     }
@@ -738,7 +834,7 @@ internal class SupabaseOfflineClientImpl(
      */
     internal suspend fun rejectedMutationList(): List<RejectedMutation> = operationGate.call {
         store.mutationQueueState.rejections().map { entry ->
-            entry.toRejectedMutation(store.json, DefaultPrimaryKeys)
+            entry.toRejectedMutation(store.json, primaryKeys)
         }
     }
 

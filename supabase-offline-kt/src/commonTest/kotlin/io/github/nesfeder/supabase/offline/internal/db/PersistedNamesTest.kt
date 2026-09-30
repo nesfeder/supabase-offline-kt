@@ -3,6 +3,8 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -35,6 +37,70 @@ class PersistedNamesTest {
         assertEquals("mutation_owners", MUTATION_OWNERS_SIGNATURE)
         assertEquals("synced_mutation_coverage", SYNCED_MUTATION_COVERAGE_SIGNATURE)
         assertEquals("unconfirmed_sends", UNCONFIRMED_SENDS_SIGNATURE)
+        assertEquals("cache_owner", CACHE_OWNER_SIGNATURE)
+    }
+
+    @Test
+    fun whose_the_cache_is_is_written_under_this_name_with_these_keys() = runTest {
+        // When — the cache dropped for a user, then for nobody signed in
+        store.dropCacheFor(QueueIdentity.User("u-1").storedValue)
+        val forUser = objectDao.getRow(RESERVED_TABLE_NAME, "cache_owner")?.payload
+        store.dropCacheFor(QueueIdentity.Anonymous.storedValue)
+        val forNobody = objectDao.getRow(RESERVED_TABLE_NAME, "cache_owner")?.payload
+
+        // Then
+        assertEquals("""{"version":1,"owner":"user:u-1"}""", forUser)
+        assertEquals("""{"version":1,"owner":"anonymous"}""", forNobody)
+    }
+
+    @Test
+    fun a_query_shape_record_is_written_under_this_name_with_these_keys() = runTest {
+        // Given / When — a network response written for a filtered query, and a key two queries
+        // share
+        val shape =
+            QueryShape(
+                select = "id,title",
+                conditions = listOf(FilterDescriptor.Condition("done", "eq", "false")),
+                hasOtherFilters = false,
+            )
+        store.addPayload(
+            "todos",
+            "todos?done=eq.false",
+            "[]",
+            authoritativeEmpty = true,
+            shape = shape,
+        )
+        store.addPayload("todos", "todos?shared", "[]", authoritativeEmpty = true, shape = shape)
+        store.addPayload(
+            "todos",
+            "todos?shared",
+            "[]",
+            authoritativeEmpty = true,
+            shape = shape.copy(select = "*"),
+        )
+
+        // Then
+        assertEquals("query_shape", QUERY_SHAPE_SIGNATURE_PREFIX_NAME)
+        assertEquals(
+            """{"version":1,"shape":{"select":"id,title","conditions":[{"column":"done","operatorId":"eq","value":"false"}],"hasOtherFilters":false}}""",
+            assertNotNull(
+                    objectDao.getRow(
+                        RESERVED_TABLE_NAME,
+                        "query_shape\u001Ftodos\u001Ftodos?done=eq.false",
+                    )
+                )
+                .payload,
+        )
+        assertEquals(
+            """{"version":1}""",
+            assertNotNull(
+                    objectDao.getRow(
+                        RESERVED_TABLE_NAME,
+                        "query_shape\u001Ftodos\u001Ftodos?shared",
+                    )
+                )
+                .payload,
+        )
     }
 
     @Test
