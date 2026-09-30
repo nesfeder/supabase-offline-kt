@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
+import io.github.nesfeder.supabase.offline.testdoubles.FakeUpstreamPastItsCancellation
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingUncaughtExceptions
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -11,24 +13,21 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.produceIn
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -150,13 +149,8 @@ class ClientOperationGateTest {
         // as an upstream caught between two statements does; here it waits, deaf to cancellation,
         // to be sure
         val gate = ClientOperationGate()
-        val uncaught = MutableStateFlow<List<Throwable>>(emptyList())
-        val appScope =
-            CoroutineScope(
-                SupervisorJob() +
-                    Dispatchers.Default +
-                    CoroutineExceptionHandler { _, failure -> uncaught.update { it + failure } }
-            )
+        val uncaught = RecordingUncaughtExceptions()
+        val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + uncaught)
         val betweenValues = CompletableDeferred<Unit>()
         val closeReturned = CompletableDeferred<Unit>()
         val upstream = FakeUpstreamPastItsCancellation(betweenValues, closeReturned)
@@ -183,7 +177,56 @@ class ClientOperationGateTest {
             values.receiveCatching().exceptionOrNull(),
             "the collection live at close()",
         )
-        assertEquals(emptyList(), uncaught.value, "the closed error escaped into the app's scope")
+        assertEquals(
+            emptyList(),
+            uncaught.recorded(),
+            "the closed error escaped into the app's scope",
+        )
+        assertEquals(0, gate.inFlight)
+        appScope.cancel()
+    }
+
+    @Test
+    fun a_collection_the_app_stopped_reading_through_produceIn_ends_quietly_at_close() = runTest {
+        // Given — an app's launch that holds a collection through produceIn, reads one value and
+        // stops reading, in a scope with a plain Job and another job beside it
+        val gate = ClientOperationGate()
+        val uncaught = RecordingUncaughtExceptions()
+        val appJob = Job()
+        val appScope = CoroutineScope(appJob + Dispatchers.Default + uncaught)
+        val sibling = appScope.launch { awaitCancellation() }
+        val values = CompletableDeferred<ReceiveChannel<Int>>()
+        val holder = appScope.launch {
+            val channel =
+                gate
+                    .callCollecting(
+                        flow {
+                            repeat(LAST_SNAPSHOT) { emit(it) }
+                            awaitCancellation()
+                        }
+                    )
+                    .produceIn(this)
+            channel.receive()
+            values.complete(channel)
+        }
+        val channel = withContext(Dispatchers.Default) { withTimeout(5.seconds) { values.await() } }
+
+        // When
+        gate.close()
+        withContext(Dispatchers.Default) { withTimeout(5.seconds) { holder.join() } }
+
+        // Then — the app's launch ended as it would have, not failed; its scope and the job beside
+        // it are untouched; nothing reached the app's handler; and reading again gives the closed
+        // error, after whatever the channel still held
+        assertEquals(false, holder.isCancelled, "the app's launch was failed by the closed error")
+        assertEquals(true, sibling.isActive, "the job beside it was cancelled")
+        assertEquals(true, appJob.isActive, "the app's scope was cancelled")
+        assertEquals(
+            emptyList(),
+            uncaught.recorded(),
+            "the closed error escaped into the app's scope",
+        )
+        assertClientClosedError(channel.drainToItsEnd(), "reading again after close()")
         assertEquals(0, gate.inFlight)
         appScope.cancel()
     }
@@ -282,7 +325,7 @@ class ClientOperationGateTest {
     }
 
     @Test
-    fun a_slow_collector_is_handed_the_latest_value_not_a_superseded_one() = runTest {
+    fun a_slow_collector_is_handed_at_most_one_value_a_newer_one_has_replaced() = runTest {
         // Given — a source of snapshots, as every read the gate carries is, that moves on while the
         // collector is busy with its first value
         val gate = ClientOperationGate()
@@ -306,9 +349,45 @@ class ClientOperationGateTest {
             }
         }
 
-        // Then — the collector went from the first snapshot straight to the latest, as it does
-        // without the gate
-        assertEquals(listOf(0, LAST_SNAPSHOT), seen)
+        // Then — from the first snapshot to the latest, with at most the one snapshot the gate had
+        // already taken from the source when the collector asked again
+        assertEquals(0, seen.first(), "saw $seen")
+        assertEquals(LAST_SNAPSHOT, seen.last(), "saw $seen")
+        assertTrue(seen.size <= 3, "the gate handed on more than one superseded snapshot: $seen")
+    }
+
+    @Test
+    fun a_collection_started_after_close_through_produceIn_ends_quietly() = runTest {
+        // Given — a closed gate, and an app's launch that starts a collection through produceIn
+        val gate = ClientOperationGate()
+        gate.close()
+        val uncaught = RecordingUncaughtExceptions()
+        val appJob = Job()
+        val appScope = CoroutineScope(appJob + Dispatchers.Default + uncaught)
+        val ending = CompletableDeferred<Throwable?>()
+
+        // When
+        val holder = appScope.launch {
+            ending.complete(
+                gate
+                    .callCollecting(flow { emit(1) })
+                    .produceIn(this)
+                    .receiveCatching()
+                    .exceptionOrNull()
+            )
+        }
+        withContext(Dispatchers.Default) { withTimeout(5.seconds) { holder.join() } }
+
+        // Then — the app's launch and scope were not failed, and the reader got the closed error
+        assertEquals(false, holder.isCancelled, "the app's launch was failed by the closed error")
+        assertEquals(true, appJob.isActive, "the app's scope was cancelled")
+        assertEquals(
+            emptyList(),
+            uncaught.recorded(),
+            "the closed error escaped into the app's scope",
+        )
+        assertClientClosedError(ending.await(), "a collection started after close()")
+        appScope.cancel()
     }
 
     @Test
@@ -329,7 +408,7 @@ class ClientOperationGateTest {
                                     if (!emptied.isCompleted) {
                                         gate.close()
                                         emptied.complete(
-                                            withTimeoutOrNull(PROMPTLY) {
+                                            withTimeoutOrNull(EMPTIES_AT_ONCE_OR_NEVER) {
                                                 gate.awaitNoCallsInFlight()
                                             } != null
                                         )
@@ -351,30 +430,24 @@ class ClientOperationGateTest {
 
     private class Boom(message: String) : RuntimeException(message)
 
+    /** Reads [this] to its end and returns what it was closed with. */
+    private suspend fun <T> ReceiveChannel<T>.drainToItsEnd(): Throwable? {
+        while (true) {
+            val next = receiveCatching()
+            if (next.isClosed) return next.exceptionOrNull()
+        }
+    }
+
     private companion object {
         const val ORDERINGS = 200
         const val FAILURE_ORDERINGS = 500
         const val GAVE_UP = "the upstream gave up"
         const val LAST_SNAPSHOT = 10
-        val PROMPTLY: Duration = 2.seconds
-    }
-}
 
-/**
- * An upstream that emits 1, then — deaf to cancellation, signalling [betweenValues] — waits for
- * [closeReturned] and emits 2. A `flow {}` would refuse that second emission once cancelled.
- */
-@OptIn(ExperimentalForInheritanceCoroutinesApi::class)
-private class FakeUpstreamPastItsCancellation(
-    private val betweenValues: CompletableDeferred<Unit>,
-    private val closeReturned: CompletableDeferred<Unit>,
-) : Flow<Int> {
-    override suspend fun collect(collector: FlowCollector<Int>) {
-        collector.emit(1)
-        withContext(NonCancellable) {
-            betweenValues.complete(Unit)
-            closeReturned.await()
-            collector.emit(2)
-        }
+        /**
+         * The gate empties at once or never, so a generous bound costs nothing when it passes and
+         * cannot fail on a slow machine.
+         */
+        val EMPTIES_AT_ONCE_OR_NEVER: Duration = 10.seconds
     }
 }

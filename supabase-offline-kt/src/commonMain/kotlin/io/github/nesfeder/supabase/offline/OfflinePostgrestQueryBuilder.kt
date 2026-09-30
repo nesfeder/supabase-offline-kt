@@ -93,9 +93,8 @@ public interface OfflinePostgrestQueryBuilder {
      * `SupabaseOfflineClient.close()` fails with [IllegalStateException], and so does one collected
      * after it, through the flow's own error channel (`catch` sees it). A read that fails for any
      * other reason delivers every value before the failure, then the failure itself, a cancellation
-     * included. A slow collector is handed what the read offers when it asks for the next value, no
-     * more: that can still be a snapshot a newer one has replaced (under `CacheFirstThenNetwork`,
-     * every one in turn), and the last it is handed is the latest.
+     * included. A slow collector can be handed a snapshot a newer one has already replaced (under
+     * `CacheFirstThenNetwork`, every one in turn), and the last it is handed is the latest.
      *
      * @param columns Columns to select.
      * @param readStrategy Flow read strategy.

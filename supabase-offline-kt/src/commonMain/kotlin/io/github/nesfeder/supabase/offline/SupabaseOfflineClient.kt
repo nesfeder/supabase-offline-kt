@@ -269,11 +269,13 @@ public interface SupabaseOfflineClient {
      * - At once, every new call fails with [IllegalStateException] ("This SupabaseOfflineClient is
      *   closed"): on the client, and on a builder, bucket or flow obtained from it.
      * - At once, every flow being collected stops, whatever its read strategy: its collector reads
-     *   that error next, even one stuck in its own body or one that has stopped reading.
+     *   that error next, even one stuck in its own body or one that has stopped reading. A channel
+     *   the app holds through `produceIn` and no longer reads ends with it quietly, failing no
+     *   scope.
      * - At once, the client's own work stops (refreshes, replay passes), and so does every Storage
      *   call and sync: syncs, downloads, uploads, updates, deletes, moves, copies, signed URLs,
      *   list, info and exists. Their callers get the same error, never a cancellation. A stopped
-     *   write may still have been stored, so the cached copies it touched are dropped: one extra
+     *   write may still have been applied, so the cached copies it touched are dropped: one extra
      *   download later, never a stale copy.
      * - Every other call already running is left to finish, and each of these can hold `close()` up
      *   to its bound: a PostgREST write, a clear, a one-shot `select` that goes to the network (its

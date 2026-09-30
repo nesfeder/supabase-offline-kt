@@ -10,6 +10,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingUncaughtExceptions
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -26,16 +27,17 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
-import kotlin.time.TimeSource
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
@@ -43,6 +45,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -180,15 +183,17 @@ class SupabaseOfflineClientCloseTest {
                         }
                 }
         for ((name, flowOf) in flows) {
-            // Given — a client that waits its full bound for calls in flight
+            // Given — a client that says when a close() gives up waiting for calls in flight
             val releases = AtomicInt(0)
+            val gaveUp = AtomicInt(0)
             val client =
                 newTestOfflineClient(
                     supabase = RecordingPostgrestServer().supabaseClient(),
                     onClose = { releases.addAndFetch(1) },
                     coordinatorScope = callerScope,
+                    onStillClosing = { gaveUp.addAndFetch(1) },
                 )
-            val tookInside = CompletableDeferred<Duration>()
+            val releasedWhenCloseReturned = CompletableDeferred<Int>()
 
             // When — the collector closes the client from inside its body
             val outcome =
@@ -196,21 +201,24 @@ class SupabaseOfflineClientCloseTest {
                     withTimeout(15.seconds) {
                         runCatching {
                             flowOf(client).collect {
-                                if (!tookInside.isCompleted) {
-                                    val mark = TimeSource.Monotonic.markNow()
+                                if (!releasedWhenCloseReturned.isCompleted) {
                                     client.close()
-                                    tookInside.complete(mark.elapsedNow())
+                                    releasedWhenCloseReturned.complete(releases.load())
                                 }
                             }
                         }
                     }
                 }
 
-            // Then — close() did not wait on the collection it was called from, the collection
-            // ended
-            // with the closed error, and the database was released
-            val took = tookInside.await()
-            assertTrue(took < PROMPTLY, "$name: close() inside the collector took $took")
+            // Then — close() did not wait on the collection it was called from: it never gave up,
+            // and the database was released by the time it returned. The collection ended with the
+            // closed error
+            assertEquals(0, gaveUp.load(), "$name: close() inside the collector gave up waiting")
+            assertEquals(
+                1,
+                releasedWhenCloseReturned.await(),
+                "$name: the database was not released when close() returned",
+            )
             assertClientClosedError(
                 outcome.exceptionOrNull(),
                 "$name after close() inside its collector",
@@ -225,12 +233,13 @@ class SupabaseOfflineClientCloseTest {
 
     @Test
     fun a_collection_that_stops_reading_does_not_hold_close() = runTest {
-        for (variant in listOf(STUCK_IN_ITS_BODY, NEVER_READ_AGAIN)) {
+        for (variant in listOf(STUCK_IN_ITS_BODY, NEVER_READ_AGAIN, NEVER_READ_AGAIN_RENDEZVOUS)) {
             for (strategy in FlowReadStrategy.entries) {
                 // Given — reads the server answers and writes that queue, so every read keeps
                 // wanting
                 // to emit, and a collection that stops reading after its first value
                 val releases = AtomicInt(0)
+                val gaveUp = AtomicInt(0)
                 val server =
                     RecordingPostgrestServer(
                         answer = { request ->
@@ -242,8 +251,10 @@ class SupabaseOfflineClientCloseTest {
                         supabase = server.supabaseClient(),
                         onClose = { releases.addAndFetch(1) },
                         coordinatorScope = callerScope,
+                        onStillClosing = { gaveUp.addAndFetch(1) },
                     )
-                val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                val uncaught = RecordingUncaughtExceptions()
+                val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + uncaught)
                 val entered = CompletableDeferred<Unit>()
                 val read = client.from("todos").selectAsFlow(readStrategy = strategy)
                 if (variant == STUCK_IN_ITS_BODY) {
@@ -253,9 +264,15 @@ class SupabaseOfflineClientCloseTest {
                             awaitCancellation()
                         }
                     }
+                } else if (variant == NEVER_READ_AGAIN) {
+                    // The app's own launch holds the channel, and waits on it, as long as it lives
+                    appScope.launch {
+                        val values = read.produceIn(this)
+                        values.receive()
+                        entered.complete(Unit)
+                    }
                 } else {
-                    // Rendezvous, so the channel nobody reads holds its producer, as an app's
-                    // unread one does
+                    // Rendezvous, so the channel nobody reads holds its producer in its send
                     val values = read.buffer(Channel.RENDEZVOUS).produceIn(appScope)
                     appScope.launch {
                         values.receive()
@@ -270,20 +287,113 @@ class SupabaseOfflineClientCloseTest {
                 }
 
                 // When
-                val mark = TimeSource.Monotonic.markNow()
                 client.close()
-                val took = mark.elapsedNow()
+                val releasedWhenCloseReturned = releases.load()
+                if (variant != STUCK_IN_ITS_BODY) {
+                    // The unread channels' producers end at close(); the app's jobs end with them
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5.seconds) {
+                            appScope.coroutineContext.job.children.forEach { job -> job.join() }
+                        }
+                    }
+                }
 
-                // Then — close() returned promptly with the database released, though the
-                // collection never ended
-                assertTrue(took < PROMPTLY, "$variant, $strategy: close() took $took")
+                // Then — close() did not wait on the collection: it never gave up, and the database
+                // was released by the time it returned. Nothing reached the app's scope
+                assertEquals(0, gaveUp.load(), "$variant, $strategy: close() gave up waiting")
                 assertEquals(
                     1,
-                    releases.load(),
+                    releasedWhenCloseReturned,
                     "$variant, $strategy: the database was not released when close() returned",
+                )
+                assertEquals(
+                    emptyList(),
+                    uncaught.recorded(),
+                    "$variant, $strategy: the app's scope failed",
                 )
                 appScope.cancel()
             }
+        }
+    }
+
+    @Test
+    fun a_flow_the_app_stopped_reading_through_produceIn_ends_quietly_at_close() = runTest {
+        val flows: List<Pair<String, (SupabaseOfflineClient) -> Flow<*>>> =
+            listOf<Pair<String, (SupabaseOfflineClient) -> Flow<*>>>(
+                "pendingMutationCountFlow()" to { client -> client.pendingMutationCountFlow() },
+                "pendingMutationCountFlow(table)" to
+                    { client ->
+                        client.pendingMutationCountFlow("todos")
+                    },
+            ) +
+                FlowReadStrategy.entries.map { strategy ->
+                    "selectAsFlow($strategy)" to
+                        { client: SupabaseOfflineClient ->
+                            client.from("todos").selectAsFlow(readStrategy = strategy)
+                        }
+                }
+        for ((name, flowOf) in flows) {
+            // Given — an app's launch that holds a client flow through produceIn, reads it once and
+            // then stops reading while writes queue, in a scope with a plain Job and another job
+            val releases = AtomicInt(0)
+            val gaveUp = AtomicInt(0)
+            val server =
+                RecordingPostgrestServer(
+                    answer = { request ->
+                        if (request.method == "GET") okJson("[]") else connectivityFailure()
+                    }
+                )
+            val client =
+                newTestOfflineClient(
+                    supabase = server.supabaseClient(),
+                    onClose = { releases.addAndFetch(1) },
+                    coordinatorScope = callerScope,
+                    onStillClosing = { gaveUp.addAndFetch(1) },
+                )
+            val uncaught = RecordingUncaughtExceptions()
+            val appJob = Job()
+            val appScope = CoroutineScope(appJob + Dispatchers.Default + uncaught)
+            val sibling = appScope.launch { awaitCancellation() }
+            val held = CompletableDeferred<ReceiveChannel<*>>()
+            val holder = appScope.launch {
+                val values = flowOf(client).produceIn(this)
+                values.receive()
+                held.complete(values)
+            }
+            val values =
+                withContext(Dispatchers.Default) { withTimeout(5.seconds) { held.await() } }
+            repeat(5) { index ->
+                client
+                    .from("todos")
+                    .insertJson(buildJsonArray { add(buildJsonObject { put("id", index) }) })
+            }
+
+            // When
+            client.close()
+            val releasedWhenCloseReturned = releases.load()
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { holder.join() } }
+
+            // Then — close() neither waited on the channel nor failed the app: its launch ended as
+            // it would have, its scope and the job beside it are untouched, nothing reached its
+            // handler, and reading again gives the closed error
+            assertEquals(0, gaveUp.load(), "$name: close() gave up waiting")
+            assertEquals(
+                1,
+                releasedWhenCloseReturned,
+                "$name: the database was not released when close() returned",
+            )
+            assertEquals(false, holder.isCancelled, "$name: the app's launch was failed")
+            assertEquals(true, sibling.isActive, "$name: the job beside it was cancelled")
+            assertEquals(true, appJob.isActive, "$name: the app's scope was cancelled")
+            assertEquals(
+                emptyList(),
+                uncaught.recorded(),
+                "$name: the closed error escaped into the app's scope",
+            )
+            var ending = values.receiveCatching()
+            while (!ending.isClosed) ending = values.receiveCatching()
+            assertClientClosedError(ending.exceptionOrNull(), "$name: reading again after close()")
+            appScope.cancel()
         }
     }
 
@@ -371,6 +481,7 @@ class SupabaseOfflineClientCloseTest {
         for ((name, call) in calls) {
             // Given — the call on the wire, held at the server
             val releases = AtomicInt(0)
+            val gaveUp = AtomicInt(0)
             val server = RecordingStorageServer()
             val held = CompletableDeferred<Unit>()
             server.gate = held
@@ -384,6 +495,7 @@ class SupabaseOfflineClientCloseTest {
                     supabase = supabase,
                     onClose = { releases.addAndFetch(1) },
                     coordinatorScope = callerScope,
+                    onStillClosing = { gaveUp.addAndFetch(1) },
                 )
             val bucket = client.storage("avatars")
             val outcome = callerScope.async { runCatching { call(bucket) } }
@@ -392,21 +504,20 @@ class SupabaseOfflineClientCloseTest {
             }
 
             // When
-            val mark = TimeSource.Monotonic.markNow()
             client.close()
-            val took = mark.elapsedNow()
+            val releasedWhenCloseReturned = releases.load()
 
-            // Then — close() stopped the call rather than waiting for it, and its caller got the
-            // closed error
+            // Then — close() stopped the call rather than waiting for it (it never gave up, and the
+            // database was released by the time it returned), and the caller got the closed error
             held.complete(Unit)
-            assertTrue(took < PROMPTLY, "$name: close() waited $took for the call")
+            assertEquals(0, gaveUp.load(), "$name: close() gave up waiting for the call")
             val failure =
                 withContext(Dispatchers.Default) { withTimeout(5.seconds) { outcome.await() } }
                     .exceptionOrNull()
             assertClientClosedError(failure, "$name on the wire at close()")
             assertEquals(
                 1,
-                releases.load(),
+                releasedWhenCloseReturned,
                 "$name: the database was not released when close() returned",
             )
         }
@@ -749,11 +860,9 @@ class SupabaseOfflineClientCloseTest {
         /** Real time given to anything in flight to reach the server. */
         const val SETTLE_MILLIS = 200L
 
-        /** Far below `close()`'s own ten-second wait: what "returned at once" means here. */
-        val PROMPTLY: Duration = 2.seconds
-
         const val STUCK_IN_ITS_BODY = "a collector stuck in its body"
         const val NEVER_READ_AGAIN = "a produceIn channel never read again"
+        const val NEVER_READ_AGAIN_RENDEZVOUS = "a rendezvous produceIn channel never read again"
         const val MARKING_ORDERINGS = 20
 
         /** An idle client's work can never finish, so its `close()` always waits this long. */
