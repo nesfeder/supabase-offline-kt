@@ -728,14 +728,11 @@ internal object FilterEngine {
             length >= 2 && startsWith('{') && endsWith('}') -> substring(1, length - 1)
             // `[...]` is `encodeOverlapAsRange`'s wrapper, and [parseRange] is the only caller that
             // reaches it — but only because every other path returns before getting here, not
-            // because
-            // a `[`-shaped value is impossible. [parseArray] returns at its JSON branch for any
-            // `[`-prefixed value (`null` when it is not decodable JSON), the array operators route
-            // the
-            // range form through [applyArrayOrRangeCondition] first, and [rowMatch]'s `in`
-            // evaluation parses via [parseArray] rather than stripping wrappers itself — which is
-            // what
-            // keeps the overlay from matching the bounds of a value the replay path drops.
+            // because a `[`-shaped value is impossible. [parseArray] returns at its JSON branch for
+            // any `[`-prefixed value (`null` when it is not decodable JSON), the array operators
+            // route the range form through [applyArrayOrRangeCondition] first, and [rowMatch]'s
+            // `in` evaluation parses via [parseArray] rather than stripping wrappers itself — which
+            // is what keeps the overlay from matching the bounds of a value the replay path drops.
             length >= 2 && startsWith('[') && endsWith(']') -> substring(1, length - 1)
             else -> this
         }

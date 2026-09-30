@@ -320,9 +320,8 @@ class ReadShapeProbeContractTest {
     @Test
     fun an_apps_retry_plugin_does_not_retry_the_check() = runTest {
         // Given — an app that retries every failed request three times, 400 ms apart, and a list
-        // the
-        // cache holds; the server answers on the test scheduler, so only a wait moves the test's
-        // clock
+        // the cache holds; the server answers on the test scheduler, so only a wait moves the
+        // test's clock
         val onTheTestClock =
             RecordingPostgrestServer(
                 answer = { okJson("""[{"id":1}]""") },

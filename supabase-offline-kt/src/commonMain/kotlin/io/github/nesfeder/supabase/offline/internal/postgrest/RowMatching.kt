@@ -261,8 +261,7 @@ private fun equalAsFloatingPoint(value: String, literal: String): Boolean {
  */
 private fun textEquality(value: String, literal: String): RowMatch =
     // Cheapest checks first, and none that allocates unless its shape can apply: this runs for
-    // every
-    // cached row against every pending UPDATE or DELETE
+    // every cached row against every pending UPDATE or DELETE
     when {
         value == literal -> RowMatch.MATCHES
         equalButForCaseOrTrailingSpaces(value, literal) -> RowMatch.UNKNOWN
