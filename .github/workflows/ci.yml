@@ -311,7 +311,7 @@ jobs:
           python3 .github/scripts/check-job-results.py --self-test
           python3 .github/scripts/check-workflows.py --self-test
           python3 .github/scripts/check-workflows.py
-          shellcheck --shell=bash .github/scripts/*.sh
+          shellcheck --shell=bash .github/scripts/*.sh .github/actions/*/*.sh
 
       # Template injection, unpinned actions, broad permissions, persisted credentials. Findings
       # fail the job and appear as annotations; nothing is uploaded to code scanning.
@@ -394,6 +394,14 @@ jobs:
         && '/Applications/Xcode.app/Contents/Developer'
         || '/Applications/Xcode_26.6.app/Contents/Developer' }}
     steps:
+      # Every step that protects the self-hosted runner runs only when IOS_RUNNER is `local`. On a
+      # self-hosted runner with any other value they would all be skipped, so stop before anything.
+      - name: Check that the self-hosted runner's protections are on
+        if: runner.environment == 'self-hosted' && env.IOS_RUNNER != 'local'
+        run: |
+          echo "::error::This job is on a self-hosted runner, but IOS_RUNNER is not 'local', so every step that protects the machine would be skipped."
+          exit 1
+
       # On a self-hosted runner, before anything else: a record of the home directory's first two
       # levels, which the last step compares against. The job must leave the home as it found it.
       - name: Record the home directory

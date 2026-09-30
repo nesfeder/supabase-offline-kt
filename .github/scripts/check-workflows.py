@@ -15,7 +15,10 @@ It fails when:
      this repository's at the same commit (`$/`); or ios-tests' routing differs from the one below;
   4. ci.yml's final-status does not need every other job, or its condition differs from the one
      below;
-  5. a `uses: $/...` reference names an action or workflow that does not exist.
+  5. a `uses: $/...` reference names an action or workflow that does not exist;
+  6. ci.yml's ios-tests takes IOS_RUNNER from anything but changes' ios-runner, does not start with
+     the self-hosted guard and the home record, or does not end with the clean-up and the
+     comparison, both under always().
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -42,6 +45,12 @@ ROUTED_RUNS_ON = ("${{ needs.changes.outputs.ios-runner == 'local' && fromJSON('
 FAN_IN = ("ci.yml", "final-status")
 FAN_IN_IF = ("always() && (github.event.action != 'labeled'"
              " || github.event.label.name == 'full-ci')")
+IOS_RUNNER_ENV = "${{ needs.changes.outputs.ios-runner }}"
+LOCAL_ONLY = "env.IOS_RUNNER == 'local'"
+ALWAYS_LOCAL = "always() && env.IOS_RUNNER == 'local'"
+SELF_HOSTED_GUARD_IF = "runner.environment == 'self-hosted' && env.IOS_RUNNER != 'local'"
+HOME_SNAPSHOT = "$/.github/actions/home-snapshot"
+CLEAN_UP = "bash .github/scripts/clean-up-local-runner.sh"
 CI_TRIGGERS = {"pull_request", "push", "merge_group", "schedule", "workflow_dispatch"}
 CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
 
@@ -106,6 +115,36 @@ def runner_problems(name: str, job_id: str, job: dict) -> list[str]:
     return problems
 
 
+def protection_problems(name: str, job_id: str, job: dict) -> list[str]:
+    """Rule 6: the steps that protect the self-hosted runner are where they must be."""
+    if (name, job_id) != ROUTED_JOB:
+        return []
+    where = f"{name}: {job_id}"
+    problems = []
+    env = job.get("env") if isinstance(job.get("env"), dict) else {}
+    if env.get("IOS_RUNNER") != IOS_RUNNER_ENV:
+        problems.append(f"{where} takes IOS_RUNNER from {env.get('IOS_RUNNER')!r}, not"
+                        f" {IOS_RUNNER_ENV!r}")
+    steps = job.get("steps") if isinstance(job.get("steps"), list) else []
+    steps = [step if isinstance(step, dict) else {} for step in steps]
+    if len(steps) < 4:
+        return problems + [f"{where} has too few steps to hold its protections"]
+
+    def snapshot(step: dict, mode: str) -> bool:
+        return step.get("uses") == HOME_SNAPSHOT and step.get("with") == {"mode": mode}
+
+    guard, record, clean_up, compare = steps[0], steps[1], steps[-2], steps[-1]
+    if guard.get("if") != SELF_HOSTED_GUARD_IF or "exit 1" not in str(guard.get("run")):
+        problems.append(f"{where} does not start with the self-hosted guard")
+    if not snapshot(record, "record") or record.get("if") != LOCAL_ONLY:
+        problems.append(f"{where} does not record the home directory right after the guard")
+    if clean_up.get("run") != CLEAN_UP or clean_up.get("if") != ALWAYS_LOCAL:
+        problems.append(f"{where} does not clean up under always() as its last step but one")
+    if not snapshot(compare, "compare") or compare.get("if") != ALWAYS_LOCAL:
+        problems.append(f"{where} does not compare the home directory under always() last")
+    return problems
+
+
 def fan_in_problems(name: str, jobs: dict) -> list[str]:
     """Rule 4."""
     if name != FAN_IN[0]:
@@ -167,6 +206,7 @@ def check_tree(root: Path) -> list[str]:
         jobs = document.get("jobs") or {}
         for job_id, job in jobs.items():
             problems += runner_problems(path.name, job_id, job if isinstance(job, dict) else {})
+            problems += protection_problems(path.name, job_id, job if isinstance(job, dict) else {})
         problems += fan_in_problems(path.name, jobs)
         problems += self_reference_problems(root, path.name, document)
     for path in sorted((root / ".github" / "actions").glob("*/action.y*ml")):
@@ -195,7 +235,20 @@ jobs:
     needs: changes
     runs-on: >-
       {ROUTED_RUNS_ON}
-    steps: [{{run: echo}}]
+    env:
+      IOS_RUNNER: {IOS_RUNNER_ENV}
+    steps:
+      - if: {SELF_HOSTED_GUARD_IF}
+        run: exit 1
+      - if: {LOCAL_ONLY}
+        uses: {HOME_SNAPSHOT}
+        with: {{mode: record}}
+      - run: echo
+      - if: {ALWAYS_LOCAL}
+        run: {CLEAN_UP}
+      - if: {ALWAYS_LOCAL}
+        uses: {HOME_SNAPSHOT}
+        with: {{mode: compare}}
   docs: {{needs: changes, uses: $/.github/workflows/docs-check.yml}}
   final-status:
     if: {FAN_IN_IF}
@@ -293,16 +346,36 @@ CASES: list[tuple[str, str, str, str]] = [
      "on: {pull_request: {}}\njobs:\n  ios-tests:\n    runs-on: ${{ needs.changes.outputs.ios-runner"
      " == 'local' && fromJSON('[\"offline-kt\"]') || 'macos-26' }}\n    steps: [{run: echo}]\n",
      "names the self-hosted runner"),
+    # The third review's probes of the steps that protect the self-hosted runner.
+    ("ios-tests without its self-hosted guard", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {SELF_HOSTED_GUARD_IF}\n        run: exit 1\n", ""),
+     "does not start with the self-hosted guard"),
+    ("home record switched off", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {LOCAL_ONLY}\n", "      - if: false\n"),
+     "does not record the home directory"),
+    ("IOS_RUNNER fed from another output", "ci.yml",
+     COMPLIANT_CI.replace(f"IOS_RUNNER: {IOS_RUNNER_ENV}",
+                          "IOS_RUNNER: ${{ needs.changes.outputs.kotlin }}"),
+     "takes IOS_RUNNER from"),
+    ("clean-up without always()", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {ALWAYS_LOCAL}\n        run:",
+                          f"      - if: {LOCAL_ONLY}\n        run:"),
+     "does not clean up under always()"),
+    ("home comparison removed", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {ALWAYS_LOCAL}\n        uses: {HOME_SNAPSHOT}\n"
+                          "        with: {mode: compare}\n", ""),
+     "does not compare the home directory"),
 ]
 
 
 def write_compliant_tree(root: Path) -> None:
     """Writes a small .github tree that passes every rule."""
     (root / ".github" / "workflows").mkdir(parents=True)
-    (root / ".github" / "actions" / "setup").mkdir(parents=True)
     (root / ".github" / "workflows" / "ci.yml").write_text(COMPLIANT_CI)
     (root / ".github" / "workflows" / "docs-check.yml").write_text(COMPLIANT_DOCS)
-    (root / ".github" / "actions" / "setup" / "action.yml").write_text(COMPLIANT_ACTION)
+    for action in ("setup", "home-snapshot"):
+        (root / ".github" / "actions" / action).mkdir(parents=True)
+        (root / ".github" / "actions" / action / "action.yml").write_text(COMPLIANT_ACTION)
 
 
 def self_test() -> None:
