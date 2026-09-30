@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "Read by scripts/api-compat.py. Every entry changes how a change to the public contract is",
+    "classified, so a change to this file is itself reported for review. Type names are fully",
+    "qualified with dots, nested types included (Outer.Inner)."
+  ],
+  "kotlinDumps": [
+    "supabase-offline-kt/api/**",
+    "supabase-offline-kt-testing/api/**"
+  ],
+  "swiftInterfaces": [
+    "swift/api/*.swiftinterface"
+  ],
+  "abiExclusions": "compat/abi-exclusions.txt",
+  "overrides": "compat/overrides.txt",
+  "inputOnlyTypes": {
+    "_comment": "Sealed or enum types a caller only ever passes in, never receives and matches on. A new subtype or entry of one of these is additive. Every other sealed or enum type counts as one a caller may match exhaustively, so a new subtype or entry is breaking.",
+    "kotlin": [
+      "io.github.nesfeder.supabase.offline.ReadStrategy",
+      "io.github.nesfeder.supabase.offline.FlowReadStrategy",
+      "io.github.nesfeder.supabase.offline.MutationStrategy"
+    ],
+    "swift": []
+  },
+  "closedForImplementation": {
+    "_comment": "Interfaces and abstract classes consumers may not implement (each carrying @SubclassOptInRequired with an error-level marker). A new abstract member of one of these is additive. Empty until the public API work decides it, so every public interface counts as one a consumer may implement.",
+    "kotlin": []
+  },
+  "schemaDirectories": [
+    "supabase-offline-kt/schemas"
+  ],
+  "persistedContract": {
+    "_comment": "Files that pin a stored format as exact literals. A change to any of them means a stored format, a reserved name or a persisted key changed, or its pin was loosened; either way a person confirms it and the changelog says what happens to data already on a device.",
+    "paths": [
+      "supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/OfflineDatabaseSchemaContinuityTest.kt",
+      "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/ShippedDatabaseFixture.kt",
+      "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/PersistedNamesTest.kt",
+      "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/ReservedRowsOnDisk.kt",
+      "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/StorageObjectNamesTest.kt",
+      "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/StorageObjectNameEncodingTest.kt"
+    ]
+  },
+  "versionCatalog": "gradle/libs.versions.toml",
+  "upstreamPins": {
+    "_comment": "Catalog versions whose major or minor change reaches consumers as a different upstream API and binds them to it. A patch change is patch-safe.",
+    "names": ["supabase-bom"]
+  },
+  "toolchainFloors": {
+    "_comment": "Catalog versions that set a floor for consumers. kotlin: a change of the tooling release (2.4.1x to 2.4.2x, or any minor) raises the Kotlin a consumer needs. increaseOnly: any increase.",
+    "kotlin": "kotlin",
+    "increaseOnly": ["android-minSdk"]
+  },
+  "changelog": "CHANGELOG.md"
+}
