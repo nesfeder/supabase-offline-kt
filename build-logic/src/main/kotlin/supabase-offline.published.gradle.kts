@@ -3,13 +3,14 @@
 @file:OptIn(ExperimentalAbiValidation::class)
 
 import io.github.nesfeder.supabase.offline.buildlogic.parseAbiExclusionMarkers
+import kotlinx.kover.gradle.plugin.dsl.KoverProjectExtension
 import org.gradle.api.GradleException
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation
 
-// supabase-offline.published: this module ships, so it carries the library's Maven identity and
-// its public ABI is recorded. The group and version also name the klib (`<group>:<module>`).
-// Publishing itself is set up elsewhere.
+// supabase-offline.published: this module ships, so it carries the library's Maven identity, its
+// public ABI is recorded and its coverage is measured. The group and version also name the klib
+// (`<group>:<module>`). Publishing itself is set up elsewhere.
 
 /** A property of the root gradle.properties that every published module needs. */
 private fun requiredGradleProperty(key: String): String =
@@ -58,6 +59,34 @@ pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
             // A target this machine cannot compile fails the record instead of being copied from
             // the committed one, which would hide exactly the change the record exists to show.
             keepLocallyUnsupportedTargets.set(false)
+        }
+    }
+}
+
+// Coverage of the Android host tests: Kover instruments JVM test runs only, so iOS-only code is
+// never measured. Each module reports its own classes; `koverXmlReport` writes
+// build/reports/kover/report.xml, and `check` runs `koverVerify`.
+pluginManager.apply("org.jetbrains.kotlinx.kover")
+
+extensions.configure<KoverProjectExtension> {
+    reports {
+        filters {
+            excludes {
+                // Room's KSP output: the DAO and database implementations, their inner classes and
+                // the object that implements the database's expect constructor.
+                classes(
+                    "io.github.nesfeder.supabase.offline.internal.db.*_Impl",
+                    "io.github.nesfeder.supabase.offline.internal.db.*_Impl\$*",
+                    "io.github.nesfeder.supabase.offline.internal.db.OfflineDatabaseConstructor",
+                )
+                // Bridges the compiler generates for interface default methods; they only delegate.
+                classes("*\$DefaultImpls")
+            }
+        }
+        verify {
+            // A tripwire for broken measurement, such as a Kover release that reports 0%, not a
+            // quality bar: the real figure is far above it.
+            rule("Coverage data reached the report") { minBound(50) }
         }
     }
 }

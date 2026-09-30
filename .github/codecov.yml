@@ -1,0 +1,115 @@
+# Codecov settings. Reference: https://docs.codecov.com/docs/codecovyml-reference
+# Validate after editing (this sends only this file):
+#   curl --data-binary @.github/codecov.yml https://codecov.io/validate
+#
+# What the figure covers: the Kotlin library as the Android host tests run it (flag `kotlin`), and
+# later the Swift package's own sources (flag `swift`). Kotlin/Native has no coverage tooling, so
+# iOS-only Kotlin and the iOS simulator tests are not in it. See CONTRIBUTING.md, "Coverage".
+#
+# Generated code is excluded in Kover's configuration (build-logic, supabase-offline.published),
+# not here, so a local Kover report and this dashboard measure the same classes. `ignore` below
+# only guards against paths that are never product code, whatever upload they arrive in.
+#
+# The dashboard reads lower than `koverLog`: Codecov counts a line where only some branches ran as
+# partial, not covered, while Kover counts any line that ran. `parsers.jacoco.partials_as_hits:
+# true` would bring the two close; the stricter figure is kept on purpose.
+
+coverage:
+  precision: 1
+  round: down
+  range: "75...95"
+  status:
+    # Both statuses inform and never block a merge.
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: true
+    patch:
+      default:
+        target: 80%
+        informational: true
+
+comment:
+  layout: "condensed_header, condensed_files, components, condensed_footer"
+  behavior: default
+  require_changes: false
+  show_carryforward_flags: true
+
+# Uncovered-line annotations on the diff are noise while the statuses only inform.
+github_checks:
+  annotations: false
+
+ignore:
+  - "**/build/**"
+  - "**/src/*Test/**"
+  - "Tests/"
+  - "**/Tests/**"
+  - "composeApp/"
+  - "iosApp/"
+  - "demo/"
+
+# One flag per upload. Carry-forward keeps a flag's last coverage when its job did not run, so a
+# change that runs only one language's tests does not report the other's coverage as gone.
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: kotlin
+      paths:
+        - "supabase-offline-kt/src/"
+        - "supabase-offline-kt-testing/src/"
+    - name: swift
+      # Wherever the Swift package lands: at the root or in a subdirectory.
+      paths:
+        - "Sources/SupabaseOffline/"
+        - "Sources/SupabaseOfflineTesting/"
+        - "**/Sources/SupabaseOffline/**"
+        - "**/Sources/SupabaseOfflineTesting/**"
+
+# Areas of the engine, by package. The mutation queue's state, replay, stored format and overlay
+# live in internal/db, so mutation-queue names those files and local-database leaves them out.
+# The internal root and internal/util belong to no component; they still count in the total.
+component_management:
+  individual_components:
+    - component_id: public-api
+      name: Public API
+      paths:
+        - "supabase-offline-kt/src/*/kotlin/io/github/nesfeder/supabase/offline/*.kt"
+    - component_id: postgrest
+      name: PostgREST reads
+      paths:
+        - "supabase-offline-kt/src/**/internal/postgrest/**"
+    - component_id: mutation-queue
+      name: Mutation queue
+      paths:
+        - "supabase-offline-kt/src/**/internal/mutationqueue/**"
+        - "supabase-offline-kt/src/**/internal/db/MutationQueue*.kt"
+        - "supabase-offline-kt/src/**/internal/db/NumericDeltaCodec.kt"
+        - "supabase-offline-kt/src/**/internal/db/OfflineMutationOverlay.kt"
+        - "supabase-offline-kt/src/**/internal/db/ReservedRows.kt"
+    - component_id: local-database
+      name: Local database
+      paths:
+        - "supabase-offline-kt/src/**/internal/db/**"
+        - "!supabase-offline-kt/src/**/internal/db/MutationQueue*.kt"
+        - "!supabase-offline-kt/src/**/internal/db/NumericDeltaCodec.kt"
+        - "!supabase-offline-kt/src/**/internal/db/OfflineMutationOverlay.kt"
+        - "!supabase-offline-kt/src/**/internal/db/ReservedRows.kt"
+    - component_id: storage
+      name: Storage cache
+      paths:
+        - "supabase-offline-kt/src/**/internal/storage/**"
+    - component_id: testing-support
+      name: Testing support
+      paths:
+        - "supabase-offline-kt/src/**/internal/testing/**"
+        - "supabase-offline-kt-testing/src/**"
+    - component_id: swift
+      name: Swift package
+      # Wherever the Swift package lands: at the root or in a subdirectory.
+      paths:
+        - "Sources/SupabaseOffline/"
+        - "Sources/SupabaseOfflineTesting/"
+        - "**/Sources/SupabaseOffline/**"
+        - "**/Sources/SupabaseOfflineTesting/**"
