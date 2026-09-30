@@ -20,6 +20,10 @@ It fails when:
      workflow's default permissions do; or a listed job holds other permissions than its own, or
      its condition does not start with the Dependabot guard as a conjunct of its own, so a run
      Dependabot pushed or started never holds the token.
+  7. ci.yml's ios-tests takes IOS_RUNNER from anything but changes' ios-runner, does not start with
+     the self-hosted guard and the home record, or does not end with the clean-up and the
+     comparison, both under always(); or a step sets IOS_RUNNER for itself; or the job or one of
+     those four steps may continue on error.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -46,6 +50,12 @@ ROUTED_RUNS_ON = ("${{ needs.changes.outputs.ios-runner == 'local' && fromJSON('
 FAN_IN = ("ci.yml", "final-status")
 FAN_IN_IF = ("always() && (github.event.action != 'labeled'"
              " || github.event.label.name == 'full-ci')")
+IOS_RUNNER_ENV = "${{ needs.changes.outputs.ios-runner }}"
+LOCAL_ONLY = "env.IOS_RUNNER == 'local'"
+ALWAYS_LOCAL = "always() && env.IOS_RUNNER == 'local'"
+SELF_HOSTED_GUARD_IF = "runner.environment != 'github-hosted' && env.IOS_RUNNER != 'local'"
+HOME_SNAPSHOT = "$/.github/actions/home-snapshot"
+CLEAN_UP = "bash .github/scripts/clean-up-local-runner.sh"
 # Jobs of ci.yml the fan-in must not need: a failure there must never block a merge.
 FAN_IN_EXEMPT = {"coverage-upload", "coverage-rehearsal"}
 # The jobs that may mint an OIDC token, each for one service, with exactly these permissions:
@@ -118,6 +128,44 @@ def runner_problems(name: str, job_id: str, job: dict) -> list[str]:
     runs_on = job.get("runs-on")
     if not (isinstance(runs_on, str) and HOSTED_LABEL.fullmatch(runs_on)):
         problems.append(f"{name}: job {job_id} runs on {runs_on!r}, not a literal hosted label")
+    return problems
+
+
+def protection_problems(name: str, job_id: str, job: dict) -> list[str]:
+    """Rule 7: the steps that protect the self-hosted runner are where they must be."""
+    if (name, job_id) != ROUTED_JOB:
+        return []
+    where = f"{name}: {job_id}"
+    problems = []
+    env = job.get("env") if isinstance(job.get("env"), dict) else {}
+    if env.get("IOS_RUNNER") != IOS_RUNNER_ENV:
+        problems.append(f"{where} takes IOS_RUNNER from {env.get('IOS_RUNNER')!r}, not"
+                        f" {IOS_RUNNER_ENV!r}")
+    steps = job.get("steps") if isinstance(job.get("steps"), list) else []
+    steps = [step if isinstance(step, dict) else {} for step in steps]
+    if len(steps) < 4:
+        return problems + [f"{where} has too few steps to hold its protections"]
+
+    def snapshot(step: dict, mode: str) -> bool:
+        return step.get("uses") == HOME_SNAPSHOT and step.get("with") == {"mode": mode}
+
+    guard, record, clean_up, compare = steps[0], steps[1], steps[-2], steps[-1]
+    for step in steps:
+        if isinstance(step.get("env"), dict) and "IOS_RUNNER" in step["env"]:
+            problems.append(f"{where}: a step sets IOS_RUNNER for itself")
+    # A step or job that may continue on error would let the job pass with a red comparison.
+    for label, node in (("the job", job), ("the guard", guard), ("the record", record),
+                        ("the clean-up", clean_up), ("the comparison", compare)):
+        if node.get("continue-on-error", False) is not False:
+            problems.append(f"{where}: {label} may continue on error")
+    if guard.get("if") != SELF_HOSTED_GUARD_IF or "exit 1" not in str(guard.get("run")):
+        problems.append(f"{where} does not start with the self-hosted guard")
+    if not snapshot(record, "record") or record.get("if") != LOCAL_ONLY:
+        problems.append(f"{where} does not record the home directory right after the guard")
+    if clean_up.get("run") != CLEAN_UP or clean_up.get("if") != ALWAYS_LOCAL:
+        problems.append(f"{where} does not clean up under always() as its last step but one")
+    if not snapshot(compare, "compare") or compare.get("if") != ALWAYS_LOCAL:
+        problems.append(f"{where} does not compare the home directory under always() last")
     return problems
 
 
@@ -232,6 +280,7 @@ def check_tree(root: Path) -> list[str]:
         jobs = document.get("jobs") or {}
         for job_id, job in jobs.items():
             problems += runner_problems(path.name, job_id, job if isinstance(job, dict) else {})
+            problems += protection_problems(path.name, job_id, job if isinstance(job, dict) else {})
         problems += fan_in_problems(path.name, jobs)
         problems += self_reference_problems(root, path.name, document)
         problems += oidc_problems(path.name, document)
@@ -261,7 +310,20 @@ jobs:
     needs: changes
     runs-on: >-
       {ROUTED_RUNS_ON}
-    steps: [{{run: echo}}]
+    env:
+      IOS_RUNNER: {IOS_RUNNER_ENV}
+    steps:
+      - if: {SELF_HOSTED_GUARD_IF}
+        run: exit 1
+      - if: {LOCAL_ONLY}
+        uses: {HOME_SNAPSHOT}
+        with: {{mode: record}}
+      - run: echo
+      - if: {ALWAYS_LOCAL}
+        run: {CLEAN_UP}
+      - if: {ALWAYS_LOCAL}
+        uses: {HOME_SNAPSHOT}
+        with: {{mode: compare}}
   docs: {{needs: changes, uses: $/.github/workflows/docs-check.yml}}
   coverage-upload:
     needs: changes
@@ -418,16 +480,48 @@ CASES: list[tuple[str, str, str, str]] = [
      COMPLIANT_CI.replace("permissions: {contents: read}\n",
                           "permissions: {contents: read, id-token: write}\n", 1),
      "job coverage-rehearsal can mint an OIDC token"),
+    # The third review's probes of the steps that protect the self-hosted runner.
+    ("ios-tests without its self-hosted guard", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {SELF_HOSTED_GUARD_IF}\n        run: exit 1\n", ""),
+     "does not start with the self-hosted guard"),
+    ("home record switched off", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {LOCAL_ONLY}\n", "      - if: false\n"),
+     "does not record the home directory"),
+    ("IOS_RUNNER fed from another output", "ci.yml",
+     COMPLIANT_CI.replace(f"IOS_RUNNER: {IOS_RUNNER_ENV}",
+                          "IOS_RUNNER: ${{ needs.changes.outputs.kotlin }}"),
+     "takes IOS_RUNNER from"),
+    ("clean-up without always()", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {ALWAYS_LOCAL}\n        run:",
+                          f"      - if: {LOCAL_ONLY}\n        run:"),
+     "does not clean up under always()"),
+    ("home comparison removed", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {ALWAYS_LOCAL}\n        uses: {HOME_SNAPSHOT}\n"
+                          "        with: {mode: compare}\n", ""),
+     "does not compare the home directory"),
+    ("the comparison may continue on error", "ci.yml",
+     COMPLIANT_CI.replace("        with: {mode: compare}\n",
+                          "        with: {mode: compare}\n        continue-on-error: true\n"),
+     "the comparison may continue on error"),
+    ("the record sets IOS_RUNNER for itself", "ci.yml",
+     COMPLIANT_CI.replace("        with: {mode: record}\n",
+                          "        with: {mode: record}\n        env: {IOS_RUNNER: local}\n"),
+     "a step sets IOS_RUNNER for itself"),
+    ("ios-tests may continue on error", "ci.yml",
+     COMPLIANT_CI.replace("    env:\n      IOS_RUNNER:",
+                          "    continue-on-error: ${{ true }}\n    env:\n      IOS_RUNNER:"),
+     "the job may continue on error"),
 ]
 
 
 def write_compliant_tree(root: Path) -> None:
     """Writes a small .github tree that passes every rule."""
     (root / ".github" / "workflows").mkdir(parents=True)
-    (root / ".github" / "actions" / "setup").mkdir(parents=True)
     (root / ".github" / "workflows" / "ci.yml").write_text(COMPLIANT_CI)
     (root / ".github" / "workflows" / "docs-check.yml").write_text(COMPLIANT_DOCS)
-    (root / ".github" / "actions" / "setup" / "action.yml").write_text(COMPLIANT_ACTION)
+    for action in ("setup", "home-snapshot"):
+        (root / ".github" / "actions" / action).mkdir(parents=True)
+        (root / ".github" / "actions" / action / "action.yml").write_text(COMPLIANT_ACTION)
 
 
 def self_test() -> None:

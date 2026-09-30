@@ -2,7 +2,8 @@
 
 Thank you for helping. Instructions for building, testing and releasing the library itself will
 follow; for now, this file covers formatting, changing the public API, test coverage, the
-documentation site and how dependency updates are handled.
+documentation site, how dependency updates are handled, and what to do when CI fails for a reason
+outside the change.
 
 ## Formatting
 
@@ -287,3 +288,87 @@ otherwise: Gradle plugins, build tools and test libraries. GitHub tags an alert 
 package "Development". An alert without that tag concerns what the library ships, so read those
 first (`scope:runtime` in the alerts filter). A new module whose output ships joins the project
 pattern in the workflow's `resolve` step.
+
+## Continuous integration
+
+Every pull request runs `.github/workflows/ci.yml`. Its last job, **Final status**, is the one check
+a pull request needs. Most failures are the change's own. This section covers two kinds that are
+not.
+
+### When a run fails on a download
+
+A job can fail because something it downloads is briefly unavailable. Each of these is covered:
+
+- **The formatter.** The Formatting job keeps kempt's release archive and the ktfmt jar in the
+  Actions cache, keyed by their pinned SHA-256 digests, and downloads them only when the cache
+  has no entry for those digests. A failed download is tried three more times, after 10, 30 and
+  60 seconds, and each attempt is given 60 seconds. So the job fails only when all four attempts
+  do: a `429 Too Many Requests` from Maven Central, a `5xx`, a server that stops answering, or a
+  network error. One file gives up after at most 340 seconds, and the job's 15-minute timeout
+  leaves room for both files to use every retry.
+- **An action, before the first step.** The runner downloads every action a job uses in its "Set up
+  job" step, on GitHub's runners and on a self-hosted one alike. That download is the runner's own,
+  and nothing in the workflow controls it. Each attempt has 100 seconds, and the runner makes three
+  attempts, 10 to 30 seconds apart, with a warning for each one that fails. After the third, the
+  job fails with "Failed to download archive … after 3 attempts". That is at most about six minutes
+  for each action; only if several of a job's actions stall at once can it reach the job's
+  timeout, which is then a download failure too. A job whose only error is "The request was
+  canceled due to the configured HttpClient.Timeout of 100 seconds elapsing" was cancelled while it
+  waited, so the runner never retried: re-run it.
+- **Other downloads in a step:** `setup-java`'s JDK, the Gradle wrapper's distribution, the build's
+  dependencies and the documentation toolchain, when one of them fails with the same kinds of
+  error.
+
+What to do: wait ten minutes, then re-run the failed jobs once ("Re-run failed jobs" on the run's
+page). If the same download fails again, stop and find out why: the file may have moved, or the
+service may be down.
+
+**Never re-run a failure that says a checksum did not match.** A file that arrives but does not
+match its pinned SHA-256 is not a transient failure: either the file changed where it is published,
+or something replaced it in transit. The job stops at once for that reason, without retrying and
+without caching the file. Find out which it is before anything runs again. If a new release really
+did replace the file, update the version and its digest together in `ci.yml`.
+
+If the step that failed its checksum ran after "Restore the formatter downloads" said
+`Cache restored`, the bad file came from the Actions cache, and a re-run restores it again. Delete
+that entry first (the repository's Actions → Caches page, or `gh cache delete <key>` with the key
+the restore step printed), then find out how it got there: the job saves the files only after both
+have passed their checksums.
+
+### The self-hosted runner, while the repository is private
+
+While the repository is private, the iOS tests may run on a self-hosted Mac instead of GitHub's
+macOS runner (the rule is at the top of `ci.yml`). The job gives the build a home and directories of
+its own, and its last two steps remove everything the job made and then compare the runner
+account's home directory with a record taken before the first step. What that comparison records,
+and what it cannot see, is in
+[the snapshot's README](https://github.com/nesfeder/supabase-offline-kt/blob/main/.github/actions/home-snapshot/README.md).
+
+**The comparison fails the job.** It lists each changed path, but it cannot tell whether the job
+changed it or something else running as the same user did. If the path is not one the job writes,
+re-run the job; if the same path comes back, it belongs in the snapshot's exclusion list, with its
+reason.
+
+Two kinds of red come from the runners themselves, and are read, not excluded. A red that names
+only a runner's directory with its `.runner_migrated` or `.credentials_migrated` is GitHub
+refreshing that runner's settings; one that names a runner's new `bin.*`, `externals.*` or
+`update.finished` is the runner updating itself. The runner's `_diag` log records either. Re-run the
+job.
+
+**A job killed before its last two steps** (the Mac restarted or slept, or the runner service
+stopped) cleans up nothing itself. What the next job on the runner does about it:
+
+| Left behind | Removed by |
+| --- | --- |
+| The job's home, Gradle User Home, Kotlin/Native and temporary directories | The runner, which empties its temporary folder when the next job starts |
+| Processes still running from those directories | The runner's orphan-process clean-up, and the next job's clean-up step |
+| The JDK `setup-java` installed | The next job's clean-up step |
+| The job's simulator, its logs in `~/Library/Logs/CoreSimulator`, and CoreSimulator's folders for it in the per-user temporary directory | The next job to start at least an hour later, which deletes simulators the CI jobs made that are older than that |
+| Any change to the home directory | Nothing: the next job's record step lists what changed since the killed job's record, as a warning that names that run |
+
+A maintainer then does two things by hand:
+
+- Read that warning, and undo anything in it that the killed job wrote. It also lists what anything
+  else on the machine changed in between, so compare it with what the job writes.
+- Look in `~/Library/Logs/DiagnosticReports` for a crash report from a step that crashed, such as
+  `xcodebuild`. The snapshot does not reach that deep, and nothing removes it.
