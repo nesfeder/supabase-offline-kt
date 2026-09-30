@@ -95,7 +95,7 @@ def check(needs: dict) -> tuple[bool, list[str]]:
             lines.append(f"iOS tests: {'ran on ' + where if plan['ios-allowed'] else 'held'}.")
         if plan["ios-held"]:
             lines.append(f"**The iOS tests were due and held ({plan['ios-hold']}).** This check is"
-                         " named apart from `Final status`, so it cannot satisfy the required"
+                         " named apart from `All Green`, so it cannot satisfy the required"
                          " check.")
     lines.extend(f"- {problem}" for problem in problems)
     return passed, lines
@@ -125,7 +125,7 @@ def main() -> None:
     plan, _ = read_plan((needs.get("changes") or {}).get("outputs"))
     if plan is not None and plan["ios-held"]:
         print(f"::warning title=iOS tests not run::The iOS tests were due and held"
-              f" ({plan['ios-hold']}). This run's fan-in is not the required Final status.")
+              f" ({plan['ios-hold']}). This run's fan-in is not the required All Green check.")
     if not passed:
         print("::error::A job's result does not match the plan; see the table above.")
         sys.exit(1)

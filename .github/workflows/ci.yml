@@ -1,6 +1,6 @@
 name: CI
 
-# One workflow, one required check: `Final status`.
+# One workflow, one required check: `All Green`.
 #
 #   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules and their
 #            │                   │                    coverage; the public API records (Android
@@ -41,7 +41,7 @@ name: CI
 #   maintainer removes the label and adds it again.
 #
 # When the iOS tests were due and held by that rule, the fan-in is named
-# `Final status (iOS tests held)`, so it can never satisfy the required `Final status`: that name
+# `All Green (iOS tests held)`, so it can never satisfy the required `All Green`: that name
 # exists only on a run where every due job ran. A green held check means the Linux jobs passed.
 #
 # Forks: every job runs with a read-only token and no secrets, and nothing writes to the
@@ -109,7 +109,7 @@ jobs:
       # Anything not named below counts as a build input, so an unfamiliar path runs the tests,
       # and a change to CI itself runs everything. A push or manual run whose changed files cannot
       # be listed runs everything; on a pull request a failed diff fails this job, and with it
-      # Final status.
+      # All Green.
       - name: Classify the changed files
         id: classify
         env:
@@ -728,13 +728,13 @@ jobs:
           verbose: true
 
   final-status:
-    # The required check is exactly `Final status`. A run that held iOS tests which were due, and a
+    # The required check is exactly `All Green`. A run that held iOS tests which were due, and a
     # label event that ran nothing, report under other names, so neither can satisfy it.
     name: >-
       ${{ (github.event.action == 'labeled' && github.event.label.name != 'full-ci')
-      && 'Final status (label ignored)'
-      || needs.changes.outputs.ios-held == 'true' && 'Final status (iOS tests held)'
-      || 'Final status' }}
+      && 'All Green (label ignored)'
+      || needs.changes.outputs.ios-held == 'true' && 'All Green (iOS tests held)'
+      || 'All Green' }}
     if: always() && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     # Every job but coverage-upload and coverage-rehearsal, left out on purpose (see them).
     needs: [changes, formatting, static-checks, jvm-tests, ios-tests, docs]
