@@ -358,14 +358,14 @@ def classify_dump(
             )
 
     removed, added = count_changes(before, after)
-    removed_parents = {entry.text for entry in removed}
+    removed_paths = {entry_path(entry) for entry in removed}
     for entry in removed:
         # A removed class reports once; its members are implied.
-        if any(parent in removed_parents for parent in entry.parents):
+        if inside_any(entry, removed_paths):
             continue
         report.add(Finding("breaking", "kotlin-removed", f"{path}: {describe(entry)}"))
 
-    added_parents = {entry.text for entry in added}
+    added_paths = {entry_path(entry) for entry in added}
     for entry in added:
         parent_text = entry.parents[-1] if entry.parents else ""
         parent_fqn = parent_fqn_of(entry, after)
@@ -404,7 +404,7 @@ def classify_dump(
                     )
                 )
                 continue
-        if any(parent in added_parents for parent in entry.parents):
+        if inside_any(entry, added_paths):
             continue  # members of a new class come with it
         if (
             is_new_abstract_member(entry, klib)
@@ -417,6 +417,20 @@ def classify_dump(
             )
             continue
         report.add(Finding("additive", "kotlin-added", f"{path}: {describe(entry)}"))
+
+
+def entry_path(entry: DumpEntry) -> Tuple[str, ...]:
+    """The declaration texts from the outermost enclosing declaration down to this one."""
+    return entry.parents + (entry.text,)
+
+
+def inside_any(entry: DumpEntry, paths: Set[Tuple[str, ...]]) -> bool:
+    """Whether one of the declarations enclosing ``entry`` has its full path in ``paths``.
+
+    Full paths, because a klib record names a nested type by its simple name: two different
+    ``Listener`` interfaces nested in two classes render the same header text.
+    """
+    return any(entry.parents[:depth] in paths for depth in range(1, len(entry.parents) + 1))
 
 
 def describe(entry: DumpEntry) -> str:
@@ -438,7 +452,7 @@ def parent_fqn_of(entry: DumpEntry, dump: Dump) -> str:
 def is_new_abstract_member(entry: DumpEntry, klib: bool) -> bool:
     if klib:
         return bool(re.match(r"^abstract (?:suspend )?(?:fun|val|var)\b", entry.text))
-    return entry.text.startswith("public abstract fun ")
+    return bool(re.match(r"^(?:public|protected) abstract fun ", entry.text))
 
 
 def parent_is_implementable(parent_text: str, klib: bool) -> bool:
@@ -629,12 +643,11 @@ def policy_problems(git: Git, head: str, policy: dict) -> List[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def apply_overrides(git: Git, head: str, policy: dict, report: Report) -> List[str]:
-    """Downgrades findings listed in compat/overrides.txt. Returns problems with the file."""
+def read_overrides(content: Optional[str]) -> Tuple[Dict[str, str], List[str]]:
+    """The overrides in a copy of compat/overrides.txt, as finding key → reason, and its problems."""
     problems = []
-    content = git.show(head, policy.get("overrides", "compat/overrides.txt")) or ""
     wanted: Dict[str, str] = {}
-    for number, line in enumerate(content.splitlines(), start=1):
+    for number, line in enumerate((content or "").splitlines(), start=1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if "  # " not in line:
@@ -645,13 +658,28 @@ def apply_overrides(git: Git, head: str, policy: dict, report: Report) -> List[s
             problems.append(f"compat/overrides.txt:{number}: empty reason")
             continue
         wanted[key.strip()] = reason.strip()
+    return wanted, problems
+
+
+def apply_overrides(git: Git, base: str, head: str, policy: dict, report: Report) -> List[str]:
+    """Downgrades findings listed in compat/overrides.txt at head. Returns problems with the file.
+
+    An override stays until the release after it empties the file, so one that an earlier change
+    wrote may match nothing in this one: that is a note. One this change adds or edits must match.
+    """
+    path = policy.get("overrides", "compat/overrides.txt")
+    wanted, problems = read_overrides(git.show(head, path))
+    earlier, _ = read_overrides(git.show(base, path))
     used = set()
     for finding in report.findings:
         if finding.key() in wanted and finding.flag != "error":
             finding.overridden_by = wanted[finding.key()]
             used.add(finding.key())
     for key in sorted(set(wanted) - used):
-        problems.append(f"compat/overrides.txt: '{key}' matches no finding; remove it")
+        if earlier.get(key) == wanted[key]:
+            report.notes.append(f"compat/overrides.txt: '{key}' is from an earlier change and matches nothing here.")
+        else:
+            problems.append(f"compat/overrides.txt: '{key}' matches no finding; remove it")
     return problems
 
 
@@ -667,10 +695,60 @@ def load_policy(git: Git, ref: str) -> dict:
     return json.loads(content)
 
 
+# Lists that widen what is watched, and lists that let a change through.
+WATCH_LISTS = [
+    ("kotlinDumps",),
+    ("swiftInterfaces",),
+    ("schemaDirectories",),
+    ("persistedContract", "paths"),
+    ("upstreamPins", "names"),
+    ("toolchainFloors", "increaseOnly"),
+]
+ALLOW_LISTS = [
+    ("inputOnlyTypes", "kotlin"),
+    ("inputOnlyTypes", "swift"),
+    ("closedForImplementation", "kotlin"),
+]
+
+
+def nested(policy: dict, keys: Tuple[str, ...]) -> List[str]:
+    value: object = policy
+    for key in keys:
+        value = value.get(key, {}) if isinstance(value, dict) else {}
+    return list(value) if isinstance(value, list) else []
+
+
+def with_nested(policy: dict, keys: Tuple[str, ...], values: List[str]) -> None:
+    for key in keys[:-1]:
+        policy = policy.setdefault(key, {})
+    policy[keys[-1]] = values
+
+
+def rating_policy(git: Git, base: str, head: str) -> dict:
+    """The rules a change is rated under: the head's, never looser than the base's.
+
+    A watch list is the union of both, and an allow list (input-only types, types closed for
+    implementation) holds only what both allow, so a change cannot widen the rules that rate it.
+    With no policy at the base, the head's applies as written.
+    """
+    policy = load_policy(git, head)
+    if git.show(base, "compat/policy.json") is None:
+        return policy
+    earlier = load_policy(git, base)
+    stricter = json.loads(json.dumps(policy))
+    for keys in WATCH_LISTS:
+        with_nested(stricter, keys, sorted(set(nested(policy, keys)) | set(nested(earlier, keys))))
+    for keys in ALLOW_LISTS:
+        with_nested(stricter, keys, sorted(set(nested(policy, keys)) & set(nested(earlier, keys))))
+    if not stricter.get("toolchainFloors", {}).get("kotlin") and earlier.get("toolchainFloors", {}).get("kotlin"):
+        stricter.setdefault("toolchainFloors", {})["kotlin"] = earlier["toolchainFloors"]["kotlin"]
+    return stricter
+
+
 def classify(git: Git, base: str, head: str, swift_report: Optional[str] = None) -> Tuple[Report, List[str]]:
     git.require_commit(base)
     git.require_commit(head)
-    policy = load_policy(git, head)
+    policy = rating_policy(git, base, head)
     report = Report(base=base, head=head)
     base_files, head_files = git.files(base), git.files(head)
 
@@ -696,7 +774,8 @@ def classify(git: Git, base: str, head: str, swift_report: Optional[str] = None)
     classify_schema(git, base, head, policy, report)
     classify_contract(git, base, head, policy, report)
     classify_catalog(git, base, head, policy, report)
-    problems = apply_overrides(git, head, policy, report) + policy_problems(git, head, policy)
+    # Whether the head's own watches exist; a path only the base watched is rated as it changed.
+    problems = apply_overrides(git, base, head, policy, report) + policy_problems(git, head, load_policy(git, head))
     return report, problems
 
 
@@ -723,6 +802,9 @@ def render(report: Report, problems: Sequence[str]) -> str:
         lines.append("### Overridden in compat/overrides.txt (counted as additive)")
         for finding in overridden:
             lines.append(f"- `{finding.key()}` — {finding.overridden_by}")
+        lines.append("")
+    if report.notes:
+        lines.extend(f"> {note}" for note in report.notes)
         lines.append("")
     if problems:
         lines.append("### Problems")
@@ -768,6 +850,19 @@ def changelog_section(content: Optional[str], title: str) -> Dict[str, Set[str]]
     return result
 
 
+def new_bullets(before: Dict[str, Set[str]], after: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
+    """The bullets under each heading whose text is nowhere in the base's section: the ones this
+    change wrote or edited. A bullet moved to another heading unchanged is not new."""
+    everywhere: Set[str] = set()
+    for bullets in before.values():
+        everywhere |= bullets
+    return {heading: after[heading] - everywhere for heading in HEADINGS}
+
+
+# A released version's section: `## 0.1.0` or `## [0.1.0] - 2026-10-01`.
+RELEASED_SECTION = re.compile(r"^## \[?\d+\.\d+\.\d+\]?(?:\s|$)", re.MULTILINE)
+
+
 def required_headings(report: Report) -> Optional[Set[str]]:
     """Headings a change of this kind must add a bullet under; None means nothing is required."""
     level, flags = report.level(), report.flags()
@@ -792,27 +887,46 @@ def command_classify(git: Git, arguments: argparse.Namespace) -> int:
 
 
 def command_check_pr(git: Git, arguments: argparse.Namespace) -> int:
+    """Rates the change, then requires the changelog line the rating needs.
+
+    Until the first release is tagged, `## Unreleased` describes that release as a whole, so any
+    new or edited line in it will do; from then on the rating decides the heading.
+    """
     report, problems = classify(git, arguments.base, arguments.head, arguments.swift_report)
     policy = load_policy(git, arguments.head)
     path = policy.get("changelog", "CHANGELOG.md")
+    changelog = git.show(arguments.head, path)
     before = changelog_section(git.show(arguments.base, path), "Unreleased")
-    after = changelog_section(git.show(arguments.head, path), "Unreleased")
-    added = {heading: after[heading] - before[heading] for heading in HEADINGS}
+    added = new_bullets(before, changelog_section(changelog, "Unreleased"))
     required = required_headings(report)
+    released = latest_release_tag(git)
     failures = list(problems)
+    if released is None and changelog is not None and RELEASED_SECTION.search(changelog):
+        failures.append(
+            f"{path} records a released version, but this clone has no release tag, so the check "
+            "cannot tell which rule applies. Fetch the tags (in CI, the checkout's `fetch-tags: true`)."
+        )
     if "error" in report.flags():
         failures.append("An exported Room schema was edited or deleted. Add a new version instead; never edit a shipped one.")
-    if required and not any(added[heading] for heading in required):
-        flags = f" with {', '.join(sorted(report.flags()))}" if report.flags() else ""
+    flags = f" with {', '.join(sorted(report.flags()))}" if report.flags() else ""
+    headings = ", ".join("### " + heading for heading in sorted(required or ()))
+    if required and released is None:
+        report.notes.append(
+            "Nothing has been released yet, so any new or edited line under `## Unreleased` will do. "
+            f"From the first release on, this change needs one under: {headings}."
+        )
+        if not any(added.values()):
+            failures.append(
+                f"This change is `{report.level()}`{flags}. Add or edit a line under `## Unreleased` in {path}."
+            )
+    elif required and not any(added[heading] for heading in required):
         failures.append(
             f"This change is `{report.level()}`{flags}. Add a bullet under `## Unreleased` in "
-            f"{path}, under one of: {', '.join('### ' + heading for heading in sorted(required))}."
+            f"{path}, under one of: {headings}."
         )
     if added["Breaking"] and report.level() != "breaking":
         report.notes.append("A person marked this change Breaking in CHANGELOG.md; the release check will treat it as breaking.")
     text = render(report, [])
-    if report.notes:
-        text += "\n" + "\n".join(f"> {note}" for note in report.notes) + "\n"
     if failures:
         text += "\n### Failed\n" + "\n".join(f"- {failure}" for failure in failures) + "\n"
     else:
@@ -902,10 +1016,10 @@ POLICY = {
     "inputOnlyTypes": {"kotlin": ["io.example.ReadStrategy", "io.example.Mode"], "swift": ["ReadStrategy"]},
     "closedForImplementation": {"kotlin": ["io.example.Closed"]},
     "schemaDirectories": ["lib/schemas"],
-    "persistedContract": {"paths": ["lib/src/commonTest/PersistedNamesTest.kt"]},
+    "persistedContract": {"paths": ["lib/src/commonTest/PersistedNamesTest.kt", "lib/src/commonTest/StoredFormatTest.kt"]},
     "versionCatalog": "gradle/libs.versions.toml",
-    "upstreamPins": {"names": ["supabase-bom"]},
-    "toolchainFloors": {"kotlin": "kotlin", "increaseOnly": ["android-minSdk"]},
+    "upstreamPins": {"names": ["supabase-bom", "ktor"]},
+    "toolchainFloors": {"kotlin": "kotlin", "increaseOnly": ["android-minSdk", "android-compileSdk"]},
     "changelog": "CHANGELOG.md",
 }
 
@@ -941,6 +1055,16 @@ sealed interface io.example/ReadStrategy { // io.example/ReadStrategy|null[0]
     final object NetworkOnly : io.example/ReadStrategy // io.example/ReadStrategy.NetworkOnly|null[0]
 }
 
+final class io.example/HolderOne { // io.example/HolderOne|null[0]
+    abstract interface Listener { // io.example/HolderOne.Listener|null[0]
+        abstract fun onEvent() // io.example/HolderOne.Listener.onEvent|onEvent(){}[0]
+    }
+}
+
+final class io.example/HolderTwo { // io.example/HolderTwo|null[0]
+    constructor <init>() // io.example/HolderTwo.<init>|<init>(){}[0]
+}
+
 final fun io.example/helper(kotlin/Int): kotlin/Int // io.example/helper|helper(kotlin.Int){}[0]
 """
 
@@ -959,6 +1083,11 @@ public final class io/example/Mode : java/lang/Enum {
 public abstract interface class io/example/MutationOutcome {
 \tpublic fun resultOrNull ()Ljava/lang/String;
 }
+
+public abstract class io/example/Base {
+\tpublic fun <init> ()V
+\tprotected abstract fun hook ()V
+}
 """
 
 SWIFT_BASE = """// swift-interface-format-version: 1.0
@@ -976,10 +1105,14 @@ public enum OfflineSyncState : Swift.Sendable {
 """
 
 CATALOG = """[versions]
-kotlin = "{kotlin}"
-supabase-bom = "{bom}"
+android-compileSdk = "{compile_sdk}"
 android-minSdk = "{min_sdk}"
+kotlin = "{kotlin}"
+ktor = "{ktor}"
+supabase-bom = "{bom}"
 """
+
+CATALOG_DEFAULTS = {"kotlin": "2.4.20", "bom": "3.8.0", "min_sdk": "23", "compile_sdk": "37", "ktor": "3.5.1"}
 
 CHANGELOG_BASE = """# Changelog
 
@@ -1031,7 +1164,8 @@ class Fixture:
         self.write("swift/api/SupabaseOffline.swiftinterface", SWIFT_BASE)
         self.write("lib/schemas/2.json", '{"version": 2}')
         self.write("lib/src/commonTest/PersistedNamesTest.kt", 'val NAME = "mutation_owners"\n')
-        self.write("gradle/libs.versions.toml", CATALOG.format(kotlin="2.4.20", bom="3.8.0", min_sdk="23"))
+        self.write("gradle/libs.versions.toml", CATALOG.format(**CATALOG_DEFAULTS))
+        self.write("lib/src/commonTest/StoredFormatTest.kt", 'assertEquals("{\\"column\\":\\"total\\"}", encoded)\n')
         self.write("CHANGELOG.md", CHANGELOG_BASE)
         self.write("compat/overrides.txt", "# empty\n")
         self.write("gradle.properties", "VERSION_NAME=0.1.1-SNAPSHOT\n")
@@ -1092,9 +1226,9 @@ def self_test() -> int:
             "swift/api/SupabaseOffline.swiftinterface", SWIFT_BASE.replace(old, new)
         )
 
-    def with_catalog(kotlin: str = "2.4.20", bom: str = "3.8.0", min_sdk: str = "23"):
+    def with_catalog(**versions: str):
         return lambda repository: repository.write(
-            "gradle/libs.versions.toml", CATALOG.format(kotlin=kotlin, bom=bom, min_sdk=min_sdk)
+            "gradle/libs.versions.toml", CATALOG.format(**dict(CATALOG_DEFAULTS, **versions))
         )
 
     scenario("nothing", lambda repository: None, "none", [])
@@ -1282,6 +1416,47 @@ def self_test() -> int:
     scenario("a Kotlin tooling release", with_catalog(kotlin="2.5.0"), "additive", ["kotlin-floor-changed"], ["dependency"])
     scenario("a Kotlin bug-fix release", with_catalog(kotlin="2.4.21"), "patch", ["kotlin-bugfix-changed"])
     scenario("a raised minSdk", with_catalog(min_sdk="24"), "additive", ["toolchain-floor-raised"], ["dependency"])
+    scenario("a raised compileSdk", with_catalog(compile_sdk="38"), "additive", ["toolchain-floor-raised"], ["dependency"])
+    scenario("a pass-through dependency's minor", with_catalog(ktor="3.6.0"), "additive", ["upstream-minor-changed"], ["dependency"])
+    scenario("a pass-through dependency's patch", with_catalog(ktor="3.5.2"), "patch", ["upstream-patch-changed"])
+    scenario(
+        "a watched pin loosened while both records stay the same",
+        lambda repository: (
+            repository.write("lib/src/commonMain/Delta.kt", "@SerialName(\"snapshot\") val snapshotValue: Double\n"),
+            repository.write("lib/src/commonTest/StoredFormatTest.kt", "\n"),
+        ),
+        "additive",
+        ["persisted-contract-changed"],
+        ["format"],
+    )
+    scenario(
+        "an abstract member on a nested interface, beside a new same-named nested type (klib only)",
+        lambda repository: repository.write(
+            "lib/api/lib.klib.api",
+            KLIB_BASE.replace(
+                "        abstract fun onEvent() // io.example/HolderOne.Listener.onEvent|onEvent(){}[0]\n",
+                "        abstract fun onEvent() // io.example/HolderOne.Listener.onEvent|onEvent(){}[0]\n"
+                "        abstract fun onOther() // io.example/HolderOne.Listener.onOther|onOther(){}[0]\n",
+            ).replace(
+                "    constructor <init>() // io.example/HolderTwo.<init>|<init>(){}[0]\n",
+                "    constructor <init>() // io.example/HolderTwo.<init>|<init>(){}[0]\n\n"
+                "    abstract interface Listener { // io.example/HolderTwo.Listener|null[0]\n"
+                "        abstract fun onOther() // io.example/HolderTwo.Listener.onOther|onOther(){}[0]\n"
+                "    }\n",
+            ),
+        ),
+        "breaking",
+        ["kotlin-abstract-member-added", "kotlin-added"],
+    )
+    scenario(
+        "a protected abstract member on an abstract class (JVM record)",
+        with_jvm(
+            "\tprotected abstract fun hook ()V\n",
+            "\tprotected abstract fun hook ()V\n\tprotected abstract fun secondHook ()V\n",
+        ),
+        "breaking",
+        ["kotlin-abstract-member-added"],
+    )
 
     # A record may hold the same line twice (overloads that differ only in what the record omits);
     # removing one of them is still a removal.
@@ -1405,6 +1580,123 @@ def self_test() -> int:
             expect(False, "a base missing from the clone is refused", failures)
         except SystemExit as error:
             expect("Fetch enough history" in str(error), "a base missing from the clone is refused", failures)
+
+    def check_pr(repository: Fixture, base: str, head: str) -> int:
+        return quietly(command_check_pr, repository.git, argparse.Namespace(base=base, head=head, swift_report=None))
+
+    def check_release(repository: Fixture, head: str, version: str, from_tag: Optional[str] = "0.1.0") -> int:
+        return quietly(
+            command_check_release,
+            repository.git,
+            argparse.Namespace(from_tag=from_tag, version=version, head=head, swift_report=None),
+        )
+
+    output_enum_entry = KLIB_BASE.replace(
+        "    enum entry APPLIED // io.example/Outcome.APPLIED|null[0]\n",
+        "    enum entry APPLIED // io.example/Outcome.APPLIED|null[0]\n"
+        "    enum entry QUEUED // io.example/Outcome.QUEUED|null[0]\n",
+    ).replace(
+        "    abstract fun select(kotlin/String): kotlin/String // io.example/Client.select|select(kotlin.String){}[0]\n",
+        "    abstract fun select(kotlin/String): kotlin/String // io.example/Client.select|select(kotlin.String){}[0]\n"
+        "    abstract fun sync(): kotlin/Int // io.example/Client.sync|sync(){}[0]\n",
+    )
+    renamed_helper = KLIB_BASE.replace("final fun io.example/helper", "final fun io.example/renamed")
+
+    def changelog_with(heading: str, bullet: str, source: str = CHANGELOG_BASE) -> str:
+        return source.replace(f"## Unreleased\n\n", f"## Unreleased\n\n### {heading}\n\n{bullet}\n\n", 1)
+
+    # A change cannot loosen the rules it is rated by: the base's policy still applies.
+    with fixture() as (repository, base):
+        repository.write("lib/api/lib.klib.api", output_enum_entry)
+        widened = json.loads(json.dumps(POLICY))
+        widened["inputOnlyTypes"]["kotlin"].append("io.example.Outcome")
+        widened["closedForImplementation"]["kotlin"].append("io.example.Client")
+        repository.write("compat/policy.json", json.dumps(widened))
+        repository.write("CHANGELOG.md", changelog_with("Added", "- `QUEUED` and `sync`."))
+        head = repository.commit("a break, with the same change widening the policy")
+        report, _ = classify(repository.git, base, head)
+        categories = {finding.category for finding in report.effective()}
+    expect(report.level() == "breaking", "a change that widens the policy is still rated under the base's", failures)
+    expect({"kotlin-enum-entry-added", "kotlin-abstract-member-added", "compatibility-rules-changed"} <= categories,
+           "…and reports the rules change beside the breaks", failures)
+    with fixture() as (repository, base):
+        narrowed = json.loads(json.dumps(POLICY))
+        narrowed["inputOnlyTypes"]["kotlin"].remove("io.example.Mode")
+        repository.write("compat/policy.json", json.dumps(narrowed))
+        repository.write(
+            "lib/api/android/lib.api",
+            JVM_BASE.replace("\tpublic static final field A Lio/example/Mode;\n",
+                             "\tpublic static final field A Lio/example/Mode;\n\tpublic static final field B Lio/example/Mode;\n"),
+        )
+        head = repository.commit("a narrowed policy applies at once")
+        report, _ = classify(repository.git, base, head)
+    expect(report.level() == "breaking", "a change that narrows the policy is rated under the stricter one", failures)
+
+    # An override stays until a release empties the file: the next change is not failed by it,
+    # and the release is rated with it.
+    with fixture() as (repository, base):
+        repository.git.run("tag", "1.0.0", base)
+        repository.write("lib/api/lib.klib.api", renamed_helper)
+        first = repository.commit("pull request 1: the break")
+        report, _ = classify(repository.git, base, first)
+        key = next(finding.key() for finding in report.findings if finding.category == "kotlin-removed")
+        repository.write("compat/overrides.txt", f"{key}  # never documented as stable\n")
+        repository.write("CHANGELOG.md", changelog_with("Changed", "- `helper` is `renamed`."))
+        first = repository.commit("pull request 1: with its override")
+        expect(check_pr(repository, base, first) == 0, "pull request 1 passes with its override", failures)
+        repository.write("lib/api/lib.klib.api", renamed_helper + "final fun io.example/more(): kotlin/Int // io.example/more|more(){}[0]\n")
+        repository.write("CHANGELOG.md", changelog_with("Added", "- `more`.", changelog_with("Changed", "- `helper` is `renamed`.")))
+        second = repository.commit("pull request 2: an unrelated addition")
+        expect(check_pr(repository, first, second) == 0, "pull request 2 passes with pull request 1's override still in place", failures)
+        report, problems = classify(repository.git, first, second)
+        expect(not problems and any("earlier change" in note for note in report.notes),
+               "…and the carried override is a note, not a problem", failures)
+        expect(check_release(repository, second, "1.1.0", from_tag="1.0.0") == 0,
+               "the release is rated with the override: a minor is enough", failures)
+        repository.write("compat/overrides.txt", f"{key}  # never documented as stable\nkotlin-removed: nothing  # stale\n")
+        third = repository.commit("pull request 3: adds an override that matches nothing")
+        expect(check_pr(repository, second, third) == 1, "an override a change adds must match something", failures)
+
+    # Before the first release, any new or edited line under Unreleased will do.
+    prerelease = CHANGELOG_BASE.split("## 0.1.0")[0].replace("### Added\n\n", "### Added\n\n- The first release.\n\n", 1)
+    with fixture() as (repository, _):
+        repository.git.run("tag", "-d", "0.1.0")
+        repository.write("CHANGELOG.md", prerelease)
+        base = repository.commit("nothing released yet")
+        repository.write("lib/api/lib.klib.api", renamed_helper)
+        head = repository.commit("a break, no changelog line")
+        expect(check_pr(repository, base, head) == 1, "before the first release, a break still needs a changelog line", failures)
+        repository.write("CHANGELOG.md", prerelease.replace("- The first release.", "- The first release, with `renamed`."))
+        head = repository.commit("a break, with an edited Added line")
+        expect(check_pr(repository, base, head) == 0, "before the first release, an edited Added line will do for a break", failures)
+        report, _ = classify(repository.git, base, head)
+        expect(report.level() == "breaking", "…and the rating is still reported as breaking", failures)
+        repository.git.run("tag", "0.1.0", base)
+        expect(check_pr(repository, base, head) == 1, "from the first release on, the same change needs ### Breaking", failures)
+        repository.git.run("tag", "-d", "0.1.0")
+        repository.write("CHANGELOG.md", changelog_with("Breaking", "- `helper` is now `renamed`."))
+        head = repository.commit("a changelog with a released version, and no tag")
+        expect(check_pr(repository, base, head) == 1, "a released version in the changelog with no tag in the clone fails", failures)
+
+    # Only a line this change wrote counts: an unchanged or moved old line does not.
+    with fixture() as (repository, _):
+        repository.write("CHANGELOG.md", changelog_with("Added", "- `applyServerRecord`."))
+        base = repository.commit("an existing Added line")
+        repository.write("lib/api/lib.klib.api", renamed_helper)
+        head = repository.commit("a break, the changelog untouched")
+        expect(check_pr(repository, base, head) == 1, "an unchanged old line does not satisfy the check", failures)
+        repository.write("CHANGELOG.md", changelog_with("Breaking", "- `applyServerRecord`."))
+        head = repository.commit("a break, an old line moved under Breaking")
+        expect(check_pr(repository, base, head) == 1, "an old line moved under ### Breaking does not satisfy it", failures)
+
+    # A loosened stored-format pin needs its line too.
+    with fixture() as (repository, base):
+        repository.write("lib/src/commonTest/StoredFormatTest.kt", "\n")
+        head = repository.commit("a pin loosened, no changelog line")
+        expect(check_pr(repository, base, head) == 1, "a loosened stored-format pin needs a changelog line", failures)
+        repository.write("CHANGELOG.md", changelog_with("Changed", "- Queued relative updates store their snapshot as `snapshot`."))
+        head = repository.commit("a pin loosened, with a Changed line")
+        expect(check_pr(repository, base, head) == 0, "…and ### Changed will do", failures)
 
     print()
     if failures:
