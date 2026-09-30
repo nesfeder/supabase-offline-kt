@@ -24,6 +24,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -50,6 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -236,8 +238,7 @@ class SupabaseOfflineClientCloseTest {
         for (variant in listOf(STUCK_IN_ITS_BODY, NEVER_READ_AGAIN, NEVER_READ_AGAIN_RENDEZVOUS)) {
             for (strategy in FlowReadStrategy.entries) {
                 // Given — reads the server answers and writes that queue, so every read keeps
-                // wanting
-                // to emit, and a collection that stops reading after its first value
+                // wanting to emit, and a collection that stops reading after its first value
                 val releases = AtomicInt(0)
                 val gaveUp = AtomicInt(0)
                 val server =
@@ -257,29 +258,40 @@ class SupabaseOfflineClientCloseTest {
                 val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + uncaught)
                 val entered = CompletableDeferred<Unit>()
                 val read = client.from("todos").selectAsFlow(readStrategy = strategy)
-                if (variant == STUCK_IN_ITS_BODY) {
-                    appScope.launch {
-                        read.collect {
+                val reader =
+                    if (variant == STUCK_IN_ITS_BODY) {
+                        appScope.launch {
+                            read.collect {
+                                entered.complete(Unit)
+                                awaitCancellation()
+                            }
+                        }
+                    } else if (variant == NEVER_READ_AGAIN) {
+                        // The app's own launch holds the channel, and waits on it, as long as it
+                        // lives
+                        appScope.launch {
+                            val values = read.produceIn(this)
+                            values.receive()
                             entered.complete(Unit)
-                            awaitCancellation()
+                        }
+                    } else {
+                        // Rendezvous, so the channel nobody reads holds its producer in its send
+                        val values = read.buffer(Channel.RENDEZVOUS).produceIn(appScope)
+                        appScope.launch {
+                            values.receive()
+                            entered.complete(Unit)
                         }
                     }
-                } else if (variant == NEVER_READ_AGAIN) {
-                    // The app's own launch holds the channel, and waits on it, as long as it lives
-                    appScope.launch {
-                        val values = read.produceIn(this)
-                        values.receive()
-                        entered.complete(Unit)
-                    }
-                } else {
-                    // Rendezvous, so the channel nobody reads holds its producer in its send
-                    val values = read.buffer(Channel.RENDEZVOUS).produceIn(appScope)
-                    appScope.launch {
-                        values.receive()
-                        entered.complete(Unit)
-                    }
+                // A collection that ends before its first value fails the wait at once, with why
+                reader.invokeOnCompletion { cause ->
+                    entered.completeExceptionally(
+                        IllegalStateException(
+                            "$variant, $strategy: the collection ended before its first value",
+                            cause,
+                        )
+                    )
                 }
-                withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
+                awaitFirstValue(entered, "$variant, $strategy", server)
                 repeat(3) { index ->
                     client
                         .from("todos")
@@ -313,6 +325,25 @@ class SupabaseOfflineClientCloseTest {
                 )
                 appScope.cancel()
             }
+        }
+    }
+
+    /**
+     * Waits for [firstValue] for at most [FIRST_VALUE_BOUND] of real time, and past that fails,
+     * naming [iteration] and the requests [server] saw. A first value comes in milliseconds, or,
+     * when a collection is stuck, never.
+     */
+    private suspend fun awaitFirstValue(
+        firstValue: CompletableDeferred<Unit>,
+        iteration: String,
+        server: RecordingPostgrestServer,
+    ) {
+        withContext(Dispatchers.Default) {
+            withTimeoutOrNull(FIRST_VALUE_BOUND) { firstValue.await() }
+                ?: fail(
+                    "$iteration: no first value in $FIRST_VALUE_BOUND; the server saw " +
+                        server.requests.map { request -> "${request.method} ${request.table}" }
+                )
         }
     }
 
@@ -864,6 +895,9 @@ class SupabaseOfflineClientCloseTest {
         const val NEVER_READ_AGAIN = "a produceIn channel never read again"
         const val NEVER_READ_AGAIN_RENDEZVOUS = "a rendezvous produceIn channel never read again"
         const val MARKING_ORDERINGS = 20
+
+        /** How long a collection's first value may take before the test names it stuck. */
+        val FIRST_VALUE_BOUND: Duration = 30.seconds
 
         /** An idle client's work can never finish, so its `close()` always waits this long. */
         val IDLE_CLOSE_WAIT: Duration = 100.milliseconds
