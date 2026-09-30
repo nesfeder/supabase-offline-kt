@@ -28,12 +28,15 @@ import kotlinx.serialization.json.jsonPrimitive
 class OfflineDatabaseSchemaContinuityTest {
 
     /**
-     * The build passes the schemas directory; the relative fallback serves a run from the module
-     * directory.
+     * The exported schemas, found through the property the build sets rather than the working
+     * directory, which differs between Gradle and an IDE.
      */
     private val schemaDirectory =
         File(
-            System.getProperty("supabase.offline.schemaDirectory") ?: "schemas",
+            checkNotNull(System.getProperty(SCHEMA_DIRECTORY_PROPERTY)) {
+                "$SCHEMA_DIRECTORY_PROPERTY is not set: run this test through Gradle, which " +
+                    "passes the checked-in schemas directory"
+            },
             "io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase",
         )
 
@@ -140,5 +143,8 @@ class OfflineDatabaseSchemaContinuityTest {
 
     private companion object {
         const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"
+
+        /** Set by the build (supabase-offline.room) to the module's `schemas/` directory. */
+        const val SCHEMA_DIRECTORY_PROPERTY = "supabase.offline.schemaDirectory"
     }
 }
