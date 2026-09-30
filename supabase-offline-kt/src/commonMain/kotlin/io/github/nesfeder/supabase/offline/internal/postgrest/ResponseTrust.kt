@@ -56,7 +56,12 @@ internal fun settledIdentityOf(session: RequestSession): QueueIdentity? =
         RequestSession.RefreshFailed -> null
     }
 
-/** When a network response may replace what the query cache holds. */
+/**
+ * When a network response may replace what the query cache holds. Without the Auth plugin, or with
+ * the app's own token provider, there is one identity, nobody signed in, for the life of the
+ * install, and its cache is never dropped: an app whose own token provider serves more than one
+ * user must clear local data itself when its user changes.
+ */
 internal enum class ResponseTrustPolicy {
 
     /**

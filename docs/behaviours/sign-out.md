@@ -23,8 +23,11 @@ file cache belong to one identity at a time: a signed-in user, or nobody signed 
 - A cache from an earlier build, which recorded no owner, is adopted by the user signed in when the
   app starts; signed out, it is dropped, since it may be an earlier user's. Nobody signed in claims
   only an empty cache.
-- Without the Auth plugin, or with the app's own token provider, there is one identity for good:
-  the cache is served as it is and never dropped.
+- Without the Auth plugin, or with the app's own token provider, there is one identity, nobody
+  signed in, for the life of the install: the cache is served as it is and never dropped for a
+  change of user, since nothing the engine can read tells one user from another. An app whose own
+  token provider serves more than one user must call `clearAllCache()` itself when its user
+  changes.
 
 <small>`CacheBelongsToOneIdentityTest.a_signed_out_answer_is_never_served_to_the_user_who_signs_in_next`,
 `CacheBelongsToOneIdentityTest.signing_in_over_another_user_drops_the_cache_and_keeps_every_queued_write`,
