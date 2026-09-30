@@ -364,10 +364,11 @@ Per-table behavior:
 | Outcome of replay | Effect |
 |-------------------|--------|
 | Success | Mutation marked synced (`synced_at_ms` populated); count incremented |
-| Network failure | Stop syncing **this table**; remaining mutations stay queued for retry |
-| Permanent failure (4xx except 408/429) | Mutation dropped from queue; continue with the next |
+| Network failure | The pass stops; the mutation and every one after it stay queued for retry |
+| PostgREST's schema cache does not know the table or a column (`PGRST205`, `PGRST204`) | The pass stops and the mutation stays queued; at the tenth miss, each counted at least 30 seconds after the last, it moves to the rejected list |
+| Permanent failure (4xx except 401/408/429) | Mutation moved to the rejected list; continue with the next. A 403 or 409 with an earlier write of the identity still pending holds the pass instead |
 | Unknown error in `syncPendingMutations(table)` | Rethrown to caller; mutation kept in queue |
-| Unknown error in `syncAllPendingMutations()` | Swallowed per-table; other tables continue |
+| Unknown error in `syncAllPendingMutations()` | The pass stops; the mutation stays queued |
 
 "Permanent failure" is decided by `Throwable.isPermanentMutationFailure()` in
 [ThrowableExtensions.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt),

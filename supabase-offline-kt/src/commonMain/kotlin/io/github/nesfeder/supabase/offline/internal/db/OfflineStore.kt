@@ -744,9 +744,8 @@ internal class OfflineStore(
                 // later one, or the earlier assignment would re-admit responses it disqualified.
                 cacheClearedTick.update { existing -> if (existing >= tick) existing else tick }
                 cacheDroppedTick.update { existing -> if (existing >= tick) existing else tick }
-                // One transaction: a clear that fails part-way must not leave mutations without the
-                // owner records in object_cache, where the next identity would adopt them. The
-                // mutations go first as well, so even a store without transactions never does.
+                // One transaction: a clear that fails part-way leaves the queue, the caches and
+                // the cache's owner as they were, never a mix the next identity could read.
                 cacheOwner.emptying(owner) {
                     mutationDao.runInTransaction {
                         mutationDao.deleteAll()
@@ -1231,7 +1230,7 @@ internal class OfflineStore(
 
     /**
      * Removes a write sent at the head of the queue once the server accepted it: its mutation row,
-     * its owner record, and any rejected entry a crash left behind for it. The caller patches the
+     * its send record, and any rejected entry a crash left behind for it. The caller patches the
      * cache with the server's response, so nothing needs to stand in for the write any more.
      *
      * @param id The sent mutation's id.

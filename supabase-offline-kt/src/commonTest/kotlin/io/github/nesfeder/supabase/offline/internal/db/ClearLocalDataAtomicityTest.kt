@@ -16,10 +16,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 
 /**
- * Clearing local data at sign-out removes the mutation queue and its owner records together. A
- * clear that fails part-way — the process dies, or a delete throws — must never leave one user's
- * pending mutations without an owner, where the next user would see them and send them as their
- * own.
+ * Clearing local data at sign-out removes the mutation queue and the caches together. A clear that
+ * fails part-way — the process dies, or a delete throws — must never leave one user's pending
+ * mutations where the next user would see them and send them as their own.
  */
 class ClearLocalDataAtomicityTest {
 

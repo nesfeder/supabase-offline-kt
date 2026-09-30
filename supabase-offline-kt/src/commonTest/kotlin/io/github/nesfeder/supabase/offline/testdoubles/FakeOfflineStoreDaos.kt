@@ -143,9 +143,9 @@ internal class FakeObjectDao : InMemoryObjectDao() {
 /**
  * [InMemoryMutationDao] that exposes the queue for assertions. The in-memory DAO already mirrors
  * Room's mutation-queue semantics: an auto-incrementing id on insert (like `autoGenerate`), rows
- * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and reactive
- * per-table flows that re-emit on every queue change. Syncer tests drive a real `OfflineStore` over
- * it and observe replay, mark-synced, drop and dead-letter transitions.
+ * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and a pending flow
+ * that re-emits on every queue change. Syncer tests drive a real `OfflineStore` over it and observe
+ * replay, mark-synced, drop and rejection transitions.
  */
 internal class FakeMutationDao : InMemoryMutationDao() {
 
