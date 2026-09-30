@@ -14,10 +14,12 @@ import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.ReplayOwner
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.installReplayOwnerCheck
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
@@ -88,6 +90,11 @@ internal class MutationQueueReplayer(
 
     /** Passes in flight, so [clearLocalData] can cancel them. */
     private val activePasses = MutableStateFlow<Set<Job>>(emptySet())
+
+    init {
+        // Before anything is sent: a mutation goes out with its owner's token, or not at all
+        supabase.installReplayOwnerCheck()
+    }
 
     /**
      * Replays the current identity's mutations across every table.
@@ -217,12 +224,18 @@ internal class MutationQueueReplayer(
         if (!claimed) return HeadSendOutcome.NotAtHead
         try {
             val newlyUnconfirmed = store.markSendUnconfirmed(mutationId)
+            val owner = ReplayOwner(identity)
             val result =
-                when (val sent = sendCapturingEngineFailure(send)) {
+                when (val sent = sendCapturingEngineFailure { withContext(owner) { send() } }) {
                     is SendOutcome.Succeeded -> sent.value
                     is SendOutcome.Failed ->
                         return sendLock.withLock {
-                            headFailureOutcome(mutationId, sent, newlyUnconfirmed, generation)
+                            if (owner.stoppedForAnotherSession) {
+                                stoppedForAnotherSession(mutationId, newlyUnconfirmed)
+                                HeadSendOutcome.NotAtHead
+                            } else {
+                                headFailureOutcome(mutationId, sent, newlyUnconfirmed, generation)
+                            }
                         }
                 }
             if (clearGeneration.value != generation)
@@ -243,6 +256,17 @@ internal class MutationQueueReplayer(
             return HeadSendOutcome.Sent(result)
         } finally {
             withContext(NonCancellable) { sendLock.withLock { inFlight -= mutationId } }
+        }
+    }
+
+    /**
+     * Keeps a mutation whose request the owner check stopped queued for its owner's next session:
+     * it never left the device, so a send record this attempt made is cleared.
+     */
+    private suspend fun stoppedForAnotherSession(mutationId: Long, newlyUnconfirmed: Boolean) {
+        if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+        sdkLogger.info {
+            "The session changed before a queued mutation was sent; it stays queued for its owner"
         }
     }
 
@@ -482,11 +506,15 @@ internal class MutationQueueReplayer(
 
             is ReplayOutcome.Held -> SyncStop.HeldBehindEarlierMutations(mutation.id, outcome.cause)
             is ReplayOutcome.Stopped -> SyncStop.TransientFailure(outcome.cause)
+            ReplayOutcome.SessionChanged -> SyncStop.SessionChanged
         }
 
     /** How one mutation's replay ended. */
     private sealed interface ReplayOutcome {
         data object Synced : ReplayOutcome
+
+        /** The session stopped being the owner's before the request left; nothing was sent. */
+        data object SessionChanged : ReplayOutcome
 
         data class Rejected(val message: String, val serverError: StoredServerError?) :
             ReplayOutcome
@@ -508,13 +536,21 @@ internal class MutationQueueReplayer(
             is Prepared.Refused -> prepared.outcome
             is Prepared.Ready -> {
                 val newlyUnconfirmed = store.markSendUnconfirmed(mutation.id)
-                when (val sent = sendCapturingEngineFailure { prepared.request(tableApi) }) {
+                val owner = ReplayOwner(identity)
+                val sent = sendCapturingEngineFailure {
+                    withContext(owner) { prepared.request(tableApi) }
+                }
+                when (sent) {
                     is SendOutcome.Succeeded -> ReplayOutcome.Synced
-                    is SendOutcome.Failed -> {
-                        if (newlyUnconfirmed && sent.provesWriteNotApplied())
-                            store.clearUnconfirmedSend(mutation.id)
-                        classify(mutation, sent.thrown, identity)
-                    }
+                    is SendOutcome.Failed ->
+                        if (owner.stoppedForAnotherSession) {
+                            stoppedForAnotherSession(mutation.id, newlyUnconfirmed)
+                            ReplayOutcome.SessionChanged
+                        } else {
+                            if (newlyUnconfirmed && sent.provesWriteNotApplied())
+                                store.clearUnconfirmedSend(mutation.id)
+                            classify(mutation, sent.thrown, identity)
+                        }
                 }
             }
         }

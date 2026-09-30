@@ -37,7 +37,11 @@ class ReplayTokenBindingTest {
     private fun changeTheSessionWhenASendStarts(change: suspend () -> Unit) {
         var changed = false
         objectDao.onUpsert = { row ->
-            if (!changed && row.signature == UNCONFIRMED_SENDS_SIGNATURE && "mutationIds" in row.payload) {
+            if (
+                !changed &&
+                    row.signature == UNCONFIRMED_SENDS_SIGNATURE &&
+                    "mutationIds" in row.payload
+            ) {
                 changed = true
                 change()
             }
@@ -46,7 +50,9 @@ class ReplayTokenBindingTest {
 
     /** Queues a keyed INSERT for [owner] without sending it, as a write made offline is. */
     private suspend fun queueFor(owner: String, id: String) {
-        store.enqueueOwnedBy(owner) { enqueueInsert(table = TABLE, body = rows("""[{"id":"$id"}]""")) }
+        store.enqueueOwnedBy(owner) {
+            enqueueInsert(table = TABLE, body = rows("""[{"id":"$id"}]"""))
+        }
     }
 
     private fun postsCarrying(subject: String): List<String> =
@@ -106,7 +112,10 @@ class ReplayTokenBindingTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         supabase.signInForTest("user-a")
         val builder =
-            OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from(TABLE), store = store)
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = supabase.postgrest.from(TABLE),
+                store = store,
+            )
         changeTheSessionWhenASendStarts { supabase.signInForTest("user-b") }
 
         // When — A writes; B signs in after the head was claimed, before the request is built
