@@ -60,6 +60,25 @@ updates:
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # SKIE supports exact Kotlin versions, so it moves by hand, together with Kotlin.
       - dependency-name: "co.touchlab.skie*"
+      # The build-tool floors (`buildToolFloor-*` in the catalog) are the patched versions the
+      # advisories name, not trackers of the latest release: a floor only ever raises what a plugin
+      # brings, so moving it past the advisory buys nothing and can run a plugin on a library
+      # version it was never built with. They move by hand when an advisory says so, or through
+      # a security update, which these `update-types` rules do not block.
+      - dependency-name: "org.bouncycastle:*"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.apache.commons:commons-lang3"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.freemarker:freemarker"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.apache.httpcomponents:httpclient"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.jdom:jdom2"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.bitbucket.b_c:jose4j"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "io.opentelemetry:opentelemetry-api"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
     # A dependency joins the first group that matches it. The first three names are the labels the
     # triage workflow applies.
     groups:

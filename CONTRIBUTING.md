@@ -302,8 +302,11 @@ asks for less than a floor any more, which means a plugin release has made it un
 it then. A pass means the floors hold, not that they are patched versions: the check knows the
 floors, not the advisories, so a floor lowered to a vulnerable version still passes it. The
 floor's comment is what records the patched version, and the dependency graph's alerts catch a
-vulnerable one. CI runs the check with the Android host tests, and Dependabot proposes updates to
-the floors in the `build-tooling` group.
+vulnerable one. CI runs the check with the Android host tests. Dependabot proposes no version
+update for a floor: a floor is the patched version the advisory names, not a tracker of the
+latest release, and a version past the advisory can run a plugin on a library it was never built
+with. A floor moves by hand when a new advisory names a higher version, or through a Dependabot
+security update, which the `ignore` rules in `.github/dependabot.yml` do not block.
 
 ## Continuous integration
 
