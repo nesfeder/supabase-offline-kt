@@ -1,0 +1,12 @@
+# A Supabase CLI project for the sample apps, so `supabase db push` can apply their schema to a
+# hosted project: run `supabase link --project-ref <your-project-ref>`, then `supabase db push`,
+# both from samples/. Its one migration is a link to ../schema.sql. Every setting left out takes
+# the CLI's default. Step by step:
+# https://nesfeder.github.io/supabase-offline-kt/samples/supabase-setup/
+
+project_id = "offline-tasks"
+
+[auth]
+# The samples sign in anonymously. A hosted project takes this from the dashboard switch
+# (Authentication > Sign In / Providers > "Allow anonymous sign-ins"), not from this file.
+enable_anonymous_sign_ins = true
