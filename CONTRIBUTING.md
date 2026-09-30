@@ -108,27 +108,40 @@ The configuration is
 ### Held dependencies
 
 The library is built and tested against one supabase-kt minor release at a time, and a few other
-dependencies move with it. For these, Dependabot proposes patch releases only. A new minor or
-major version is adopted by hand, in a pull request that moves the coupled versions together.
+dependencies move with it. For these, Dependabot proposes patch releases only, and for the
+pass-through set below, none at all. A new version is adopted by hand, in a pull request that
+moves the coupled versions together.
 
 | Dependency | Why it is held |
 | --- | --- |
 | supabase-kt | The library compiles supabase-kt's inline functions into its own artifact and matches exhaustively on its filter operators, so a minor release can change its behavior or break the build. |
-| Ktor, kotlinx.coroutines, kotlinx.serialization | They are `api` dependencies, kept at the versions supabase-kt is built against. A newer version here is a newer version for every consumer. |
+| Ktor, okio, kotlinx.coroutines, kotlinx.serialization | The pass-through set, below. |
 | Kotlin | The version the library is built with limits the Kotlin versions its consumers can use, and it has to work with the pinned supabase-kt. |
 | Android Gradle plugin | It has to stay inside the Kotlin Gradle plugin's supported range. |
 | Room, androidx.sqlite | Together they define the on-device database and the bundled SQLite, and Room is built against a particular androidx.sqlite. |
 | SKIE | It supports exact Kotlin versions only, so Dependabot proposes no version updates for it; it moves with Kotlin. |
 
-Patch releases of the held dependencies arrive in three groups: `upstream-pin`, `toolchain` and
-`persistence`. The Dependabot triage workflow gives each such pull request the matching label and
-a checklist of what a passing build does not prove. It never approves or merges. Two cases need
-care:
+**The pass-through set.** Ktor, okio, kotlinx.coroutines and kotlinx.serialization are `api`
+dependencies: every app that uses the library gets the versions this build names. The library
+keeps each at the version the pinned supabase-kt release was built with, so an app gets the
+combination supabase-kt was tested with, and a newer one here would be a newer one for every
+consumer. Dependabot proposes no version update for them, patch releases included. They move by
+hand, together with supabase-kt, in the pull request that moves the pin, and the owner decides
+that pull request. A security update still arrives, because the rule that holds them covers
+version updates only: Dependabot opens it as a security pull request, and the triage workflow
+labels it `upstream-pin` and marks it as a security update. The owner decides it too: take the
+fix alone, or move the supabase-kt pin instead.
+
+Patch releases of the other held dependencies arrive in three groups: `upstream-pin`
+(supabase-kt), `toolchain` and `persistence`. The Dependabot triage workflow gives each such pull
+request the matching label and a checklist of what a passing build does not prove. It never
+approves or merges. Two cases need care:
 
 - A Kotlin `x.y.20` release is a tooling release, not a bug fix, although semver reads it as a
   patch. It arrives in the `toolchain` group like any other patch.
 - Security updates are not held. Dependabot proposes a fix even when it needs a new minor or
-  major version, and the triage workflow says so on the pull request.
+  major version, or moves a pass-through dependency, and the triage workflow says so on the pull
+  request.
 
 Other Gradle dependencies arrive as grouped minor and patch updates, and a new major version as a
 pull request of its own. ktfmt, the formatter, arrives alone in the `formatter` group, because
@@ -143,3 +156,10 @@ on every push to `main` that changes it and sends the resulting dependency graph
 Dependabot alerts and security updates for Gradle dependencies are based on that graph. An alert
 on a transitive dependency comes without a pull request: update the dependency that brings it in,
 or add a dependency constraint.
+
+Each package in the graph is labelled. It is `runtime` when a published module's shipping
+classpath resolves it (the Android runtime classpath or an iOS target's klibs), and `development`
+otherwise: Gradle plugins, build tools and test libraries. GitHub tags an alert on a development
+package "Development". An alert without that tag concerns what the library ships, so read those
+first (`scope:runtime` in the alerts filter). A new module whose output ships joins the project
+pattern in the workflow's `resolve` step.

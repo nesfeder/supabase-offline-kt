@@ -50,15 +50,20 @@ jobs:
           upstream_pin=false
           toolchain=false
           persistence=false
-          held_minor_or_major=false
+          # Version updates never move a pass-through dependency, nor another held one by a minor
+          # or major version, so an update that does is a security update.
+          security_update=false
 
           # One line per updated dependency: its name, a tab, the semver level of its update.
           dependency_lines=$(jq -r '.[] | [.dependencyName, .updateType] | @tsv' <<< "$UPDATED_DEPENDENCIES")
           while IFS=$'\t' read -r dependency_name update_type; do
             held=true
             case "$dependency_name" in
-              io.github.jan-tennert.supabase:*|io.ktor:*|org.jetbrains.kotlinx:kotlinx-coroutines*|org.jetbrains.kotlinx:kotlinx-serialization*)
+              io.github.jan-tennert.supabase:*)
                 upstream_pin=true ;;
+              io.ktor:*|com.squareup.okio:*|org.jetbrains.kotlinx:kotlinx-coroutines*|org.jetbrains.kotlinx:kotlinx-serialization*)
+                upstream_pin=true
+                security_update=true ;;
               org.jetbrains.kotlin:*|org.jetbrains.kotlin.*|com.android.*|co.touchlab.skie*)
                 toolchain=true ;;
               androidx.room:*|androidx.room|androidx.sqlite:*)
@@ -69,7 +74,7 @@ jobs:
             if [[ "$held" == true ]]; then
               case "$update_type" in
                 version-update:semver-minor|version-update:semver-major)
-                  held_minor_or_major=true ;;
+                  security_update=true ;;
               esac
             fi
           done <<< "$dependency_lines"
@@ -98,20 +103,20 @@ jobs:
 
           While the repository is private, CI holds this pull request's iOS tests, and its check reads `Final status (iOS tests held)`. To run them, read the push, then add the `full-ci` label: that event runs everything. After Dependabot pushes again, remove the label and add it again.
           MARKDOWN
-            if [[ "$held_minor_or_major" == true ]]; then
+            if [[ "$security_update" == true ]]; then
               cat <<'MARKDOWN'
 
           > [!WARNING]
-          > It moves a held dependency by a minor or major version. Version updates never do that, so this is a security update: decide it as a change of the pin (CONTRIBUTING.md, "Dependency updates"), not as a routine merge.
+          > It moves a pass-through dependency, or another held dependency by a minor or major version. Version updates never do that, so this is a security update: decide it as a change of the pin (CONTRIBUTING.md, "Dependency updates"), not as a routine merge.
           MARKDOWN
             fi
             if [[ "$upstream_pin" == true ]]; then
               cat <<'MARKDOWN'
 
-          **supabase-kt, Ktor, coroutines, serialization** (`upstream-pin`)
+          **supabase-kt and the pass-through set: Ktor, okio, coroutines, serialization** (`upstream-pin`)
 
           - [ ] Read the release notes for changes to the PostgREST query builder, filters, Storage, or request and retry behavior: this library compiles supabase-kt's inline functions into its own artifact.
-          - [ ] Ktor, coroutines and serialization still match what the pinned supabase-kt release was built with, or the difference is deliberate. They are `api` dependencies, so consumers get the higher version.
+          - [ ] Ktor, okio, coroutines and serialization stay at the versions the pinned supabase-kt release was built with. They move together with supabase-kt, in the pull request that moves the pin, never alone; a security update that moves one is the owner's decision. They are `api` dependencies, so consumers get whatever version this sets.
           - [ ] The change is noted under Unreleased in `CHANGELOG.md`.
           MARKDOWN
             fi

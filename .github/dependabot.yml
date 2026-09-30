@@ -32,12 +32,18 @@ updates:
     ignore:
       - dependency-name: "io.github.jan-tennert.supabase:*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # The pass-through set takes no version update at all, patches included: it moves by hand
+      # with the supabase-kt pin (CONTRIBUTING.md, "Held dependencies"). Every level is listed:
+      # a rule with no `update-types` or `versions` ignores all versions, and `ignore` applies to
+      # security updates too (options reference, above), so it would stop those as well.
       - dependency-name: "io.ktor:*"
-        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "com.squareup.okio:*"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "org.jetbrains.kotlinx:kotlinx-coroutines*"
-        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "org.jetbrains.kotlinx:kotlinx-serialization*"
-        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       # Libraries are group:artifact; Gradle plugins are their plugin id. The dot after `kotlin`
       # keeps `org.jetbrains.kotlinx.*` out.
       - dependency-name: "org.jetbrains.kotlin:*"
@@ -57,10 +63,12 @@ updates:
     # A dependency joins the first group that matches it. The first three names are the labels the
     # triage workflow applies.
     groups:
+      # supabase-kt and the pass-through set; keep it in step with the ignore rules above.
       upstream-pin:
         patterns:
           - "io.github.jan-tennert.supabase*"
           - "io.ktor:*"
+          - "com.squareup.okio:*"
           - "org.jetbrains.kotlinx:kotlinx-coroutines*"
           - "org.jetbrains.kotlinx:kotlinx-serialization*"
       toolchain:
