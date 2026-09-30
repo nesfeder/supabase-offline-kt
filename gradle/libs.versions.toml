@@ -33,6 +33,8 @@ buildToolFloor-jose4j = "0.9.7"
 # GHSA-rcgg-9c38-7xpx: the Kotlin Gradle plugin's Swift export brings 1.41.0 (2.4.20, 2.5.0-Beta1).
 # Unneeded once a Kotlin release's Swift export brings 1.62.0.
 buildToolFloor-opentelemetry = "1.62.0"
+# The documentation engine: the HTML reference in each published artifact's documentation jar.
+dokka = "2.2.0"
 kotlin = "2.4.20"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
@@ -42,6 +44,8 @@ ksp = "2.3.12"
 # CONTRIBUTING.md, "Formatting", before changing it.
 ktfmt = "0.64"
 ktor = "3.5.1"
+# The Maven Central publishing plugin (com.vanniktech.maven.publish). It needs Gradle 9.0 or later.
+mavenPublish = "0.37.0"
 okio = "3.17.0"
 robolectric = "4.17"
 room = "2.8.4"
@@ -75,6 +79,7 @@ buildToolFloor-httpclient = { module = "org.apache.httpcomponents:httpclient", v
 buildToolFloor-jdom2 = { module = "org.jdom:jdom2", version.ref = "buildToolFloor-jdom2" }
 buildToolFloor-jose4j = { module = "org.bitbucket.b_c:jose4j", version.ref = "buildToolFloor-jose4j" }
 buildToolFloor-opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "buildToolFloor-opentelemetry" }
+dokka-gradlePlugin = { module = "org.jetbrains.dokka:dokka-gradle-plugin", version.ref = "dokka" }
 kotlin-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
@@ -85,6 +90,7 @@ kover-gradlePlugin = { module = "org.jetbrains.kotlinx:kover-gradle-plugin", ver
 ktfmt = { module = "com.facebook:ktfmt", version.ref = "ktfmt" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
+mavenPublish-gradlePlugin = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "mavenPublish" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 supabase-auth-kt = { module = "io.github.jan-tennert.supabase:auth-kt" }
@@ -95,8 +101,10 @@ supabase-storage-kt = { module = "io.github.jan-tennert.supabase:storage-kt" }
 [plugins]
 androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 androidx-room = { id = "androidx.room", version.ref = "room" }
+dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
 skie = { id = "co.touchlab.skie", version.ref = "skie" }

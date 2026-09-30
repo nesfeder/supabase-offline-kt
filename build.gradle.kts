@@ -18,9 +18,11 @@ plugins {
     // loaded here once, so all projects share one copy of it.
     alias(libs.plugins.androidKmpLibrary) apply false
     alias(libs.plugins.androidx.room) apply false
+    alias(libs.plugins.dokka) apply false
     alias(libs.plugins.kotlinMultiplatform) apply false
     alias(libs.plugins.kotlinSerialization) apply false
     alias(libs.plugins.kover) apply false
     alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.mavenPublish) apply false
     alias(libs.plugins.skie) apply false
 }

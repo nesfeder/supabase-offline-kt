@@ -1,6 +1,5 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-import java.util.Properties
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 
@@ -9,7 +8,6 @@ plugins {
     alias(libs.plugins.androidKmpLibrary)
     alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.skie)
-    `maven-publish`
     id("supabase-offline.kmp-library")
     id("supabase-offline.published")
     id("supabase-offline.host-test-sqlite")
@@ -121,42 +119,6 @@ kotlin {
             implementation(libs.robolectric)
             implementation(libs.androidx.testExt.junit)
             implementation(libs.androidx.test.core.ktx)
-        }
-    }
-}
-
-// The system-SQLite variant builds the Swift package and runs the iOS suite on Apple's SQLite. Its
-// iOS publications would hand a Maven consumer Apple's SQLite without the -lsqlite3 it needs, in
-// place of the bundled SQLite every published version carries, so no publish task may run with it.
-if (providers.gradleProperty("supabase.offline.iosSqlite").orNull == "system") {
-    tasks.withType<AbstractPublishToMaven>().configureEach {
-        doFirst {
-            throw GradleException(
-                "Publishing is disabled with -Psupabase.offline.iosSqlite=system: that build is for the Swift " +
-                    "package and the system-SQLite test run only. Publish from a build without the property."
-            )
-        }
-    }
-}
-
-// The GitHub Packages repository, configured only when github.properties is present.
-val githubProps = runCatching {
-    Properties().apply {
-        load(rootProject.file("github.properties").inputStream())
-    }
-}
-    .getOrNull()
-
-if (githubProps != null) {
-    publishing {
-        repositories {
-            maven {
-                url = uri("https://maven.pkg.github.com/nesfeder/supabase-offline-kt")
-                credentials {
-                    username = githubProps.getProperty("username")
-                    password = githubProps.getProperty("token")
-                }
-            }
         }
     }
 }
