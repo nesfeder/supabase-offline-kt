@@ -375,9 +375,8 @@ internal class MutationQueueState(
 
     /**
      * Reads the unconfirmed-sends row. A missing or unreadable one cannot say which sends were
-     * never made, so every keyed INSERT queued so far (before this process queues any, see
-     * [OfflineStore.enqueueOwnedBy]) counts as possibly delivered: a set to write in its place for
-     * later launches.
+     * never made, so every keyed INSERT queued before this process queues any
+     * ([OfflineStore.enqueueOwnedBy]) counts as possibly delivered, the set to write in its place.
      */
     private suspend fun readUnconfirmedSends(): FirstRead<Set<Long>> {
         val payload = objectDao.get(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload
