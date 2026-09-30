@@ -456,14 +456,16 @@ jobs:
     steps:
       # Every step that protects the self-hosted runner runs only when IOS_RUNNER is `local`. On a
       # self-hosted runner with any other value they would all be skipped, so stop before anything.
+      # Anything but GitHub's own runner counts, so a runner that reports no environment stops too.
       - name: Check that the self-hosted runner's protections are on
-        if: runner.environment == 'self-hosted' && env.IOS_RUNNER != 'local'
+        if: runner.environment != 'github-hosted' && env.IOS_RUNNER != 'local'
         run: |
-          echo "::error::This job is on a self-hosted runner, but IOS_RUNNER is not 'local', so every step that protects the machine would be skipped."
+          echo "::error::This job is not on a GitHub-hosted runner, but IOS_RUNNER is not 'local', so every step that protects the machine would be skipped."
           exit 1
 
       # On a self-hosted runner, before anything else: a record of the home directory's first two
-      # levels, which the last step compares against. The job must leave the home as it found it.
+      # levels and of a few persistence points in it, which the last step compares against. The job
+      # must leave the home as it found it.
       - name: Record the home directory
         if: env.IOS_RUNNER == 'local'
         uses: $/.github/actions/home-snapshot
@@ -500,7 +502,10 @@ jobs:
 
       # The whole output first: piping it into `head` can close the pipe while xcodebuild is still
       # writing, and xcodebuild aborts on the broken pipe.
+      # The summary also names the runner's environment, which the guard above reads.
       - name: Check the Xcode version
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
         run: |
           output=$(xcodebuild -version)
           version="${output%%$'\n'*}"
@@ -509,8 +514,8 @@ jobs:
           else
             where="GitHub's macos-26 runner"
           fi
-          echo "  $version on $where"
-          echo "iOS tests ran on $where, $version." >> "$GITHUB_STEP_SUMMARY"
+          echo "  $version on $where (runner environment: ${RUNNER_KIND:-none})"
+          echo "iOS tests ran on $where (runner environment: ${RUNNER_KIND:-none}), $version." >> "$GITHUB_STEP_SUMMARY"
           if [[ "$version" != "Xcode $XCODE_VERSION" ]]; then
             echo "::error::Expected Xcode $XCODE_VERSION, found $version"
             exit 1

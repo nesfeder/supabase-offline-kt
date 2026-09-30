@@ -22,7 +22,8 @@ It fails when:
      Dependabot pushed or started never holds the token.
   7. ci.yml's ios-tests takes IOS_RUNNER from anything but changes' ios-runner, does not start with
      the self-hosted guard and the home record, or does not end with the clean-up and the
-     comparison, both under always(); or the job or one of those four steps may continue on error.
+     comparison, both under always(); or a step sets IOS_RUNNER for itself; or the job or one of
+     those four steps may continue on error.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -52,7 +53,7 @@ FAN_IN_IF = ("always() && (github.event.action != 'labeled'"
 IOS_RUNNER_ENV = "${{ needs.changes.outputs.ios-runner }}"
 LOCAL_ONLY = "env.IOS_RUNNER == 'local'"
 ALWAYS_LOCAL = "always() && env.IOS_RUNNER == 'local'"
-SELF_HOSTED_GUARD_IF = "runner.environment == 'self-hosted' && env.IOS_RUNNER != 'local'"
+SELF_HOSTED_GUARD_IF = "runner.environment != 'github-hosted' && env.IOS_RUNNER != 'local'"
 HOME_SNAPSHOT = "$/.github/actions/home-snapshot"
 CLEAN_UP = "bash .github/scripts/clean-up-local-runner.sh"
 # Jobs of ci.yml the fan-in must not need: a failure there must never block a merge.
@@ -149,6 +150,14 @@ def protection_problems(name: str, job_id: str, job: dict) -> list[str]:
         return step.get("uses") == HOME_SNAPSHOT and step.get("with") == {"mode": mode}
 
     guard, record, clean_up, compare = steps[0], steps[1], steps[-2], steps[-1]
+    for step in steps:
+        if isinstance(step.get("env"), dict) and "IOS_RUNNER" in step["env"]:
+            problems.append(f"{where}: a step sets IOS_RUNNER for itself")
+    # A step or job that may continue on error would let the job pass with a red comparison.
+    for label, node in (("the job", job), ("the guard", guard), ("the record", record),
+                        ("the clean-up", clean_up), ("the comparison", compare)):
+        if node.get("continue-on-error", False) is not False:
+            problems.append(f"{where}: {label} may continue on error")
     if guard.get("if") != SELF_HOSTED_GUARD_IF or "exit 1" not in str(guard.get("run")):
         problems.append(f"{where} does not start with the self-hosted guard")
     if not snapshot(record, "record") or record.get("if") != LOCAL_ONLY:
@@ -490,6 +499,18 @@ CASES: list[tuple[str, str, str, str]] = [
      COMPLIANT_CI.replace(f"      - if: {ALWAYS_LOCAL}\n        uses: {HOME_SNAPSHOT}\n"
                           "        with: {mode: compare}\n", ""),
      "does not compare the home directory"),
+    ("the comparison may continue on error", "ci.yml",
+     COMPLIANT_CI.replace("        with: {mode: compare}\n",
+                          "        with: {mode: compare}\n        continue-on-error: true\n"),
+     "the comparison may continue on error"),
+    ("the record sets IOS_RUNNER for itself", "ci.yml",
+     COMPLIANT_CI.replace("        with: {mode: record}\n",
+                          "        with: {mode: record}\n        env: {IOS_RUNNER: local}\n"),
+     "a step sets IOS_RUNNER for itself"),
+    ("ios-tests may continue on error", "ci.yml",
+     COMPLIANT_CI.replace("    env:\n      IOS_RUNNER:",
+                          "    continue-on-error: ${{ true }}\n    env:\n      IOS_RUNNER:"),
+     "the job may continue on error"),
 ]
 
 
