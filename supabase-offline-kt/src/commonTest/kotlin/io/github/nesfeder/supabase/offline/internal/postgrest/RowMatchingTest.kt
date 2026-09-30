@@ -126,6 +126,22 @@ class RowMatchingTest {
         assertEquals(RowMatch.UNKNOWN, match("is", text("true"), "true"))
     }
 
+    /**
+     * A known limit, chosen: PostgREST sends a SQL NULL and a `jsonb` column holding the JSON value
+     * `null` alike, and the engine reads both as NULL. `is(col, null)` so matches the `jsonb` one,
+     * which Postgres would not; answering unknown would keep every `is(col, null)` write off
+     * screen.
+     */
+    @Test
+    fun a_json_null_is_read_as_sql_null_even_where_the_column_is_jsonb() {
+        // Given — a column holding JSON null, whichever of the two the server meant
+        val jsonNull = JsonNull
+
+        // When / Then — `is.null` matches it and `is.not_null` excludes it, never unknown
+        assertEquals(RowMatch.MATCHES, match("is", jsonNull, "null"))
+        assertEquals(RowMatch.EXCLUDED, match("is", jsonNull, "not_null"))
+    }
+
     @Test
     fun every_other_operator_is_unknown() {
         listOf(

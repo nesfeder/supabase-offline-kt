@@ -40,9 +40,15 @@ Facts about the engine as it is. Each names the test that pins it.
   `TypeDependentComparisonTest.a_pending_update_or_delete_never_touches_a_row_it_cannot_tell`,
   `AdmissionSemanticsTest.every_family_the_engine_cannot_evaluate_admits_the_row`,
   `StaleQueriesTest.an_online_update_whose_filter_the_cache_cannot_evaluate_marks_the_lists_it_may_reach`</small>
-- **A JSON `null` is read as SQL `NULL`.** `is(column, null)` matches a column holding JSON
-  `null`, where the server would not for a `jsonb` column holding the JSON value `null`.
-  <small>`OfflineStoreApplyLocalMutationTest.update_with_is_null_condition_patches_unread_row_and_skips_read_row`</small>
+- **A known limit: a JSON `null` is read as SQL `NULL`.** PostgREST sends a SQL `NULL` and a
+  `jsonb` column holding the JSON value `null` alike, so the engine cannot tell them apart and reads
+  both as `NULL`. The one case this gets wrong is that `jsonb` value: `is(column, null)` matches it
+  where Postgres does not, so a pending write filtered that way changes such a row on screen, and a
+  locally written row with it joins a list filtered that way, until the list is fetched again.
+  Reading it as unknown instead would keep every `is(column, null)` write off screen until it
+  synced.
+  <small>`RowMatchingTest.a_json_null_is_read_as_sql_null_even_where_the_column_is_jsonb`,
+  `OfflineStoreApplyLocalMutationTest.update_with_is_null_condition_patches_unread_row_and_skips_read_row`</small>
 - **Keys are read as UUIDs.** A key written in capitals matches the same key sent back in lower
   case, so the row is shown once.
   <small>`UuidKeyCaseTest.a_row_written_in_capitals_and_sent_back_in_lower_case_is_shown_once`,
