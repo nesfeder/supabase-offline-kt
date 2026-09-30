@@ -43,7 +43,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okio.IOException
 
-/** HTTP status returned by the server for an object that no longer exists. */
+/** HTTP status the server returns for a missing object. */
 private const val HTTP_NOT_FOUND = 404
 
 /** Size of the buffer a streamed download moves bytes through. */
@@ -85,8 +85,6 @@ internal class CachingBucketApi(
             onUploadFinished = { bucketId, path -> cache.invalidateObject(bucketId, path) },
         )
     }
-
-    // ─────────────────────────────── Cached files ───────────────────────────────
 
     override suspend fun cachedFile(path: String): CachedFile? = operationGate.call {
         cache.entryFor(bucketId, path)?.let { entry -> cache.lookup(entry) }
@@ -147,8 +145,6 @@ internal class CachingBucketApi(
         return cache.lookup(entry)
             ?: throw IOException("The downloaded file left the cache before it could be returned")
     }
-
-    // ───────────────────────────────── Downloads ─────────────────────────────────
 
     override suspend fun downloadAuthenticated(
         path: String,
@@ -334,8 +330,8 @@ internal class CachingBucketApi(
 
     /**
      * Streams [fetch] into [file] for the entry [entryProvider] names, once bytes arrive. A failed
-     * or cancelled download leaves the file to [file]'s owner; a disk that refuses it deletes it
-     * now, cancels the download and reports [StreamedDownload.CacheRefused].
+     * or cancelled download leaves the file to [file]'s owner; a disk that refuses it deletes it at
+     * once, cancels the download and reports [StreamedDownload.CacheRefused].
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
@@ -408,6 +404,7 @@ internal class CachingBucketApi(
      * between.
      */
     private inner class OwnedTemporaryFile {
+        /** The file, or `null` before it is opened and once it is committed or discarded. */
         var temporary: TemporaryDownload? = null
 
         /**
@@ -425,6 +422,7 @@ internal class CachingBucketApi(
         }
     }
 
+    /** Stops the download, deletes its file and says why nothing was cached. */
     private suspend fun abandon(
         file: OwnedTemporaryFile,
         producer: Deferred<Unit>,
@@ -458,7 +456,7 @@ internal class CachingBucketApi(
             throw failure
         }
 
-    // ─────────── Writes: online-only, invalidating, and stopped by close() ───────────
+    // Writes are never queued: each drops the cached copies it may change, and close() stops it.
 
     override suspend fun upload(
         path: String,
@@ -537,7 +535,7 @@ internal class CachingBucketApi(
             uncertain = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
         )
 
-    // ─────────────── Passed through: refused once closed, and stopped by close() ───────────────
+    // Passed through: refused once the client is closed, and stopped by close().
 
     override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
         operationGate.cancellableCall(backgroundScope) {
@@ -617,6 +615,7 @@ internal class CachingBucketApi(
             result
         }
 
+    /** Whether this failure, or a cause, is a timeout, after which the write may have landed. */
     private fun Throwable.mayHaveReachedTheServer(): Boolean {
         var current: Throwable? = this
         while (current != null) {

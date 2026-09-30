@@ -38,7 +38,7 @@ private const val STREAM_BUFFER_BYTES: Int = 64 * 1024
 /** Every temporary download file starts with this, so a sweep can find the ones a crash left. */
 private const val TEMPORARY_FILE_PREFIX: String = ".supabase-offline-download-"
 
-/** And ends with this. */
+/** Every temporary download file ends with this. */
 private const val TEMPORARY_FILE_SUFFIX: String = ".tmp"
 
 /**
@@ -76,9 +76,9 @@ internal class StorageCacheEntry(
     val file: Path,
 ) {
     /**
-     * The cache row's `path`. For the original it is the object path, which keeps the stored key
-     * format `"$bucket::$path"` every existing install uses; for a variant, the object path, the
-     * variant separator and the transform.
+     * The cache row's `path`: the object path for the original, so its key keeps the persisted
+     * `"$bucket::$path"` format; for a variant, the object path, [VARIANT_SEPARATOR] and the
+     * transform.
      */
     val rowPath: String =
         if (transform == null) objectPath else "$objectPath$VARIANT_SEPARATOR$transform"
@@ -142,7 +142,10 @@ internal class StorageFileCache(
     private val hashedDirectory: Path
         get() = dataDirectory / HASHED_DIRECTORY_NAME
 
+    /** The lock every commit, eviction, move, invalidation and clear runs under. */
     private val lock = Mutex()
+
+    /** Bumped by [clear]; a download that started in an earlier generation is never committed. */
     private val generation = AtomicLong(0L)
 
     /** Entry key → number of reads in progress. Guarded by [lock]. */
@@ -151,7 +154,10 @@ internal class StorageFileCache(
     /** Whether the one sweep for crash-orphaned temporary files has run. Guarded by [lock]. */
     private var temporaryFilesSwept = false
 
-    /** Whether [prepareDirectories] has run, so [clear] re-creates what it deletes. */
+    /**
+     * Whether [prepareDirectories] has run, so [clear] re-creates what it deletes. Written outside
+     * [lock] only while the client is being built, before any [clear] can run.
+     */
     private var directoriesPrepared = false
 
     /**
@@ -161,15 +167,19 @@ internal class StorageFileCache(
     private var trackedBytes: Long? = null
 
     /**
-     * Until when every file an eviction could take is too recently used for one to be worth a scan.
+     * Until when every file an eviction could take is too recently used for a scan to be worth it.
+     * Guarded by [lock].
      */
     private var evictionIdleUntilMillis: Long = Long.MIN_VALUE
 
-    /** The data directory with every symlink resolved, once it exists. */
+    /**
+     * The data directory with every symlink resolved, once it exists. Cached without [lock]: racing
+     * callers resolve the same path, and one that misses the cache resolves it again.
+     */
     private var canonicalDataDirectory: Path? = null
 
     /**
-     * Creates both cache directories now and asks the platform to leave them out of device backups,
+     * Creates both cache directories and asks the platform to leave them out of device backups,
      * before anything is written into them. Best effort: a failure is logged at DEBUG and the
      * directories are created on first write instead. [clear] repeats it once it has run.
      */
@@ -220,11 +230,11 @@ internal class StorageFileCache(
     fun currentGeneration(): Long = generation.load()
 
     /**
-     * The cached copy of [entry], marked as used now, or `null` when it is not cached.
+     * The cached copy of [entry], marked as used, or `null` when it is not cached.
      *
-     * The file is [entry]'s own, wherever its row says it was written. A row recorded under a
-     * mapping this version no longer uses is dropped, and counts as not cached; so does every entry
-     * while the cache is not the current identity's.
+     * The file is [entry]'s own, whatever its row recorded. A row that recorded another path
+     * mapping's file is dropped and counts as not cached, as does every entry while the cache
+     * belongs to another identity.
      *
      * @param entry the entry.
      * @return the cached file, reporting the size of the file on disk.
@@ -395,7 +405,7 @@ internal class StorageFileCache(
 
     /**
      * Records [temporary]'s entry, renames the file over the entry's own, then enforces the size
-     * bound. The row goes first, so a database that refuses it leaves the old copy as it was.
+     * bound. The row goes first, so a database that refuses it leaves the previous copy in place.
      *
      * @param startedInGeneration [currentGeneration] as read before the download started.
      * @return what happened, even to a caller cancelled meanwhile; on anything but
@@ -454,7 +464,7 @@ internal class StorageFileCache(
                     sdkLogger.warning {
                         "Storage cache could not store a file (${failure::class.simpleName}); not caching"
                     }
-                    // The row now describes bytes that never arrived: put back the one it replaced.
+                    // The row describes bytes that never arrived: put back the one it replaced.
                     restoreRowLocked(entry, replaced = previous, recordedSize = size)
                     return@withLock CommitOutcome.FAILED
                 }
@@ -552,8 +562,6 @@ internal class StorageFileCache(
      */
     fun cacheDirectories(): List<Path> = listOf(storageDirectory, hashedDirectory)
 
-    // ───────────────────────────── Rows and entries ─────────────────────────────
-
     /**
      * The entry [row] describes, derived from its bucket and path — never from the file it
      * recorded.
@@ -578,8 +586,9 @@ internal class StorageFileCache(
         return recorded != entry.file && recorded.isStrictlyInside(dataDirectory)
     }
 
-    // ───────────────────────────── Under the lock ─────────────────────────────
+    // A function whose name ends in Locked runs under [lock].
 
+    /** Drops every row and file of the object at [objectPath], its variants included. */
     private suspend fun removeObjectLocked(bucketId: String, objectPath: String) {
         store.storageRowsForObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR").forEach {
             row ->
@@ -593,6 +602,7 @@ internal class StorageFileCache(
         entryFor(bucketId, objectPath)?.let { entry -> deleteContained(entry.file) }
     }
 
+    /** Deletes [row] and takes its recorded size off [trackedBytes]. */
     private suspend fun removeRowLocked(row: StorageRow) {
         store.deleteStorageRow(row.key)
         trackedBytes = trackedBytes?.minus(row.sizeBytes ?: 0L)
@@ -684,6 +694,11 @@ internal class StorageFileCache(
         }
     }
 
+    /**
+     * Evicts the least recently used files until the cache is a tenth below its bound, sparing
+     * [protectedKey], pinned entries and files used within [RECENT_USE_GRACE_MILLIS]. Runs under
+     * [lock].
+     */
     private suspend fun evictOverLimit(protectedKey: String) {
         val limit = maxSizeBytes ?: return
         val total = trackedBytes ?: store.totalStorageSizeBytes().also { trackedBytes = it }
@@ -708,8 +723,7 @@ internal class StorageFileCache(
             evicted++
         }
         trackedBytes = remaining
-        // Still over: what is left is too recent to take, so scan again only once the oldest of it
-        // ages out.
+        // Still over: the rest is too recent to take, so scan again once the oldest of it ages out.
         val oldestRecentUse = recent.minOfOrNull { (_, lastUsed) -> lastUsed }
         evictionIdleUntilMillis =
             if (remaining > lowWater && oldestRecentUse != null)
@@ -733,8 +747,9 @@ internal class StorageFileCache(
         withContext(NonCancellable) { withContext(Dispatchers.IO) { block() } }
 
     /**
-     * Deletes the temporary files a crash left behind, once per cache. It takes those a day old or
-     * older, and only when no cache row names the file, since an object can be named like one.
+     * Deletes the temporary files a crash left behind, once per cache and under [lock]: those last
+     * modified [STALE_TEMPORARY_FILE_MILLIS] ago or more that no cache row names, since an object
+     * can be named like one.
      */
     private suspend fun sweepTemporaryFilesOnce() {
         if (temporaryFilesSwept) return
@@ -773,8 +788,6 @@ internal class StorageFileCache(
         return entryFor(segments.first(), objectPath)?.file == normalized &&
             store.getStorageByKey(segments.first(), objectPath) != null
     }
-
-    // ───────────────────────────── Containment ─────────────────────────────
 
     /**
      * Whether [path] stays inside the data directory once every symlink on it is resolved. The
