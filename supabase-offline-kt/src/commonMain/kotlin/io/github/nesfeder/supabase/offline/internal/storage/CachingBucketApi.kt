@@ -256,9 +256,8 @@ internal class CachingBucketApi(
                     deliver(file, download.temporary, generation, channel)
                 is StreamedDownload.CacheRefused,
                 StreamedDownload.Uncacheable -> {
-                    // The disk refused the copy (logged when it did), or the variant could not be
-                    // told: rather than fail a good download, fetch it again straight into the
-                    // caller's channel.
+                    // The disk refused the copy (logged), or the variant is unknown: rather than
+                    // fail a good download, fetch it again straight into the caller's channel.
                     fetch(channel, options)
                     return
                 }

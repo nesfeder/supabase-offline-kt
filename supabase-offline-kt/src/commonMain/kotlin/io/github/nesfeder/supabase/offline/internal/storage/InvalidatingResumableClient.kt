@@ -53,8 +53,7 @@ internal class InvalidatingResumableClient(
                         } catch (cancellation: CancellationException) {
                             throw cancellation
                         } catch (_: Exception) {
-                            // The upload could not be resumed; the caller sees why through its own
-                            // Deferred.
+                            // Not resumed; the caller sees why through its own Deferred.
                             return@launch
                         }
                     invalidateWhenFinished(upload)
