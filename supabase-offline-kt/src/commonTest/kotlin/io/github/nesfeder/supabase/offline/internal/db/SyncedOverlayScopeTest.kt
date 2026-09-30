@@ -164,8 +164,8 @@ class SyncedOverlayScopeTest {
     @Test
     fun a_refreshed_query_keeps_the_servers_version_after_a_restart() = runTest {
         // Given — a keyless insert and an update replayed; ALL refreshed afterwards with the
-        // server's
-        // rows, while another query stays unrefreshed and so keeps the synced mutations around
+        // server's rows, while another query stays unrefreshed and so keeps the synced mutations
+        // around
         objectDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
         objectDao.seedPayload(TABLE, ALL, """[{"id":"a","title":"orig"}]""")
         tick = 10L

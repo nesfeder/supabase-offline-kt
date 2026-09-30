@@ -95,8 +95,7 @@ class QueryReaderRecoveryTest {
             runCurrent()
 
             // Then: the first emission is the typed no-data state, and the ladder exhaustion is
-            // Stalled —
-            // never a fabricated empty payload
+            // Stalled — never a fabricated empty payload
             assertNull(
                 reads.first().result,
                 "fresh cache-less subscription starts at no-data, not empty []",
@@ -240,8 +239,7 @@ class QueryReaderRecoveryTest {
             // Then: the memoized single-flight share did not replay the first subscription's stale
             // outcome — with replayExpirationMillis = 0 the replay cache was dropped when the last
             // collector left, so the re-subscription starts a genuinely fresh refresh (second
-            // network
-            // call) and observes the fresh payload rather than a stale replayed one.
+            // network call) and observes the fresh payload rather than a stale replayed one.
             assertEquals(2, networkCalls, "a re-subscription starts a fresh refresh, not a replay")
             assertEquals(
                 secondPayload,
@@ -256,8 +254,7 @@ class QueryReaderRecoveryTest {
     fun one_shot_cache_first_misses_cache_when_a_live_subscription_is_unpopulated() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a live CacheFirstThenNetwork subscription whose network is down — with the
-            // seed
-            // removed, it populates nothing
+            // seed removed, it populates nothing
             val postgrest = testPostgrest()
             var failing = true
             val wrapper =
@@ -283,8 +280,7 @@ class QueryReaderRecoveryTest {
             val oneShot = resolver.select(Columns.ALL, ReadStrategy.CacheFirst()) {}
 
             // Then: it missed the (non-existent, un-seeded) cache and went to the network — a
-            // phantom
-            // "[]" seed would have short-circuited it to an empty cache hit instead
+            // phantom "[]" seed would have short-circuited it to an empty cache hit instead
             assertEquals(freshPayload, oneShot.data)
 
             live.cancelAndJoin()
@@ -1124,8 +1120,7 @@ class QueryReaderRecoveryTest {
                     onSelect = {
                         networkCalls++
                         // Snapshot before parking: this request's answer is the server as it was
-                        // when
-                        // the request went out, not as it is when the response is finally
+                        // when the request went out, not as it is when the response is finally
                         // delivered.
                         val answer = serverRows
                         if (networkCalls == 2) inFlight.await()

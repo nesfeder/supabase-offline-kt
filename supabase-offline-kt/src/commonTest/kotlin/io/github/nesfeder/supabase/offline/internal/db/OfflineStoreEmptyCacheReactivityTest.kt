@@ -100,8 +100,7 @@ class OfflineStoreEmptyCacheReactivityTest {
             }
 
             // When — an online-success upsert fires while the subscriber is live but cache-less;
-            // the
-            // client passes the live signature so materialize-on-write can create the row
+            // the client passes the live signature so materialize-on-write can create the row
             store.patchCachedQueries(
                 table = table,
                 operation = MutationOperation.UPSERT,
@@ -113,8 +112,7 @@ class OfflineStoreEmptyCacheReactivityTest {
             )
 
             // Then — the collector observes the materialized row (honoring the "UI reflects
-            // immediately"
-            // contract for first-time saves), and a real row now exists in Room
+            // immediately" contract for first-time saves), and a real row now exists in Room
             val emitted = firstRealRow.await()
             assertNotNull(
                 emitted,
