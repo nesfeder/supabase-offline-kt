@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -11,6 +12,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.equalityDecidedByContent
 import io.github.nesfeder.supabase.offline.internal.postgrest.isUuid
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.sameUuidDigits
@@ -41,6 +43,9 @@ import kotlinx.serialization.json.JsonPrimitive
  *   new row; without them nothing tells whether it replaces one.
  * @param onMutationFailure told of each skipped mutation, for logging; never its body.
  * @param bodyOf a mutation's body, parsed; one parse may serve many overlays.
+ * @param filterFor an UPDATE's or DELETE's filter, decoded; `null` when it has none that reads.
+ * @param keyed UPDATEs known to reach exactly the rows with one key each; they find those rows by
+ *   key instead of reading every row.
  */
 internal class MutationOverlay(
     private val json: Json,
@@ -52,6 +57,10 @@ internal class MutationOverlay(
     private val bodyOf: (MutationRow) -> JsonElement = { mutation ->
         json.parseToJsonElement(mutation.bodyJson)
     },
+    private val filterFor: (MutationRow) -> FilterDescriptor? = { mutation ->
+        FilterEngine.decodeOrNull(mutation.filterJson, json)
+    },
+    private val keyed: KeyedUpdates? = null,
 ) {
 
     /**
@@ -273,8 +282,14 @@ internal class MutationOverlay(
         }
 
         private fun update(mutation: MutationRow) {
-            val filter =
-                RowFilter(filterOf(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
+            val descriptor = filterFor(mutation) ?: return
+            val keyedBy = keyed
+            val key = keyedBy?.keys?.get(mutation.id)
+            if (keyedBy != null && key != null) {
+                val patch = bodyOf(mutation) as? JsonObject ?: return
+                return updateByKey(descriptor, patch, key, keyedBy.keyColumns)
+            }
+            val filter = RowFilter(descriptor, primaryKeys.of(mutation.table).toSet())
             val patch = bodyOf(mutation) as? JsonObject ?: return
             // No row can match: none is visited
             if (!filter.canMatch) return
@@ -290,9 +305,37 @@ internal class MutationOverlay(
             }
         }
 
+        /**
+         * [update] for an UPDATE of [keyed], which matches the rows with [key] and no others:
+         * visits them in the order a scan of every row would.
+         */
+        private fun updateByKey(
+            descriptor: FilterDescriptor,
+            patch: JsonObject,
+            key: List<String>,
+            keyColumns: List<String>,
+        ) {
+            val heldBefore = held.size
+            val shown = keyIndexOf(keyColumns)[key]?.toList().orEmpty()
+            val heldWithKey =
+                (0 until heldBefore).filter { index ->
+                    keyOf(held[index], keyColumns) == key
+                }
+            if (shown.isEmpty() && heldWithKey.isEmpty()) return
+            val filter = RowFilter(descriptor, keyColumns.toSet())
+            shown.asReversed().forEach { slot ->
+                val row = slots[slot] as JsonObject
+                if (filter.match(row) == RowMatch.MATCHES) replaceShown(slot, merge(row, patch))
+            }
+            heldWithKey.asReversed().forEach { index ->
+                val row = held[index]
+                if (filter.match(row) == RowMatch.MATCHES) replaceHeld(index, merge(row, patch))
+            }
+        }
+
         private fun delete(mutation: MutationRow) {
             val filter =
-                RowFilter(filterOf(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
+                RowFilter(filterFor(mutation) ?: return, primaryKeys.of(mutation.table).toSet())
             // No row can match: none is visited
             if (!filter.canMatch) return
             slots.indices.reversed().forEach { slot ->
@@ -351,13 +394,6 @@ internal class MutationOverlay(
     /** The columns an UPSERT matches existing rows on; see [conflictColumnsOf]. */
     private fun conflictColumnsOf(mutation: MutationRow): List<String> =
         conflictColumnsOf(mutation, primaryKeys)
-
-    /**
-     * The rows an UPDATE or DELETE targets; `null`, which touches nothing, when it has no readable
-     * filter.
-     */
-    private fun filterOf(mutation: MutationRow): FilterDescriptor? =
-        FilterEngine.decodeOrNull(mutation.filterJson, json)
 }
 
 /**
@@ -383,6 +419,31 @@ internal fun conflictColumnsOf(mutation: MutationRow, primaryKeys: PrimaryKeys):
         ?.map { column -> column.trim() }
         ?.filter { column -> column.isNotEmpty() }
         ?.takeIf { it.isNotEmpty() } ?: primaryKeys.of(mutation.table)
+
+/**
+ * UPDATEs of one patch that each name one key ([keyNamedBy]) over values whose `eq` is decided by
+ * content ([equalityDecidedByContent]): each reaches exactly the rows with its key, and no row's
+ * reach is unknown.
+ *
+ * @property keyColumns the table's key columns, in order.
+ * @property keys each such UPDATE's key, by its id.
+ */
+internal class KeyedUpdates(val keyColumns: List<String>, val keys: Map<Long, List<String>>)
+
+/**
+ * The [keyOf] under [keyColumns] that [filter] names when it is exactly one `eq` on each of them,
+ * combined by AND; `null` for any other filter.
+ */
+internal fun keyNamedBy(filter: FilterDescriptor, keyColumns: List<String>): List<String>? {
+    if (filter.mode != FilterDescriptor.Mode.AND || keyColumns.isEmpty()) return null
+    if (filter.conditions.size != keyColumns.size) return null
+    val values = HashMap<String, JsonElement>()
+    for (condition in filter.conditions) {
+        if (condition.operator != FilterOperator.EQ || condition.column !in keyColumns) return null
+        if (values.put(condition.column, JsonPrimitive(condition.value)) != null) return null
+    }
+    return keyOf(JsonObject(values), keyColumns)
+}
 
 /** The rows of [payload], or `null` when it is not a JSON array. */
 internal fun payloadRowsOf(json: Json, payload: String): List<JsonElement>? =

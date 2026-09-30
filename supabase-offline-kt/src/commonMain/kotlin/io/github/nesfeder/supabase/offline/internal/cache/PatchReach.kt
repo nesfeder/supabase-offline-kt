@@ -49,15 +49,46 @@ internal class PatchTarget(
  * - an UPSERT row has no key to place it by, or its key is a row read with another projection.
  *
  * @param conflictColumnsOf the columns an UPSERT matches rows on.
+ * @param keyed UPDATEs known to reach exactly the rows with one key each, and no row whose reach is
+ *   unknown: only a row read with another projection that one brings in can leave [target] wrong.
  */
 internal fun patchMayLeaveWrong(
     writes: List<MutationRow>,
     target: PatchTarget,
     json: Json,
+    keyed: KeyedUpdates? = null,
     conflictColumnsOf: (MutationRow) -> List<String>,
-): Boolean = writes.any { write ->
+): Boolean {
+    val otherByKey = lazy {
+        keyed?.let { updates ->
+            target.otherSelectRows.groupBy { row -> keyOf(row, updates.keyColumns) }
+        }
+    }
+    return writes.any { write ->
+        mayLeaveWrong(write, target, json, conflictColumnsOf, keyed, otherByKey)
+    }
+}
+
+/**
+ * [patchMayLeaveWrong] for one of the writes.
+ *
+ * @param otherByKey the rows read with another projection, by key, when [keyed] is known.
+ */
+private fun mayLeaveWrong(
+    write: MutationRow,
+    target: PatchTarget,
+    json: Json,
+    conflictColumnsOf: (MutationRow) -> List<String>,
+    keyed: KeyedUpdates?,
+    otherByKey: Lazy<Map<List<String>?, List<JsonObject>>?>,
+): Boolean =
     when (write.operation) {
-        MutationOperation.UPDATE -> updateMayLeaveWrong(write, target, json)
+        MutationOperation.UPDATE -> {
+            val key = keyed?.keys?.get(write.id)
+            if (key != null)
+                keyedUpdateMayLeaveWrong(write, target, json, otherByKey.value?.get(key))
+            else updateMayLeaveWrong(write, target, json)
+        }
         MutationOperation.DELETE -> {
             val filter = FilterEngine.decodeOrNull(write.filterJson, json)
             filter != null &&
@@ -66,6 +97,21 @@ internal fun patchMayLeaveWrong(
         MutationOperation.UPSERT -> upsertMayLeaveWrong(write, target, json, conflictColumnsOf)
         else -> false
     }
+
+/**
+ * [updateMayLeaveWrong] for an UPDATE that reaches exactly the rows with one key, [held] being
+ * those read with another projection: only such a row it brings in can leave the query wrong.
+ */
+private fun keyedUpdateMayLeaveWrong(
+    write: MutationRow,
+    target: PatchTarget,
+    json: Json,
+    held: List<JsonObject>?,
+): Boolean {
+    if (held.isNullOrEmpty()) return false
+    val patch = json.parseToJsonElement(write.bodyJson) as? JsonObject ?: return false
+    val admission = target.admission
+    return held.any { row -> !admission.admits(row) && admission.admits(JsonObject(row + patch)) }
 }
 
 private fun updateMayLeaveWrong(write: MutationRow, target: PatchTarget, json: Json): Boolean {
@@ -126,12 +172,14 @@ private fun reachIsUnknown(
 
 /**
  * Whether an UPDATE setting [patch]'s columns may bring rows into a query of [shape]: its filters
- * name one of them, or cannot be read.
+ * name one of them, or cannot be read, and do not exclude [patch]'s values. Every row the UPDATE
+ * changes carries those values, so a condition excluding them excludes each such row.
  */
 internal fun mayGainRowsBy(patch: JsonObject, shape: QueryShape?): Boolean =
     shape == null ||
-        shape.hasOtherFilters ||
-        shape.conditions.any { condition -> condition.column in patch.keys }
+        ((shape.hasOtherFilters ||
+            shape.conditions.any { condition -> condition.column in patch.keys }) &&
+            shape.admission.admits(patch))
 
 /**
  * What a row a query reads holds, as compared between queries: its select list without whitespace
