@@ -9,14 +9,20 @@
 #   - every action a workflow uses must be pinned to a full-length commit SHA;
 #   - private vulnerability reporting is on;
 #   - code scanning's default setup is configured for GitHub Actions workflows;
+#   - releases are immutable once published, so a tag a Swift checksum depends on never moves;
 #   - Discussions are on and the wiki is off;
 #   - the description, homepage and topics are the ones below.
 # It never touches branch protection, rulesets, environments (the release environment's required
-# reviewer included), secrets or variables. Those stay manual steps in the runbook.
+# reviewer included), the Pages source, secrets or variables. Those stay manual steps in the
+# runbook.
 #
 # It refuses to run, and changes nothing, while the repository is private or while any
 # self-hosted runner is registered: on a public repository, a fork's pull request can edit a
 # workflow to run on a self-hosted runner.
+#
+# It stops before any write when a setting cannot be read. A write that fails does not stop it:
+# the settings are independent, so it sends the remaining writes, reads every setting back, and
+# exits 2. Running it again retries what is still to set.
 #
 # Before --apply, check that every action the workflows use is pinned by SHA, including the actions
 # a composite action calls: once pinning is required, a job that uses an action pinned by tag fails.
@@ -47,6 +53,9 @@
 #   private-vulnerability-reporting           "Enable private vulnerability reporting for a
 #                                             repository"
 #   code-scanning/default-setup               "Update a code scanning default setup configuration"
+#   immutable-releases                        "Enable immutable releases". Its read, "Check if
+#                                             immutable releases are enabled for a repository",
+#                                             answers 404 when they are off: read here as off
 #   the repository itself                     "Update a repository": has_wiki, description,
 #                                             homepage. has_discussions is missing from that page
 #                                             but accepted; `gh repo edit --enable-discussions`
@@ -60,13 +69,14 @@ DESCRIPTION='Offline-first PostgREST and Storage for supabase-kt, for Kotlin Mul
 HOMEPAGE='https://nesfeder.github.io/supabase-offline-kt/'
 TOPICS='android ios kotlin kotlin-multiplatform offline-first postgrest supabase swift'
 
-# Only the self-test changes these, to point the script at a fake gh and a repository that does
-# not exist.
+# The self-test changes these, to point the script at a fake gh and a repository that does not
+# exist. GO_PUBLIC_REPOSITORY also names the repository if the code moves to a fresh public one
+# under another name.
 REPOSITORY="${GO_PUBLIC_REPOSITORY:-nesfeder/supabase-offline-kt}"
 GH="${GO_PUBLIC_GH:-gh}"
 
 # The settings, in the order they are shown and applied.
-SETTINGS='fork_approval sha_pinning vulnerability_reporting code_scanning discussions wiki description homepage topics'
+SETTINGS='fork_approval sha_pinning vulnerability_reporting code_scanning immutable_releases discussions wiki description homepage topics'
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
@@ -158,6 +168,7 @@ load_current_values() {
     ACTIONS_ENABLED='?' ACTIONS_ALLOWED='?' SHA_PINNING='?'
     VULNERABILITY_REPORTING='?'
     SCANNING_STATE='?' SCANNING_LANGUAGES='?'
+    IMMUTABLE_RELEASES='?'
     CURRENT_DESCRIPTION='?' CURRENT_HOMEPAGE='?' HAS_DISCUSSIONS='?' HAS_WIKI='?'
     CURRENT_TOPICS='?'
 
@@ -186,6 +197,16 @@ load_current_values() {
         read -r SCANNING_STATE SCANNING_LANGUAGES <<< "$output"
     else
         note_unreadable code_scanning
+    fi
+
+    # GitHub answers this read with 404 while immutable releases are off. Any other failure is
+    # unreadable, as for every other setting.
+    if output="$(gh_read "repos/$REPOSITORY/immutable-releases" '.enabled | tostring')"; then
+        IMMUTABLE_RELEASES="$output"
+    elif grep -F -q '(HTTP 404)' "$SCRATCH/error"; then
+        IMMUTABLE_RELEASES=false
+    else
+        note_unreadable immutable_releases
     fi
 
     # The two booleans come last: command substitution drops trailing empty lines, and an empty
@@ -235,9 +256,11 @@ target_languages() {
     fi
 }
 
-# Sets LABEL, NOW and TARGET for a setting, and SETTING_STATE to set, ok or unreadable.
+# Sets LABEL, NOW and TARGET for a setting, SENDS to anything else its write carries, and
+# SETTING_STATE to set, ok or unreadable.
 describe_setting() {
     local satisfied=false
+    SENDS=""
     case "$1" in
         fork_approval)
             LABEL='Workflow runs from fork pull requests wait for approval from'
@@ -248,6 +271,9 @@ describe_setting() {
             LABEL='Actions must be pinned to a full commit SHA'
             NOW="$SHA_PINNING"
             TARGET=true
+            SENDS="enabled=$ACTIONS_ENABLED"
+            if [ "$ACTIONS_ALLOWED" != unset ]; then SENDS="$SENDS, allowed_actions=$ACTIONS_ALLOWED"; fi
+            SENDS="$SENDS, as they are now (the API requires enabled)"
             [ "$NOW" = "$TARGET" ] && satisfied=true ;;
         vulnerability_reporting)
             LABEL='Private vulnerability reporting'
@@ -263,8 +289,16 @@ describe_setting() {
             fi
             TARGET="configured ($(target_languages | sed 's/,/, /g'))"
             if [ "$SCANNING_STATE" = configured ]; then
+                SENDS="nothing else; the query suite stays as it is"
                 case ",$SCANNING_LANGUAGES," in *,actions,*) satisfied=true ;; esac
+            else
+                SENDS="query_suite=default"
             fi ;;
+        immutable_releases)
+            LABEL='Releases are immutable once published'
+            NOW="$IMMUTABLE_RELEASES"
+            TARGET=true
+            [ "$NOW" = "$TARGET" ] && satisfied=true ;;
         discussions)
             LABEL='Discussions'
             NOW="$HAS_DISCUSSIONS"
@@ -325,6 +359,9 @@ print_settings() {
             printf '  %-10s   now     %s\n' '' "${NOW:-(empty)}"
         fi
         printf '  %-10s   target  %s\n' '' "${TARGET:-(empty)}"
+        if [ "$SETTING_STATE" = set ] && [ -n "$SENDS" ]; then
+            printf '  %-10s   sends   %s\n' '' "$SENDS"
+        fi
     done
     if [ -n "$UNREADABLE" ]; then
         echo
@@ -350,6 +387,8 @@ write_setting() {
             gh_write "$@" -F sha_pinning_required=true ;;
         vulnerability_reporting)
             gh_write -X PUT "repos/$REPOSITORY/private-vulnerability-reporting" ;;
+        immutable_releases)
+            gh_write -X PUT "repos/$REPOSITORY/immutable-releases" ;;
         code_scanning)
             set -- -X PATCH "repos/$REPOSITORY/code-scanning/default-setup" -f state=configured
             for language in $(target_languages | tr , ' '); do
@@ -400,7 +439,13 @@ apply_changes() {
         echo "$failed write(s) failed; see above. Run again to retry what is still to set."
         exit 2
     fi
-    if [ "$TO_SET" -gt 0 ] || [ -n "$UNREADABLE" ]; then
+    if [ -n "$UNREADABLE" ]; then
+        echo
+        echo "Every write was accepted, but some settings could not be read back (listed above). Run"
+        echo "the dry run again to see whether they took."
+        exit 2
+    fi
+    if [ "$TO_SET" -gt 0 ]; then
         echo
         echo "Every write was accepted, but $TO_SET setting(s) still read differently. Code scanning's"
         echo "default setup is configured in the background; run the dry run again in a few minutes."
@@ -413,8 +458,8 @@ apply_changes() {
 print_manual_steps() {
     echo
     echo "Left to the runbook, by hand: branch protection, the release environment's required"
-    echo "reviewer, secrets and variables, release immutability, the Pages source, and making the"
-    echo "Swift package's repository public."
+    echo "reviewer, secrets and variables, the Pages source, and making the Swift package's"
+    echo "repository public."
 }
 
 main() {
@@ -457,7 +502,9 @@ main() {
 
 # Writes the fake gh. It answers `gh api` GETs from $FAKE_GH_RESPONSES, a file per endpoint with
 # `/` as `__`, and after a write to an endpoint answers from its `.applied.json` if there is one.
-# An `.error` file makes the endpoint fail with that message. Every call is logged.
+# An `.error` file makes a read of the endpoint fail with that message, an `.applied.error` file a
+# read after a write, a `.write-error` file a write to it, and a missing response is a 404 as gh
+# reports it. Every call is logged.
 write_fake_gh() {
     mkdir -p "$1"
     printf '#!%s\n' "$BASH" > "$1/gh"
@@ -478,8 +525,16 @@ done
 echo "$method $endpoint$fields" >> "$FAKE_GH_LOG"
 key="$(printf '%s' "$endpoint" | sed 's#/#__#g')"
 if [ "$method" != GET ]; then
+    if [ -e "$FAKE_GH_RESPONSES/$key.write-error" ]; then
+        cat "$FAKE_GH_RESPONSES/$key.write-error" >&2
+        exit 1
+    fi
     : > "$FAKE_GH_STATE/$key.written"
     exit 0
+fi
+if [ -e "$FAKE_GH_STATE/$key.written" ] && [ -e "$FAKE_GH_RESPONSES/$key.applied.error" ]; then
+    cat "$FAKE_GH_RESPONSES/$key.applied.error" >&2
+    exit 1
 fi
 if [ -e "$FAKE_GH_RESPONSES/$key.error" ]; then cat "$FAKE_GH_RESPONSES/$key.error" >&2; exit 1; fi
 response="$FAKE_GH_RESPONSES/$key.json"
@@ -493,11 +548,16 @@ FAKE
 }
 
 # Records a response: scenario directory, endpoint below the repository ("" for the repository
-# itself), and the JSON body, or `error:<message>` for a failing endpoint. A third `.applied`
-# argument before the body records the response after a write.
+# itself), and the JSON body, or `error:<message>` for a read that fails. A third argument before
+# the body, `applied`, records the response after a write, `applied-error` makes that read fail,
+# and `write-error` makes the write fail, each with the message given.
 record() {
     local directory="$1" suffix="$2" kind=json body="$3" key
-    if [ "$3" = applied ]; then kind=applied.json; body="$4"; fi
+    case "$3" in
+        applied) kind=applied.json; body="$4" ;;
+        applied-error) kind=applied.error; body="$4" ;;
+        write-error) kind=write-error; body="$4" ;;
+    esac
     key="$(printf '%s' "repos/self-test/offline-kt$suffix" | sed 's#/#__#g')"
     mkdir -p "$directory"
     case "$body" in
@@ -547,6 +607,8 @@ record_scenarios() {
     record "$fresh" /private-vulnerability-reporting applied '{"enabled":true}'
     record "$fresh" /code-scanning/default-setup '{"state":"not-configured","languages":[],"query_suite":"default","updated_at":null,"schedule":null}'
     record "$fresh" /code-scanning/default-setup applied '{"state":"configured","languages":["actions"],"query_suite":"default","updated_at":"2026-10-01T09:00:00Z","schedule":"weekly"}'
+    # No response for immutable-releases: GitHub answers 404 while they are off.
+    record "$fresh" /immutable-releases applied '{"enabled":true,"enforced_by_owner":false}'
     record "$fresh" /topics '{"names":[]}'
     record "$fresh" /topics applied "{\"names\":[$(target_topics | sed 's/[^,]*/"&"/g')]}"
 
@@ -558,6 +620,7 @@ record_scenarios() {
     record "$already_set" /actions/permissions '{"enabled":true,"allowed_actions":"all","sha_pinning_required":true}'
     record "$already_set" /private-vulnerability-reporting '{"enabled":true}'
     record "$already_set" /code-scanning/default-setup '{"state":"configured","languages":["actions"],"query_suite":"default","updated_at":"2026-10-01T09:00:00Z","schedule":"weekly"}'
+    record "$already_set" /immutable-releases '{"enabled":true,"enforced_by_owner":false}'
     record "$already_set" /topics "{\"names\":[$(target_topics | sed 's/[^,]*/"&"/g')]}"
 
     # The owner already chose a narrower actions policy and another code scanning language: the
@@ -572,6 +635,20 @@ record_scenarios() {
     cp -R "$fresh" "$root/unreadable"
     rm "$root/unreadable/repos__self-test__offline-kt__code-scanning__default-setup.json"
     record "$root/unreadable" /code-scanning/default-setup 'error:gh: Code scanning is not enabled for this repository. (HTTP 403)'
+
+    # Immutability cannot be read for a reason other than being off.
+    cp -R "$already_set" "$root/immutability-unreadable"
+    rm "$root/immutability-unreadable/repos__self-test__offline-kt__immutable-releases.json"
+    record "$root/immutability-unreadable" /immutable-releases 'error:gh: Must have admin rights to Repository. (HTTP 403)'
+
+    # The first write, the fork approval policy, is refused.
+    cp -R "$fresh" "$root/write-fails"
+    record "$root/write-fails" /actions/permissions/fork-pr-contributor-approval write-error 'gh: Validation Failed (HTTP 422)'
+
+    # Every write is accepted, but the topics cannot be read back.
+    cp -R "$fresh" "$root/readback-fails"
+    rm "$root/readback-fails/repos__self-test__offline-kt__topics.applied.json"
+    record "$root/readback-fails" /topics applied-error 'gh: Server Error (HTTP 502)'
 }
 
 run_self_test() {
@@ -622,6 +699,10 @@ run_self_test() {
     has() { printf '%s\n' "$OUTPUT" | grep -F -q -- "$1"; }
     lacks() { ! has "$1"; }
     count_rows() { printf '%s\n' "$OUTPUT" | grep -c "^  $1 " || true; }
+    # The first `now` value printed under the setting with this label.
+    row_now() {
+        printf '%s\n' "$OUTPUT" | grep -F -A 1 -- "$1" | sed -n 's/^ *now     //p' | head -n 1
+    }
     writes() { printf '%s\n' "$CALLS" | grep -v '^GET ' || true; }
     only_the_two_checks() {
         [ "$CALLS" = "GET $repository
@@ -665,8 +746,11 @@ GET $repository/actions/runners" ]
     local expected_dry_run
     printed_every_setting() {
         [ "$STATUS" -eq 0 ] && [ -z "$(writes)" ] && has "Mode: dry run" \
-            && has "8 to set, 1 already set." \
-            && [ "$(count_rows set)" -eq 8 ] && [ "$(count_rows ok)" -eq 1 ] \
+            && has "9 to set, 1 already set." \
+            && [ "$(count_rows set)" -eq 9 ] && [ "$(count_rows ok)" -eq 1 ] \
+            && [ "$(row_now "Releases are immutable once published")" = false ] \
+            && has "sends   enabled=true, allowed_actions=all, as they are now" \
+            && has "sends   query_suite=default" \
             && has "now     first_time_contributors" && has "target  all_external_contributors" \
             && has "now     false" && has "now     true" \
             && has "now     not-configured" && has "target  configured (actions)" \
@@ -677,7 +761,7 @@ GET $repository/actions/runners" ]
     }
     run_case fresh
     expected_dry_run="$OUTPUT"
-    check "just made public: the dry run prints every setting, its value and its target, and writes nothing" \
+    check "just made public: the dry run prints every setting, its value, its target and what else it sends, and writes nothing; immutability's 404 reads as off" \
         printed_every_setting
 
     same_as_no_argument() {
@@ -687,7 +771,7 @@ GET $repository/actions/runners" ]
     check "--dry-run prints exactly what no argument prints" same_as_no_argument
 
     nothing_to_set() {
-        [ "$STATUS" -eq 0 ] && has "0 to set, 9 already set." && [ "$(count_rows ok)" -eq 9 ] \
+        [ "$STATUS" -eq 0 ] && has "0 to set, 10 already set." && [ "$(count_rows ok)" -eq 10 ] \
             && [ -z "$(writes)" ] && lacks "Applying"
     }
     run_case already-set
@@ -710,17 +794,47 @@ GET $repository/actions/runners" ]
 PUT $repository/actions/permissions -F enabled=true -f allowed_actions=all -F sha_pinning_required=true
 PUT $repository/private-vulnerability-reporting
 PATCH $repository/code-scanning/default-setup -f state=configured -f languages[]=actions -f query_suite=default
+PUT $repository/immutable-releases
 PATCH $repository -F has_discussions=true
 PATCH $repository -F has_wiki=false
 PATCH $repository -f description=$DESCRIPTION
 PUT $repository/topics$topic_fields"
     applied_and_read_back() {
-        [ "$STATUS" -eq 0 ] && [ "$(writes)" = "$expected_writes" ] && has "Applying 8 setting(s):" \
-            && has "Every setting reads as its target." && has "0 to set, 9 already set."
+        [ "$STATUS" -eq 0 ] && [ "$(writes)" = "$expected_writes" ] && has "Applying 9 setting(s):" \
+            && has "Every setting reads as its target." && has "0 to set, 10 already set."
     }
     run_case fresh --apply
-    check "just made public: --apply sends exactly the eight writes, in order, and reads them back" \
+    check "just made public: --apply sends exactly the nine writes, in order, and reads them back" \
         applied_and_read_back
+
+    # A refused write is reported, the later writes are still sent, and the read-back shows it.
+    carried_on_after_a_failed_write() {
+        [ "$STATUS" -eq 2 ] && [ "$(writes)" = "$expected_writes" ] \
+            && has "FAILED     Workflow runs from fork pull requests wait for approval from: gh: Validation Failed (HTTP 422)" \
+            && [ "$(printf '%s\n' "$OUTPUT" | grep -c '^  done ')" -eq 8 ] \
+            && has "Read back after applying:" && has "1 to set, 9 already set." \
+            && has "1 write(s) failed" && lacks "Every setting reads as its target."
+    }
+    run_case write-fails --apply
+    check "a write refused: --apply reports it, sends the other eight, reads back and exits 2" \
+        carried_on_after_a_failed_write
+
+    reported_the_unreadable_read_back() {
+        [ "$STATUS" -eq 2 ] && [ "$(writes)" = "$expected_writes" ] \
+            && has "some settings could not be read back" && has "topics: gh: Server Error (HTTP 502)" \
+            && lacks "FAILED" && lacks "Every setting reads as its target."
+    }
+    run_case readback-fails --apply
+    check "every write accepted but a read-back fails: --apply says so and exits 2" \
+        reported_the_unreadable_read_back
+
+    stopped_on_unreadable_immutability() {
+        [ "$STATUS" -eq 2 ] && [ "$(row_now "Releases are immutable once published")" = "(could not be read)" ] \
+            && has "immutable_releases: gh: Must have admin rights" && [ -z "$(writes)" ]
+    }
+    run_case immutability-unreadable --apply
+    check "immutability unreadable for a reason other than 404: --apply stops before any write" \
+        stopped_on_unreadable_immutability
 
     kept_the_owner_choices() {
         [ "$STATUS" -eq 0 ] && [ "$(writes)" = "PUT $repository/actions/permissions -F enabled=true -f allowed_actions=selected -F sha_pinning_required=true
