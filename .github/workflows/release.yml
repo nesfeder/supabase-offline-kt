@@ -1,0 +1,224 @@
+name: Release
+
+# Publishes VERSION_NAME (gradle.properties) to Maven Central and, on a real run, tags it, creates
+# the GitHub Release and opens the pull request that starts the next version. Started by hand on
+# main; RELEASING.md is the whole process, including what the owner does before and after.
+#
+#   verify    no side effects: the version's guards, the release check of the public contract
+#             against the last release tag, every check of both modules Linux can run, and the
+#             published-artifacts check; the summary names the commit being released
+#   publish   the `release` environment (its approval and its secrets): a dry run uploads a
+#             deployment to the Central Portal without releasing it and stops; a real run
+#             releases it and waits until Central says PUBLISHED
+#   finish    real runs only: the tag at the commit verify checked, the GitHub Release from the
+#             changelog, the Swift package (not set up yet) and the post-release pull request
+#
+# Maven Central goes first because it is the step most likely to fail and the one that cannot be
+# undone: until it says PUBLISHED nothing is public, and after it, only finish is left. If finish
+# fails, run `Release resume` (release-resume.yml) with the commit this run's summary names; never
+# run this workflow again for a version Central has published.
+#
+# It runs on Linux: the iOS klibs cross-compile there, as CI's API record check proves on every
+# run. The iOS simulator suites ran on macOS in the release commit's own CI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Dry run: upload to the Central Portal without releasing, then stop. Inspect the deployment
+          in the Portal and drop it. Nothing is tagged.
+        type: boolean
+        default: true
+
+permissions: {}
+
+# One release at a time, this workflow and Release resume together, and never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify the release
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      # All history and every tag: the guards look for an existing tag, and the release check rates
+      # everything since the last one.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Check the version can be released
+        id: version
+        run: python3 scripts/release.py check-version --github-output "$GITHUB_OUTPUT"
+
+      # The public contract since the last release tag: the version must be large enough for it.
+      - name: Check the version against the public contract
+        run: python3 scripts/api-compat.py check-release
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # No cache is restored in this workflow: a release builds only what the commit holds.
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # `check` of both modules, less the iOS simulator suites, which need macOS (and whose link
+      # step needs Xcode): the Android host tests, the API records, the coverage floor.
+      - name: Run the checks of both modules
+        run: >-
+          ./gradlew
+          :supabase-offline-kt:check
+          :supabase-offline-kt-testing:check
+          -x :supabase-offline-kt:iosSimulatorArm64Test
+          -x :supabase-offline-kt-testing:iosSimulatorArm64Test
+          --continue --stacktrace
+
+      # What Maven Central will receive, published to the build directory and checked file by file.
+      - name: Check the published artifacts
+        run: python3 scripts/check-published-artifacts.py
+
+      - name: Name the commit in the summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          {
+            echo "### Releasing $VERSION"
+            echo
+            echo "From commit \`$SHA\`. Every guard and check passed."
+            echo
+            echo "If Maven Central publishes $VERSION and a later step fails, run **Release resume** with this commit."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish to Maven Central
+    needs: verify
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    # A real run waits up to 45 minutes for Central to publish (SONATYPE_CLOSE_TIMEOUT_SECONDS).
+    timeout-minutes: 75
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # The secrets reach Gradle as project properties through the environment of this step only.
+      # No configuration cache: its entry would hold the signing key on the runner's disk.
+      - name: Upload to the Central Portal without releasing (dry run)
+        if: inputs.dry_run
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_KEY_CONTENTS }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew publishToMavenCentral --no-configuration-cache --stacktrace 2>&1 \
+            | tee "$RUNNER_TEMP/publish.log"
+          deployment=$(sed -n 's/.*deployment id: \([0-9a-f-]*\).*/\1/p' "$RUNNER_TEMP/publish.log" | tail -1)
+          {
+            echo "### Dry run: nothing was released"
+            echo
+            echo "The Central Portal holds deployment \`${deployment:-unknown}\`, uploaded without releasing it."
+            echo "Open https://central.sonatype.com/publishing/deployments, wait for **VALIDATED**,"
+            echo "inspect its files, then **Drop** it. Nothing was tagged."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish and release on Maven Central
+        if: ${{ !inputs.dry_run }}
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_KEY_CONTENTS }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
+        run: >-
+          ./gradlew publishAndReleaseToMavenCentral
+          -PmavenCentralDeploymentValidation=PUBLISHED
+          -PSONATYPE_CLOSE_TIMEOUT_SECONDS=2700
+          --no-configuration-cache --stacktrace
+
+      - name: Say what to do after a failed publish
+        if: failure() && !inputs.dry_run
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          {
+            echo "### The publish did not finish"
+            echo
+            echo "Look up the deployment at https://central.sonatype.com/publishing/deployments."
+            echo "- **PUBLISHED** (the wait timed out): the version is out. Run **Release resume** with \`$SHA\`."
+            echo "- **FAILED**, or none: nothing is public. Drop a failed deployment, fix the cause and run Release again."
+            echo "- **PUBLISHING**: wait until it says PUBLISHED, then run **Release resume** with \`$SHA\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  finish:
+    name: Tag and announce the release
+    needs: [verify, publish]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # the tag, the GitHub Release and the post-release branch
+      pull-requests: write # the post-release pull request
+    steps:
+      # The pushes are this job's purpose, so the checkout keeps its credentials.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Push the tag
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: python3 scripts/release.py push-tag --version "$VERSION" --sha "$SHA"
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: python3 scripts/release.py publish-github-release --version "$VERSION"
+
+      # A placeholder that does nothing. The Swift package's framework (a release asset) and its
+      # manifest (in the Swift package repository) are published here once the Swift distribution
+      # exists; until then there is nothing to publish.
+      - name: Publish the Swift package (not set up yet)
+        run: echo "The Swift package is not published by this workflow yet; nothing to do."
+
+      - name: Open the post-release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: python3 scripts/release.py open-post-release-pr --version "$VERSION"

@@ -24,6 +24,15 @@ It fails when:
      the self-hosted guard and the home record, or does not end with the clean-up and the
      comparison, both under always(); or a step sets IOS_RUNNER for itself; or the job or one of
      those four steps may continue on error.
+  8. Releases (RELEASING.md). Only the jobs listed below use the `release` environment, each with
+     a condition that starts with the Dependabot guard and requires main; the release secrets
+     appear only in the environment of a step of those jobs that publish; only those steps run a
+     Maven Central publish task, and only release.yml releases. release.yml and release-resume.yml
+     are started by hand alone, grant nothing by default and share the concurrency group `release`,
+     never cancelled; release.yml's dry_run input is a boolean defaulting to true, its publish steps
+     each run in one mode only, and a job that can write needs the publish and never runs on a dry
+     run. release-resume.yml exists beside it, and runs no Gradle and reads no secret. In every
+     workflow, a checkout keeps its credentials only in a job that holds `contents: write`.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -57,7 +66,7 @@ SELF_HOSTED_GUARD_IF = "runner.environment != 'github-hosted' && env.IOS_RUNNER 
 HOME_SNAPSHOT = "$/.github/actions/home-snapshot"
 CLEAN_UP = "bash .github/scripts/clean-up-local-runner.sh"
 # Jobs of ci.yml the fan-in must not need: a failure there must never block a merge.
-FAN_IN_EXEMPT = {"coverage-upload", "coverage-rehearsal"}
+FAN_IN_EXEMPT = {"coverage-upload", "coverage-rehearsal", "snapshot"}
 # The jobs that may mint an OIDC token, each for one service, with exactly these permissions:
 # Codecov (a job that runs no project code; ci.yml says why) and GitHub Pages.
 OIDC_JOBS = {
@@ -68,6 +77,18 @@ OIDC_JOBS = {
 DEPENDABOT_GUARD = ("github.actor != 'dependabot[bot]'"
                     " && github.triggering_actor != 'dependabot[bot]'")
 CI_TRIGGERS = {"pull_request", "push", "merge_group", "schedule", "workflow_dispatch"}
+# The jobs that use the `release` environment (its approval and its secrets), and which of them
+# publish to Maven Central with the release secrets. Release resume only waits for the approval.
+RELEASE_ENVIRONMENT = "release"
+RELEASE_ENVIRONMENT_JOBS = {("release.yml", "publish"), ("release-resume.yml", "finish"),
+                            ("ci.yml", "snapshot")}
+PUBLISHING_JOBS = {("release.yml", "publish"), ("ci.yml", "snapshot")}
+RELEASE_SECRETS = ("MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD", "GPG_KEY_CONTENTS",
+                   "SIGNING_PASSWORD", "SWIFT_PACKAGE_DEPLOY_KEY")
+RELEASE_WORKFLOWS = ("release.yml", "release-resume.yml")
+MAIN_ONLY = "github.ref == 'refs/heads/main'"
+DRY_RUN = "inputs.dry_run"
+REAL_RUN = "${{ !inputs.dry_run }}"
 CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
 
 
@@ -238,6 +259,97 @@ def oidc_problems(name: str, document: dict) -> list[str]:
     return problems
 
 
+def environment_name(job: dict) -> object:
+    """The name of the environment a job uses, or None."""
+    environment = job.get("environment")
+    return environment.get("name") if isinstance(environment, dict) else environment
+
+
+def steps_of(job: dict) -> list[dict]:
+    """The job's steps, each a mapping."""
+    steps = job.get("steps") if isinstance(job.get("steps"), list) else []
+    return [step if isinstance(step, dict) else {} for step in steps]
+
+
+def release_problems(name: str, document: dict) -> list[str]:
+    """Rule 8, for one workflow."""
+    problems = []
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    if name in RELEASE_WORKFLOWS:
+        triggers = document.get("on")
+        if triggers not in ("workflow_dispatch", ["workflow_dispatch"]) and not (
+                isinstance(triggers, dict) and set(triggers) == {"workflow_dispatch"}):
+            problems.append(f"{name}: triggers {triggers!r}, not workflow_dispatch alone")
+        if document.get("permissions") != {}:
+            problems.append(f"{name}: its default permissions are {document.get('permissions')!r},"
+                            " not {}")
+        if document.get("concurrency") != {"group": "release", "cancel-in-progress": False}:
+            problems.append(f"{name}: its concurrency is {document.get('concurrency')!r}, not the"
+                            " group `release`, never cancelled")
+    for job_id, job in jobs.items():
+        job = job if isinstance(job, dict) else {}
+        key = (name, job_id)
+        text = json.dumps(job)
+        if (environment_name(job) == RELEASE_ENVIRONMENT) != (key in RELEASE_ENVIRONMENT_JOBS):
+            problems.append(f"{name}: job {job_id} uses the environment"
+                            f" {environment_name(job)!r}; only {sorted(RELEASE_ENVIRONMENT_JOBS)}"
+                            f" use `{RELEASE_ENVIRONMENT}`")
+        if key in RELEASE_ENVIRONMENT_JOBS and (
+                not starts_with_guard(job.get("if")) or MAIN_ONLY not in str(job.get("if"))):
+            problems.append(f"{name}: job {job_id} uses the release environment, and its condition"
+                            " does not start with the Dependabot guard or does not require main")
+        if key == ("ci.yml", "snapshot") and not all(
+                part in str(job.get("if")) for part in ("github.event_name == 'push'",
+                                                        "vars.PUBLISH_SNAPSHOTS == 'on'")):
+            problems.append(f"{name}: job {job_id} may run on something but a push to main, or"
+                            " without PUBLISH_SNAPSHOTS")
+        for secret in RELEASE_SECRETS:
+            reference = f"secrets.{secret}"
+            in_steps = sum(json.dumps(step.get("env", {})).count(reference) for step in steps_of(job))
+            if text.count(reference) != in_steps or (in_steps and key not in PUBLISHING_JOBS):
+                problems.append(f"{name}: job {job_id} reads the secret {secret} outside the"
+                                " environment of a publishing step")
+        for step in steps_of(job):
+            run = str(step.get("run", ""))
+            if "ToMavenCentral" in run and key not in PUBLISHING_JOBS:
+                problems.append(f"{name}: job {job_id} publishes to Maven Central")
+            if "publishAndReleaseToMavenCentral" in run and (
+                    name != "release.yml" or step.get("if") != REAL_RUN):
+                problems.append(f"{name}: job {job_id} runs publishAndReleaseToMavenCentral"
+                                f" outside release.yml's real run (`if: {REAL_RUN}`)")
+            if (re.search(r"\bpublishToMavenCentral\b", run) and name == "release.yml"
+                    and step.get("if") != DRY_RUN):
+                problems.append(f"{name}: job {job_id} runs publishToMavenCentral outside the dry"
+                                f" run (`if: {DRY_RUN}`)")
+            uses = str(step.get("uses", ""))
+            with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
+            permissions = job.get("permissions") if isinstance(job.get("permissions"), dict) else {}
+            if (uses.startswith("actions/checkout@") and with_.get("persist-credentials") is not False
+                    and permissions.get("contents") != "write"):
+                problems.append(f"{name}: job {job_id} keeps a checkout's credentials without"
+                                " holding contents: write")
+        if name == "release.yml":
+            permissions = job.get("permissions") if isinstance(job.get("permissions"), dict) else {}
+            needs = job.get("needs")
+            needs = [needs] if isinstance(needs, str) else (needs or [])
+            if "write" in permissions.values() and ("publish" not in needs
+                                                    or job.get("if") != REAL_RUN):
+                problems.append(f"{name}: job {job_id} can write, and does not need publish with"
+                                f" `if: {REAL_RUN}`")
+        if name == "release-resume.yml" and ("gradlew" in text or "secrets." in text):
+            problems.append(f"{name}: job {job_id} runs Gradle or reads a secret; the resume path"
+                            " only tags and announces a version Maven Central has published")
+    if name == "release.yml":
+        inputs = (document.get("on") or {}).get("workflow_dispatch") if isinstance(
+            document.get("on"), dict) else None
+        dry_run = ((inputs or {}).get("inputs") or {}).get("dry_run") if isinstance(inputs, dict) else None
+        if not isinstance(dry_run, dict) or dry_run.get("type") != "boolean" or dry_run.get(
+                "default") is not True:
+            problems.append(f"{name}: its dry_run input is {dry_run!r}, not a boolean defaulting to"
+                            " true")
+    return problems
+
+
 def self_reference_problems(root: Path, name: str, document: object) -> list[str]:
     """Rule 5: every `$/` reference in the document names a path that exists."""
     problems = []
@@ -284,6 +396,10 @@ def check_tree(root: Path) -> list[str]:
         problems += fan_in_problems(path.name, jobs)
         problems += self_reference_problems(root, path.name, document)
         problems += oidc_problems(path.name, document)
+        problems += release_problems(path.name, document)
+    workflows = root / ".github" / "workflows"
+    if (workflows / "release.yml").is_file() and not (workflows / "release-resume.yml").is_file():
+        problems.append("release.yml has no resume path: release-resume.yml is missing")
     for path in sorted((root / ".github" / "actions").glob("*/action.y*ml")):
         name = str(path.relative_to(root))
         document = load_yaml(path)
@@ -338,11 +454,88 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {{contents: read}}
     steps: [{{run: echo}}]
+  snapshot:
+    needs: changes
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && vars.PUBLISH_SNAPSHOTS == 'on')
+    runs-on: ubuntu-latest
+    environment: release
+    permissions: {{contents: read}}
+    steps:
+      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
+        with: {{persist-credentials: false}}
+      - env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{{{ secrets.MAVEN_CENTRAL_USERNAME }}}}
+        run: ./gradlew publishToMavenCentral
   final-status:
     if: {FAN_IN_IF}
     needs: [changes, ios-tests, docs]
     runs-on: ubuntu-slim
     steps: [{{run: echo}}]
+"""
+RELEASE_GUARD_IF = """>-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')"""
+COMPLIANT_RELEASE = f"""\
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run: {{type: boolean, default: true}}
+permissions: {{}}
+concurrency: {{group: release, cancel-in-progress: false}}
+jobs:
+  verify:
+    if: {RELEASE_GUARD_IF}
+    runs-on: ubuntu-latest
+    permissions: {{contents: read}}
+    steps:
+      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
+        with: {{fetch-depth: 0, persist-credentials: false}}
+      - run: python3 scripts/release.py check-version
+  publish:
+    needs: verify
+    if: {RELEASE_GUARD_IF}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions: {{contents: read}}
+    steps:
+      - if: inputs.dry_run
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{{{ secrets.GPG_KEY_CONTENTS }}}}
+        run: ./gradlew publishToMavenCentral
+      - if: ${{{{ !inputs.dry_run }}}}
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{{{ secrets.GPG_KEY_CONTENTS }}}}
+        run: ./gradlew publishAndReleaseToMavenCentral
+  finish:
+    needs: [verify, publish]
+    if: ${{{{ !inputs.dry_run }}}}
+    runs-on: ubuntu-latest
+    permissions: {{contents: write, pull-requests: write}}
+    steps:
+      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
+        with: {{persist-credentials: true}}
+      - run: python3 scripts/release.py push-tag
+"""
+COMPLIANT_RESUME = f"""\
+on:
+  workflow_dispatch:
+    inputs:
+      sha: {{type: string, required: true}}
+permissions: {{}}
+concurrency: {{group: release, cancel-in-progress: false}}
+jobs:
+  finish:
+    if: {RELEASE_GUARD_IF}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions: {{contents: write, pull-requests: write}}
+    steps:
+      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
+        with: {{persist-credentials: true}}
+      - run: python3 scripts/release.py check-resume
 """
 COMPLIANT_DOCS = """\
 on:
@@ -360,7 +553,7 @@ GUARD_LINE = f"      {DEPENDABOT_GUARD}\n"
 
 # Each case: what it proves, the file it replaces or adds, its content, and a phrase the report
 # must contain. The later ones are the second review's counter-examples.
-CASES: list[tuple[str, str, str, str]] = [
+CASES: list[tuple[str, str, str | None, str]] = [
     ("pull_request_target", "extra.yml",
      "on: pull_request_target\njobs: {a: {runs-on: ubuntu-latest}}\n", "pull_request_target"),
     ("workflow_run", "extra.yml",
@@ -511,6 +704,87 @@ CASES: list[tuple[str, str, str, str]] = [
      COMPLIANT_CI.replace("    env:\n      IOS_RUNNER:",
                           "    continue-on-error: ${{ true }}\n    env:\n      IOS_RUNNER:"),
      "the job may continue on error"),
+    # Rule 8: releases.
+    ("the release workflow on a pull request", "release.yml",
+     COMPLIANT_RELEASE.replace("on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),
+     "not workflow_dispatch alone"),
+    ("the resume workflow on a push", "release-resume.yml",
+     COMPLIANT_RESUME.replace("on:\n", "on:\n  push: {branches: [main]}\n"),
+     "not workflow_dispatch alone"),
+    ("a release that cancels one in progress", "release.yml",
+     COMPLIANT_RELEASE.replace("cancel-in-progress: false", "cancel-in-progress: true"),
+     "never cancelled"),
+    ("releases in different concurrency groups", "release-resume.yml",
+     COMPLIANT_RESUME.replace("group: release", "group: resume"), "never cancelled"),
+    ("a release workflow granting permissions by default", "release.yml",
+     COMPLIANT_RELEASE.replace("permissions: {}\n", "permissions: {contents: read}\n", 1),
+     "its default permissions"),
+    ("dry_run defaulting to false", "release.yml",
+     COMPLIANT_RELEASE.replace("default: true", "default: false"), "its dry_run input"),
+    ("dry_run as a string", "release.yml",
+     COMPLIANT_RELEASE.replace("type: boolean", "type: string"), "its dry_run input"),
+    ("the finish job running on a dry run", "release.yml",
+     COMPLIANT_RELEASE.replace("  finish:\n    needs: [verify, publish]\n    if: ${{ !inputs.dry_run }}\n",
+                               "  finish:\n    needs: [verify, publish]\n"),
+     "does not need publish"),
+    ("the finish job not waiting for the publish", "release.yml",
+     COMPLIANT_RELEASE.replace("needs: [verify, publish]", "needs: [verify]"), "does not need publish"),
+    ("the real publish on a dry run too", "release.yml",
+     COMPLIANT_RELEASE.replace("      - if: ${{ !inputs.dry_run }}\n", "      - if: always()\n"),
+     "runs publishAndReleaseToMavenCentral outside"),
+    ("the dry run in the real run too", "release.yml",
+     COMPLIANT_RELEASE.replace("      - if: inputs.dry_run\n", "      - if: always()\n"),
+     "runs publishToMavenCentral outside the dry run"),
+    ("the snapshot job releasing", "ci.yml",
+     COMPLIANT_CI.replace("run: ./gradlew publishToMavenCentral", "run: ./gradlew publishAndReleaseToMavenCentral"),
+     "outside release.yml's real run"),
+    ("a publish in a job without the release environment", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/release.py check-version",
+                               "      - run: ./gradlew publishToMavenCentral"),
+     "job verify publishes to Maven Central"),
+    ("a release secret in the job's environment", "release.yml",
+     COMPLIANT_RELEASE.replace("    environment: release\n",
+                               "    environment: release\n    env: {KEY: '${{ secrets.SIGNING_PASSWORD }}'}\n"),
+     "reads the secret SIGNING_PASSWORD outside"),
+    ("a release secret in a job that does not publish", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/release.py check-version",
+                               "      - env: {KEY: '${{ secrets.MAVEN_CENTRAL_PASSWORD }}'}\n"
+                               "        run: python3 scripts/release.py check-version"),
+     "job verify reads the secret MAVEN_CENTRAL_PASSWORD"),
+    ("the release environment on the verify job", "release.yml",
+     COMPLIANT_RELEASE.replace("    permissions: {contents: read}\n    steps:\n      - uses",
+                               "    environment: release\n    permissions: {contents: read}\n    steps:\n      - uses", 1),
+     "job verify uses the environment 'release'"),
+    ("the publish job without the release environment", "release.yml",
+     COMPLIANT_RELEASE.replace("    environment: release\n", ""), "job publish uses the environment None"),
+    ("the release environment named in a mapping elsewhere", "docs-check.yml",
+     "on: workflow_call\njobs:\n  check:\n    runs-on: ubuntu-latest\n"
+     "    environment: {name: release}\n    steps: [{run: echo}]\n",
+     "job check uses the environment 'release'"),
+    ("the release environment without the Dependabot guard", "release-resume.yml",
+     COMPLIANT_RESUME.replace("github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'\n      && ", ""),
+     "does not start with the Dependabot guard or does not require main"),
+    ("the release environment off main", "release.yml",
+     COMPLIANT_RELEASE.replace(" && github.ref == 'refs/heads/main'", ""),
+     "does not start with the Dependabot guard or does not require main"),
+    ("the snapshot job without its variable", "ci.yml",
+     COMPLIANT_CI.replace("\n      && vars.PUBLISH_SNAPSHOTS == 'on')", ")"),
+     "without PUBLISH_SNAPSHOTS"),
+    ("the snapshot job needed by the fan-in", "ci.yml",
+     COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]", "needs: [changes, ios-tests, docs, snapshot]"),
+     "needs snapshot, which must never block a merge"),
+    ("the resume path running Gradle", "release-resume.yml",
+     COMPLIANT_RESUME.replace("python3 scripts/release.py check-resume", "./gradlew publishToMavenCentral"),
+     "the resume path only tags"),
+    ("the resume path reading a secret", "release-resume.yml",
+     COMPLIANT_RESUME.replace("      - run: python3 scripts/release.py check-resume",
+                              "      - env: {KEY: '${{ secrets.GPG_KEY_CONTENTS }}'}\n"
+                              "        run: python3 scripts/release.py check-resume"),
+     "the resume path only tags"),
+    ("a release with no resume path", "release-resume.yml", None, "release-resume.yml is missing"),
+    ("a checkout keeping its credentials in a read-only job", "release.yml",
+     COMPLIANT_RELEASE.replace("with: {fetch-depth: 0, persist-credentials: false}", "with: {fetch-depth: 0}"),
+     "keeps a checkout's credentials"),
 ]
 
 
@@ -519,6 +793,8 @@ def write_compliant_tree(root: Path) -> None:
     (root / ".github" / "workflows").mkdir(parents=True)
     (root / ".github" / "workflows" / "ci.yml").write_text(COMPLIANT_CI)
     (root / ".github" / "workflows" / "docs-check.yml").write_text(COMPLIANT_DOCS)
+    (root / ".github" / "workflows" / "release.yml").write_text(COMPLIANT_RELEASE)
+    (root / ".github" / "workflows" / "release-resume.yml").write_text(COMPLIANT_RESUME)
     for action in ("setup", "home-snapshot"):
         (root / ".github" / "actions" / action).mkdir(parents=True)
         (root / ".github" / "actions" / action / "action.yml").write_text(COMPLIANT_ACTION)
@@ -536,7 +812,10 @@ def self_test() -> None:
         for index, (name, file_name, content, expected) in enumerate(CASES):
             root = Path(work) / f"case-{index}"
             write_compliant_tree(root)
-            (root / ".github" / "workflows" / file_name).write_text(content)
+            if content is None:
+                (root / ".github" / "workflows" / file_name).unlink()
+            else:
+                (root / ".github" / "workflows" / file_name).write_text(content)
             problems = check_tree(root)
             caught = any(expected in problem for problem in problems)
             print(f"{'ok  ' if caught else 'FAIL'} {name}: {'caught' if caught else problems}")
