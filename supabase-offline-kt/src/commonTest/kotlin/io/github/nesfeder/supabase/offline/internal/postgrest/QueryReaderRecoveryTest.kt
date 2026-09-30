@@ -322,11 +322,10 @@ class QueryReaderRecoveryTest {
             }
             advanceUntilIdle()
 
-            // Then: the authoritative empty replaces the cached rows — both in the store and
-            // at the collector — instead of the pre-fix behavior of dropping the [] and
-            // rendering the deleted rows forever. (The eager refresh may overwrite the cache
-            // before the first cached emission reaches the collector, so only convergence is
-            // asserted, not the stale-then-empty sequence.)
+            // Then: the authoritative empty replaces the cached rows, in the store and at the
+            // collector, rather than being dropped while the deleted rows are still served. (The
+            // eager refresh may overwrite the cache before the first cached emission reaches the
+            // collector, so only convergence is asserted, not the stale-then-empty sequence.)
             assertEquals(2, networkCalls, "the re-subscription must run its own refresh")
             assertEquals("[]", emissions.last(), "collector converges to the server's empty")
             assertEquals("[]", objectDao.allForTable("plans").single().payload)
