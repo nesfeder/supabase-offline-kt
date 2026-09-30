@@ -22,16 +22,17 @@ Facts about the engine as it is. Each names the test that pins it.
 - **A queued row carries only the columns it wrote.** In a list that embeds another table
   (`author:profiles(name)`) or renames a column (`heading:title`), it shows without the embed and
   under the name it was written with, which can fail a decode of the whole list. A row read with
-  other columns never joins a list; an online write that asked for rows back (`select()`) brings
-  the server's columns.
+  other columns, or with other options for a table it embeds (a limit, an order, a filter), never
+  joins a list, which is fetched again instead; an online write that asked for rows back
+  (`select()`) brings the server's columns.
   <small>`OverlayLimitsTest.a_queued_row_carries_only_the_columns_it_wrote`,
   `BorrowedRowsShapeTest.a_row_does_not_join_a_list_that_renames_its_columns`,
+  `BorrowedRowsShapeTest.a_row_read_with_one_embedded_row_does_not_join_a_list_that_reads_them_all`,
   `WritesThatSelectTest.an_insert_that_selects_its_id_keeps_the_columns_it_wrote`</small>
 - **What the engine cannot evaluate touches nothing.** A pending UPDATE or DELETE changes only the
   rows its filter provably matches, while a new row joins every list whose filter does not provably
-  exclude it, so the user's own row is never hidden. The engine evaluates `eq`, `neq`, `in`, `is` and
-  the other plain comparisons it can decide from the JSON alone; `lt`, `gt` and the other ordered
-  comparisons, `like`, `ilike`, full-text search and the array and range operators are left to the
+  exclude it, so the user's own row is never hidden. The engine evaluates `eq`, `neq`, `in` and `is`
+  alone; `lt`, `gt` and the other ordered comparisons, `like`, `ilike`, full-text search and the array and range operators are left to the
   server, and so is any comparison whose answer depends on the column's type: digits equal but for
   leading zeros, numbers equal only as a float, boolean words, quoted literals, `inf`, MAC
   addresses. Such a write shows once it has synced and the list is fetched again. An online write
@@ -53,6 +54,15 @@ Facts about the engine as it is. Each names the test that pins it.
   case, so the row is shown once.
   <small>`UuidKeyCaseTest.a_row_written_in_capitals_and_sent_back_in_lower_case_is_shown_once`,
   `UuidKeyCaseTest.an_update_filtered_by_a_capitalised_key_changes_the_row_sent_in_lower_case`</small>
+- **An online update brings in only rows a cached list holds.** A row that no cached list holds
+  does not join a list it starts matching after an online update, even when the update asked for
+  the row back; the list shows it once it is fetched again.
+  <small>`OverlayLimitsTest.an_online_update_of_a_row_no_cached_list_holds_brings_it_into_none`</small>
+- **A list cached by an earlier build admits every row until it is read.** Which rows a list admits
+  is recorded when it is read, from the cache or the server. A list an earlier build cached has no
+  record, so until it is read, an online write, or a record sent from the server, for any list of
+  its table is placed in it, and stays there until the list is fetched again.
+  <small>`QueryShapeRecordsTest.a_query_cached_without_a_shape_admits_every_row_until_it_is_read`</small>
 - **An upsert keys on `id` unless it names its conflict columns.** On a table without an `id`
   column, an upsert without `onConflict` adds a row next to the one it replaces on the server. Name
   the conflict columns.

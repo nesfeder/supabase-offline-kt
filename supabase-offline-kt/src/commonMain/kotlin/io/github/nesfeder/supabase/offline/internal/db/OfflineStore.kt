@@ -1673,7 +1673,8 @@ internal class OfflineStore(
 
     /**
      * The admission of the query cached under [signature]: [shape]'s, or the recorded one's, or
-     * every row when neither is known, since unknown conditions admit.
+     * every row when neither is known, since unknown conditions admit: so for a payload an earlier
+     * build cached, until it is read.
      */
     private suspend fun admissionOf(
         table: String,

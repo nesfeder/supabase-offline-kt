@@ -24,9 +24,10 @@ internal const val QUERY_SHAPE_RECORD_VERSION: Int = 1
 /**
  * The [QueryShape] of each cached query, kept in a row of [RESERVED_TABLE_NAME] beside its payload
  * so it outlives the process, and read back when a write is patched into the table's cached
- * queries. A query cached by a build that kept no record has no shape: its conditions are unknown,
- * and unknown admits. Records are loaded once per table per process and kept in memory. Its lock is
- * always taken last and held over no other.
+ * queries. A query cached by a build that kept no record has no shape until it is read: its
+ * conditions are unknown, and unknown admits, so a patch meanwhile places any of the table's rows
+ * in it. Records are loaded once per table per process and kept in memory. Its lock is always taken
+ * last and held over no other.
  */
 internal class QueryShapeRecords(private val objectDao: ObjectDao, private val json: Json) {
 

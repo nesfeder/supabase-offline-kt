@@ -31,11 +31,14 @@ class OverlayLimitsTest {
     /** What the server answers a read with, by its query parameters. */
     private var rowsFor: (Map<String, String>) -> String = { "[]" }
 
+    /** What the server answers a write with: the rows it returns when asked for them. */
+    private var writtenRows = "[]"
+
     private val server =
         RecordingPostgrestServer(
             answer = { request ->
                 if (!online) connectivityFailure()
-                okJson(if (request.method == "GET") rowsFor(request.query) else "[]")
+                okJson(if (request.method == "GET") rowsFor(request.query) else writtenRows)
             }
         )
     private val items =
@@ -164,6 +167,25 @@ class OverlayLimitsTest {
             """[{"id":"a","list_id":"A"},{"id":"x","list_id":"A"}]""",
             cached(request = listA),
         )
+    }
+
+    @Test
+    fun an_online_update_of_a_row_no_cached_list_holds_brings_it_into_none() = runTest {
+        // Given — the list of tasks done cached; x held by no cached list
+        rowsFor = { query ->
+            if (query["done"] == "eq.true") """[{"id":"y","done":true}]""" else "[]"
+        }
+        items.select(readStrategy = ReadStrategy.NetworkOnly) { filter { eq("done", true) } }
+
+        // When — online, x is marked done, and the server sends the whole row back
+        writtenRows = """[{"id":"x","done":true}]"""
+        items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+            filter { eq("id", "x") }
+            select()
+        }
+
+        // Then — the list shows it only once fetched again
+        assertEquals("""[{"id":"y","done":true}]""", cached { filter { eq("done", true) } })
     }
 
     private companion object {
