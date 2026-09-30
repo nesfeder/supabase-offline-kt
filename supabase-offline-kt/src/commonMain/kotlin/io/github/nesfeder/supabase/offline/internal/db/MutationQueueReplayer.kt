@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.auth.exception.TokenExpiredException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Count
@@ -196,8 +197,9 @@ internal class MutationQueueReplayer(
         data class Sent(val result: PostgrestResult) : HeadSendOutcome
 
         /**
-         * It may not have run on the server — no connection or no answer, or a `503`/`520` — and
-         * stays queued.
+         * It may not have run on the server — no connection or no answer, a `503`/`520`, a table or
+         * column PostgREST's schema cache does not know yet, or a session token that could not be
+         * refreshed — and stays queued.
          */
         data class StaysQueued(val cause: Exception) : HeadSendOutcome
 
@@ -290,6 +292,12 @@ internal class MutationQueueReplayer(
         return when {
             clearGeneration.value != generation ->
                 HeadSendOutcome.Cleared(result = null, cause = cause)
+            // The session's token expired and could not be refreshed: nothing left the device
+            cause is TokenExpiredException -> {
+                if (newlyUnconfirmed && failure.provesWriteNotApplied())
+                    store.clearUnconfirmedSend(mutationId)
+                HeadSendOutcome.StaysQueued(cause)
+            }
             postgrestCodeOf(cause) in SCHEMA_CACHE_MISS_CODES &&
                 !schemaCacheMissReachesBound(mutationId) -> {
                 if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)

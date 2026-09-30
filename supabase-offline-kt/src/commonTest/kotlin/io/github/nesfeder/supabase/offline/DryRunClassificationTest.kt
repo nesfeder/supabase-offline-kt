@@ -143,36 +143,33 @@ class DryRunClassificationTest {
     }
 
     @Test
-    fun a_write_that_fails_before_its_request_is_built_is_not_reported_as_unclassifiable() =
-        runTest {
-            // Given — an expired session, and no network to refresh it: supabase-kt fails the write
-            // while building its request, before the dry-run check can read it
-            val logger = RecordingOfflineLogger()
-            val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-            val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
-            supabase.signInForTest("user-a", expiresInSeconds = -60)
-            val builder =
-                OfflinePostgrestQueryBuilderImpl(
-                    delegate = supabase.postgrest.from(TABLE),
-                    store = store,
-                    sdkLogger = logger.asSdkLogger(),
-                )
+    fun a_write_whose_session_token_cannot_be_refreshed_is_classified_and_queued() = runTest {
+        // Given — an expired session, and no network to refresh it: supabase-kt fails the write
+        // while building its request, but the check reads it on a handle that needs no token
+        val logger = RecordingOfflineLogger()
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
+        supabase.signInForTest("user-a", expiresInSeconds = -60)
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = supabase.postgrest.from(TABLE),
+                store = store,
+                sdkLogger = logger.asSdkLogger(),
+            )
 
-            // When
-            val outcome = runCatching {
-                builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
-                    filter { eq("id", 1) }
-                }
+        // When
+        val outcome =
+            builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+                filter { eq("id", 1) }
             }
 
-            // Then — the write's own failure reaches the caller, without a false "cannot tell"
-            // ERROR
-            assertTrue(outcome.isFailure)
-            assertEquals(
-                0,
-                logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
-            )
-        }
+        // Then — queued, without a false "cannot tell" ERROR
+        assertEquals(MutationOutcome.Queued, outcome)
+        assertEquals(
+            0,
+            logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
+        )
+    }
 
     private fun patch(): JsonElement = Json.parseToJsonElement("""{"title":"new"}""")
 

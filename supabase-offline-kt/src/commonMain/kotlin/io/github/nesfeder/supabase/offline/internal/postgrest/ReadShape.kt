@@ -85,10 +85,11 @@ internal fun readShapeOf(
 /**
  * A second PostgREST plugin instance on [postgrest]'s client, configured as [postgrest] is, whose
  * requests carry a fixed token: building one asks neither the Auth plugin nor the app's own token
- * provider for a token, and sends nothing, since the read-shape check stops every request it
- * builds. What it copies is pinned by `ReadShapeProbeContractTest`. The client makes it once, at
- * its first `from()`: a setting of the app's plugin changed after that, `propertyConversionMethod`
- * say, is not followed, so reads are keyed and checked as the plugin was configured then.
+ * provider for a token, and sends nothing, since the read-shape check, and the dry-run check that
+ * builds writes on it too, stop every request it builds. What it copies is pinned by
+ * `ReadShapeProbeContractTest`. The client makes it once, at its first `from()`: a setting of the
+ * app's plugin changed after that, `propertyConversionMethod` say, is not followed, so reads are
+ * keyed and checked as the plugin was configured then.
  */
 internal fun readShapePostgrestOf(postgrest: Postgrest): Postgrest {
     val source = postgrest.config

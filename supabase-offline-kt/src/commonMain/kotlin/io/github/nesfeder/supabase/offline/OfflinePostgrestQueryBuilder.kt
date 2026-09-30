@@ -26,7 +26,6 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
-import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunProbe
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
@@ -326,8 +325,6 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * `BackgroundSyncTrigger`).
      */
     private val requestSync: () -> Unit = {},
-    /** Tells a dry run from a write before the write is queued; see [DryRunProbe]. */
-    private val dryRunProbe: DryRunProbe = delegate,
     /**
      * Sends a queued write at the head of its identity's queue. The real client passes its one
      * syncer, which every builder and replay pass share; built directly, the builder has its own.
@@ -425,7 +422,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
-            performOnline = { delegate.insert(body, request) },
+            perform = { handle -> handle.insert(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
                 // Honor QueueIfOffline's "UI reflects immediately" promise on the online-success
                 // path so reactive `selectAsFlow` observers re-emit without waiting for a re-fetch.
@@ -496,7 +493,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
-            performOnline = { delegate.upsert(body, request) },
+            perform = { handle -> handle.upsert(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
                 val upsertBuilder = built.value
                 val descriptor = buildDescriptorFromBuilder(upsertBuilder)
@@ -573,7 +570,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
-            performOnline = { delegate.update(body, request) },
+            perform = { handle -> handle.update(body, request) },
             applyOnlineSuccessOverlay = { result, startedAtTick ->
                 // Asked for rows back, the response names every row the update changed, none when
                 // it is empty; each carrying its key is patched by it alone, in one pass
@@ -627,7 +624,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
-            performOnline = { delegate.delete(request) },
+            perform = { handle -> handle.delete(request) },
             applyOnlineSuccessOverlay = { _, startedAtTick ->
                 patchFilteredWrite(
                     MutationOperation.DELETE,
@@ -742,6 +739,8 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * directly and never queued. The request lambda runs up to three times: built once for the
      * schema, the queue capture and the cache patch, once to tell a dry run and once to send.
      *
+     * @param perform Sends the write on the handle it is given: this builder's, or one the dry-run
+     *   check reads it on.
      * @param applyOnlineSuccessOverlay Patches the cache with the result, given the write's start
      *   tick.
      * @param captureForQueue How the write would be queued; see [QueueCapture].
@@ -751,7 +750,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         table: String,
         mutationStrategy: MutationStrategy,
         writeSchema: () -> String,
-        performOnline: suspend () -> PostgrestResult,
+        perform: suspend (PostgrestQueryBuilderWrapper) -> PostgrestResult,
         applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
     ): MutationOutcome = operationGate.call {
@@ -760,7 +759,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table,
             mutationStrategy,
             writeSchema,
-            performOnline,
+            perform,
             applyOnlineSuccessOverlay,
             captureForQueue,
         )
@@ -778,10 +777,11 @@ internal class OfflinePostgrestQueryBuilderImpl(
         table: String,
         mutationStrategy: MutationStrategy,
         writeSchema: () -> String,
-        performOnline: suspend () -> PostgrestResult,
+        perform: suspend (PostgrestQueryBuilderWrapper) -> PostgrestResult,
         applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
     ): MutationOutcome {
+        val performOnline: suspend () -> PostgrestResult = { perform(delegate) }
         if (mutationStrategy == MutationStrategy.OnlineOnly) {
             val result = performOnline()
             sdkLogger.debug { "$verbLabel $table response: ${result.data}" }
@@ -818,7 +818,9 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 "Not queueing offline $verbLabel for $table: the session's identity cannot be told"
             }
         }
-        when (val verdict = dryRunProbe.classify(performOnline)) {
+        // Read from the request's shape, on a handle that needs no session token: a session whose
+        // token cannot be refreshed offline does not stop a write from queueing
+        when (val verdict = delegate.classifyTokenFree(perform)) {
             DryRunVerdict.NotDryRun -> Unit
             DryRunVerdict.DryRun ->
                 return direct.send(OfflineLogLevel.INFO) {
@@ -882,11 +884,16 @@ internal class OfflinePostgrestQueryBuilderImpl(
 
             is MutationQueueReplayer.HeadSendOutcome.StaysQueued -> {
                 sdkLogger.info {
-                    if (sent.cause.isNetworkOrConnectivityFailure()) {
-                        "$verbLabel $table queued offline (network unavailable)"
-                    } else {
-                        "$verbLabel $table queued (the server answered ${sent.cause.httpStatusOrNull()}; " +
-                            "it may not have run)"
+                    val status = sent.cause.httpStatusOrNull()
+                    when {
+                        sent.cause.isNetworkOrConnectivityFailure() ->
+                            "$verbLabel $table queued offline (network unavailable)"
+                        status == null ->
+                            "$verbLabel $table queued (it could not be sent: " +
+                                "${sent.cause::class.simpleName})"
+                        else ->
+                            "$verbLabel $table queued (the server answered $status; " +
+                                "it may not have run)"
                     }
                 }
                 MutationOutcome.Queued

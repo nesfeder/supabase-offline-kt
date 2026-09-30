@@ -58,12 +58,19 @@ internal fun interface DryRunProbe {
  * request.
  *
  * A dry run is never queued; whether the server rolled it back is read from [wasRolledBack].
+ *
+ * @param stopsEveryRequest whether the check stops every request the write makes, not only the
+ *   PostgREST write: for a write built on a handle whose requests carry a placeholder token, which
+ *   must never leave the device.
  */
-internal class PreferHeaderDryRunProbe(private val supabase: SupabaseClient) : DryRunProbe {
+internal class PreferHeaderDryRunProbe(
+    private val supabase: SupabaseClient,
+    private val stopsEveryRequest: Boolean = false,
+) : DryRunProbe {
 
     override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict {
         if (!supabase.hasPreferHeaderProbe()) return DryRunVerdict.Unavailable
-        val probe = PreferHeaderProbe()
+        val probe = PreferHeaderProbe(stopsEveryRequest)
         val result =
             try {
                 withContext(probe) { write() }
@@ -84,8 +91,12 @@ internal class PreferHeaderDryRunProbe(private val supabase: SupabaseClient) : D
 /**
  * A coroutine-context element that makes the phase [installDryRunCheck] adds record the `Prefer`
  * header of a PostgREST write sent from its coroutine, then stop the request.
+ *
+ * @property stopsEveryRequest whether the phase stops every request sent from its coroutine, a
+ *   write or not.
  */
-internal class PreferHeaderProbe : AbstractCoroutineContextElement(Key) {
+internal class PreferHeaderProbe(val stopsEveryRequest: Boolean = false) :
+    AbstractCoroutineContextElement(Key) {
 
     /** The key a probe is found under in a coroutine context. */
     companion object Key : CoroutineContext.Key<PreferHeaderProbe>
@@ -159,11 +170,10 @@ internal fun SupabaseClient.installDryRunCheck(): Boolean {
     if (!installation.compareAndSet(expectedValue = false, newValue = true)) return false
     client.requestPipeline.insertPhaseBefore(HttpRequestPipeline.Before, DryRunCheckPhase)
     client.requestPipeline.intercept(DryRunCheckPhase) {
-        val probe = currentCoroutineContext()[PreferHeaderProbe]
-        if (probe != null && isPostgrestWrite(context)) {
-            probe.record(context.headers[PostgrestQueryBuilder.HEADER_PREFER])
-            throw DryRunCheckStop()
-        }
+        val probe = currentCoroutineContext()[PreferHeaderProbe] ?: return@intercept
+        val write = isPostgrestWrite(context)
+        if (write) probe.record(context.headers[PostgrestQueryBuilder.HEADER_PREFER])
+        if (write || probe.stopsEveryRequest) throw DryRunCheckStop()
     }
     return true
 }

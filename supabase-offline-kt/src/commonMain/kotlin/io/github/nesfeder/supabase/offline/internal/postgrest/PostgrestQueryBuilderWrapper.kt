@@ -54,6 +54,15 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
 
     /** Sends a DELETE of the rows [request] filters. */
     suspend fun delete(request: PostgrestRequestBuilder.() -> Unit): PostgrestResult
+
+    /**
+     * [classify] for the write [write] makes on the handle it is given. The real handle gives it
+     * one of this table whose requests carry a placeholder token and are all stopped: a dry run is
+     * told from its request's shape alone, so even when the session's token cannot be had.
+     */
+    suspend fun classifyTokenFree(
+        write: suspend (PostgrestQueryBuilderWrapper) -> PostgrestResult
+    ): DryRunVerdict = classify { write(this) }
 }
 
 /**
@@ -65,7 +74,7 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
  */
 internal class PostgrestQueryBuilderWrapperImpl(
     private val builder: PostgrestQueryBuilder,
-    readShapePostgrest: Postgrest = readShapePostgrestOf(builder.postgrest),
+    private val readShapePostgrest: Postgrest = readShapePostgrestOf(builder.postgrest),
 ) : PostgrestQueryBuilderWrapper {
 
     init {
@@ -77,6 +86,21 @@ internal class PostgrestQueryBuilderWrapperImpl(
     }
 
     private val dryRunProbe = PreferHeaderDryRunProbe(builder.postgrest.supabaseClient)
+
+    /** Reads writes built on [tokenFreeHandle], stopping every request they make. */
+    private val tokenFreeDryRunProbe =
+        PreferHeaderDryRunProbe(builder.postgrest.supabaseClient, stopsEveryRequest = true)
+
+    /**
+     * This table on [readShapePostgrest], whose requests carry a placeholder token; made when first
+     * asked for.
+     */
+    private val tokenFreeHandle: PostgrestQueryBuilderWrapper by lazy {
+        PostgrestQueryBuilderWrapperImpl(
+            readShapePostgrest.from(builder.schema, builder.table),
+            readShapePostgrest,
+        )
+    }
 
     private val readShapeProbe =
         PipelineReadShapeProbe(readShapePostgrest, builder.table, builder.schema)
@@ -133,6 +157,11 @@ internal class PostgrestQueryBuilderWrapperImpl(
     /** @see PreferHeaderDryRunProbe */
     override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict =
         dryRunProbe.classify(write)
+
+    /** @see PostgrestQueryBuilderWrapper.classifyTokenFree */
+    override suspend fun classifyTokenFree(
+        write: suspend (PostgrestQueryBuilderWrapper) -> PostgrestResult
+    ): DryRunVerdict = tokenFreeDryRunProbe.classify { write(tokenFreeHandle) }
 
     /** @see PipelineReadShapeProbe */
     override suspend fun shapeOf(
