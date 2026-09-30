@@ -15,8 +15,9 @@ and the steps or the code that show it.
 ## What happens next
 
 - You get an acknowledgement within seven days.
-- The fix ships in the next release of the latest minor line: a patch release when the fix changes
-  no API, stored format or supabase-kt minor version, otherwise the next minor release. A GitHub
+- The fix ships in the next release of the latest minor line: a patch release when the release
+  rules in CONTRIBUTING allow one (no change to the public API, a stored format, a dependency a
+  consumer sees, or a minimum platform version), otherwise the next minor release. A GitHub
   security advisory describes the problem, says which versions it affects and names the version
   that fixes it. The advisory is published when the fix is released, not before.
 - You are credited in the advisory if you want to be; say so in the report, with the name to
@@ -25,8 +26,9 @@ and the steps or the code that show it.
 ## Supported versions
 
 Only the latest minor release gets security fixes. While the library is below 1.0, that means
-the latest `0.x` release: when `0.3.0` is out, a fix ships as `0.3.1` (or as `0.4.0`, when it has
-to change the API, a stored format or the supabase-kt minor version), and `0.2.x` gets none.
+the latest `0.x` release: when `0.3.0` is out, a fix ships as `0.3.1` (or as `0.4.0`, when the
+release rules require a minor: a change to the public API, a stored format, a dependency a
+consumer sees, or a minimum platform version), and `0.2.x` gets none.
 Upgrade to the latest minor release to receive fixes.
 
 ## Scope
