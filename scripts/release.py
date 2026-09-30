@@ -593,7 +593,8 @@ def self_test() -> int:
         repository = central.as_uri()
         expect(check_resume(resume, released, repository) == "0.1.0", "check-resume passes a published release")
         expect(refused(lambda: check_resume(resume, "abc", repository), "not a full commit SHA"), "check-resume refuses a short SHA")
-        side = git(resume, "commit-tree", "-m", "side", f"{released}^{{tree}}").strip()
+        side = git(resume, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                   "commit-tree", "-m", "side", f"{released}^{{tree}}").strip()
         expect(refused(lambda: check_resume(resume, side, repository), "not on origin/main"), "check-resume refuses a commit off main")
         (central / "io/example/group/lib-android/0.1.0/lib-android-0.1.0.pom").unlink()
         expect(refused(lambda: check_resume(resume, released, repository), "1 of 2 artifacts"),
