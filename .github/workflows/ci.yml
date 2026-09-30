@@ -214,7 +214,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.formatting == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Room for both downloads to use every retry: 340 s each at most (download-verified.sh).
+    timeout-minutes: 15
     env:
       KEMPT_VERSION: v0.3.1
       # SHA-256 of kempt-fmt-x86_64-unknown-linux-gnu.tar.xz for KEMPT_VERSION, from the release's
@@ -245,8 +246,8 @@ jobs:
           path: ${{ runner.temp }}/formatter-downloads
           key: formatter-downloads-kempt-${{ env.KEMPT_LINUX_X64_SHA256 }}-ktfmt-${{ env.KTFMT_SHA256 }}
 
-      # A failed download is tried three more times, after 10, 30 and 60 s. A file that fails its
-      # digest fails the job at once, with no retry, and is never saved.
+      # A failed download is tried three more times, after 10, 30 and 60 s, each attempt limited to
+      # 60 s. A file that fails its digest fails the job at once, with no retry, and is never saved.
       - name: Download the formatter archive and the ktfmt jar
         if: steps.formatter-downloads.outputs.cache-hit != 'true'
         run: |
