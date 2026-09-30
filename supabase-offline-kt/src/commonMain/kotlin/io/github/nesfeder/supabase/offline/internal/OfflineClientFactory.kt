@@ -172,9 +172,10 @@ internal fun SupabaseOfflineConfig.toCacheSettings(): OfflineCacheSettings =
         maxDbSizeBytes =
             if (cacheSizeBytes == CACHE_SIZE_UNLIMITED) null
             else maxOf(cacheSizeBytes, MIN_CACHE_SIZE_BYTES),
-        // A small batch of rows per pass; what each batch frees depends on the payloads.
+        // A small batch of rows per step of a pass; what each batch frees depends on the payloads.
         evictionBatchSize = 10,
-        // A pass drains 50 MB below the bound, so the next writes do not start another at once.
+        // A pass drains 50 MB below the bound, or to the bound when it is 50 MB or less, so the
+        // next writes do not start another at once.
         minRetainedBytes = 50L * 1024L * 1024L,
     )
 

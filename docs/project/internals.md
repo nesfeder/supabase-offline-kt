@@ -481,10 +481,12 @@ the `Preference-Applied` response header.
 
 `StorageFileCache` runs every commit, eviction, move, invalidation and clear under one lock, and a
 function whose name ends in `Locked` expects to hold it. Two fields are written outside it, both
-safely: the flag that says the cache directories were prepared is set only while the client is
-built, before any clear can run; and the canonical data directory is a cache that any caller can
-recompute, so a race resolves the same path twice. A file's last use is recorded as its
-modification time, which survives a restart and needs no database column; eviction takes the
-least recently used files until the cache is a tenth below its bound, sparing pinned files and any
-used in the last 30 seconds. Temporary download files a crash left behind are swept once per
-cache, when they are a day old and no cache row names them.
+safely: the flag that says the cache directories were prepared is written outside the lock only
+while the client is being built, before any clear can run (a clear sets it again under the lock);
+and the canonical data directory is a cache that any caller can recompute, so a race resolves the
+same path twice. A file's last use is recorded as its modification time, which survives a restart
+and needs no database column. Once the cache is over its bound, eviction takes the least recently
+used files until the cache is a tenth below it, sparing the file just committed, pinned files and
+any used in the last 30 seconds; when the recently used files keep it over, it skips the scan
+until the oldest of them ages out. Temporary download files a crash left behind are swept once per
+cache, when they are more than a day old and no cache row names them.

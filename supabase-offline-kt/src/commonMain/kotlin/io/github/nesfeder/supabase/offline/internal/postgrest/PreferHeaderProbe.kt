@@ -52,9 +52,10 @@ internal fun interface DryRunProbe {
 }
 
 /**
- * The [DryRunProbe] over supabase-kt's HTTP pipeline, which records `dryRun()` nowhere but the
- * `Prefer` header, as `tx=rollback`. The write runs under a [PreferHeaderProbe], and the phase
- * [installDryRunCheck] puts ahead of every plugin reads that header and stops the request.
+ * The [DryRunProbe] over supabase-kt's HTTP pipeline. supabase-kt records `dryRun()` nowhere but
+ * the `Prefer` header, as `tx=rollback`, so the write runs under a [PreferHeaderProbe], and the
+ * phase that [installDryRunCheck] puts ahead of every plugin reads that header and stops the
+ * request.
  *
  * A dry run is never queued; whether the server rolled it back is read from [wasRolledBack].
  */

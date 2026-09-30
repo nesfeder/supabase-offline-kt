@@ -233,8 +233,8 @@ internal class StorageFileCache(
      * The cached copy of [entry], marked as used, or `null` when it is not cached.
      *
      * The file is [entry]'s own, whatever its row recorded. A row that recorded another path
-     * mapping's file is dropped and counts as not cached, as does every entry while the cache
-     * belongs to another identity.
+     * mapping's file is dropped and counts as not cached, as does every entry while the cache is
+     * not the current identity's.
      *
      * @param entry the entry.
      * @return the cached file, reporting the size of the file on disk.
@@ -695,9 +695,10 @@ internal class StorageFileCache(
     }
 
     /**
-     * Evicts the least recently used files until the cache is a tenth below its bound, sparing
-     * [protectedKey], pinned entries and files used within [RECENT_USE_GRACE_MILLIS]. Runs under
-     * [lock].
+     * Once the cache is over its bound, evicts the least recently used files until it is a tenth
+     * below it. It spares [protectedKey], pinned entries and files used within
+     * [RECENT_USE_GRACE_MILLIS], and skips the scan until the oldest file it had to spare ages out.
+     * Runs under [lock].
      */
     private suspend fun evictOverLimit(protectedKey: String) {
         val limit = maxSizeBytes ?: return
@@ -748,7 +749,7 @@ internal class StorageFileCache(
 
     /**
      * Deletes the temporary files a crash left behind, once per cache, under [lock]. It takes those
-     * last modified [STALE_TEMPORARY_FILE_MILLIS] ago or more that no cache row names, since an
+     * last modified more than [STALE_TEMPORARY_FILE_MILLIS] ago that no cache row names, since an
      * object can be named like one.
      */
     private suspend fun sweepTemporaryFilesOnce() {

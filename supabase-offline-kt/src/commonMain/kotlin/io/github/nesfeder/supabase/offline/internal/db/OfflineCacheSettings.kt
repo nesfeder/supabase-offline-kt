@@ -9,11 +9,11 @@ import okio.SYSTEM
 /**
  * The bounds the store's eviction pass holds the object cache to.
  *
- * @param maxDbSizeBytes the bound on the summed length of cached payloads, not on the database
+ * @property maxDbSizeBytes the bound on the summed length of cached payloads, not on the database
  *   file, which never shrinks after a `DELETE`; `null` for no bound.
- * @param evictionBatchSize how many of the oldest rows one pass deletes at a time; the pass treats
- *   anything below one as one.
- * @param minRetainedBytes how far below the bound a pass drains, so a burst of writes does not
+ * @property evictionBatchSize how many of the oldest rows one pass deletes at a time; the pass
+ *   treats anything below one as one.
+ * @property minRetainedBytes how far below the bound a pass drains, so a burst of writes does not
  *   start a pass on every write; a value that is not positive, or not below the bound, drains to
  *   the bound itself.
  */

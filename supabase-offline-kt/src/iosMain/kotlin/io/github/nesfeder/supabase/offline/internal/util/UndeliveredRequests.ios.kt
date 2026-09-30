@@ -20,9 +20,9 @@ private val URL_ERROR_CODE =
     Regex("""^Exception in http request: Error Domain=NSURLErrorDomain Code=(-?\d+)""")
 
 /**
- * Reads the `NSURLErrorDomain` code from the failure's message. The Darwin engine's exception type
- * is not visible without that engine as a dependency, so the code is parsed from the text; a
- * message from another engine does not match.
+ * Whether [failure]'s message names one of [NEVER_SENT_URL_ERROR_CODES]. The Darwin engine's
+ * exception type is not visible without that engine as a dependency, so the code is parsed from the
+ * text; a message from another engine does not match.
  */
 internal actual fun isConnectFailureOnThisPlatform(failure: Throwable): Boolean {
     val code =

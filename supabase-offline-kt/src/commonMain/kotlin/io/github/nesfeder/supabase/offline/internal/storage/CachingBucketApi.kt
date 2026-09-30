@@ -43,7 +43,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okio.IOException
 
-/** HTTP status the server returns for a missing object. */
+/** A literal HTTP 404, which also marks the object missing. */
 private const val HTTP_NOT_FOUND = 404
 
 /** Size of the buffer a streamed download moves bytes through. */
@@ -455,7 +455,8 @@ internal class CachingBucketApi(
             throw failure
         }
 
-    // Writes are never queued: each drops the cached copies it may change, and close() stops it.
+    // Writes are never queued: each drops or moves the cached copies it may change, and close()
+    // stops it.
 
     override suspend fun upload(
         path: String,
