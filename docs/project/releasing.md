@@ -50,7 +50,7 @@ Which versions you can take without reading their notes is on the
 
 Next to the library itself, every artifact carries:
 
-- a POM with the project's licence (MIT), URL and source repository;
+- a POM with the project's license (MIT), URL and source repository;
 - a sources jar;
 - a documentation jar holding the HTML API reference of its public packages;
 - a PGP signature (`.asc`) of every file, and its MD5 and SHA-1 checksums.
@@ -71,8 +71,8 @@ A release runs as a GitHub Actions workflow that a maintainer starts by hand on 
    until it succeeds nothing is public.
 3. **GitHub.** The tag `X.Y.Z` is pushed at the commit that was checked and published, and the
    GitHub Release is created from the changelog.
-4. **The next version.** A pull request moves the version on to the next `-SNAPSHOT` and opens a new
-   `Unreleased` section in the changelog.
+4. **The next version.** A branch moves the version on to the next `-SNAPSHOT` and opens a new
+   `Unreleased` section in the changelog, and the maintainer opens its pull request.
 
 A version that reached Maven Central is never rebuilt or published again: if a later step fails,
 a second workflow finishes only what is missing. A defect found after a release is fixed in a new

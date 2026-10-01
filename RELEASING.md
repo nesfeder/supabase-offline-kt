@@ -68,8 +68,8 @@ Central Portal without releasing it, so Central's own validation of the signatur
 files runs, and nothing becomes public.
 
 1. **Actions → Release → Run workflow**, branch `main`, with **Dry run** ticked (the default).
-2. The `verify` job runs the checks below. When it passes, approve the `release` environment if
-   GitHub asks.
+2. The `verify` job runs the checks listed under [Release](#3-release). When it passes, approve
+   the `release` environment if GitHub asks.
 3. The `publish` job uploads the deployment and stops. Its summary names the deployment.
 4. In the Central Portal, **Publishing → Deployments**, wait for **VALIDATED** and look through the
    files: for each of the two modules, four artifacts (the module itself, `-android`,
@@ -89,12 +89,17 @@ files runs, and nothing becomes public.
    - `scripts/check-published-artifacts.py`, which publishes both modules to the build directory
      and checks every file Maven Central would receive.
 
-   Its summary names the commit being released. Keep that SHA: every later step works on it.
+   Its summary names the commit being released, the run's own commit. Keep that SHA for a resume.
+   The later jobs check out that same commit themselves: nothing `verify` produces (it runs the
+   build and the tests) reaches the job that signs or the job that tags.
 3. Approve the `release` environment when GitHub asks.
 4. **publish** uploads the signed artifacts, releases the deployment, and waits until Central
    says **PUBLISHED**, up to 45 minutes.
 5. **finish** pushes the tag `X.Y.Z` at the released commit, creates the GitHub Release from the
-   changelog's section, and opens the post-release pull request as `github-actions[bot]`.
+   changelog's section, and pushes the post-release branch, `release/X.Y.Z-next-snapshot`, committed
+   as `github-actions[bot]`. Its summary has the link that opens that branch's pull request: GitHub
+   Actions may not open pull requests in this repository ("Allow GitHub Actions to create and
+   approve pull requests" is off, and stays off), so you open it.
 
 ## 4. After the release
 
@@ -102,10 +107,11 @@ files runs, and nothing becomes public.
    `https://repo1.maven.org/maven2/io/github/nesfeder/supabase-offline/` at `X.Y.Z`. The
    Central Portal's search can take a few more hours.
 2. Check the GitHub Release: its notes, and that it is not a draft.
-3. The post-release pull request sets `VERSION_NAME` to the next minor's `-SNAPSHOT`, adds an
-   empty `## Unreleased` section to the changelog and an `Unreleased` row to the compatibility
-   table, and empties `compat/overrides.txt`. GitHub runs no workflow for a pull request the
-   workflow's own token opened: **close and reopen it** to start CI. Review it and merge it.
+3. Open the post-release pull request with the link in `finish`'s summary; its title and
+   description are filled in, and CI starts by itself because you opened it. It sets
+   `VERSION_NAME` to the next minor's `-SNAPSHOT`, adds an empty `## Unreleased` section to the
+   changelog and an `Unreleased` row to the compatibility table, and empties
+   `compat/overrides.txt`. Review it and merge it.
 4. If the next release is a patch, set that version in the pull request that prepares it.
 
 ## When a release stops halfway
@@ -123,7 +129,9 @@ Look at the run's summary, and at the deployment in the Central Portal.
 checks that the commit is on `main`, that its `VERSION_NAME` is the release version with its
 changelog section, that no tag of that version points anywhere else, and that Maven Central serves
 every artifact of it; then it does whichever of the tag, the GitHub Release and the post-release
-pull request is missing. It waits for the same approval as a release. It never builds and never
+branch is missing, and its summary has the pull request's link. It waits for the same approval as a
+release once the environment has a reviewer; until then, as for a release, starting it is the
+approval. It never builds and never
 publishes: once Central has published a version, nothing may be rebuilt under that number, because
 the rebuilt files would differ from the published ones.
 
@@ -159,10 +167,18 @@ Two steps for the owner turn it on:
 
 The job uses the secrets of the `release` environment, which has no required reviewer while the
 repository is private. When the owner adds that reviewer, every push to `main` would wait for an
-approval, so at the same time the owner creates an environment `snapshot`, restricted to `main`,
-with the same four secrets and no reviewer, and the `snapshot` job moves to it: its `environment:`
-line in `ci.yml`, and the job's entry in `.github/scripts/check-workflows.py` (rule 8), change in
-one pull request.
+approval. The planned way out is an environment `snapshot`, restricted to `main`, with the same four
+secrets and no reviewer, to which the `snapshot` job moves: its `environment:` line in `ci.yml`, and
+its entry in the release rule of `.github/scripts/check-workflows.py`, change in one pull request.
+
+**What that costs the approval.** A `snapshot` environment with no reviewer gives every push to
+`main` the Portal user token and the signing key, with no approval. The token can publish and
+release any version in the namespace, so a change merged to `main` that edits `ci.yml` could use
+it to release, and the release approval would then guard against mistakes in a run, not against
+what is merged. The alternatives: leave snapshots off (the default, since `PUBLISH_SNAPSHOTS` does
+not exist), or give the `snapshot` environment a reviewer too and approve each snapshot. This is
+the owner's decision at the public flip; the environment and the variable are the owner's to
+create.
 
 There are no Swift package snapshots.
 

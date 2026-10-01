@@ -766,9 +766,10 @@ jobs:
   # to main. Inert until the owner turns snapshots on for the namespace in the Central Portal and
   # sets the repository variable PUBLISH_SNAPSHOTS to `on` (RELEASING.md, "Snapshots"). It takes the
   # Portal token and signing key from the `release` environment, the only job in this workflow to
-  # use it; when that environment gains a required reviewer, this job moves to a `snapshot`
-  # environment holding the same secrets and no reviewer. It publishes nothing unless VERSION_NAME
-  # ends in -SNAPSHOT: a release version goes through release.yml alone. It restores no cache.
+  # use it; when that environment gains a required reviewer, this job would move to a `snapshot`
+  # environment holding the same secrets and no reviewer, which RELEASING.md weighs ("Snapshots").
+  # It publishes nothing unless VERSION_NAME ends in -SNAPSHOT: a release version goes through
+  # release.yml alone. It restores no cache.
   snapshot:
     name: Publish a snapshot
     needs: jvm-tests
