@@ -20,6 +20,7 @@ import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
+import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
@@ -58,6 +59,7 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * @param engineLogger messages at INFO and above name the bucket, never the object path.
  * @param backgroundScope the client's own scope, which closing the client cancels.
  */
+@OptIn(OfflineInternal::class)
 internal class CachingBucketApi(
     private val delegate: BucketApi,
     private val cache: StorageFileCache,

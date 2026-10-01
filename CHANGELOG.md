@@ -16,12 +16,58 @@ release.
 
 ### Breaking
 
+- The library is a supabase-kt plugin. Install it with `install(Offline) { … }` in
+  `createSupabaseClient` and reach it as `supabase.offline`, where `createSupabaseOfflineClient(…)`
+  returned a client; the settings of `SupabaseOfflineConfig` are the plugin's `Offline.Config`
+  (`offlineStoragePath` is `dataDirectory`, a `String`). The old names compile, deprecated; see
+  Deprecated. supabase-kt closes the plugin with the client, after it has closed its HTTP client:
+  call `supabase.offline.close()` first to let requests already on the wire answer.
+- `MutationOutcome.Queued` is a class that carries the queued write as a `PendingMutation`: match it
+  with `is MutationOutcome.Queued`, not `MutationOutcome.Queued ->`. `MutationOutcome.Applied` and
+  `Queued` have internal constructors.
+- `OfflinePostgrestQueryBuilder` is a final class, as supabase-kt's builder is, and `Offline` and
+  `OfflineBucketApi` need the `OfflineInternal` opt-in to implement. A test double comes from
+  `supabase-offline-kt-testing`.
+- `RefreshState.InFlight` is `RefreshState.Refreshing`, and `RefreshState.Paused` is new: an
+  exhaustive `when` over `RefreshState` needs a branch for it.
+- `ReadStrategy.NetworkFirst`, `CacheFirst` and `CacheOnly` take `maxAge`, not `cacheDuration`, and
+  are no longer data classes. `FlowReadStrategy` and `MutationStrategy` are sealed interfaces: their
+  cases are written as before, but `entries`, `values()` and `valueOf` are gone.
+- A `CacheOnly` read that finds nothing it may serve throws `CacheMissException`, not
+  `NoSuchElementException`. A `QueueIfOffline` write the queue cannot hold (a dry run, a filter it
+  cannot record, an unknown user, another schema) that cannot be sent for want of a connection
+  throws `MutationNotQueueableException`, with that failure as its cause, instead of the failure
+  itself or an `IOException`. `isNetworkOrConnectivityFailure()` is still `true` for it.
+- The testing hook's opt-in marker `InternalOfflineTestingApi` is `OfflineInternal`.
+- On Android, an interface member with a body compiles to a JVM default method only, so the
+  `$DefaultImpls` classes are gone (`-jvm-default=no-compatibility`).
+
 ### Added
 
-- Offline-first PostgREST reads through supabase-kt. `SupabaseOfflineClient.from(table).select { }`
+- The `Offline` plugin for supabase-kt: `install(Offline) { … }` and `supabase.offline`, with its
+  settings in `Offline.Config`: the two cache sizes, `dataDirectory`, `primaryKeys` (each table's
+  key, `id` unless set; `primaryKey(table, columns)`), `responseTrust` (`ResponseTrust`, with the
+  earlier rule as `AuthenticatedSessionOnly`), and the logger. `networkAvailability` and `autoSync`
+  are declared, experimental (`@OfflineExperimental`) until the library watches connectivity
+  itself. On Android the plugin needs no `Context`: androidx.startup gives it the application's.
+- Offline-first PostgREST reads through supabase-kt. `supabase.offline.from(table).select { }`
   takes supabase-kt's own request builder and a `ReadStrategy` (`NetworkFirst`, `CacheFirst`,
   `CacheOnly` or `NetworkOnly`). `selectAsFlow` emits an `OfflineReadResult` each time the cache or
   the network answers, under a `FlowReadStrategy`.
+- `OfflinePostgrestQueryBuilder` has supabase-kt's verbs and overloads under its names (`insert`,
+  `upsert` and `update` of JSON, of a value and of a list, the `update { set(…) }` DSL, `delete`)
+  and its `table`, `schema` and `postgrest`; the offline choice is a named parameter before the
+  trailing lambda, so a call written against supabase-kt compiles with only the receiver changed.
+  Typed writes encode through `postgrest.serializer`, as supabase-kt's do.
+- `MutationOutcome.Queued.pendingMutation` (`PendingMutation`: id, table, `MutationOperation`,
+  createdAt, row keys, body) and `MutationOutcome.isQueued`.
+- `rpc` on the plugin, network only, with a typed overload; `offline.storage.from(bucket)` and
+  `offline.storage[bucket]`; a typed `applyServerRecord`, whose `primaryKeys` default to the table's
+  configured key.
+- `OfflineException`, open for new subclasses, with `CacheMissException`,
+  `MutationNotQueueableException` and `NetworkDisabledException`; `httpStatusOrNull()`, which reads
+  supabase-kt's and Ktor's errors, Storage's included.
+- The opt-in markers `OfflineExperimental` (warning) and `OfflineInternal` (error).
 - Writes that work offline. `insert`, `update`, `upsert` and `delete`, and their JSON forms, return
   a `MutationOutcome`: `Applied` with the server's response, or `Queued` when the write was recorded
   in the mutation queue to be sent later (`MutationStrategy.QueueIfOffline`, the default). Queued
@@ -29,13 +75,13 @@ release.
 - `syncAllPendingMutations()` and `syncPendingMutations(table)` replay the current identity's queued
   mutations in the order they were made. `pendingMutationCount()` and `pendingMutationCountFlow()`
   report how many are waiting.
-- Storage downloads cached on the device. `storage(bucket)` returns an `OfflineBucketApi` with
+- Storage downloads cached on the device. `storage.from(bucket)` returns an `OfflineBucketApi` with
   `cachedFile` and `ensureCachedFile`, and Android and iOS functions return the cached file's
   location.
 - `applyServerRecord` and `applyServerDelete` apply a Realtime change to the cached reads.
-- Size limits for the cached rows and the cached files, in `SupabaseOfflineConfig`.
-- `clearAllCache()` deletes the cached rows, the queued mutations and the cached files, and
-  `close()` releases the client's database.
+- Size limits for the cached rows and the cached files, in `Offline.Config`.
+- `clearLocalData()` deletes the cached rows, the queued mutations, which are never sent, and the
+  cached files; `close()` releases the plugin's database.
 - `buildInMemorySupabaseOfflineClient` in the `supabase-offline-kt-testing` artifact: a client that
   keeps everything in memory, for tests.
 - A record of the public API of both artifacts, checked on every change, so the API cannot change
@@ -61,9 +107,12 @@ release.
   session settles into another, they are dropped. Queued mutations are kept for their owners.
 - `single()`, `maybeSingle()`, `head`, counts (a list with a count included), `csv()`, `geojson()`,
   `stripNulls()` and `explain()` are never cached: they go to the network, and under `CacheOnly`
-  throw `NoSuchElementException` without sending anything.
+  throw `CacheMissException` without sending anything.
 - A table in another schema is cached apart. A write to it with the default strategy is sent at
-  once and never queued; offline it throws.
+  once and never queued; offline it throws `MutationNotQueueableException`.
+- Typed writes (`insert(value)`, `upsert(values)`, `update(value)`) encode through the app's own
+  PostgREST serializer, so a custom `Json`, contextual serializers and `encodeDefaults` reach the
+  server, and the mutation queue, as supabase-kt sends them; they used the library's own `Json`.
 - Offline, a `NetworkFirst` read with a warm cache answers at once instead of after supabase-kt's
   retries; `NetworkFirstThenCache` with a warm cache shows it as `Stalled` and keeps fetching
   instead of failing; a `CacheFirstThenNetwork` refresh reports `Stalled` after about 3.6 s.
@@ -92,6 +141,17 @@ release.
   column is still `signature`, and the schema's identity hash is unchanged.
 
 ### Deprecated
+
+- `createSupabaseOfflineClient` (Android and iOS): install the plugin and use `supabase.offline`.
+  It opens the same database in the same place, so the cache and unsent writes carry over.
+- `SupabaseOfflineConfig`: the same settings in `install(Offline) { … }`.
+- `SupabaseOfflineClient`: a type alias of `Offline`.
+- `insertJson`, `upsertJson` and `updateJson`: `insert`, `upsert` and `update`. `insertWith`,
+  `upsertWith` and `updateWith`: the typed `insert`, `upsert` and `update`, which encode through
+  `postgrest.serializer`. The reified `insert`, `upsert` and `update` extensions: they are members
+  now; remove the import.
+- `storage(bucket)`: `storage.from(bucket)`. `clearAllCache()`: `clearLocalData()`, which says
+  what it deletes. `supabase`: `supabaseClient`.
 
 ### Removed
 

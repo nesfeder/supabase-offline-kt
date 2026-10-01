@@ -125,7 +125,7 @@ class MutationOutcomeTest {
             buildBuilder(
                 remoteTable =
                     FakeRemoteTable(
-                        table = "beta_feedback",
+                        table = "comments",
                         postgrest = postgrest,
                         onUpsert = { throw IOException("network down") },
                     ),

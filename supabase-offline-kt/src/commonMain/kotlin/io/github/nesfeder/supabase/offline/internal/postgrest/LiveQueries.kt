@@ -29,7 +29,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** What a call on a closed client — or a reactive read it was serving — fails with. */
-internal const val CLIENT_CLOSED_MESSAGE: String = "This SupabaseOfflineClient is closed"
+internal const val CLIENT_CLOSED_MESSAGE: String = "This offline client is closed"
 
 /**
  * The client's single-flight refresh per `(table, cacheKey)`: overlapping `selectAsFlow` collectors

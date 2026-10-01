@@ -1,5 +1,5 @@
 public final class io/github/nesfeder/supabase/offline/testing/InMemorySupabaseOfflineClientKt {
-	public static final fun buildInMemorySupabaseOfflineClient (Lio/github/jan/supabase/SupabaseClient;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function0;)Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;
-	public static synthetic fun buildInMemorySupabaseOfflineClient$default (Lio/github/jan/supabase/SupabaseClient;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function0;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SupabaseOfflineClient;
+	public static final fun buildInMemorySupabaseOfflineClient (Lio/github/jan/supabase/SupabaseClient;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function0;)Lio/github/nesfeder/supabase/offline/Offline;
+	public static synthetic fun buildInMemorySupabaseOfflineClient$default (Lio/github/jan/supabase/SupabaseClient;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function0;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/Offline;
 }
 

@@ -44,6 +44,31 @@ import kotlinx.serialization.json.jsonObject
  * first is closed. It is closed with the client ([SupabaseClient.close]), or on its own with
  * [close].
  *
+ * ### Android backups
+ *
+ * The database holds cached rows and writes not yet sent, and the file cache downloaded objects:
+ * all of it re-creatable, and one user's. Android's Auto Backup includes both by default, so a
+ * restore onto a new device would bring them back under whoever signs in next. Leave them out in
+ * the app's backup rules; for Android 12 and later (`android:dataExtractionRules`), with the
+ * default [Config.dataDirectory]:
+ * ```xml
+ * <data-extraction-rules>
+ *     <cloud-backup>
+ *         <exclude domain="database" path="supabase_offline.db" />
+ *         <exclude domain="database" path="supabase_offline.db-wal" />
+ *         <exclude domain="database" path="supabase_offline.db-shm" />
+ *         <exclude domain="file" path="supabase_offline/" />
+ *     </cloud-backup>
+ *     <device-transfer>
+ *         <!-- the same four lines -->
+ *     </device-transfer>
+ * </data-extraction-rules>
+ * ```
+ *
+ * and the same four lines in a `<full-backup-content>` file for Android 11 and earlier
+ * (`android:fullBackupContent`). With a data directory set, exclude that directory instead. On iOS
+ * the plugin excludes its files from backups itself.
+ *
  * Only the library implements this interface; [OfflineInternal] marks it so. Tests build a client
  * with the `supabase-offline-kt-testing` artifact.
  */
@@ -342,8 +367,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * moves it here, unsent writes included; when it cannot, the default one stays in use and a
          * warning is logged.
          *
-         * On Android, keep this directory out of Auto Backup: it holds one user's rows and writes.
-         * On iOS the plugin excludes its files from backups itself.
+         * On Android, keep its files out of Auto Backup, as [Offline] shows; on iOS the plugin
+         * excludes them from backups itself.
          */
         public var dataDirectory: String? = null
 

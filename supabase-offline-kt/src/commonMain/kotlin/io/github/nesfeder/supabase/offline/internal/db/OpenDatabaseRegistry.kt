@@ -73,16 +73,16 @@ internal object OpenDatabaseRegistry {
         fun conflictMessage(databasePath: Path): String {
             val callsInFlight =
                 stillClosing.load()
-                    ?: return "A SupabaseOfflineClient is already open on $databasePath or its data directory. Reuse that " +
+                    ?: return "An offline client is already open on $databasePath or its data directory. Reuse that " +
                         "client, or close() it before creating another: two clients on one database would each " +
                         "replay the same queued writes."
             val stillRunning = callsInFlight()
             if (stillRunning == 0) {
-                return "The SupabaseOfflineClient on $databasePath or its data directory is still closing: its last " +
+                return "The offline client on $databasePath or its data directory is still closing: its last " +
                     "call has finished and it is releasing the database now. Call close() again on it to wait for " +
                     "the release, then create the new client."
             }
-            return "The SupabaseOfflineClient on $databasePath or its data directory is still closing: " +
+            return "The offline client on $databasePath or its data directory is still closing: " +
                 "$stillRunning call(s) it had in flight have not finished. It releases the database as soon as " +
                 "they do; call close() again on it to wait for that, then create the new client."
         }

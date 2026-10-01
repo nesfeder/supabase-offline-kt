@@ -18,13 +18,17 @@
     "kotlin": [
       "io.github.nesfeder.supabase.offline.ReadStrategy",
       "io.github.nesfeder.supabase.offline.FlowReadStrategy",
-      "io.github.nesfeder.supabase.offline.MutationStrategy"
+      "io.github.nesfeder.supabase.offline.MutationStrategy",
+      "io.github.nesfeder.supabase.offline.ResponseTrust"
     ],
     "swift": []
   },
   "closedForImplementation": {
-    "_comment": "Interfaces and abstract classes consumers may not implement (each carrying @SubclassOptInRequired with an error-level marker). A new abstract member of one of these is additive. Empty until the public API work decides it, so every public interface counts as one a consumer may implement.",
-    "kotlin": []
+    "_comment": "Interfaces and abstract classes consumers may not implement (each carrying @SubclassOptInRequired with an error-level marker). A new abstract member of one of these is additive. Every other public interface counts as one a consumer may implement.",
+    "kotlin": [
+      "io.github.nesfeder.supabase.offline.Offline",
+      "io.github.nesfeder.supabase.offline.OfflineBucketApi"
+    ]
   },
   "schemaDirectories": [
     "supabase-offline-kt/schemas"
