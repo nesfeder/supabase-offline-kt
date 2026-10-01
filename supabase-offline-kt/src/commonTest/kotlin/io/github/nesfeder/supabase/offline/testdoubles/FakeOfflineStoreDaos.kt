@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
+import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
-import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
-import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryObjectDao
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryQueryCacheDao
 import kotlinx.coroutines.flow.update
 
 /*
@@ -17,8 +17,10 @@ import kotlinx.coroutines.flow.update
  * needs none uses the in-memory DAO directly. Build a store over them with newTestOfflineStore.
  */
 
-/** [InMemoryObjectDao] with write counters, silent seeding, and eviction and interleaving hooks. */
-internal class FakeObjectDao : InMemoryObjectDao() {
+/**
+ * [InMemoryQueryCacheDao] with write counters, silent seeding, and eviction and interleaving hooks.
+ */
+internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
 
     /**
      * Number of `upsert` writes that have occurred — exposed for write-amplification assertions.
@@ -62,16 +64,16 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * Runs inside [get] between reading the row and returning it; a test parks a first load of a
      * record here while a clear runs. `null` returns at once.
      */
-    var onGetSnapshot: (suspend (table: String, signature: String) -> Unit)? = null
+    var onGetSnapshot: (suspend (table: String, cacheKey: String) -> Unit)? = null
 
     /**
      * Makes [upsert] of a row it accepts fail with an [IllegalStateException], as a full disk or a
      * corrupt page would. `null` never fails.
      */
-    var failUpsertOf: ((ObjectRow) -> Boolean)? = null
+    var failUpsertOf: ((CachedQueryRow) -> Boolean)? = null
 
     /** Makes the next [upsert] of a row that [match] accepts fail, once, as a full disk would. */
-    fun failNextUpsertOf(match: (ObjectRow) -> Boolean) {
+    fun failNextUpsertOf(match: (CachedQueryRow) -> Boolean) {
         var failed = false
         failUpsertOf = { row ->
             val fails = !failed && match(row)
@@ -85,31 +87,31 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * [updatedAt] controls the row's age so eviction tests can assert oldest-first ordering; it
      * defaults to `0L` for callers that don't care about age.
      */
-    fun seedPayload(table: String, signature: String, payload: String, updatedAt: Long = 0L) {
+    fun seedPayload(table: String, cacheKey: String, payload: String, updatedAt: Long = 0L) {
         val row =
-            ObjectRow(
+            CachedQueryRow(
                 table = table,
-                signature = signature,
+                cacheKey = cacheKey,
                 payload = payload,
                 updatedAt = updatedAt,
             )
-        rows.update { current -> current + ((table to signature) to row) }
+        rows.update { current -> current + ((table to cacheKey) to row) }
     }
 
     /** Look up a row without going through the suspend contract. */
-    fun getRow(table: String, signature: String): ObjectRow? = rows.value[table to signature]
+    fun getRow(table: String, cacheKey: String): CachedQueryRow? = rows.value[table to cacheKey]
 
     /** Every row of [table], without going through the suspend contract. */
-    fun rowsOf(table: String): List<ObjectRow> =
+    fun rowsOf(table: String): List<CachedQueryRow> =
         rows.value.values.filter { row -> row.table == table }
 
-    override suspend fun get(table: String, signature: String): ObjectRow? {
-        val row = super.get(table, signature)
-        onGetSnapshot?.invoke(table, signature)
+    override suspend fun get(table: String, cacheKey: String): CachedQueryRow? {
+        val row = super.get(table, cacheKey)
+        onGetSnapshot?.invoke(table, cacheKey)
         return row
     }
 
-    override suspend fun allForTable(table: String): List<ObjectRow> {
+    override suspend fun allForTable(table: String): List<CachedQueryRow> {
         val snapshot = super.allForTable(table)
         onAllForTableSnapshot?.invoke(table)
         return snapshot
@@ -119,9 +121,9 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * Runs inside [upsert] before the row is written, where a test parks a store's write inside its
      * locks while another writer queues on them. `null` writes at once.
      */
-    var onUpsert: (suspend (row: ObjectRow) -> Unit)? = null
+    var onUpsert: (suspend (row: CachedQueryRow) -> Unit)? = null
 
-    override suspend fun upsert(row: ObjectRow) {
+    override suspend fun upsert(row: CachedQueryRow) {
         onUpsert?.invoke(row)
         check(failUpsertOf?.invoke(row) != true) { "Scripted write failure" }
         writes++
@@ -131,13 +133,13 @@ internal class FakeObjectDao : InMemoryObjectDao() {
     override suspend fun totalPayloadBytes(): Long =
         fixedTotalPayloadBytes ?: super.totalPayloadBytes()
 
-    override suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int {
+    override suspend fun deleteOldestPayloadRows(limit: Int, keptCacheKeys: List<String>): Int {
         deleteCallCount++
         forcedDeleteCount?.let { forced ->
             evictedRows += forced
             return forced
         }
-        val deleted = super.deleteOldestPayloadRows(limit, keptSignatures)
+        val deleted = super.deleteOldestPayloadRows(limit, keptCacheKeys)
         evictedRows += deleted
         return deleted
     }
@@ -259,10 +261,10 @@ internal class FakeDeleteAllFailingMutationDao(real: MutationDao) : MutationDao 
 }
 
 /**
- * A real [ObjectDao], Room's in the on-disk tests, whose [deleteAll] fails. A test checks with it
- * that a clear failing part-way changes nothing on disk.
+ * A real [QueryCacheDao], Room's in the on-disk tests, whose [deleteAll] fails. A test checks with
+ * it that a clear failing part-way changes nothing on disk.
  */
-internal class FakeDeleteAllFailingObjectDao(real: ObjectDao) : ObjectDao by real {
+internal class FakeDeleteAllFailingQueryCacheDao(real: QueryCacheDao) : QueryCacheDao by real {
     override suspend fun deleteAll() {
         error("Scripted failure of the object-cache delete")
     }

@@ -4,7 +4,8 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,7 +35,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * blank loading placeholder for minutes after its row was already on the server.
  *
  * Every test parks one writer between its read and its write with
- * [FakeObjectDao.onAllForTableSnapshot], so the interleaving is exact rather than timing-dependent.
+ * [FakeQueryCacheDao.onAllForTableSnapshot], so the interleaving is exact rather than
+ * timing-dependent.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class OfflineStoreConcurrentWriteTest {
@@ -45,19 +47,19 @@ class OfflineStoreConcurrentWriteTest {
     fun concurrent_upsert_overlays_on_one_table_keep_every_appended_row() = runTest {
         // Given — one cached signature holding a single row, and a first overlay that will park
         // after it has snapshotted the cache (the read half of its read-modify-write)
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload("ratings", "sig-A", ratingsPayload(1))
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("ratings", "sig-A", ratingsPayload(1))
         val firstSnapshotTaken = CompletableDeferred<Unit>()
         val releaseFirstWriter = CompletableDeferred<Unit>()
         var snapshots = 0
-        objectDao.onAllForTableSnapshot = {
+        queryCacheDao.onAllForTableSnapshot = {
             snapshots++
             if (snapshots == 1) {
                 firstSnapshotTaken.complete(Unit)
                 releaseFirstWriter.await()
             }
         }
-        val store = buildStore(objectDao, tick = { 0L })
+        val store = buildStore(queryCacheDao, tick = { 0L })
 
         // When — two online-success inserts overlay concurrently: the first parks holding its
         // pre-write snapshot, the second is launched while it is parked, then the first resumes
@@ -71,19 +73,19 @@ class OfflineStoreConcurrentWriteTest {
 
         // Then — both appended rows survive: the second writer must have read the first's write
         // rather than the snapshot the first was still holding
-        assertEquals(listOf(1, 2, 3), objectDao.itemIds("ratings", "sig-A"))
+        assertEquals(listOf(1, 2, 3), queryCacheDao.itemIds("ratings", "sig-A"))
     }
 
     @Test
     fun refresh_landing_mid_overlay_is_not_rolled_back_by_that_overlay() = runTest {
         // Given — a cached signature and an overlay parked after its snapshot
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload("ratings", "sig-A", ratingsPayload(1))
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("ratings", "sig-A", ratingsPayload(1))
         var tick = 10L
-        val store = buildStore(objectDao, tick = { tick })
+        val store = buildStore(queryCacheDao, tick = { tick })
         val snapshotTaken = CompletableDeferred<Unit>()
         val releaseOverlay = CompletableDeferred<Unit>()
-        objectDao.onAllForTableSnapshot = {
+        queryCacheDao.onAllForTableSnapshot = {
             snapshotTaken.complete(Unit)
             releaseOverlay.await()
         }
@@ -99,7 +101,7 @@ class OfflineStoreConcurrentWriteTest {
         val refresh = launch {
             store.addPayload(
                 table = "ratings",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = ratingsPayload(1, 2, 9),
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -111,7 +113,7 @@ class OfflineStoreConcurrentWriteTest {
 
         // Then — the fresher server payload is what the cache holds; the overlay's stale
         // snapshot did not write row 9 back out
-        assertEquals(listOf(1, 2, 9), objectDao.itemIds("ratings", "sig-A"))
+        assertEquals(listOf(1, 2, 9), queryCacheDao.itemIds("ratings", "sig-A"))
     }
 
     private suspend fun OfflineStore.insertRating(itemId: Int) {
@@ -131,8 +133,8 @@ class OfflineStoreConcurrentWriteTest {
             """{"item_id":$id,"user_id":"u"}"""
         }
 
-    private fun FakeObjectDao.itemIds(table: String, signature: String): List<Int> {
-        val row = getRow(table, signature)
+    private fun FakeQueryCacheDao.itemIds(table: String, cacheKey: String): List<Int> {
+        val row = getRow(table, cacheKey)
         assertNotNull(row)
         return json.parseToJsonElement(row.payload).jsonArray.map { element ->
             element.jsonObject.getValue("item_id").jsonPrimitive.int
@@ -140,11 +142,11 @@ class OfflineStoreConcurrentWriteTest {
     }
 
     private fun buildStore(
-        objectDao: FakeObjectDao,
+        queryCacheDao: FakeQueryCacheDao,
         tick: () -> Long,
     ): OfflineStore =
         newTestOfflineStore(
-            objectDao = objectDao,
+            queryCacheDao = queryCacheDao,
             monotonicTick = tick,
         )
 }

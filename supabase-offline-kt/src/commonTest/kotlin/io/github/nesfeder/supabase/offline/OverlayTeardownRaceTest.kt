@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -20,16 +20,16 @@ import kotlinx.serialization.json.JsonArray
  */
 class OverlayTeardownRaceTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val queryCacheDao = FakeQueryCacheDao()
+    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
 
     @Test
     fun an_overlay_in_progress_when_local_data_is_cleared_does_not_resurrect_the_cache() = runTest {
         // Given — user A's cached list, and A's online insert whose overlay has read the cache
-        objectDao.seedPayload(NOTES, "notes", """[{"id":"a1","title":"A's private row"}]""")
+        queryCacheDao.seedPayload(NOTES, "notes", """[{"id":"a1","title":"A's private row"}]""")
         val parked = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
-        objectDao.onAllForTableSnapshot = { table ->
+        queryCacheDao.onAllForTableSnapshot = { table ->
             if (table == NOTES && !parked.isCompleted) {
                 parked.complete(Unit)
                 release.await()
@@ -49,12 +49,12 @@ class OverlayTeardownRaceTest {
         parked.await()
 
         // When — local data is cleared (sign-out), then the overlay resumes
-        store.clearAll()
+        store.clearLocalData()
         release.complete(Unit)
         write.await()
 
         // Then — nothing of A's is back in the cache
-        assertNull(objectDao.getRow(NOTES, "notes")?.payload)
+        assertNull(queryCacheDao.getRow(NOTES, "notes")?.payload)
     }
 
     private companion object {

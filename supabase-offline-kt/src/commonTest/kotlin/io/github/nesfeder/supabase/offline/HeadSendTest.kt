@@ -4,12 +4,12 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -35,12 +35,12 @@ import kotlinx.serialization.json.JsonElement
  */
 class HeadSendTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val queryCacheDao = FakeQueryCacheDao()
+    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
     private var syncRequests = 0
-    private val syncer =
+    private val replayer =
         MutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
@@ -52,7 +52,7 @@ class HeadSendTest {
             store = store,
             queueIdentity = { session },
             requestSync = { syncRequests++ },
-            headSender = syncer,
+            headSender = replayer,
         )
 
     private suspend fun rename(title: String): MutationOutcome =
@@ -66,7 +66,7 @@ class HeadSendTest {
         // When / Then — the caller gets the refusal; nothing is queued or put on the rejected list
         assertFailsWith<PostgrestRestException> { rename("A") }
         assertEquals(0, store.allPendingMutations().size)
-        assertEquals(emptyList(), store.mutationQueueState.rejections())
+        assertEquals(emptyList(), store.rejectedList.rejections())
     }
 
     @Test
@@ -107,7 +107,7 @@ class HeadSendTest {
         parked.await()
 
         // When — a pass runs meanwhile
-        val report = syncer.sync()
+        val report = replayer.sync()
         release.complete(Unit)
 
         // Then — the pass stopped at it; the write went out once and was applied
@@ -151,7 +151,7 @@ class HeadSendTest {
                 store = store,
                 queueIdentity = { USER_A },
                 requestSync = { syncRequests++ },
-                headSender = syncer,
+                headSender = replayer,
             )
         session = USER_B
 
@@ -162,7 +162,7 @@ class HeadSendTest {
         assertEquals(MutationOutcome.Queued, outcome)
         assertEquals(0, server.requests.size)
         session = USER_A
-        assertEquals(1, syncer.sync().syncedCount)
+        assertEquals(1, replayer.sync().syncedCount)
     }
 
     @Test
@@ -229,8 +229,8 @@ class HeadSendTest {
     @Test
     fun an_accepted_write_leaves_the_queue_even_if_patching_the_cache_fails() = runTest {
         // Given — a cached row whose rewrite fails
-        objectDao.seedPayload(TABLE, "tasks?id=eq.1", """[{"id":1,"title":"original"}]""")
-        objectDao.failUpsertOf = { row -> row.table == TABLE }
+        queryCacheDao.seedPayload(TABLE, "tasks?id=eq.1", """[{"id":1,"title":"original"}]""")
+        queryCacheDao.failUpsertOf = { row -> row.table == TABLE }
 
         // When
         val outcome = runCatching { rename("A") }
@@ -311,11 +311,12 @@ class HeadSendTest {
             release.await()
             okJson("[]")
         }
-        val pass = async { syncer.sync() }
+        val pass = async { replayer.sync() }
         parked.await()
 
         // When — its own caller offers it at the head meanwhile
-        val outcome = syncer.sendAtHead(id, USER_A, send = { error("sent twice") }, onAccepted = {})
+        val outcome =
+            replayer.sendAtHead(id, USER_A, send = { error("sent twice") }, onAccepted = {})
         release.complete(Unit)
         pass.await()
 

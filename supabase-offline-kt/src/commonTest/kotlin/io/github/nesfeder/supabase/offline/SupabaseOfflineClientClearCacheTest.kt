@@ -4,7 +4,7 @@
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -69,22 +69,22 @@ class SupabaseOfflineClientClearCacheTest {
     @Test
     fun clearing_deletes_every_row_once_and_scrubs_the_database_after() = runTest {
         // Given — a client with a cached storage row, whose database scrub records what it found
-        val storageDao = RecordingStorageDao()
-        val store = newTestOfflineStore(storageDao = storageDao)
+        val cachedFileDao = RecordingCachedFileDao()
+        val store = newTestOfflineStore(cachedFileDao = cachedFileDao)
         store.addStorage("avatars", "me.png", "/tmp/me.png".toPath(), 3, null)
         var rowsLeftAtScrub: Int? = null
         val client =
             newTestOfflineClient(
                 supabase = newTestSupabaseClient(plugins = {}),
                 store = store,
-                scrubDatabase = { rowsLeftAtScrub = storageDao.all().size },
+                scrubDatabase = { rowsLeftAtScrub = cachedFileDao.all().size },
             )
 
         // When
         client.clearAllCache()
 
         // Then — one clear, not one per lock holder, and the scrub ran after its deletes
-        assertEquals(1, storageDao.clears)
+        assertEquals(1, cachedFileDao.clears)
         assertEquals(0, rowsLeftAtScrub, "the scrub ran before the rows were deleted")
     }
 }

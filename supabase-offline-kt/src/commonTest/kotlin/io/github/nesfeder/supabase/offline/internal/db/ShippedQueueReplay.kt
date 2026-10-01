@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.RecordedRequest
@@ -20,8 +21,8 @@ internal fun shippedQueueServer(): RecordingPostgrestServer =
 internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgrestServer): Int {
     val store =
         newTestOfflineStore(
-            objectDao = objectDao(),
-            storageDao = storageDao(),
+            queryCacheDao = queryCacheDao(),
+            cachedFileDao = cachedFileDao(),
             mutationDao = mutationDao(),
         )
     return MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()

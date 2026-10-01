@@ -8,10 +8,10 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.equalityDecidedByContent
 import io.github.nesfeder.supabase.offline.internal.postgrest.isUuid
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
@@ -58,7 +58,7 @@ internal class MutationOverlay(
         json.parseToJsonElement(mutation.bodyJson)
     },
     private val filterFor: (MutationRow) -> FilterDescriptor? = { mutation ->
-        FilterEngine.decodeOrNull(mutation.filterJson, json)
+        decodeFilterOrNull(mutation.filterJson, json)
     },
     private val keyed: KeyedUpdates? = null,
 ) {

@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,21 +24,21 @@ class ClearedQueueRecordsTest {
     @Test
     fun reading_the_queues_records_after_a_clear_writes_none_back() = runTest {
         // Given — a store holding the rejected list and a keyed insert whose send started
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "{}")
-        val store = newTestOfflineStore(objectDao = objectDao)
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "{}")
+        val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
         val id =
             store.enqueueInsert("todos", Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray)
         store.markSendUnconfirmed(id)
 
         // When — cleared, then read the way the overlay and the counts read them
-        store.clearAll()
+        store.clearLocalData()
         val unconfirmed = store.unconfirmedSends()
-        val rejections = store.mutationQueueState.rejections()
+        val rejections = store.rejectedList.rejections()
 
         // Then — every record reads empty, and nothing was written back
         assertTrue(unconfirmed.isEmpty() && rejections.isEmpty())
-        assertEquals(emptyList(), objectDao.allForTable(RESERVED_TABLE_NAME))
+        assertEquals(emptyList(), queryCacheDao.allForTable(RESERVED_TABLE_NAME))
     }
 
     @Test
@@ -62,7 +62,7 @@ class ClearedQueueRecordsTest {
 
         // When — the clear runs while that read is parked, and then the read finishes
         mutationDao.afterUnconfirmedSendIdsRead = null
-        store.clearAll()
+        store.clearLocalData()
         release.complete(Unit)
         firstRead.await()
 

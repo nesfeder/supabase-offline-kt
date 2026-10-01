@@ -99,26 +99,26 @@ internal object ShippedDatabaseFixture {
      * Cached SELECT payloads, one plain and one positional window; the first was fetched after the
      * synced write replayed, and holds it.
      */
-    val OBJECT_ROWS: List<ObjectRow> =
+    val CACHED_QUERY_ROWS: List<CachedQueryRow> =
         listOf(
-            ObjectRow(
+            CachedQueryRow(
                 table = "todos",
-                signature = "todos?select=*&user_id=eq.u-1",
+                cacheKey = "todos?select=*&user_id=eq.u-1",
                 payload = """[{"id":1,"title":"Buy milk","done":false}]""",
                 updatedAt = 1_727_000_000_000,
                 syncedThrough = 1,
             ),
-            ObjectRow(
+            CachedQueryRow(
                 table = "todos",
-                signature = "todos?order=created_at.desc&user_id=eq.u-1|range=0-19",
+                cacheKey = "todos?order=created_at.desc&user_id=eq.u-1|range=0-19",
                 payload = """[{"id":2,"title":"Walk the dog","done":false}]""",
                 updatedAt = 1_727_000_000_100,
             ),
         )
 
     /** A downloaded storage object's metadata row, keyed `"$bucket::$path"`. */
-    val STORAGE_ROW: StorageRow =
-        StorageRow(
+    val CACHED_FILE_ROW: CachedFileRow =
+        CachedFileRow(
             key = "avatars::u-1/me.png",
             bucketId = "avatars",
             path = "u-1/me.png",
@@ -216,18 +216,18 @@ internal object ShippedDatabaseFixture {
         val connection = driver.open(path)
         try {
             schemaStatements.forEach { statement -> connection.execSQL(statement) }
-            OBJECT_ROWS.forEach { row ->
+            CACHED_QUERY_ROWS.forEach { row ->
                 connection.execSQL(
                     "INSERT INTO object_cache (table_name, signature, payload, updated_at, " +
-                        "synced_through) VALUES (${sql(row.table)}, ${sql(row.signature)}, " +
+                        "synced_through) VALUES (${sql(row.table)}, ${sql(row.cacheKey)}, " +
                         "${sql(row.payload)}, ${row.updatedAt}, ${row.syncedThrough})"
                 )
             }
             connection.execSQL(
                 "INSERT INTO storage_objects (`key`, bucketId, path, localPath, sizeBytes, eTag, " +
-                    "lastFetchedEpochMs) VALUES (${sql(STORAGE_ROW.key)}, ${sql(STORAGE_ROW.bucketId)}, " +
-                    "${sql(STORAGE_ROW.path)}, ${sql(STORAGE_ROW.localPath)}, ${STORAGE_ROW.sizeBytes}, " +
-                    "${sql(STORAGE_ROW.eTag)}, ${STORAGE_ROW.lastFetchedEpochMs})"
+                    "lastFetchedEpochMs) VALUES (${sql(CACHED_FILE_ROW.key)}, ${sql(CACHED_FILE_ROW.bucketId)}, " +
+                    "${sql(CACHED_FILE_ROW.path)}, ${sql(CACHED_FILE_ROW.localPath)}, ${CACHED_FILE_ROW.sizeBytes}, " +
+                    "${sql(CACHED_FILE_ROW.eTag)}, ${CACHED_FILE_ROW.lastFetchedEpochMs})"
             )
             MUTATION_ROWS.forEach { row ->
                 connection.execSQL(

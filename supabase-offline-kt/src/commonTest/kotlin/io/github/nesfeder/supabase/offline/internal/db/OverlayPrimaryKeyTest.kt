@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -20,14 +20,15 @@ import kotlinx.serialization.json.JsonArray
  */
 class OverlayPrimaryKeyTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+    private val store =
+        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_replayed_insert_of_a_row_the_payload_already_holds_is_shown_once() = runTest {
         // Given
-        objectDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"from the server"}]""")
+        queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"from the server"}]""")
 
         // When — an insert already replayed, kept for queries fetched before it
         store.enqueueInsert(
@@ -46,7 +47,7 @@ class OverlayPrimaryKeyTest {
     @Test
     fun a_queued_upsert_merges_into_the_row_with_its_key() = runTest {
         // Given
-        objectDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"old","done":false}]""")
+        queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"old","done":false}]""")
 
         // When
         store.enqueueUpsert(table = TABLE, bodyJson = rows("""[{"id":"x","title":"new"}]"""))
@@ -61,7 +62,7 @@ class OverlayPrimaryKeyTest {
     @Test
     fun a_queued_upsert_that_ignores_duplicates_leaves_the_row_with_its_key_alone() = runTest {
         // Given
-        objectDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"old"}]""")
+        queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"old"}]""")
 
         // When
         store.enqueueUpsert(
@@ -80,7 +81,7 @@ class OverlayPrimaryKeyTest {
     @Test
     fun a_never_sent_insert_is_shown_even_when_a_row_shares_its_id() = runTest {
         // Given — a table keyed on (list_id, id), whose ids repeat across lists
-        objectDao.seedPayload(TABLE, TABLE, """[{"list_id":"A","id":1,"title":"a1"}]""")
+        queryCacheDao.seedPayload(TABLE, TABLE, """[{"list_id":"A","id":1,"title":"a1"}]""")
 
         // When — a new row in list B with id 1, not sent yet
         store.enqueueInsert(table = TABLE, body = rows("""[{"list_id":"B","id":1,"title":"b1"}]"""))
@@ -95,7 +96,7 @@ class OverlayPrimaryKeyTest {
     @Test
     fun keyless_rows_are_still_appended() = runTest {
         // Given
-        objectDao.seedPayload(TABLE, TABLE, """[{"title":"same"}]""")
+        queryCacheDao.seedPayload(TABLE, TABLE, """[{"title":"same"}]""")
 
         // When
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"same"}]"""))

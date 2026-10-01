@@ -15,14 +15,14 @@ import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
-import io.github.nesfeder.supabase.offline.SdkLogger
-import io.github.nesfeder.supabase.offline.internal.db.AddPayloadOutcome
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
+import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
-import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
-import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
-import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.ktor.http.HeadersBuilder
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -63,7 +63,7 @@ private data class FetchedResponse(
     val response: PostgrestResult,
     val sessionBefore: RequestSession,
     val sessionAfter: RequestSession,
-    val outcome: AddPayloadOutcome,
+    val outcome: CacheWriteOutcome,
 ) {
     /** Whether the server's own body held no rows. */
     val isEmpty: Boolean
@@ -71,7 +71,7 @@ private data class FetchedResponse(
 
     /** Whether the response was refused because local data was cleared while it was in flight. */
     val wasRefusedAfterClear: Boolean
-        get() = outcome == AddPayloadOutcome.DROPPED_CACHE_CLEARED
+        get() = outcome == CacheWriteOutcome.REFUSED_AFTER_CLEAR
 
     /**
      * Whether the cache holds this answer, or a newer local write it was refused for: not when it
@@ -79,18 +79,18 @@ private data class FetchedResponse(
      */
     val isHeldByTheCache: Boolean
         get() =
-            outcome == AddPayloadOutcome.WRITTEN ||
-                outcome == AddPayloadOutcome.DROPPED_STALE ||
-                outcome == AddPayloadOutcome.DROPPED_CACHE_CLEARED
+            outcome == CacheWriteOutcome.WRITTEN ||
+                outcome == CacheWriteOutcome.REFUSED_STALE ||
+                outcome == CacheWriteOutcome.REFUSED_AFTER_CLEAR
 }
 
 /**
  * A network read's answer, as a caller gets it.
  *
  * @property result what the caller is answered with.
- * @property cached whether the cache holds it, so a reactive read showing the cache shows it.
+ * @property wasCached whether the cache holds it, so a reactive read showing the cache shows it.
  */
-private class NetworkAnswer(val result: PostgrestResult, val cached: Boolean)
+private class NetworkAnswer(val result: PostgrestResult, val wasCached: Boolean)
 
 /**
  * Answers one-shot and reactive SELECTs from the network, the query cache, or both, as the read
@@ -98,19 +98,18 @@ private class NetworkAnswer(val result: PostgrestResult, val cached: Boolean)
  *
  * @param requestSession the session a request sent now goes out under; read around every request.
  * @param trustPolicy which responses may replace what the cache holds.
- * @param refreshCoordinator shares one refresh per live query and tracks which queries are live.
- * @param accelerator wake-ups (the session settled, connectivity back) that cut a retry's wait
- *   short.
+ * @param liveQueries shares one refresh per live query and tracks which queries are live.
+ * @param wakeUps wake-ups (the session settled, connectivity back) that cut a retry's wait short.
  */
 internal class QueryReader(
-    private val delegate: PostgrestQueryBuilderWrapper,
+    private val delegate: RemoteTable,
     private val store: OfflineStore,
-    private val sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
     private val trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
-    private val refreshCoordinator: RefreshCoordinator,
-    private val accelerator: Flow<Unit> = emptyFlow(),
+    private val liveQueries: LiveQueries,
+    private val wakeUps: Flow<Unit> = emptyFlow(),
 ) {
 
     /**
@@ -130,10 +129,10 @@ internal class QueryReader(
         val table = slot.table
         if (shape is ReadShape.Uncacheable) {
             if (readStrategy is ReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
-            sdkLogger.debug { "SELECT $table asks for ${shape.kind}; bypassing the cache" }
+            engineLogger.debug { "SELECT $table asks for ${shape.kind}; bypassing the cache" }
             return delegate.select(columns, request)
         }
-        sdkLogger.debug { "SELECT $table via ${readStrategy::class.simpleName}" }
+        engineLogger.debug { "SELECT $table via ${readStrategy::class.simpleName}" }
         return when (readStrategy) {
             is ReadStrategy.NetworkFirst -> {
                 // The cache answers a transport failure, so upstream's waits before one would only
@@ -148,10 +147,12 @@ internal class QueryReader(
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
                     val cached = readCached(slot, readStrategy.cacheDuration, servesStale = true)
                     if (cached != null) {
-                        sdkLogger.warning { "SELECT $table network failed, falling back to cache" }
+                        engineLogger.warning {
+                            "SELECT $table network failed, falling back to cache"
+                        }
                         cached
                     } else {
-                        sdkLogger.error { "SELECT $table network failed and no cache available" }
+                        engineLogger.error { "SELECT $table network failed and no cache available" }
                         throw exception
                     }
                 }
@@ -162,7 +163,7 @@ internal class QueryReader(
             is ReadStrategy.CacheFirst -> {
                 val cached = readCached(slot, readStrategy.cacheDuration, servesStale = false)
                 if (cached != null) {
-                    sdkLogger.info { "SELECT $table served from cache" }
+                    engineLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
                     cacheFirstFromNetwork(slot, columns, request, readStrategy.cacheDuration)
@@ -171,10 +172,10 @@ internal class QueryReader(
             is ReadStrategy.CacheOnly -> {
                 val cached = readCached(slot, readStrategy.cacheDuration, servesStale = true)
                 if (cached != null) {
-                    sdkLogger.info { "SELECT $table served from cache" }
+                    engineLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
-                    sdkLogger.error { "SELECT $table no cached data available" }
+                    engineLogger.error { "SELECT $table no cached data available" }
                     throw NoSuchElementException("No valid cached data found for this query")
                 }
             }
@@ -202,7 +203,7 @@ internal class QueryReader(
         } catch (exception: Exception) {
             if (!exception.isNetworkOrConnectivityFailure()) throw exception
             val stale = readCached(slot, cacheDuration, servesStale = true) ?: throw exception
-            sdkLogger.warning { "SELECT ${slot.table} network failed, serving the stale cache" }
+            engineLogger.warning { "SELECT ${slot.table} network failed, serving the stale cache" }
             stale
         }
     }
@@ -240,31 +241,31 @@ internal class QueryReader(
             if (fetched.wasRefusedAfterClear)
                 return NetworkAnswer(
                     buildResult(EMPTY_JSON_ARRAY, delegate.postgrest),
-                    cached = true,
+                    wasCached = true,
                 )
             if (
                 !trustPolicy.oneShotAsksAgain(
                     fetched.sessionBefore,
                     fetched.sessionAfter,
                     fetched.isEmpty,
-                ) || fetched.outcome == AddPayloadOutcome.WRITTEN
+                ) || fetched.outcome == CacheWriteOutcome.WRITTEN
             ) {
                 return NetworkAnswer(overlaidResponse(slot, fetched), fetched.isHeldByTheCache)
             }
             if (stepsTaken == RESTORE_WINDOW_RETRY_WAITS) {
-                sdkLogger.warning {
+                engineLogger.warning {
                     "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the response uncached"
                 }
-                return NetworkAnswer(overlaidResponse(slot, fetched), cached = false)
+                return NetworkAnswer(overlaidResponse(slot, fetched), wasCached = false)
             }
-            sdkLogger.warning {
+            engineLogger.warning {
                 "SELECT $table answered while the session was not settled; waiting for the session"
             }
             if (fetched.sessionBefore is RequestSession.Restoring) {
                 // Waiting is cheap; a request sent while still restoring would come back the same
                 do {
                     stepsTaken++
-                    awaitRestoreWindowBackoff(defaultRefreshBackoffMillis(stepsTaken))
+                    awaitRestoreWindowBackoff(refreshBackoff(stepsTaken))
                     sessionBefore = requestSession()
                 } while (
                     sessionBefore is RequestSession.Restoring &&
@@ -279,12 +280,12 @@ internal class QueryReader(
     }
 
     /**
-     * Waits [millis] for the next restore-window step, waking early on an [accelerator] edge. An
+     * Waits [backoff] for the next restore-window step, waking early on an [wakeUps] edge. An
      * accelerator that completes without emitting must not cut the wait to nothing.
      */
-    private suspend fun awaitRestoreWindowBackoff(millis: Long) {
-        withTimeoutOrNull(millis) {
-            accelerator.firstOrNull() ?: awaitCancellation()
+    private suspend fun awaitRestoreWindowBackoff(backoff: Duration) {
+        withTimeoutOrNull(backoff) {
+            wakeUps.firstOrNull() ?: awaitCancellation()
         }
     }
 
@@ -303,7 +304,7 @@ internal class QueryReader(
             delegate.shapeOf(columns, request) { builder -> built = cacheSlotOf(columns, builder) }
         if (shape is ReadShape.Uncacheable) {
             if (readStrategy == FlowReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
-            sdkLogger.debug {
+            engineLogger.debug {
                 "SELECT ${delegate.table} asks for ${shape.kind}; bypassing the cache"
             }
             emit(
@@ -336,7 +337,7 @@ internal class QueryReader(
                 FlowReadStrategy.CacheFirstThenNetwork ->
                     flow {
                         emitAll(
-                            refreshCoordinator.sharedReadFlow(slot.table, slot.cacheKey) {
+                            liveQueries.sharedReadFlow(slot.table, slot.cacheKey) {
                                 cacheFirstThenNetworkWithState(slot, columns, request)
                             }
                         )
@@ -346,8 +347,8 @@ internal class QueryReader(
                     networkFirstThenCacheWithState(slot, columns, request)
             }
         return base
-            .onStart { refreshCoordinator.registerLiveSignature(slot.table, slot.cacheKey) }
-            .onCompletion { refreshCoordinator.unregisterLiveSignature(slot.table, slot.cacheKey) }
+            .onStart { liveQueries.registerLiveQuery(slot.table, slot.cacheKey) }
+            .onCompletion { liveQueries.unregisterLiveQuery(slot.table, slot.cacheKey) }
     }
 
     /** The cache and the overlay as they change, never the network; the refresh is always idle. */
@@ -373,9 +374,9 @@ internal class QueryReader(
             cacheFirstWithParallelRefresh(
                 cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape),
                 refresh = { refreshFromNetwork(slot, columns, request) },
-                accelerator = accelerator,
+                wakeUps = wakeUps,
                 onRefreshState = { state -> refreshState.value = state },
-                refreshRequests = refreshCoordinator.refreshRequestsFor(slot.table, slot.cacheKey),
+                refreshRequests = liveQueries.refreshRequestsFor(slot.table, slot.cacheKey),
             )
         // One result per distinct payload: a refresh-state change re-emits the same result instance
         val results =
@@ -402,15 +403,15 @@ internal class QueryReader(
             fetchAndCache(slot, columns, request, requestSession(), Retries.TRANSPORT_FAILS_FAST)
         if (fetched.wasRefusedAfterClear) return
         if (
-            fetched.outcome == AddPayloadOutcome.DROPPED_OTHER_OWNER ||
+            fetched.outcome == CacheWriteOutcome.REFUSED_OTHER_OWNER ||
                 trustPolicy.refreshRetries(
                     fetched.sessionBefore,
                     fetched.sessionAfter,
                     fetched.isEmpty,
                 )
         ) {
-            sdkLogger.warning {
-                if (fetched.outcome == AddPayloadOutcome.DROPPED_OTHER_OWNER) {
+            engineLogger.warning {
+                if (fetched.outcome == CacheWriteOutcome.REFUSED_OTHER_OWNER) {
                     "SELECT ${slot.table} answered while the cache passed to another identity; will retry"
                 } else {
                     "SELECT ${slot.table} answered while the session was not settled; will retry"
@@ -466,7 +467,7 @@ internal class QueryReader(
                     }
                     refreshFromNetwork(slot, columns, request)
                 },
-                accelerator = accelerator,
+                wakeUps = wakeUps,
                 // Not confirmed until a refresh succeeds: an attempt in flight changes nothing
                 onRefreshState = { state ->
                     if (state !is RefreshState.InFlight) refreshState.value = state
@@ -502,14 +503,14 @@ internal class QueryReader(
             else Retries.UPSTREAM
         return try {
             val answer = fetchWaitingOutRestoreAnswer(slot, columns, request, retries)
-            if (answer.cached) null else UntrustedResponseException(slot.table)
+            if (answer.wasCached) null else UntrustedResponseException(slot.table)
         } catch (exception: Exception) {
             if (
                 !exception.isNetworkOrConnectivityFailure() ||
                     !hasFreshCache(slot, cacheDuration = null)
             )
                 throw exception
-            sdkLogger.warning { "SELECT ${slot.table} network failed, falling back to cache" }
+            engineLogger.warning { "SELECT ${slot.table} network failed, falling back to cache" }
             exception
         }
     }
@@ -533,7 +534,7 @@ internal class QueryReader(
         while (true) {
             val requestStartedAtTick = store.monotonicTickNow()
             val response = send(slot, columns, request, retries)
-            sdkLogger.debug { "SELECT $table network response: ${response.data}" }
+            engineLogger.debug { "SELECT $table network response: ${response.data}" }
             val sessionAfter = requestSession()
             val isEmpty = isEmptyJsonArrayPayload(response.data)
             // An empty response goes through the store's empty guard, a non-empty one through the
@@ -541,7 +542,7 @@ internal class QueryReader(
             val outcome =
                 store.addPayload(
                     table = table,
-                    signature = cacheKey,
+                    cacheKey = cacheKey,
                     payload = response.data,
                     authoritativeEmpty =
                         trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = true),
@@ -552,14 +553,14 @@ internal class QueryReader(
                     shape = slot.shape,
                 )
             when (outcome) {
-                AddPayloadOutcome.DROPPED_CACHE_CLEARED ->
-                    sdkLogger.info {
+                CacheWriteOutcome.REFUSED_AFTER_CLEAR ->
+                    engineLogger.info {
                         "SELECT $table response predates clearing local data; discarding"
                     }
-                AddPayloadOutcome.DROPPED_STALE ->
+                CacheWriteOutcome.REFUSED_STALE ->
                     if (refetchBudget > 0) {
                         refetchBudget--
-                        sdkLogger.info {
+                        engineLogger.info {
                             "SELECT $table response predates a local write; re-fetching once"
                         }
                         sessionBefore = requestSession()
@@ -567,7 +568,7 @@ internal class QueryReader(
                     }
                 // The tick goes along, so a replay that landed after this request left still blocks
                 // it
-                AddPayloadOutcome.WRITTEN ->
+                CacheWriteOutcome.WRITTEN ->
                     store.retireCoveredSyncedMutations(table, requestStartedAtTick)
                 else -> Unit
             }
@@ -585,8 +586,8 @@ internal class QueryReader(
     ): PostgrestResult {
         val (table, cacheKey) = slot
         val base =
-            if (fetched.outcome == AddPayloadOutcome.DROPPED_STALE) {
-                sdkLogger.warning {
+            if (fetched.outcome == CacheWriteOutcome.REFUSED_STALE) {
+                engineLogger.warning {
                     "SELECT $table response still predates a local write; serving cached state"
                 }
                 store.getPayload(table, cacheKey) ?: fetched.response.data
@@ -596,7 +597,7 @@ internal class QueryReader(
         val overlaid =
             store.overlayPendingOnResponse(
                 table = table,
-                signature = cacheKey,
+                cacheKey = cacheKey,
                 serverJson = base,
                 shape = slot.shape,
             )
@@ -650,7 +651,7 @@ internal class QueryReader(
         val overlaid =
             store.overlayCachedPayload(
                 table = table,
-                signature = cacheKey,
+                cacheKey = cacheKey,
                 cachedJson = payload,
                 shape = slot.shape,
             )
@@ -746,6 +747,6 @@ internal class QueryReader(
          * the gaps between the refresh loop's fast retries. A read that starts signed in never
          * waits.
          */
-        const val RESTORE_WINDOW_RETRY_WAITS = FAST_LADDER_ATTEMPTS - 1
+        const val RESTORE_WINDOW_RETRY_WAITS = FAST_RETRY_COUNT - 1
     }
 }

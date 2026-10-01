@@ -13,12 +13,12 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 /**
- * Pins [buildDescriptorStrict] / [buildDescriptorStrictFromRequest]: the strict capture used on the
- * offline-queue (replay) path must throw [UnsupportedOfflineFilterException] on any filter it
- * cannot represent faithfully — `not.`-negated operators, `or` / `and` logical groups, and
- * foreign-table dotted keys — rather than silently dropping the condition. The lenient
- * [buildDescriptorFromRequest] is asserted unchanged for the same inputs to document exactly the
- * over-broad-replay behavior the strict path exists to prevent.
+ * Pins [captureFilterExactly] / [captureFilterExactly]: the strict capture used on the
+ * offline-queue (replay) path must throw [UncapturableFilterException] on any filter it cannot
+ * represent faithfully — `not.`-negated operators, `or` / `and` logical groups, and foreign-table
+ * dotted keys — rather than silently dropping the condition. The lenient [captureFilter] is
+ * asserted unchanged for the same inputs to document exactly the over-broad-replay behavior the
+ * strict path exists to prevent.
  */
 class OfflineFiltersStrictTest {
 
@@ -33,7 +33,7 @@ class OfflineFiltersStrictTest {
     fun `strict builder captures a simple eq filter faithfully`() {
         // Given / When
         val descriptor =
-            buildDescriptorStrictFromRequest(schema, conversion) {
+            captureFilterExactly(schema, conversion) {
                 filter { eq("status", "active") }
             }
 
@@ -47,7 +47,7 @@ class OfflineFiltersStrictTest {
     @Test
     fun `strict builder returns null for a genuinely filter-free request`() {
         // Given / When
-        val descriptor = buildDescriptorStrictFromRequest(schema, conversion) {}
+        val descriptor = captureFilterExactly(schema, conversion) {}
 
         // Then
         assertNull(descriptor)
@@ -57,8 +57,8 @@ class OfflineFiltersStrictTest {
     fun `strict builder throws on a not-prefixed operator`() {
         // Given a negated filter, whose value encodes as "not.eq.archived"
         // When / Then
-        assertFailsWith<UnsupportedOfflineFilterException> {
-            buildDescriptorStrictFromRequest(schema, conversion) {
+        assertFailsWith<UncapturableFilterException> {
+            captureFilterExactly(schema, conversion) {
                 filter { filterNot("status", FilterOperator.EQ, "archived") }
             }
         }
@@ -67,8 +67,8 @@ class OfflineFiltersStrictTest {
     @Test
     fun `strict builder throws on an or logical group`() {
         // Given / When / Then
-        assertFailsWith<UnsupportedOfflineFilterException> {
-            buildDescriptorStrictFromRequest(schema, conversion) {
+        assertFailsWith<UncapturableFilterException> {
+            captureFilterExactly(schema, conversion) {
                 filter {
                     or {
                         eq("status", "active")
@@ -82,8 +82,8 @@ class OfflineFiltersStrictTest {
     @Test
     fun `strict builder throws on a foreign-table dotted key`() {
         // Given / When / Then
-        assertFailsWith<UnsupportedOfflineFilterException> {
-            buildDescriptorStrictFromRequest(schema, conversion) {
+        assertFailsWith<UncapturableFilterException> {
+            captureFilterExactly(schema, conversion) {
                 filter { eq("author.name", "ada") }
             }
         }
@@ -94,7 +94,7 @@ class OfflineFiltersStrictTest {
         // Given the same negated filter the strict path rejects
         // When the lenient path runs
         val descriptor =
-            buildDescriptorFromRequest(schema, conversion) {
+            captureFilter(schema, conversion) {
                 filter { filterNot("status", FilterOperator.EQ, "archived") }
             }
 
@@ -107,7 +107,7 @@ class OfflineFiltersStrictTest {
     fun `lenient builder still captures a simple eq filter unchanged`() {
         // Given / When
         val descriptor =
-            buildDescriptorFromRequest(schema, conversion) {
+            captureFilter(schema, conversion) {
                 filter { eq("status", "active") }
             }
 
@@ -126,7 +126,7 @@ class OfflineFiltersStrictTest {
         // ordinary `update { filter { … }; select() }` made offline failed instead of queuing.
         // When
         val descriptor =
-            buildDescriptorStrictFromRequest(schema, conversion) {
+            captureFilterExactly(schema, conversion) {
                 filter { eq("id", "project-1") }
                 select()
             }
@@ -148,7 +148,7 @@ class OfflineFiltersStrictTest {
         // notices.
         // When
         val descriptor =
-            buildDescriptorStrictFromRequest(schema, conversion) {
+            captureFilterExactly(schema, conversion) {
                 filter {
                     eq("id", "project-1")
                     eq("user_id", "user-1")
@@ -171,8 +171,8 @@ class OfflineFiltersStrictTest {
         // Skipping them would replay against more rows than the caller wrote, so unlike a
         // projection they must stay fail-closed.
         // When / Then
-        assertFailsWith<UnsupportedOfflineFilterException> {
-            buildDescriptorStrictFromRequest(schema, conversion) {
+        assertFailsWith<UncapturableFilterException> {
+            captureFilterExactly(schema, conversion) {
                 filter { eq("id", "project-1") }
                 range(0L, 4L)
             }

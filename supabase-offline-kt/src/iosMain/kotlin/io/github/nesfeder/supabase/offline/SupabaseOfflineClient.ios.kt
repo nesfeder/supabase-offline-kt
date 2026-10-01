@@ -20,10 +20,10 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.DEFAULT_CACHE_SIZE_BYTES
 import io.github.nesfeder.supabase.offline.internal.db.BackupExclusionCallback
-import io.github.nesfeder.supabase.offline.internal.db.IosDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.getDatabaseBuilder
-import io.github.nesfeder.supabase.offline.internal.db.getRoomDatabase
+import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
+import io.github.nesfeder.supabase.offline.internal.db.defaultDatabasePath
+import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
 import io.github.nesfeder.supabase.offline.internal.openOfflineClient
 import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
 import io.github.nesfeder.supabase.offline.internal.storage.excludeFromBackup
@@ -165,20 +165,19 @@ public fun createSupabaseOfflineClient(
             // Best effort: the cache directories inside it are excluded on their own as well.
         }
     }
-    val defaultDatabasePath = IosDbPathProvider().dbPath()
+    val defaultPath = defaultDatabasePath()
     return openOfflineClient(
         supabase = supabase,
         config = config,
-        databasePath =
-            configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
+        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultPath,
         dataDirectory = dataDirectory,
         openDatabase = { databasePath ->
-            getRoomDatabase(
-                getDatabaseBuilder(databasePath.toString())
+            buildOfflineDatabase(
+                offlineDatabaseBuilder(databasePath.toString())
                     .addCallback(BackupExclusionCallback(databasePath))
             )
         },
-        defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
+        defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
     )
 }
 

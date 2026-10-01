@@ -62,7 +62,9 @@ class SqliteLibraryIosTest {
         // Given
         FileSystem.SYSTEM.createDirectories(directory)
         val database =
-            getRoomDatabase(getDatabaseBuilder((directory / "supabase_offline.db").toString()))
+            buildOfflineDatabase(
+                offlineDatabaseBuilder((directory / "supabase_offline.db").toString())
+            )
 
         // When
         val journalMode =

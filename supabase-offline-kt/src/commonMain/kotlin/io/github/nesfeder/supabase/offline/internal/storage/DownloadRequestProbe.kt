@@ -77,7 +77,7 @@ internal class DownloadRequestProbe(
         cache: StorageFileCache,
         bucketId: String,
         objectPath: String,
-    ): StorageCacheEntry? =
+    ): FileCacheEntry? =
         when (val seen = observation.load()) {
             Observation.None -> null
             Observation.Original -> cache.entryFor(bucketId, objectPath)
@@ -94,7 +94,7 @@ internal class DownloadRequestProbe(
         cache: StorageFileCache,
         bucketId: String,
         objectPath: String,
-    ): StorageCacheEntry? =
+    ): FileCacheEntry? =
         when (val seen = observation.load()) {
             Observation.None,
             Observation.Original -> cache.entryFor(bucketId, objectPath)

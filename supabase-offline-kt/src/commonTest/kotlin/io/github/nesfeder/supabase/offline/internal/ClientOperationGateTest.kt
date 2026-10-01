@@ -116,7 +116,7 @@ class ClientOperationGateTest {
             val dispatcher = if (attempt % 2 == 0) Dispatchers.Default else Dispatchers.Unconfined
             val collection =
                 async(dispatcher) {
-                    runCatching {
+                    val outcome = runCatching {
                         gate
                             .callCollecting(
                                 flow {
@@ -126,7 +126,7 @@ class ClientOperationGateTest {
                             )
                             .collect { entered.complete(Unit) }
                     }
-                        .exceptionOrNull()
+                    outcome.exceptionOrNull()
                 }
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
 

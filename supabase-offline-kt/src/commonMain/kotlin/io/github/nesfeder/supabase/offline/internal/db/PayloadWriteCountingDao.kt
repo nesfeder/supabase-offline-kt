@@ -8,14 +8,14 @@ package io.github.nesfeder.supabase.offline.internal.db
  * to the object cache is counted.
  */
 internal class PayloadWriteCountingDao(
-    private val delegate: ObjectDao,
+    private val delegate: QueryCacheDao,
     private val onWrite: (table: String?) -> Unit,
-) : ObjectDao by delegate {
+) : QueryCacheDao by delegate {
 
-    override suspend fun upsert(row: ObjectRow) = counted(row.table) { delegate.upsert(row) }
+    override suspend fun upsert(row: CachedQueryRow) = counted(row.table) { delegate.upsert(row) }
 
-    override suspend fun delete(table: String, signature: String) =
-        counted(table) { delegate.delete(table, signature) }
+    override suspend fun delete(table: String, cacheKey: String) =
+        counted(table) { delegate.delete(table, cacheKey) }
 
     override suspend fun deleteTable(table: String) = counted(table) { delegate.deleteTable(table) }
 
@@ -24,14 +24,14 @@ internal class PayloadWriteCountingDao(
     override suspend fun deleteAllExceptTable(table: String) =
         counted(null) { delegate.deleteAllExceptTable(table) }
 
-    override suspend fun deleteWithSignaturePrefix(table: String, prefix: String) =
-        counted(table) { delegate.deleteWithSignaturePrefix(table, prefix) }
+    override suspend fun deleteWithCacheKeyPrefix(table: String, prefix: String) =
+        counted(table) { delegate.deleteWithCacheKeyPrefix(table, prefix) }
 
     override suspend fun deleteOrphanedQueryShapes(): Int =
         counted(null) { delegate.deleteOrphanedQueryShapes() }
 
-    override suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int =
-        counted(null) { delegate.deleteOldestPayloadRows(limit, keptSignatures) }
+    override suspend fun deleteOldestPayloadRows(limit: Int, keptCacheKeys: List<String>): Int =
+        counted(null) { delegate.deleteOldestPayloadRows(limit, keptCacheKeys) }
 
     /** Runs [write], then counts it against [table] whether it returned or failed. */
     private inline fun <T> counted(table: String?, write: () -> T): T =

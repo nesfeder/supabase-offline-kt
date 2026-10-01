@@ -6,10 +6,10 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
@@ -31,9 +31,9 @@ import kotlinx.serialization.json.put
  * Behavioral contract for the mutation verbs on [OfflinePostgrestQueryBuilderImpl], which return a
  * [MutationOutcome] ([MutationOutcome.Applied] online / [MutationOutcome.Queued] offline).
  *
- * Verbs run against a scripted [FakePostgrestQueryBuilderWrapper] delegate (no HTTP transport) and
- * a real [OfflineStore] over in-memory DAO fakes, so the enqueue side effect is observable via the
- * fake mutation DAO. A connectivity failure is scripted as a [kotlinx.io.IOException] — the shape
+ * Verbs run against a scripted [FakeRemoteTable] delegate (no HTTP transport) and a real
+ * [OfflineStore] over in-memory DAO fakes, so the enqueue side effect is observable via the fake
+ * mutation DAO. A connectivity failure is scripted as a [kotlinx.io.IOException] — the shape
  * `isNetworkOrConnectivityFailure` classifies as a transport failure and therefore queues.
  */
 class MutationOutcomeTest {
@@ -48,8 +48,8 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "attachments",
                         postgrest = postgrest,
                         onInsert = { postgrestResultOf(serverRow, postgrest) },
@@ -73,8 +73,8 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "attachments",
                         postgrest = postgrest,
                         onInsert = { throw IOException("network down") },
@@ -98,8 +98,8 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "attachments",
                         postgrest = postgrest,
                         onInsert = { throw IOException("network down") },
@@ -121,8 +121,8 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "beta_feedback",
                         postgrest = postgrest,
                         onUpsert = { throw IOException("network down") },
@@ -152,8 +152,8 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "notes",
                         postgrest = postgrest,
                         onUpsert = { throw IOException("network down") },
@@ -184,8 +184,8 @@ class MutationOutcomeTest {
         val serverRow = """[{"id":"log-1"}]"""
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "notes",
                         postgrest = postgrest,
                         onUpsert = { postgrestResultOf(serverRow, postgrest) },
@@ -210,8 +210,8 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "projects",
                         postgrest = postgrest,
                         onUpdate = { throw IOException("network down") },
@@ -245,8 +245,8 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "projects",
                         postgrest = postgrest,
                         onUpdate = { throw IOException("network down") },
@@ -280,8 +280,8 @@ class MutationOutcomeTest {
         val mutationDao = FakeMutationDao()
         val builder =
             buildBuilder(
-                wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                remoteTable =
+                    FakeRemoteTable(
                         table = "note_projects",
                         postgrest = postgrest,
                         onDelete = { throw IOException("network down") },
@@ -310,11 +310,11 @@ class MutationOutcomeTest {
     }
 
     private fun buildBuilder(
-        wrapper: FakePostgrestQueryBuilderWrapper,
+        remoteTable: FakeRemoteTable,
         mutationDao: MutationDao,
     ): OfflinePostgrestQueryBuilderImpl =
         OfflinePostgrestQueryBuilderImpl(
-            delegate = wrapper,
+            delegate = remoteTable,
             store = buildStore(mutationDao),
         )
 

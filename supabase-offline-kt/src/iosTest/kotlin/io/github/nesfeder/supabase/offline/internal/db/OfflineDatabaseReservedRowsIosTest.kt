@@ -21,9 +21,9 @@ class OfflineDatabaseReservedRowsIosTest {
     private val directory =
         FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
             "supabase-offline-reserved-rows-${Random.nextLong()}"
-    private val dbPath = (directory / "supabase_offline.db").toString()
+    private val databasePath = (directory / "supabase_offline.db").toString()
     private val scenarios = ReservedRowsDatabaseScenarios { path, callback ->
-        getRoomDatabase(getDatabaseBuilder(path).addCallback(callback))
+        buildOfflineDatabase(offlineDatabaseBuilder(path).addCallback(callback))
     }
 
     @BeforeTest
@@ -38,51 +38,51 @@ class OfflineDatabaseReservedRowsIosTest {
 
     @Test
     fun reserved_rows_persist_across_reopening() = runTest {
-        scenarios.reservedRowsPersistAcrossReopening(dbPath)
+        scenarios.reservedRowsPersistAcrossReopening(databasePath)
     }
 
     @Test
     fun room_never_evicts_or_counts_reserved_rows() = runTest {
-        scenarios.roomNeverEvictsOrCountsReservedRows(dbPath)
+        scenarios.roomNeverEvictsOrCountsReservedRows(databasePath)
     }
 
     @Test
     fun room_eviction_keeps_the_listed_signatures() = runTest {
-        scenarios.roomEvictionKeepsTheListedSignatures(dbPath)
+        scenarios.roomEvictionKeepsTheListedCacheKeys(databasePath)
     }
 
     @Test
     fun room_finds_and_drops_query_shape_records() = runTest {
-        scenarios.roomFindsAndDropsQueryShapeRecords(dbPath)
+        scenarios.roomFindsAndDropsQueryShapeRecords(databasePath)
     }
 
     @Test
     fun room_drops_the_cached_queries_and_keeps_the_engines_rows() = runTest {
-        scenarios.roomDropsTheCachedQueriesAndKeepsTheEnginesRows(dbPath)
+        scenarios.roomDropsTheCachedQueriesAndKeepsTheEnginesRows(databasePath)
     }
 
     @Test
     fun room_replays_pending_writes_in_insertion_order() = runTest {
-        scenarios.roomReplaysPendingWritesInInsertionOrder(dbPath)
+        scenarios.roomReplaysPendingWritesInInsertionOrder(databasePath)
     }
 
     @Test
     fun a_queue_without_owners_is_adopted_in_place() = runTest {
-        scenarios.aQueueWithoutOwnersIsAdoptedInPlace(dbPath)
+        scenarios.aQueueWithoutOwnersIsAdoptedInPlace(databasePath)
     }
 
     @Test
     fun a_failed_mutation_queue_transaction_changes_nothing() = runTest {
-        scenarios.aFailedMutationQueueTransactionChangesNothing(dbPath)
+        scenarios.aFailedMutationQueueTransactionChangesNothing(databasePath)
     }
 
     @Test
     fun a_clear_whose_mutation_delete_fails_changes_nothing() = runTest {
-        scenarios.aClearWhoseMutationDeleteFailsChangesNothing(dbPath)
+        scenarios.aClearWhoseMutationDeleteFailsChangesNothing(databasePath)
     }
 
     @Test
     fun a_clear_whose_object_cache_delete_fails_changes_nothing() = runTest {
-        scenarios.aClearWhoseObjectCacheDeleteFailsChangesNothing(dbPath)
+        scenarios.aClearWhoseObjectCacheDeleteFailsChangesNothing(databasePath)
     }
 }

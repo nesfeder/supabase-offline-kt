@@ -12,7 +12,7 @@ import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -40,7 +40,7 @@ import kotlinx.coroutines.test.runTest
  */
 class OldTrustRuleAsksAgainTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
 
     /** Held by the next read the server answers, until completed. */
     private var heldRead: CompletableDeferred<Unit>? = null
@@ -86,7 +86,7 @@ class OldTrustRuleAsksAgainTest {
         runCurrent()
         return newTestOfflineClient(
                 supabase = supabase,
-                store = newTestOfflineStore(objectDao = objectDao),
+                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                 coordinatorScope = backgroundScope,
                 responseTrust = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
             )
@@ -114,7 +114,7 @@ class OldTrustRuleAsksAgainTest {
     @Test
     fun a_network_first_reactive_read_sent_while_restoring_starts_on_the_users_rows() = runTest {
         // Given — A's rows cached from before, and A's stored session restoring
-        objectDao.seedPayload(TABLE, TABLE, OLD_ROWS)
+        queryCacheDao.seedPayload(TABLE, TABLE, OLD_ROWS)
         val sessions = FakeHeldSessionManager(storedSessionOf("A"))
         val client = launchClient(newServer(), sessions, restoresStoredSession = true)
 

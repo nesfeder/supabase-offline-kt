@@ -3,7 +3,10 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestPostgrest
@@ -32,7 +35,7 @@ class RejectionCrashWindowTest {
             body = Json.parseToJsonElement("""[{"id":"n1","title":"x"}]""") as JsonArray,
         )
         val pending = store.allPendingMutations().single()
-        store.mutationQueueState.addRejection(
+        store.rejectedList.addRejection(
             StoredRejection(
                 id = pending.id,
                 table = NOTES,
@@ -50,7 +53,7 @@ class RejectionCrashWindowTest {
 
         // Then — it is not still reported as rejected
         assertEquals(0, store.pendingMutationCount())
-        assertEquals(emptyList(), store.mutationQueueState.rejections().map { it.id })
+        assertEquals(emptyList(), store.rejectedList.rejections().map { it.id })
     }
 
     @Test
@@ -64,7 +67,7 @@ class RejectionCrashWindowTest {
                     )
                 } as EnqueueOutcome.Queued)
                 .id
-        store.mutationQueueState.addRejection(
+        store.rejectedList.addRejection(
             StoredRejection(
                 id = id,
                 table = NOTES,
@@ -75,7 +78,7 @@ class RejectionCrashWindowTest {
                 message = "stale",
             )
         )
-        val syncer =
+        val replayer =
             MutationQueueReplayer(
                 store = store,
                 supabase = RecordingPostgrestServer().supabaseClient(),
@@ -84,7 +87,7 @@ class RejectionCrashWindowTest {
 
         // When — its caller sends it at the head and the server accepts it
         val outcome =
-            syncer.sendAtHead(
+            replayer.sendAtHead(
                 id,
                 QueueIdentity.User("user-a"),
                 send = { acceptedResult() },
@@ -93,7 +96,7 @@ class RejectionCrashWindowTest {
 
         // Then
         assertIs<MutationQueueReplayer.HeadSendOutcome.Sent>(outcome)
-        assertEquals(emptyList(), store.mutationQueueState.rejections().map { it.id })
+        assertEquals(emptyList(), store.rejectedList.rejections().map { it.id })
     }
 
     private fun acceptedResult(): PostgrestResult = postgrestResultOf("[]", newTestPostgrest())

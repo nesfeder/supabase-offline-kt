@@ -20,9 +20,9 @@ import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
-import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
+import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.utils.io.ByteChannel
@@ -55,13 +55,13 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * overridden, its convenience overloads included, so stale copies are dropped; every member passes
  * the client's gate.
  *
- * @param sdkLogger messages at INFO and above name the bucket, never the object path.
+ * @param engineLogger messages at INFO and above name the bucket, never the object path.
  * @param backgroundScope the client's own scope, which closing the client cancels.
  */
 internal class CachingBucketApi(
     private val delegate: BucketApi,
     private val cache: StorageFileCache,
-    private val sdkLogger: SdkLogger,
+    private val engineLogger: EngineLogger,
     private val backgroundScope: CoroutineScope,
     private val operationGate: ClientOperationGate = ClientOperationGate(),
     private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH,
@@ -71,7 +71,7 @@ internal class CachingBucketApi(
         CachingBucketApi(
             delegate.setHeader(name, value),
             cache,
-            sdkLogger,
+            engineLogger,
             backgroundScope,
             operationGate,
             renderImagePath,
@@ -87,7 +87,7 @@ internal class CachingBucketApi(
     }
 
     override suspend fun cachedFile(path: String): CachedFile? = operationGate.call {
-        cache.entryFor(bucketId, path)?.let { entry -> cache.lookup(entry) }
+        cache.entryFor(bucketId, path)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
     override suspend fun ensureCachedFile(path: String, isPublic: Boolean): CachedFile =
@@ -101,7 +101,7 @@ internal class CachingBucketApi(
                     "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
                         "or '..' segment, a '\\' or a control character"
                 )
-        cache.lookup(entry)?.let {
+        cache.useCachedCopy(entry)?.let {
             return it
         }
         val generation = cache.currentGeneration()
@@ -142,7 +142,7 @@ internal class CachingBucketApi(
         } finally {
             file.discard()
         }
-        return cache.lookup(entry)
+        return cache.useCachedCopy(entry)
             ?: throw IOException("The downloaded file left the cache before it could be returned")
     }
 
@@ -198,7 +198,7 @@ internal class CachingBucketApi(
                 wrap: (DownloadOptionBuilder.() -> Unit) -> (DownloadOptionBuilder.() -> Unit)
             ) -> ByteArray,
     ): ByteArray {
-        sdkLogger.debug { "Storage download $bucketId/$path attempting network" }
+        engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         val probe = DownloadRequestProbe(renderImagePath)
         val generation = cache.currentGeneration()
         val bytes =
@@ -226,7 +226,7 @@ internal class CachingBucketApi(
         fetch:
             suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit,
     ) {
-        sdkLogger.debug { "Storage download $bucketId/$path attempting network" }
+        engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!isCacheableObjectPath(path) || !isCacheableBucketId(bucketId)) {
             fetch(channel, options)
             return
@@ -297,21 +297,23 @@ internal class CachingBucketApi(
         path: String,
         probe: DownloadRequestProbe,
         failure: Exception,
-        readCached: suspend (StorageCacheEntry) -> T?,
+        readCached: suspend (FileCacheEntry) -> T?,
     ): T {
         if (failure.indicatesServerObjectMissing()) {
             cache.invalidateObject(bucketId, path)
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage object in $bucketId no longer exists; dropped its cached copy"
             }
             throw failure
         }
         val cached = probe.entryToServe(cache, bucketId, path)?.let { entry -> readCached(entry) }
         if (cached != null) {
-            sdkLogger.warning { "Storage download from $bucketId failed; serving the cached copy" }
+            engineLogger.warning {
+                "Storage download from $bucketId failed; serving the cached copy"
+            }
             return cached
         }
-        sdkLogger.error { "Storage download from $bucketId failed and nothing is cached" }
+        engineLogger.error { "Storage download from $bucketId failed and nothing is cached" }
         throw failure
     }
 
@@ -334,7 +336,7 @@ internal class CachingBucketApi(
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
-        entryProvider: () -> StorageCacheEntry?,
+        entryProvider: () -> FileCacheEntry?,
         fetch: suspend (ByteWriteChannel) -> Unit,
     ): StreamedDownload = coroutineScope {
         val pipe = ByteChannel()
@@ -365,7 +367,7 @@ internal class CachingBucketApi(
             try {
                 withContext(Dispatchers.IO) { target.sink.write(buffer, 0, read) }
             } catch (failure: IOException) {
-                sdkLogger.warning {
+                engineLogger.warning {
                     "Storage cache could not write a download (${failure::class.simpleName}); not caching"
                 }
                 return@coroutineScope abandon(
@@ -388,7 +390,7 @@ internal class CachingBucketApi(
         try {
             withContext(Dispatchers.IO) { target.sink.flush() }
         } catch (failure: IOException) {
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not write a download (${failure::class.simpleName}); not caching"
             }
             file.discard()
@@ -410,7 +412,7 @@ internal class CachingBucketApi(
          * Opens the file for [entry] and holds it; the cache hands it back even to a cancelled
          * caller.
          */
-        suspend fun open(entry: StorageCacheEntry?): TemporaryDownload? =
+        suspend fun open(entry: FileCacheEntry?): TemporaryDownload? =
             entry?.let { cache.openTemporaryDownload(it) }?.also { opened -> temporary = opened }
 
         /** Deletes the file if it is still held. */

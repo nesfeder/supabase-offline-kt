@@ -6,7 +6,7 @@ package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineLogger
-import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -33,9 +33,9 @@ internal class RecordingOfflineLogger : OfflineLogger {
         }
     }
 
-    /** Wraps this recorder in the SDK's level-gating [SdkLogger]. */
-    fun asSdkLogger(minLevel: OfflineLogLevel = OfflineLogLevel.DEBUG): SdkLogger =
-        SdkLogger(this, minLevel)
+    /** Wraps this recorder in the SDK's level-gating [EngineLogger]. */
+    fun asEngineLogger(minLevel: OfflineLogLevel = OfflineLogLevel.DEBUG): EngineLogger =
+        EngineLogger(this, minLevel)
 
     /** The recorded entries at exactly [level]. */
     fun entriesAt(level: OfflineLogLevel): List<Entry> = entries.filter { it.level == level }

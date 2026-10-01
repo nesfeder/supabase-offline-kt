@@ -10,24 +10,23 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
-import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.internal.postgrest.ReadShape
+import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
 import io.ktor.http.HeadersBuilder
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 
 /**
- * Scripted [PostgrestQueryBuilderWrapper], with no HTTP: SELECT answers [onSelect], and each write
- * records its call, then answers its handler. A write whose handler is `null` throws, so an
- * unexpected write fails the test; a handler may throw to script a failure. Build answers with
- * [postgrestResultOf].
+ * Scripted [RemoteTable], with no HTTP: SELECT answers [onSelect], and each write records its call,
+ * then answers its handler. A write whose handler is `null` throws, so an unexpected write fails
+ * the test; a handler may throw to script a failure. Build answers with [postgrestResultOf].
  */
-internal class FakePostgrestQueryBuilderWrapper(
+internal class FakeRemoteTable(
     override val table: String,
     override val postgrest: Postgrest,
     override val schema: String = "public",
     private val onSelect: suspend () -> PostgrestResult = {
-        error("FakePostgrestQueryBuilderWrapper.select must not be called in this test")
+        error("FakeRemoteTable.select must not be called in this test")
     },
     private val onInsert: (suspend (JsonArray) -> PostgrestResult)? = null,
     private val onUpsert: (suspend (JsonArray) -> PostgrestResult)? = null,
@@ -38,7 +37,7 @@ internal class FakePostgrestQueryBuilderWrapper(
      * check that cannot tell. A scripted handle builds no HTTP request, so it cannot see a dry run.
      */
     private val dryRunVerdict: Boolean? = false,
-) : PostgrestQueryBuilderWrapper {
+) : RemoteTable {
 
     /** Bodies passed to [insert], in call order — lets tests assert what the builder encoded. */
     val recordedInsertBodies: MutableList<JsonArray> = mutableListOf()
@@ -54,7 +53,7 @@ internal class FakePostgrestQueryBuilderWrapper(
         private set
 
     private fun unsupported(member: String): Nothing =
-        error("FakePostgrestQueryBuilderWrapper.$member must not be called in this test")
+        error("FakeRemoteTable.$member must not be called in this test")
 
     override suspend fun select(
         columns: Columns,
@@ -110,7 +109,7 @@ internal class FakePostgrestQueryBuilderWrapper(
 
 /**
  * Wraps [payload] in a [PostgrestResult] with no headers, as the engine builds a result from a
- * cached payload; for the handlers of [FakePostgrestQueryBuilderWrapper].
+ * cached payload; for the handlers of [FakeRemoteTable].
  */
 internal fun postgrestResultOf(payload: String, postgrest: Postgrest): PostgrestResult =
     PostgrestResult(payload, HeadersBuilder().build(), postgrest)

@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -69,7 +69,7 @@ class OverlayUndoTest {
         val failed = mutableListOf<Long>()
         val overlay =
             MutationOverlay(
-                json = OfflineJson,
+                json = EngineJson,
                 admission = admission,
                 primaryKeys = DefaultPrimaryKeys,
                 mayAlreadyHold = { mutation -> mutation.id in mayAlreadyHold },
@@ -82,11 +82,11 @@ class OverlayUndoTest {
         JsonObject(mapOf("id" to JsonPrimitive(id), "list" to JsonPrimitive(list)))
 
     private fun byColumn(column: String, operator: String, value: String): String =
-        FilterEngine.encode(
+        encodeFilter(
             FilterDescriptor(
                 conditions = listOf(FilterDescriptor.Condition(column, operator, value))
             ),
-            OfflineJson,
+            EngineJson,
         )
 
     @Test

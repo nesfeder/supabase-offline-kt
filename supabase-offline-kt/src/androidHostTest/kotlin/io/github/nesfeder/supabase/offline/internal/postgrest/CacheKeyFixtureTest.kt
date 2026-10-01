@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.ReadStrategy
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
@@ -57,11 +57,11 @@ class CacheKeyFixtureTest {
  * under.
  */
 internal suspend fun storedCacheKeyOf(case: CacheKeyFixtureCase): String {
-    val objectDao = FakeObjectDao()
+    val queryCacheDao = FakeQueryCacheDao()
     val server = RecordingPostgrestServer(answer = { okJson("""[{"id":1}]""") })
     newTestOfflineClient(
             supabase = server.supabaseClient(),
-            store = newTestOfflineStore(objectDao = objectDao),
+            store = newTestOfflineStore(queryCacheDao = queryCacheDao),
         )
         .closingAfter { client ->
             val builder =
@@ -83,7 +83,7 @@ internal suspend fun storedCacheKeyOf(case: CacheKeyFixtureCase): String {
     val rows =
         (listOf(case.table) + schemas.map { schema -> "$schema.${case.table}" })
             .distinct()
-            .flatMap(objectDao::rowsOf)
+            .flatMap(queryCacheDao::rowsOf)
     check(rows.size == 1) { "${case.name} stored ${rows.size} rows" }
-    return rows.single().signature
+    return rows.single().cacheKey
 }

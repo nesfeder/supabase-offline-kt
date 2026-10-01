@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -35,7 +35,7 @@ class PerIdentityQueueTest {
             store = store,
             queueIdentity = { session },
         )
-    private val syncer =
+    private val replayer =
         MutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
@@ -74,7 +74,7 @@ class PerIdentityQueueTest {
 
         // When — A is signed in and the queue replays
         server.answer = { okJson("[]") }
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — only A's write went out; the anonymous one waits
         assertEquals(1, report.syncedCount)
@@ -91,11 +91,11 @@ class PerIdentityQueueTest {
         writeOffline("anonymous note")
         session = USER_A
         server.answer = { okJson("[]") }
-        syncer.sync()
+        replayer.sync()
 
         // When — A signs out
         session = QueueIdentity.Anonymous
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then
         assertEquals(1, report.syncedCount)
@@ -121,9 +121,9 @@ class PerIdentityQueueTest {
         release.complete(Unit)
         write.await()
         server.answer = { okJson("[]") }
-        val asB = syncer.sync()
+        val asB = replayer.sync()
         session = USER_A
-        val asA = syncer.sync()
+        val asA = replayer.sync()
 
         // Then — it never goes out under B, and does under A
         assertEquals(0, asB.syncedCount)

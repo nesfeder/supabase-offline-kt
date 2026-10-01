@@ -6,8 +6,8 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.serialization.json.Json
@@ -74,7 +74,7 @@ class UuidKeyCaseTest {
         // Given
         val cached = """[{"id":"$LOWER","title":"a"}]"""
         val byKey =
-            FilterEngine.encode(
+            encodeFilter(
                 FilterDescriptor(
                     conditions = listOf(FilterDescriptor.Condition("id", "eq", UPPER))
                 ),

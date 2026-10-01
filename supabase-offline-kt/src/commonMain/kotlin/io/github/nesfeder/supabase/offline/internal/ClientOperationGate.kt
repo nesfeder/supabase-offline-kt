@@ -31,16 +31,16 @@ import kotlinx.coroutines.withContext
 internal class ClientOperationGate {
 
     /** Whether the gate is closed, and how many calls are in flight, changed together. */
-    private data class State(val closed: Boolean, val inFlight: Int)
+    private data class State(val isClosed: Boolean, val inFlight: Int)
 
-    private val state = MutableStateFlow(State(closed = false, inFlight = 0))
+    private val state = MutableStateFlow(State(isClosed = false, inFlight = 0))
 
     /** Completes at [close], which ends every flow [callCollecting] is running. */
     private val closing = CompletableDeferred<Unit>()
 
     /** Whether [close] has run. */
     val isClosed: Boolean
-        get() = state.value.closed
+        get() = state.value.isClosed
 
     /** How many calls are in flight. */
     val inFlight: Int
@@ -54,7 +54,7 @@ internal class ClientOperationGate {
     /** Runs [block] as a call the database's close waits for; refused once [close] has run. */
     suspend fun <T> call(block: suspend () -> T): T {
         state.update { current ->
-            check(!current.closed) { CLIENT_CLOSED_MESSAGE }
+            check(!current.isClosed) { CLIENT_CLOSED_MESSAGE }
             current.copy(inFlight = current.inFlight + 1)
         }
         try {
@@ -141,8 +141,8 @@ internal class ClientOperationGate {
     fun close(): Boolean {
         var closedNow = false
         state.update { current ->
-            closedNow = !current.closed
-            current.copy(closed = true)
+            closedNow = !current.isClosed
+            current.copy(isClosed = true)
         }
         closing.complete(Unit)
         return closedNow

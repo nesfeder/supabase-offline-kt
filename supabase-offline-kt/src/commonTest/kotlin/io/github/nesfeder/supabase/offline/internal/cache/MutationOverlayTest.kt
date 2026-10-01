@@ -6,8 +6,8 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -73,8 +73,8 @@ class MutationOverlayTest {
         val result = overlay(json, serverJson, pending)
 
         // Then
-        val arr = json.parseToJsonElement(result) as JsonArray
-        val ids = arr.map { it as JsonObject }.map { it["id"]!!.jsonPrimitive.content }
+        val rows = json.parseToJsonElement(result) as JsonArray
+        val ids = rows.map { it as JsonObject }.map { it["id"]!!.jsonPrimitive.content }
         assertEquals(listOf("1", "2", "3"), ids)
     }
 
@@ -122,10 +122,10 @@ class MutationOverlayTest {
         val result = overlay(json, serverJson, pending)
 
         // Then
-        val arr = json.parseToJsonElement(result) as JsonArray
-        val obj = arr[0] as JsonObject
-        assertEquals("1", obj["id"]!!.jsonPrimitive.content)
-        assertEquals("changed", obj["name"]!!.jsonPrimitive.content)
+        val rows = json.parseToJsonElement(result) as JsonArray
+        val row = rows[0] as JsonObject
+        assertEquals("1", row["id"]!!.jsonPrimitive.content)
+        assertEquals("changed", row["name"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -164,8 +164,8 @@ class MutationOverlayTest {
         val result = overlay(json, serverJson, pending)
 
         // Then
-        val arr = json.parseToJsonElement(result) as JsonArray
-        val statuses = arr.map { it as JsonObject }.map { it["status"]!!.jsonPrimitive.content }
+        val rows = json.parseToJsonElement(result) as JsonArray
+        val statuses = rows.map { it as JsonObject }.map { it["status"]!!.jsonPrimitive.content }
         assertEquals(listOf("active", "old"), statuses)
     }
 
@@ -196,8 +196,8 @@ class MutationOverlayTest {
         val result = overlay(json, serverJson, pending)
 
         // Then
-        val arr = json.parseToJsonElement(result) as JsonArray
-        val ids = arr.map { it as JsonObject }.map { it["id"]!!.jsonPrimitive.content }
+        val rows = json.parseToJsonElement(result) as JsonArray
+        val ids = rows.map { it as JsonObject }.map { it["id"]!!.jsonPrimitive.content }
         assertEquals(listOf("2"), ids)
     }
 
@@ -251,7 +251,7 @@ class MutationOverlayTest {
                     table = "assets",
                     operation = MutationOperation.DELETE,
                     bodyJson = "{}",
-                    filterJson = FilterEngine.encode(filter, json),
+                    filterJson = encodeFilter(filter, json),
                     createdAtMs = 0L,
                     syncedAtMs = null,
                     defaultToNull = null,

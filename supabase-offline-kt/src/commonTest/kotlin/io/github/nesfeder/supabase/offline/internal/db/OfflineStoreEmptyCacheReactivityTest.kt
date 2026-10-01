@@ -4,8 +4,9 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -35,7 +36,7 @@ class OfflineStoreEmptyCacheReactivityTest {
     @Test
     fun substrate_reports_no_data_when_no_cache_and_no_mutations() = runTest {
         // Given — an empty cache and no queued mutations
-        val store = buildStore(FakeObjectDao(), FakeMutationDao())
+        val store = buildStore(FakeQueryCacheDao(), FakeMutationDao())
 
         // When — the overlay substrate is observed
         val emitted = store.overlaidPayloadFlow("projects", "sig-A").first()
@@ -47,9 +48,9 @@ class OfflineStoreEmptyCacheReactivityTest {
     @Test
     fun queued_offline_insert_is_visible_via_substrate_without_writing_a_room_row() = runTest {
         // Given — an empty cache and a queued offline INSERT for the table
-        val objectDao = FakeObjectDao()
+        val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
-        val store = buildStore(objectDao, mutationDao)
+        val store = buildStore(queryCacheDao, mutationDao)
         store.enqueueInsert(
             table = "projects",
             body =
@@ -62,7 +63,7 @@ class OfflineStoreEmptyCacheReactivityTest {
                     )
                 },
         )
-        val writesBefore = objectDao.writes
+        val writesBefore = queryCacheDao.writes
 
         // When — the overlay substrate is observed
         val emitted = store.overlaidPayloadFlow("projects", "sig-A").first()
@@ -72,12 +73,12 @@ class OfflineStoreEmptyCacheReactivityTest {
         assertNotNull(emitted, "a queued INSERT must be visible even with no cached payload")
         assertTrue(emitted.contains("project-1"))
         assertNull(
-            objectDao.getRow("projects", "sig-A"),
+            queryCacheDao.getRow("projects", "sig-A"),
             "the substrate must not persist a Room row",
         )
         assertEquals(
             writesBefore,
-            objectDao.writes,
+            queryCacheDao.writes,
             "the substrate must not write to the object cache",
         )
     }
@@ -86,11 +87,11 @@ class OfflineStoreEmptyCacheReactivityTest {
     fun live_cache_less_subscriber_sees_a_materialized_online_upsert() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a live subscriber on a signature whose object cache is empty
-            val objectDao = FakeObjectDao()
-            val store = buildStore(objectDao, FakeMutationDao())
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao, FakeMutationDao())
             val table = "note_projects"
-            val signature = "sig-A"
-            val cacheFlow = store.overlaidPayloadFlow(table, signature)
+            val cacheKey = "sig-A"
+            val cacheFlow = store.overlaidPayloadFlow(table, cacheKey)
             val firstRealRow = async {
                 withTimeoutOrNull(timeMillis = 500) {
                     cacheFlow.first { it != null && it.contains("project-1") }
@@ -106,7 +107,7 @@ class OfflineStoreEmptyCacheReactivityTest {
                 filterJson = null,
                 defaultToNull = false,
                 onConflict = "note_id",
-                liveSignatures = setOf(signature),
+                liveCacheKeys = setOf(cacheKey),
             )
 
             // Then — the collector observes the materialized row (honoring the "UI reflects
@@ -118,7 +119,7 @@ class OfflineStoreEmptyCacheReactivityTest {
             )
             assertTrue(emitted.contains("project-1"))
             assertNotNull(
-                objectDao.getRow(table, signature),
+                queryCacheDao.getRow(table, cacheKey),
                 "materialize-on-write must persist the real row",
             )
         }
@@ -126,8 +127,8 @@ class OfflineStoreEmptyCacheReactivityTest {
     @Test
     fun online_success_mutation_writes_nothing_when_no_subscriber_is_live() = runTest {
         // Given — an empty cache and no live subscribers
-        val objectDao = FakeObjectDao()
-        val store = buildStore(objectDao, FakeMutationDao())
+        val queryCacheDao = FakeQueryCacheDao()
+        val store = buildStore(queryCacheDao, FakeMutationDao())
 
         // When — an online-success upsert fires on an uncached table
         store.patchCachedQueries(
@@ -140,12 +141,12 @@ class OfflineStoreEmptyCacheReactivityTest {
         )
 
         // Then — nothing is materialized (self-GC: no live subscriber → no write)
-        assertEquals(0, objectDao.writes, "no live subscriber means no materialized row")
+        assertEquals(0, queryCacheDao.writes, "no live subscriber means no materialized row")
     }
 
-    private fun buildStore(objectDao: ObjectDao, mutationDao: MutationDao): OfflineStore =
+    private fun buildStore(queryCacheDao: QueryCacheDao, mutationDao: MutationDao): OfflineStore =
         newTestOfflineStore(
-            objectDao = objectDao,
+            queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
         )
 }

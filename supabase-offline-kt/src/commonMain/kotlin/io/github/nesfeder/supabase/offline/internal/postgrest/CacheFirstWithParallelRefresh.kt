@@ -3,6 +3,8 @@
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.RefreshState
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -24,7 +26,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * its wait budget from this: the two ladders are deliberately the same shape, and deriving one from
  * the other keeps them from drifting apart if this is retuned.
  */
-internal const val FAST_LADDER_ATTEMPTS: Int = 4
+internal const val FAST_RETRY_COUNT: Int = 4
 
 /**
  * Backoff sleep applied after the [failures]-th consecutive failed refresh attempt.
@@ -36,16 +38,16 @@ internal const val FAST_LADDER_ATTEMPTS: Int = 4
  * Schedule (delay *after* failure N): 300, 900, 2400, then 5s, 15s, 60s, 60s, …
  *
  * @param failures Number of consecutive failures so far (1-based).
- * @return Milliseconds to sleep before the next attempt.
+ * @return How long to sleep before the next attempt.
  */
-internal fun defaultRefreshBackoffMillis(failures: Int): Long =
+internal fun refreshBackoff(failures: Int): Duration =
     when (failures) {
-        1 -> 300L
-        2 -> 900L
-        3 -> 2_400L
-        4 -> 5_000L
-        5 -> 15_000L
-        else -> 60_000L
+        1 -> 300.milliseconds
+        2 -> 900.milliseconds
+        3 -> 2_400.milliseconds
+        4 -> 5_000.milliseconds
+        5 -> 15_000.milliseconds
+        else -> 60_000.milliseconds
     }
 
 /**
@@ -62,19 +64,19 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long =
  *
  * ### Self-healing refresh
  * The refresh retries for the **life of the subscription**: the fast ladder for the first
- * [FAST_LADDER_ATTEMPTS] attempts (300/900/2400ms between them), then capped exponential backoff
- * (5s, 15s, 60s, 60s, …). The first success ends the loop permanently — a broken network never
- * tears down the flow, and cached emissions keep flowing in parallel regardless. This replaces the
- * old give-up-after-a-fixed-budget behavior that pinned first-run subscriptions on empty caches
- * until process restart.
+ * [FAST_RETRY_COUNT] attempts (300/900/2400ms between them), then capped exponential backoff (5s,
+ * 15s, 60s, 60s, …). The first success ends the loop permanently — a broken network never tears
+ * down the flow, and cached emissions keep flowing in parallel regardless. This replaces the old
+ * give-up-after-a-fixed-budget behavior that pinned first-run subscriptions on empty caches until
+ * process restart.
  *
  * ### Recovery accelerator
- * [accelerator] is an optional edge-triggered wake-up (auth restored / connectivity regained, built
- * by [io.github.nesfeder.supabase.offline.buildRefreshAccelerator]). An edge that lands while the
- * loop is sleeping cancels the current backoff delay and retries immediately. Edges are conflated,
- * so a burst buys exactly one immediate attempt, and — being strict transitions — a
- * persistently-failing refresh can never hot-loop. The accelerator is a hint only: with an empty
- * [accelerator] the loop still recovers on its capped schedule.
+ * [wakeUps] is an optional edge-triggered wake-up (auth restored / connectivity regained, built by
+ * [refreshWakeUps]). An edge that lands while the loop is sleeping cancels the current backoff
+ * delay and retries immediately. Edges are conflated, so a burst buys exactly one immediate
+ * attempt, and — being strict transitions — a persistently-failing refresh can never hot-loop. The
+ * accelerator is a hint only: with an empty [wakeUps] the loop still recovers on its capped
+ * schedule.
  *
  * ### State reporting
  * [onRefreshState] observes the refresh lifecycle: [RefreshState.InFlight] at start,
@@ -90,17 +92,17 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long =
  * @param cache Flow of cached values to forward downstream as they arrive.
  * @param refresh Suspend operation that refreshes the cache (typically a network SELECT whose side
  *   effect is a `store.addPayload` that triggers a new [cache] emission).
- * @param accelerator Edge-triggered wake-ups that short-circuit the current backoff sleep.
+ * @param wakeUps Edge-triggered wake-ups that short-circuit the current backoff sleep.
  * @param onRefreshState Callback invoked on each refresh lifecycle transition.
- * @param backoffMillis Backoff schedule; injectable so tests can shrink or reshape delays.
+ * @param backoff Backoff schedule; injectable so tests can shrink or reshape delays.
  * @param refreshRequests Each emission after the first success runs the refresh again.
  */
 internal fun <T> cacheFirstWithParallelRefresh(
     cache: Flow<T>,
     refresh: suspend () -> Unit,
-    accelerator: Flow<Unit> = emptyFlow(),
+    wakeUps: Flow<Unit> = emptyFlow(),
     onRefreshState: (RefreshState) -> Unit = {},
-    backoffMillis: (failures: Int) -> Long = ::defaultRefreshBackoffMillis,
+    backoff: (failures: Int) -> Duration = ::refreshBackoff,
     refreshRequests: Flow<Unit> = emptyFlow(),
 ): Flow<T> = channelFlow {
     // Forward cache emissions immediately — not gated on the network.
@@ -116,46 +118,46 @@ internal fun <T> cacheFirstWithParallelRefresh(
     }
     // In parallel, refresh the cache with self-healing backoff, and again on each later request.
     launch {
-        runSelfHealingRefresh(
+        refreshUntilSuccess(
             refresh = refresh,
-            accelerator = accelerator,
+            wakeUps = wakeUps,
             onRefreshState = onRefreshState,
-            backoffMillis = backoffMillis,
+            backoff = backoff,
         )
         refreshRequests.conflate().collect {
-            runSelfHealingRefresh(
+            refreshUntilSuccess(
                 refresh = refresh,
-                accelerator = accelerator,
+                wakeUps = wakeUps,
                 onRefreshState = onRefreshState,
-                backoffMillis = backoffMillis,
+                backoff = backoff,
             )
         }
     }
 }
 
 /**
- * Runs [refresh] until it succeeds, retrying with [backoffMillis] backoff for the life of the
- * calling coroutine. Reports lifecycle transitions through [onRefreshState] and short-circuits the
- * current sleep whenever [accelerator] emits.
+ * Runs [refresh] until it succeeds, retrying with [backoff] backoff for the life of the calling
+ * coroutine. Reports lifecycle transitions through [onRefreshState] and short-circuits the current
+ * sleep whenever [wakeUps] emits.
  *
  * @param refresh The refresh operation to retry until it succeeds.
- * @param accelerator Edge wake-ups that cancel the current backoff sleep.
+ * @param wakeUps Edge wake-ups that cancel the current backoff sleep.
  * @param onRefreshState Lifecycle callback ([RefreshState.InFlight] / [RefreshState.Stalled] /
  *   [RefreshState.Idle]).
- * @param backoffMillis Backoff schedule keyed by consecutive-failure count.
+ * @param backoff Backoff schedule keyed by consecutive-failure count.
  */
-internal suspend fun runSelfHealingRefresh(
+internal suspend fun refreshUntilSuccess(
     refresh: suspend () -> Unit,
-    accelerator: Flow<Unit>,
+    wakeUps: Flow<Unit>,
     onRefreshState: (RefreshState) -> Unit,
-    backoffMillis: (failures: Int) -> Long,
+    backoff: (failures: Int) -> Duration,
 ): Unit = coroutineScope {
     onRefreshState(RefreshState.InFlight)
     // Conflated so a burst of edges buys exactly one immediate re-attempt; buffered for the whole
     // loop lifetime so an edge that lands between attempts (not just during a sleep) is not missed.
-    val acceleratorEdges = Channel<Unit>(Channel.CONFLATED)
-    val acceleratorCollector = launch {
-        accelerator.collect { acceleratorEdges.trySend(Unit) }
+    val bufferedWakeUps = Channel<Unit>(Channel.CONFLATED)
+    val wakeUpCollector = launch {
+        wakeUps.collect { bufferedWakeUps.trySend(Unit) }
     }
     try {
         var failures = 0
@@ -177,7 +179,7 @@ internal suspend fun runSelfHealingRefresh(
             }
 
             failures++
-            if (failures == FAST_LADDER_ATTEMPTS) {
+            if (failures == FAST_RETRY_COUNT) {
                 // The fast ladder exhausted: report the stall exactly once, then keep retrying on
                 // the capped schedule (state stays Stalled until a success flips it to Idle).
                 onRefreshState(RefreshState.Stalled(failure))
@@ -185,11 +187,11 @@ internal suspend fun runSelfHealingRefresh(
 
             // Interruptible backoff: wake early if an accelerator edge arrives, otherwise sleep out
             // the capped delay. A real cancellation propagates out of `receive()`.
-            withTimeoutOrNull(backoffMillis(failures)) {
-                acceleratorEdges.receive()
+            withTimeoutOrNull(backoff(failures)) {
+                bufferedWakeUps.receive()
             }
         }
     } finally {
-        acceleratorCollector.cancel()
+        wakeUpCollector.cancel()
     }
 }

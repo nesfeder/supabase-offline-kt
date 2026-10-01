@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -44,7 +45,7 @@ class OverlayKeyIndexDifferentialTest {
             val admission = QueryAdmission(listOf(FilterDescriptor.Condition("list", "eq", "A")))
             val indexed =
                 MutationOverlay(
-                        json = OfflineJson,
+                        json = EngineJson,
                         admission = admission,
                         primaryKeys = DefaultPrimaryKeys,
                         mayAlreadyHold = { mutation -> mutation.id in mayAlreadyHold },
@@ -98,7 +99,7 @@ class OverlayKeyIndexDifferentialTest {
         }
 
         private fun bodyOf(mutation: MutationRow): List<JsonElement> =
-            OfflineJson.parseToJsonElement(mutation.bodyJson) as JsonArray
+            EngineJson.parseToJsonElement(mutation.bodyJson) as JsonArray
 
         private fun insert(mutation: MutationRow) {
             val keyColumns = DefaultPrimaryKeys.of(mutation.table)
@@ -133,7 +134,7 @@ class OverlayKeyIndexDifferentialTest {
 
         private fun update(mutation: MutationRow) {
             val filter = RowFilter(filterOf(mutation), setOf("id"))
-            val patch = OfflineJson.parseToJsonElement(mutation.bodyJson) as JsonObject
+            val patch = EngineJson.parseToJsonElement(mutation.bodyJson) as JsonObject
             if (!filter.canMatch) return
             val heldBefore = held.size
             visible.indices.reversed().forEach { index ->
@@ -162,7 +163,7 @@ class OverlayKeyIndexDifferentialTest {
         }
 
         private fun filterOf(mutation: MutationRow): FilterDescriptor =
-            checkNotNull(FilterEngine.decodeOrNull(mutation.filterJson, OfflineJson))
+            checkNotNull(decodeFilterOrNull(mutation.filterJson, EngineJson))
 
         private fun place(row: JsonObject) {
             written += row
@@ -263,11 +264,11 @@ class OverlayKeyIndexDifferentialTest {
         }
 
     private fun byColumn(column: String, operator: String, value: String): String =
-        FilterEngine.encode(
+        encodeFilter(
             FilterDescriptor(
                 conditions = listOf(FilterDescriptor.Condition(column, operator, value))
             ),
-            OfflineJson,
+            EngineJson,
         )
 
     private companion object {

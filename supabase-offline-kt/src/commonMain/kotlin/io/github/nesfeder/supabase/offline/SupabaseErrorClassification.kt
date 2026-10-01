@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure as internalIsNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure as internalIsNetworkOrConnectivityFailure
 
 /**
  * Public error-classification API for consumers of the offline SDK.

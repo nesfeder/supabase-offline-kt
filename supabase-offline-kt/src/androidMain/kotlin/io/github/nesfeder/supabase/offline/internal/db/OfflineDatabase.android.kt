@@ -6,15 +6,15 @@ import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-/** A Room builder for the offline database at [dbPath], on the application context. */
-internal fun getDatabaseBuilder(
+/** A Room builder for the offline database at [databasePath], on the application context. */
+internal fun offlineDatabaseBuilder(
     context: Context,
-    dbPath: String,
+    databasePath: String,
 ): RoomDatabase.Builder<OfflineDatabase> {
     val appContext = context.applicationContext
     return Room.databaseBuilder(
         appContext,
         OfflineDatabase::class.java,
-        dbPath,
+        databasePath,
     )
 }

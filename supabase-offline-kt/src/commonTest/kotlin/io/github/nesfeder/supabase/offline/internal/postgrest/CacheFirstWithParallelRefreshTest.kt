@@ -210,7 +210,7 @@ class CacheFirstWithParallelRefreshTest {
             // Given: a refresh that fails until told otherwise, and an accelerator we control
             val cache = MutableSharedFlow<String>(replay = 1)
             cache.tryEmit("[]")
-            val accelerator = MutableSharedFlow<Unit>()
+            val wakeUps = MutableSharedFlow<Unit>()
             var attemptCount = 0
             var failing = true
             val collector = launch {
@@ -221,7 +221,7 @@ class CacheFirstWithParallelRefreshTest {
                             if (failing) throw RuntimeException("down")
                             cache.emit("fresh")
                         },
-                        accelerator = accelerator,
+                        wakeUps = wakeUps,
                     )
                     .collect {}
             }
@@ -233,7 +233,7 @@ class CacheFirstWithParallelRefreshTest {
             // When: an accelerator edge lands well before the 300ms delay elapses
             advanceTimeBy(50)
             failing = false
-            accelerator.emit(Unit)
+            wakeUps.emit(Unit)
             runCurrent()
 
             // Then: exactly one immediate retry ran (not waiting out the backoff), and it succeeded
@@ -255,7 +255,7 @@ class CacheFirstWithParallelRefreshTest {
             // edge
             val cache = MutableSharedFlow<String>(replay = 1)
             cache.tryEmit("[]")
-            val accelerator = MutableSharedFlow<Unit>()
+            val wakeUps = MutableSharedFlow<Unit>()
             val states = mutableListOf<RefreshState>()
             var failing = true
             val collector = launch {
@@ -265,7 +265,7 @@ class CacheFirstWithParallelRefreshTest {
                             if (failing) throw RuntimeException("boom")
                             cache.emit("fresh")
                         },
-                        accelerator = accelerator,
+                        wakeUps = wakeUps,
                         onRefreshState = { state -> states += state },
                     )
                     .collect {}
@@ -277,7 +277,7 @@ class CacheFirstWithParallelRefreshTest {
             assertIs<RefreshState.InFlight>(states.first())
             assertTrue(states.any { it is RefreshState.Stalled })
             failing = false
-            accelerator.emit(Unit)
+            wakeUps.emit(Unit)
             runCurrent()
 
             // Then: the terminal state is Idle (success ends the loop)
@@ -359,7 +359,7 @@ class CacheFirstWithParallelRefreshTest {
             // Given: a refresh that succeeds on the first attempt
             val cache = MutableSharedFlow<String>(replay = 1)
             cache.tryEmit("[]")
-            val accelerator = MutableSharedFlow<Unit>()
+            val wakeUps = MutableSharedFlow<Unit>()
             var attemptCount = 0
             val collector = launch {
                 cacheFirstWithParallelRefresh(
@@ -368,7 +368,7 @@ class CacheFirstWithParallelRefreshTest {
                             attemptCount++
                             cache.emit("fresh")
                         },
-                        accelerator = accelerator,
+                        wakeUps = wakeUps,
                     )
                     .collect {}
             }
@@ -376,7 +376,7 @@ class CacheFirstWithParallelRefreshTest {
             assertEquals(1, attemptCount)
 
             // When: an accelerator edge fires after the refresh already succeeded
-            accelerator.emit(Unit)
+            wakeUps.emit(Unit)
             runCurrent()
 
             // Then: the loop already ended — no extra attempts

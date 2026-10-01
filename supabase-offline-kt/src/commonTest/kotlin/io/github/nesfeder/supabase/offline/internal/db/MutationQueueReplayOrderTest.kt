@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
@@ -48,10 +49,10 @@ class MutationQueueReplayOrderTest {
         store.enqueueUpdate(table = PHOTOS, body = row("caption" to "new"), filter = idFilter("p0"))
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
-        val synced = syncer.syncAllTables()
+        val synced = replayer.syncAllTables()
 
         // Then — all three arrive; the child was not replayed ahead of its parent and dropped
         assertEquals(3, synced)
@@ -72,10 +73,10 @@ class MutationQueueReplayOrderTest {
         clock = 1_000L
         store.enqueueUpdate(table = TASKS, body = row("title" to "final"), filter = idFilter("t1"))
         val server = RecordingPostgrestServer()
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
-        syncer.syncAllTables()
+        replayer.syncAllTables()
 
         // Then — the insert goes first, so the edit lands on the row instead of on nothing
         assertEquals(listOf("POST", "PATCH"), server.requests.map { it.method })
@@ -92,10 +93,10 @@ class MutationQueueReplayOrderTest {
                     if (request.table == TASKS) connectivityFailure() else okJson("[]")
                 }
             )
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
-        val synced = syncer.syncAllTables()
+        val synced = replayer.syncAllTables()
 
         // Then — nothing after the failure is sent, and both writes stay queued
         assertEquals(0, synced)
@@ -116,10 +117,10 @@ class MutationQueueReplayOrderTest {
                     else okJson("[]")
                 }
             )
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
-        val synced = syncer.syncAllTables()
+        val synced = replayer.syncAllTables()
 
         // Then — the later write does not overtake the one that failed
         assertEquals(0, synced)
@@ -136,16 +137,16 @@ class MutationQueueReplayOrderTest {
             )
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — the photo replays first and its foreign key fails with 409
-        syncer.syncTable(table = PHOTOS)
+        replayer.syncTable(table = PHOTOS)
 
         // Then — the photo is held for a later sweep, not dropped
         assertEquals(listOf(TASKS, PHOTOS), store.allPendingMutations().map { it.table })
 
         // And — the next full sweep delivers both, parent first
-        val synced = syncer.syncAllTables()
+        val synced = replayer.syncAllTables()
         assertEquals(2, synced)
         assertEquals(listOf("p1"), server.rows(PHOTOS).map { it.string("id") })
     }
@@ -156,10 +157,10 @@ class MutationQueueReplayOrderTest {
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
         val server = RecordingPostgrestServer(answer = { postgrestError(HttpStatusCode.Forbidden) })
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
-        syncer.syncTable(table = PHOTOS)
+        replayer.syncTable(table = PHOTOS)
 
         // Then
         assertEquals(listOf(TASKS, PHOTOS), store.allPendingMutations().map { it.table })

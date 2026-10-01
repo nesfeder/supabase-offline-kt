@@ -12,8 +12,8 @@ package io.github.nesfeder.supabase.offline.internal.db
  * `SupabaseOfflineClientImpl.from` refuses this one.
  *
  * Rows under this name are never evicted, never counted towards the cache size, never returned by a
- * read and never touched by an overlay; `clearAll` removes them with everything else, and a drop of
- * the cache for a new owner removes the query shapes and keeps the rest.
+ * read and never touched by an overlay; `clearLocalData` removes them with everything else, and a
+ * drop of the cache for a new owner removes the query shapes and keeps the rest.
  *
  * Changing this value orphans every installed device's records, so it never changes.
  */
@@ -21,28 +21,28 @@ internal const val RESERVED_TABLE_NAME: String =
     "__supabase_offline_kt__.reserved_engine_state.this_name_is_longer_than_any_postgres_identifier"
 
 /** Signature, within [RESERVED_TABLE_NAME], of the persisted rejected-mutation list. */
-internal const val REJECTED_MUTATIONS_SIGNATURE: String = "rejected_mutations"
+internal const val REJECTED_MUTATIONS_CACHE_KEY: String = "rejected_mutations"
 
 /**
  * Signature, within [RESERVED_TABLE_NAME], of the identity the query cache and the Storage file
  * cache belong to.
  */
-internal const val CACHE_OWNER_SIGNATURE: String = "cache_owner"
+internal const val CACHE_OWNER_CACHE_KEY: String = "cache_owner"
 
 /**
  * The name that begins the signature of each query-shape record within [RESERVED_TABLE_NAME]: the
  * name, a unit separator (U+001F), the cached query's table, another separator, and its cache key.
  */
-internal const val QUERY_SHAPE_SIGNATURE_PREFIX_NAME: String = "query_shape"
+internal const val QUERY_SHAPE_CACHE_KEY_PREFIX_NAME: String = "query_shape"
 
 /**
- * [QUERY_SHAPE_SIGNATURE_PREFIX_NAME] and the separator after it, as a record's signature begins.
+ * [QUERY_SHAPE_CACHE_KEY_PREFIX_NAME] and the separator after it, as a record's signature begins.
  */
-internal const val QUERY_SHAPE_SIGNATURE_PREFIX: String =
-    QUERY_SHAPE_SIGNATURE_PREFIX_NAME + "\u001F"
+internal const val QUERY_SHAPE_CACHE_KEY_PREFIX: String =
+    QUERY_SHAPE_CACHE_KEY_PREFIX_NAME + "\u001F"
 
-/** The length of [QUERY_SHAPE_SIGNATURE_PREFIX]. */
-internal const val QUERY_SHAPE_SIGNATURE_PREFIX_LENGTH: Int = 12
+/** The length of [QUERY_SHAPE_CACHE_KEY_PREFIX]. */
+internal const val QUERY_SHAPE_CACHE_KEY_PREFIX_LENGTH: Int = 12
 
 /**
  * Whether [table] is the engine's reserved state table rather than a table of the app's.

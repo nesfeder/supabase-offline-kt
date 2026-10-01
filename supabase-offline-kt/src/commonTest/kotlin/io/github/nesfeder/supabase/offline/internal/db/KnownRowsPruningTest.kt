@@ -5,8 +5,9 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
 import io.github.nesfeder.supabase.offline.internal.cache.Projection
 import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
@@ -16,12 +17,12 @@ import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
 import io.github.nesfeder.supabase.offline.internal.cache.projectionOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.random.Random
 import kotlin.test.Test
@@ -63,7 +64,7 @@ class KnownRowsPruningTest {
      * @property cached `false` for a live query with no payload.
      */
     private class Query(
-        val signature: String,
+        val cacheKey: String,
         val columns: String,
         val shaped: Boolean = true,
         val cached: Boolean = true,
@@ -172,16 +173,16 @@ class KnownRowsPruningTest {
      */
     private fun Random.asRead(query: Query, row: JsonObject, keys: Keys): JsonObject =
         when {
-            query.signature == "picker" ->
+            query.cacheKey == "picker" ->
                 JsonObject(row.filterKeys { column -> column in keys.columns || column == "title" })
-            query.signature.startsWith("emb-") -> {
+            query.cacheKey.startsWith("emb-") -> {
                 val comments = buildJsonArray {
                     repeat(1 + nextInt(3)) { position ->
                         add(buildJsonObject { put("body", "b$position") })
                     }
                 }
                 val shown =
-                    if (query.signature == "emb-all") comments else JsonArray(comments.take(1))
+                    if (query.cacheKey == "emb-all") comments else JsonArray(comments.take(1))
                 JsonObject(row + ("comments" to shown))
             }
             else -> row
@@ -203,17 +204,17 @@ class KnownRowsPruningTest {
     private suspend fun seed(
         random: Random,
         keys: Keys,
-        objectDao: FakeObjectDao,
+        queryCacheDao: FakeQueryCacheDao,
         store: OfflineStore,
         queries: List<Query>,
-    ): Map<String, ObjectRow> {
+    ): Map<String, CachedQueryRow> {
         val base = (0 until ROWS).map { index -> random.row(keys, index) }
         val cached = queries.filter { query -> query.cached }
         val ages = (1..cached.size).shuffled(random)
         queries
             .filter { query -> query.shaped }
             .forEach { query ->
-                store.queryShapes.remember(TABLE, query.signature, shapeOf(query), persist = false)
+                store.queryShapes.remember(TABLE, query.cacheKey, shapeOf(query), persist = false)
             }
         return cached
             .mapIndexed { position, query ->
@@ -228,8 +229,8 @@ class KnownRowsPruningTest {
                 val payload = JsonArray(held).toString()
                 val fetchedAt = NOW - 1_000L * ages[position] - random.nextLong(500)
                 val updatedAt = if (random.nextInt(4) == 0) staleStampOf(fetchedAt) else fetchedAt
-                objectDao.seedPayload(TABLE, query.signature, payload, updatedAt)
-                query.signature to ObjectRow(TABLE, query.signature, payload, updatedAt)
+                queryCacheDao.seedPayload(TABLE, query.cacheKey, payload, updatedAt)
+                query.cacheKey to CachedQueryRow(TABLE, query.cacheKey, payload, updatedAt)
             }
             .toMap()
     }
@@ -336,16 +337,16 @@ class KnownRowsPruningTest {
     private suspend fun queue(store: OfflineStore, write: Write): Long =
         when (write.operation) {
             MutationOperation.INSERT ->
-                store.enqueueInsert(TABLE, OfflineJson.parseToJsonElement(write.body) as JsonArray)
+                store.enqueueInsert(TABLE, EngineJson.parseToJsonElement(write.body) as JsonArray)
             MutationOperation.UPSERT ->
                 store.enqueueUpsert(
                     TABLE,
-                    OfflineJson.parseToJsonElement(write.body) as JsonArray,
+                    EngineJson.parseToJsonElement(write.body) as JsonArray,
                     onConflict = write.onConflict,
                     ignoreDuplicates = write.ignoreDuplicates,
                 )
             MutationOperation.UPDATE ->
-                store.enqueueUpdate(TABLE, OfflineJson.parseToJsonElement(write.body), write.filter)
+                store.enqueueUpdate(TABLE, EngineJson.parseToJsonElement(write.body), write.filter)
             else -> store.enqueueDelete(TABLE, write.filter)
         }
 
@@ -363,14 +364,14 @@ class KnownRowsPruningTest {
     private fun everyRow(
         self: Query,
         queries: List<Query>,
-        payloads: Map<String, ObjectRow>,
+        payloads: Map<String, CachedQueryRow>,
         keyColumns: List<String>,
         sameProjection: Boolean,
         own: List<JsonElement>?,
     ): List<JsonObject> {
         val projection = projectionFor(self)
         if (sameProjection && projection == null) return emptyList()
-        val bySignature = queries.associateBy { query -> query.signature }
+        val byCacheKey = queries.associateBy { query -> query.cacheKey }
         val ownKeys =
             own.orEmpty().mapNotNullTo(HashSet()) { element ->
                 (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
@@ -378,12 +379,12 @@ class KnownRowsPruningTest {
         val seen = HashSet<List<String>>()
         return payloads.values
             .filter { payload ->
-                payload.signature != self.signature &&
-                    (projectionFor(bySignature.getValue(payload.signature)) == projection) ==
+                payload.cacheKey != self.cacheKey &&
+                    (projectionFor(byCacheKey.getValue(payload.cacheKey)) == projection) ==
                         sameProjection
             }
             .sortedByDescending { payload -> fetchedAtOf(payload.updatedAt) }
-            .flatMap { payload -> payloadRowsOf(OfflineJson, payload.payload).orEmpty() }
+            .flatMap { payload -> payloadRowsOf(EngineJson, payload.payload).orEmpty() }
             .mapNotNull { element -> element as? JsonObject }
             .filter { row ->
                 val key = keyOf(row, keyColumns)
@@ -401,7 +402,7 @@ class KnownRowsPruningTest {
         mayAlreadyHold: (MutationRow) -> Boolean,
     ): String =
         MutationOverlay(
-                json = OfflineJson,
+                json = EngineJson,
                 admission = admissionFor(query),
                 primaryKeys = PrimaryKeys { keyColumns },
                 mayAlreadyHold = mayAlreadyHold,
@@ -418,16 +419,16 @@ class KnownRowsPruningTest {
                 // pending writes, some replayed and some whose send may have reached the server
                 val random = Random(seed * 31 + keys.ordinal)
                 val queries = queriesFor(keys)
-                val objectDao = FakeObjectDao()
+                val queryCacheDao = FakeQueryCacheDao()
                 val mutationDao = FakeMutationDao()
                 val store =
                     newTestOfflineStore(
-                        objectDao = objectDao,
+                        queryCacheDao = queryCacheDao,
                         mutationDao = mutationDao,
                         nowMillis = { NOW },
                     )
                 store.primaryKeys = PrimaryKeys { keys.columns }
-                val payloads = seed(random, keys, objectDao, store, queries)
+                val payloads = seed(random, keys, queryCacheDao, store, queries)
                 val unconfirmed = mutableSetOf<Long>()
                 repeat(1 + random.nextInt(7)) {
                     val id = queue(store, random.write(keys))
@@ -459,7 +460,7 @@ class KnownRowsPruningTest {
                         store
                             .overlaidPayloadFlow(
                                 TABLE,
-                                query.signature,
+                                query.cacheKey,
                                 if (passShape) shapeOf(query) else null,
                             )
                             .first()
@@ -472,17 +473,17 @@ class KnownRowsPruningTest {
                         compared++
                         if (reactive != expected)
                             mismatches +=
-                                "$keys seed $seed ${query.signature} reactive, no payload: " +
+                                "$keys seed $seed ${query.cacheKey} reactive, no payload: " +
                                     "$reactive, not $expected"
                         return@forEach
                     }
-                    val payload = payloads.getValue(query.signature).payload
+                    val payload = payloads.getValue(query.cacheKey).payload
                     val expected =
                         everyRowOverlay(payload, all, query, keys.columns, known, mayAlreadyHold)
-                    val oneShot = store.overlayCachedPayload(TABLE, query.signature, payload)
+                    val oneShot = store.overlayCachedPayload(TABLE, query.cacheKey, payload)
                     val answer =
                         JsonArray(
-                                payloadRowsOf(OfflineJson, payload).orEmpty().filter {
+                                payloadRowsOf(EngineJson, payload).orEmpty().filter {
                                     random.nextInt(3) != 0
                                 }
                             )
@@ -491,17 +492,17 @@ class KnownRowsPruningTest {
                         everyRowOverlay(answer, pending, query, keys.columns, known) { mutation ->
                             mutation.id in unconfirmed
                         }
-                    val response = store.overlayPendingOnResponse(TABLE, query.signature, answer)
+                    val response = store.overlayPendingOnResponse(TABLE, query.cacheKey, answer)
                     compared += 3
                     if (oneShot != expected)
                         mismatches +=
-                            "$keys seed $seed ${query.signature} one-shot: $oneShot, not $expected"
+                            "$keys seed $seed ${query.cacheKey} one-shot: $oneShot, not $expected"
                     if (reactive != expected)
                         mismatches +=
-                            "$keys seed $seed ${query.signature} reactive: $reactive, not $expected"
+                            "$keys seed $seed ${query.cacheKey} reactive: $reactive, not $expected"
                     if (response != expectedResponse)
                         mismatches +=
-                            "$keys seed $seed ${query.signature} response: $response, " +
+                            "$keys seed $seed ${query.cacheKey} response: $response, " +
                                 "not $expectedResponse"
                 }
             }
@@ -518,14 +519,14 @@ class KnownRowsPruningTest {
                 // Given — a table cached by twelve queries, and one of them live with no payload
                 val random = Random(seed * 17 + keys.ordinal)
                 val queries = queriesFor(keys)
-                val objectDao = FakeObjectDao()
-                val store = newTestOfflineStore(objectDao = objectDao, nowMillis = { NOW })
+                val queryCacheDao = FakeQueryCacheDao()
+                val store = newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW })
                 val primaryKeys = PrimaryKeys { keys.columns }
                 store.primaryKeys = primaryKeys
-                store.liveSignatureProvider = { setOf(LIVE) }
+                store.liveCacheKeysOf = { setOf(LIVE) }
                 val marked = mutableSetOf<String>()
-                store.onQueriesMarkedStale = { _, signatures -> marked += signatures }
-                val payloads = seed(random, keys, objectDao, store, queries)
+                store.onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys }
+                val payloads = seed(random, keys, queryCacheDao, store, queries)
 
                 // When — the server accepted one write, or an update that returned several rows
                 val writes = acceptWrite(random, keys, store)
@@ -533,8 +534,8 @@ class KnownRowsPruningTest {
                 // Then — each payload, and each query to fetch again, as with every row
                 val expectedMarked = mutableSetOf<String>()
                 queries.forEach { query ->
-                    val before = payloads[query.signature]
-                    val rows = before?.let { payloadRowsOf(OfflineJson, it.payload) }.orEmpty()
+                    val before = payloads[query.cacheKey]
+                    val rows = before?.let { payloadRowsOf(EngineJson, it.payload) }.orEmpty()
                     val same =
                         everyRow(
                             query,
@@ -565,14 +566,14 @@ class KnownRowsPruningTest {
                         )
                     val overlay =
                         MutationOverlay(
-                            json = OfflineJson,
+                            json = EngineJson,
                             admission = target.admission,
                             primaryKeys = primaryKeys,
                             mayAlreadyHold = { true },
                             placesKeylessUpsertRows = false,
                         )
                     val wrong =
-                        patchMayLeaveWrong(writes, target, OfflineJson) { mutation ->
+                        patchMayLeaveWrong(writes, target, EngineJson) { mutation ->
                             conflictColumnsOf(mutation, primaryKeys)
                         }
                     val expected =
@@ -585,12 +586,12 @@ class KnownRowsPruningTest {
                                     .written
                                     .filter(target.admission::admits)
                             when {
-                                wrong -> null.also { expectedMarked += query.signature }
+                                wrong -> null.also { expectedMarked += query.cacheKey }
                                 made.isEmpty() -> null
                                 else ->
-                                    ObjectRow(
+                                    CachedQueryRow(
                                         TABLE,
-                                        query.signature,
+                                        query.cacheKey,
                                         overlay.encode(made),
                                         staleStampOf(NOW),
                                     )
@@ -603,7 +604,7 @@ class KnownRowsPruningTest {
                             ) {
                                 before
                             } else {
-                                if (wrong) expectedMarked += query.signature
+                                if (wrong) expectedMarked += query.cacheKey
                                 before.copy(
                                     payload = overlay.encode(patched.visible),
                                     updatedAt =
@@ -612,14 +613,14 @@ class KnownRowsPruningTest {
                                 )
                             }
                         }
-                    val after = objectDao.getRow(TABLE, query.signature)
+                    val after = queryCacheDao.getRow(TABLE, query.cacheKey)
                     compared++
                     if (
                         after?.payload != expected?.payload ||
                             after?.updatedAt != expected?.updatedAt
                     )
                         mismatches +=
-                            "$keys seed $seed ${query.signature}: ${after?.payload} " +
+                            "$keys seed $seed ${query.cacheKey}: ${after?.payload} " +
                                 "@${after?.updatedAt}, not ${expected?.payload} " +
                                 "@${expected?.updatedAt}"
                 }
@@ -667,8 +668,7 @@ class KnownRowsPruningTest {
                     table = TABLE,
                     operation = MutationOperation.UPDATE,
                     bodyJson = JsonObject(body + row).toString(),
-                    filterJson =
-                        FilterEngine.encode(FilterDescriptor(conditions = key), OfflineJson),
+                    filterJson = encodeFilter(FilterDescriptor(conditions = key), EngineJson),
                     createdAtMs = NOW,
                 )
             }
@@ -679,8 +679,7 @@ class KnownRowsPruningTest {
                 table = TABLE,
                 operation = write.operation,
                 bodyJson = write.body,
-                filterJson =
-                    write.filter?.let { filter -> FilterEngine.encode(filter, OfflineJson) },
+                filterJson = write.filter?.let { filter -> encodeFilter(filter, EngineJson) },
                 createdAtMs = NOW,
                 onConflict = write.onConflict,
                 ignoreDuplicates =
@@ -694,7 +693,7 @@ class KnownRowsPruningTest {
             row.filterJson,
             onConflict = row.onConflict,
             ignoreDuplicates = row.ignoreDuplicates,
-            liveSignatures = setOf(LIVE),
+            liveCacheKeys = setOf(LIVE),
         )
         return listOf(row)
     }
@@ -708,23 +707,23 @@ class KnownRowsPruningTest {
                 // Given — pending writes, and every read once, so the store keeps what it parsed
                 val random = Random(seed * 13 + keys.ordinal)
                 val queries = queriesFor(keys)
-                val objectDao = FakeObjectDao()
+                val queryCacheDao = FakeQueryCacheDao()
                 val mutationDao = FakeMutationDao()
                 val store =
                     newTestOfflineStore(
-                        objectDao = objectDao,
+                        queryCacheDao = queryCacheDao,
                         mutationDao = mutationDao,
                         nowMillis = { NOW },
                     )
                 store.primaryKeys = PrimaryKeys { keys.columns }
-                store.liveSignatureProvider = { setOf(LIVE) }
-                val before = seed(random, keys, objectDao, store, queries)
+                store.liveCacheKeysOf = { setOf(LIVE) }
+                val before = seed(random, keys, queryCacheDao, store, queries)
                 repeat(1 + random.nextInt(5)) { queue(store, random.write(keys)) }
                 queries.forEach { query ->
-                    before[query.signature]?.let { payload ->
-                        store.overlayCachedPayload(TABLE, query.signature, payload.payload)
+                    before[query.cacheKey]?.let { payload ->
+                        store.overlayCachedPayload(TABLE, query.cacheKey, payload.payload)
                     }
-                    store.overlaidPayloadFlow(TABLE, query.signature).first()
+                    store.overlaidPayloadFlow(TABLE, query.cacheKey).first()
                 }
 
                 // When — accepted writes rewrite the payloads
@@ -734,12 +733,12 @@ class KnownRowsPruningTest {
                         TABLE,
                         write.operation,
                         write.body,
-                        write.filter?.let { filter -> FilterEngine.encode(filter, OfflineJson) },
+                        write.filter?.let { filter -> encodeFilter(filter, EngineJson) },
                         onConflict = write.onConflict,
                         ignoreDuplicates =
                             if (write.operation == MutationOperation.UPSERT) write.ignoreDuplicates
                             else null,
-                        liveSignatures = setOf(LIVE),
+                        liveCacheKeys = setOf(LIVE),
                     )
                 }
 
@@ -747,8 +746,8 @@ class KnownRowsPruningTest {
                 val payloads =
                     queries
                         .mapNotNull { query ->
-                            objectDao.getRow(TABLE, query.signature)?.let { row ->
-                                query.signature to row
+                            queryCacheDao.getRow(TABLE, query.cacheKey)?.let { row ->
+                                query.cacheKey to row
                             }
                         }
                         .toMap()
@@ -763,23 +762,23 @@ class KnownRowsPruningTest {
                             sameProjection = true,
                             null,
                         )
-                    val payload = payloads[query.signature]?.payload
+                    val payload = payloads[query.cacheKey]?.payload
                     val overlaid =
                         everyRowOverlay(payload ?: "[]", all, query, keys.columns, known) { false }
                     val expected =
                         if (payload == null) overlaid.takeUnless { text -> text == "[]" }
                         else overlaid
-                    val reactive = store.overlaidPayloadFlow(TABLE, query.signature).first()
+                    val reactive = store.overlaidPayloadFlow(TABLE, query.cacheKey).first()
                     compared++
                     if (reactive != expected)
                         mismatches +=
-                            "$keys seed $seed ${query.signature} reactive: $reactive, not $expected"
+                            "$keys seed $seed ${query.cacheKey} reactive: $reactive, not $expected"
                     if (payload != null) {
-                        val oneShot = store.overlayCachedPayload(TABLE, query.signature, payload)
+                        val oneShot = store.overlayCachedPayload(TABLE, query.cacheKey, payload)
                         compared++
                         if (oneShot != expected)
                             mismatches +=
-                                "$keys seed $seed ${query.signature} one-shot: $oneShot, " +
+                                "$keys seed $seed ${query.cacheKey} one-shot: $oneShot, " +
                                     "not $expected"
                     }
                 }
@@ -793,15 +792,15 @@ class KnownRowsPruningTest {
      */
     private suspend fun storeOf(
         vararg lists: Triple<String, String, Long>
-    ): Pair<OfflineStore, FakeObjectDao> {
-        val objectDao = FakeObjectDao()
-        val store = newTestOfflineStore(objectDao = objectDao, nowMillis = { NOW })
-        lists.forEach { (signature, payload, updatedAt) ->
-            objectDao.seedPayload(TABLE, signature, payload, updatedAt)
-            val query = queriesFor(Keys.INT).single { query -> query.signature == signature }
-            store.queryShapes.remember(TABLE, signature, shapeOf(query), persist = false)
+    ): Pair<OfflineStore, FakeQueryCacheDao> {
+        val queryCacheDao = FakeQueryCacheDao()
+        val store = newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW })
+        lists.forEach { (cacheKey, payload, updatedAt) ->
+            queryCacheDao.seedPayload(TABLE, cacheKey, payload, updatedAt)
+            val query = queriesFor(Keys.INT).single { query -> query.cacheKey == cacheKey }
+            store.queryShapes.remember(TABLE, cacheKey, shapeOf(query), persist = false)
         }
-        return store to objectDao
+        return store to queryCacheDao
     }
 
     private fun byColumn(column: String, value: String): FilterDescriptor =
@@ -833,7 +832,7 @@ class KnownRowsPruningTest {
         // When — a queued update moves row 5 into list B
         store.enqueueUpdate(
             TABLE,
-            OfflineJson.parseToJsonElement("""{"list":"B"}"""),
+            EngineJson.parseToJsonElement("""{"list":"B"}"""),
             byColumn("id", "5"),
         )
 
@@ -860,12 +859,12 @@ class KnownRowsPruningTest {
         store.queryShapes.remember(
             TABLE,
             "everything",
-            shapeOf(queriesFor(Keys.INT).single { query -> query.signature == "everything" }),
+            shapeOf(queriesFor(Keys.INT).single { query -> query.cacheKey == "everything" }),
             persist = false,
         )
         store.enqueueUpsert(
             TABLE,
-            JsonArray(listOf(OfflineJson.parseToJsonElement("""{"id":5,"list":"B"}"""))),
+            JsonArray(listOf(EngineJson.parseToJsonElement("""{"id":5,"list":"B"}"""))),
         )
         val first = store.overlayCachedPayload(TABLE, "list-b", LIST_B)
 
@@ -912,7 +911,7 @@ class KnownRowsPruningTest {
             TABLE,
             JsonArray(
                 listOf(
-                    OfflineJson.parseToJsonElement(
+                    EngineJson.parseToJsonElement(
                         """{"id":"5","list":"A","title":"renamed","flag":"urgent"}"""
                     )
                 )
@@ -920,7 +919,7 @@ class KnownRowsPruningTest {
         )
         store.enqueueUpdate(
             TABLE,
-            OfflineJson.parseToJsonElement("""{"list":"B"}"""),
+            EngineJson.parseToJsonElement("""{"list":"B"}"""),
             byColumn("flag", "urgent"),
         )
 
@@ -948,12 +947,12 @@ class KnownRowsPruningTest {
         store.enqueueInsert(
             TABLE,
             JsonArray(
-                listOf(OfflineJson.parseToJsonElement("""{"id":5,"list":"B","title":"new"}"""))
+                listOf(EngineJson.parseToJsonElement("""{"id":5,"list":"B","title":"new"}"""))
             ),
         )
         store.enqueueUpsert(
             TABLE,
-            JsonArray(listOf(OfflineJson.parseToJsonElement("""{"id":5,"status":"open"}"""))),
+            JsonArray(listOf(EngineJson.parseToJsonElement("""{"id":5,"status":"open"}"""))),
         )
 
         // Then — gone from list A; in list B once, as inserted and upserted
@@ -968,7 +967,7 @@ class KnownRowsPruningTest {
     fun a_row_two_lists_filters_match_moves_between_them_once() = runTest {
         // Given — row 5 in list A and in the urgent list
         val row = """{"id":5,"list":"A","flag":"urgent","title":"old"}"""
-        val (store, objectDao) =
+        val (store, queryCacheDao) =
             storeOf(
                 Triple("list-a", "[$row]", NOW - 3_000),
                 Triple("urgent", "[$row]", NOW - 2_000),
@@ -980,26 +979,26 @@ class KnownRowsPruningTest {
             TABLE,
             MutationOperation.UPDATE,
             """{"title":"new"}""",
-            FilterEngine.encode(byColumn("id", "5"), OfflineJson),
-            liveSignatures = emptySet(),
+            encodeFilter(byColumn("id", "5"), EngineJson),
+            liveCacheKeys = emptySet(),
         )
         store.patchCachedQueries(
             TABLE,
             MutationOperation.UPDATE,
             """{"list":"B"}""",
-            FilterEngine.encode(byColumn("id", "5"), OfflineJson),
-            liveSignatures = emptySet(),
+            encodeFilter(byColumn("id", "5"), EngineJson),
+            liveCacheKeys = emptySet(),
         )
 
         // Then — it left list A, stays in the urgent list, and joined list B once
-        assertEquals("[]", objectDao.getRow(TABLE, "list-a")?.payload)
+        assertEquals("[]", queryCacheDao.getRow(TABLE, "list-a")?.payload)
         assertEquals(
             """[{"id":5,"list":"B","flag":"urgent","title":"new"}]""",
-            objectDao.getRow(TABLE, "urgent")?.payload,
+            queryCacheDao.getRow(TABLE, "urgent")?.payload,
         )
         assertEquals(
             """[{"id":1,"list":"B","title":"b"},{"id":5,"list":"B","flag":"urgent","title":"new"}]""",
-            objectDao.getRow(TABLE, "list-b")?.payload,
+            queryCacheDao.getRow(TABLE, "list-b")?.payload,
         )
     }
 
@@ -1023,18 +1022,18 @@ class KnownRowsPruningTest {
                     }
                 }
             val queries = TRUTH_QUERIES
-            val objectDao = FakeObjectDao()
-            val store = newTestOfflineStore(objectDao = objectDao, nowMillis = { NOW })
-            store.liveSignatureProvider = { emptySet() }
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW })
+            store.liveCacheKeysOf = { emptySet() }
             val marked = mutableSetOf<String>()
-            store.onQueriesMarkedStale = { _, signatures -> marked += signatures }
-            queries.entries.forEachIndexed { position, (signature, conditions) ->
+            store.onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys }
+            queries.entries.forEachIndexed { position, (cacheKey, conditions) ->
                 val shape = QueryShape("*", conditions, hasOtherFilters = false)
-                store.queryShapes.remember(TABLE, signature, shape, persist = false)
+                store.queryShapes.remember(TABLE, cacheKey, shape, persist = false)
                 val answer = server.filter { row -> conditions.all { truth(row, it) } }
-                objectDao.seedPayload(
+                queryCacheDao.seedPayload(
                     TABLE,
-                    signature,
+                    cacheKey,
                     JsonArray(answer).toString(),
                     NOW - position,
                 )
@@ -1055,23 +1054,23 @@ class KnownRowsPruningTest {
                 TABLE,
                 MutationOperation.UPDATE,
                 patch.toString(),
-                FilterEngine.encode(FilterDescriptor(conditions = filter), OfflineJson),
-                liveSignatures = emptySet(),
+                encodeFilter(FilterDescriptor(conditions = filter), EngineJson),
+                liveCacheKeys = emptySet(),
             )
 
             val after = server.map { row ->
                 if (filter.all { truth(row, it) }) JsonObject(row + patch) else row
             }
-            queries.forEach { (signature, conditions) ->
-                val stored = checkNotNull(objectDao.getRow(TABLE, signature))
-                if (signature in marked || isStaleStamp(stored.updatedAt)) return@forEach
+            queries.forEach { (cacheKey, conditions) ->
+                val stored = checkNotNull(queryCacheDao.getRow(TABLE, cacheKey))
+                if (cacheKey in marked || isStaleStamp(stored.updatedAt)) return@forEach
                 fresh++
                 val shown =
-                    payloadRowsOf(OfflineJson, stored.payload).orEmpty().sortedBy { row ->
+                    payloadRowsOf(EngineJson, stored.payload).orEmpty().sortedBy { row ->
                         (row as JsonObject).getValue("id").toString().toInt()
                     }
                 val truth = after.filter { row -> conditions.all { truth(row, it) } }
-                if (shown != truth) mismatches += "seed $seed $signature: $shown, not $truth"
+                if (shown != truth) mismatches += "seed $seed $cacheKey: $shown, not $truth"
             }
         }
         assertEquals(emptyList(), mismatches.take(3))

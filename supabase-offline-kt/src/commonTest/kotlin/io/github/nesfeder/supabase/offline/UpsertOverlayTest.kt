@@ -6,7 +6,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMAR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
@@ -28,7 +28,7 @@ import kotlinx.serialization.json.jsonObject
 class UpsertOverlayTest {
 
     private val server = FakeRelationalPostgrestServer()
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
 
     private var client: SupabaseOfflineClient = newClient()
@@ -36,7 +36,7 @@ class UpsertOverlayTest {
     private fun newClient(primaryKeys: PrimaryKeys = DefaultPrimaryKeys): SupabaseOfflineClient =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
-            store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao),
+            store = newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao),
             coordinatorScope = idleCoroutineScope(),
             primaryKeys = primaryKeys,
         )

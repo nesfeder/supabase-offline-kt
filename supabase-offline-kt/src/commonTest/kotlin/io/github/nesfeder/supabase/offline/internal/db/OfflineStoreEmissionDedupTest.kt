@@ -4,8 +4,9 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,19 +38,19 @@ class OfflineStoreEmissionDedupTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given — a live overlay collector and a cached payload
             var now = 0L
-            val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { now })
+            val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { now })
             val emissions = mutableListOf<String?>()
             val collector = launch {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
             now = 1L
-            store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
+            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_ONE_ROW)
             val emissionsAfterFirstWrite = emissions.size
 
             // When — a background refresh rewrites the byte-identical payload with a fresh
             // timestamp
             now = 2L
-            store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
+            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_ONE_ROW)
 
             // Then — the rewrite is invisible downstream: no new emission, so no re-decode fan-out
             assertEquals(
@@ -64,12 +65,12 @@ class OfflineStoreEmissionDedupTest {
     fun mutation_write_for_an_unrelated_table_does_not_reemit() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a live overlay collector on `ratings` with a cached payload
-            val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { 1L })
+            val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { 1L })
             val emissions = mutableListOf<String?>()
             val collector = launch {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
-            store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
+            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_ONE_ROW)
             val emissionsBeforeUnrelatedWrite = emissions.size
 
             // When — a mutation is queued for a different table (the mutation queue is one shared
@@ -101,17 +102,17 @@ class OfflineStoreEmissionDedupTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given — a live overlay collector and a cached payload
             var now = 0L
-            val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { now })
+            val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { now })
             val emissions = mutableListOf<String?>()
             val collector = launch {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
             now = 1L
-            store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_ONE_ROW)
+            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_ONE_ROW)
 
             // When — a refresh writes a genuinely different payload
             now = 2L
-            store.addPayload(table = "ratings", signature = "sig-A", payload = PAYLOAD_TWO_ROWS)
+            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_TWO_ROWS)
 
             // Then — the change propagates and the latest emission carries the new payload
             assertEquals(
@@ -123,12 +124,12 @@ class OfflineStoreEmissionDedupTest {
         }
 
     private fun buildStore(
-        objectDao: ObjectDao,
+        queryCacheDao: QueryCacheDao,
         mutationDao: MutationDao,
         nowMillis: () -> Long,
     ): OfflineStore =
         newTestOfflineStore(
-            objectDao = objectDao,
+            queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             nowMillis = nowMillis,
         )

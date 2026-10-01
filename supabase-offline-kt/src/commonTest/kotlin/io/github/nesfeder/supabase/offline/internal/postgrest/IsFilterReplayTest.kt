@@ -27,12 +27,12 @@ class IsFilterReplayTest {
     private fun replayed(value: String): List<String>? {
         val captured =
             assertNotNull(
-                buildDescriptorStrict(
+                captureFilterExactly(
                     newBuilder().apply { filter { filter("deleted_at", FilterOperator.IS, value) } }
                 )
             )
         val replayBuilder = newBuilder()
-        FilterEngine.applyTo(replayBuilder, captured)
+        replayOnto(replayBuilder, captured)
         return replayBuilder.params["deleted_at"]
     }
 

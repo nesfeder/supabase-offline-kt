@@ -27,7 +27,7 @@ class OfflineMutationLoggingTest {
         OfflinePostgrestQueryBuilderImpl(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = newTestOfflineStore(),
-            sdkLogger = logger.asSdkLogger(),
+            engineLogger = logger.asEngineLogger(),
         )
 
     private fun messagesAt(level: OfflineLogLevel): List<String> =

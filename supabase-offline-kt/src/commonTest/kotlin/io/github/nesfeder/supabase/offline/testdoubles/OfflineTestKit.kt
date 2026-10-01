@@ -12,15 +12,15 @@ import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.db.StorageDao
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
@@ -29,8 +29,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
@@ -51,13 +50,13 @@ import okio.SYSTEM
 /*
  * The one place the engine's tests build the offline stack. Start here when writing a test:
  *
- * - newTestOfflineStore — a real OfflineStore over the in-memory DAOs (FakeObjectDao /
- *   FakeMutationDao add recording and scripting hooks; InMemoryStorageDao has none to add).
+ * - newTestOfflineStore — a real OfflineStore over the in-memory DAOs (FakeQueryCacheDao /
+ *   FakeMutationDao add recording and scripting hooks; InMemoryCachedFileDao has none to add).
  * - newTestSupabaseClient / newTestPostgrest — a real supabase-kt client on a Ktor MockEngine.
  * - newTestOfflineClient — the real SupabaseOfflineClientImpl over the two.
  *
  * To observe what goes on the wire, build the client from a RecordingPostgrestServer. To script
- * the PostgREST handle without HTTP, use FakePostgrestQueryBuilderWrapper.
+ * the PostgREST handle without HTTP, use FakeRemoteTable.
  */
 
 /** Project URL every test client points at. Never contacted: requests go to a MockEngine. */
@@ -67,52 +66,49 @@ internal const val TEST_SUPABASE_URL: String = "https://unit-test.supabase.co"
 internal const val TEST_SUPABASE_KEY: String = "unit-test-anon-key"
 
 /** Cache settings with size-based eviction off — what every test but the eviction tests uses. */
-internal val UNLIMITED_TEST_CACHE_SETTINGS: OfflineCacheSettings =
-    OfflineCacheSettings(
-        maxDbSizeBytes = null,
+internal val UNLIMITED_TEST_CACHE_SETTINGS: QueryCacheLimits =
+    QueryCacheLimits(
+        maxPayloadBytes = null,
         evictionBatchSize = 0,
-        minRetainedBytes = 0,
+        evictionHeadroomBytes = 0,
     )
 
 /**
  * Builds a real [OfflineStore] over in-memory DAOs, so a test drives the store's real logic without
  * Room or a filesystem.
  *
- * @param objectDao object-cache DAO; pass a [FakeObjectDao] to seed or inspect cached payloads.
- * @param storageDao storage-metadata DAO.
+ * @param queryCacheDao object-cache DAO; pass a [FakeQueryCacheDao] to seed or inspect cached
+ *   payloads.
+ * @param cachedFileDao storage-metadata DAO.
  * @param mutationDao mutation-queue DAO; pass a [FakeMutationDao] to inspect what was queued.
- * @param settings eviction settings; eviction is off by default.
+ * @param queryCacheLimits eviction settings; eviction is off by default.
  * @param nowMillis clock for row timestamps; defaults to a fixed `0L`.
  * @param monotonicTick tick source for the stale-refresh watermark, or `null` for the store's own.
  * @return a store wired to the given DAOs.
  */
 internal fun newTestOfflineStore(
-    objectDao: ObjectDao = FakeObjectDao(),
-    storageDao: StorageDao = InMemoryStorageDao(),
+    queryCacheDao: QueryCacheDao = FakeQueryCacheDao(),
+    cachedFileDao: CachedFileDao = InMemoryCachedFileDao(),
     mutationDao: MutationDao = FakeMutationDao(),
-    settings: OfflineCacheSettings = UNLIMITED_TEST_CACHE_SETTINGS,
+    queryCacheLimits: QueryCacheLimits = UNLIMITED_TEST_CACHE_SETTINGS,
     nowMillis: () -> Long = { 0L },
     monotonicTick: (() -> Long)? = null,
 ): OfflineStore =
     if (monotonicTick == null) {
         OfflineStore(
-            objectDao = objectDao,
-            storageDao = storageDao,
+            queryCacheDao = queryCacheDao,
+            cachedFileDao = cachedFileDao,
             mutationDao = mutationDao,
-            dbPathProvider = InMemoryDbPathProvider,
-            settings = settings,
+            queryCacheLimits = queryCacheLimits,
             nowMillis = nowMillis,
-            dbSizeProvider = { null },
         )
     } else {
         OfflineStore(
-            objectDao = objectDao,
-            storageDao = storageDao,
+            queryCacheDao = queryCacheDao,
+            cachedFileDao = cachedFileDao,
             mutationDao = mutationDao,
-            dbPathProvider = InMemoryDbPathProvider,
-            settings = settings,
+            queryCacheLimits = queryCacheLimits,
             nowMillis = nowMillis,
-            dbSizeProvider = { null },
             monotonicTick = monotonicTick,
         )
     }
@@ -140,7 +136,7 @@ internal fun newTestSupabaseClient(
 internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 
 /**
- * Records that the query cached under [signature] has the shape of a SELECT of [columns] that
+ * Records that the query cached under [cacheKey] has the shape of a SELECT of [columns] that
  * [request] configures, as a read through the client would.
  *
  * @param persist whether to write the record to the object cache as well; by default it is kept in
@@ -148,7 +144,7 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  */
 internal suspend fun OfflineStore.recordQueryShape(
     table: String,
-    signature: String,
+    cacheKey: String,
     columns: Columns = Columns.ALL,
     persist: Boolean = false,
     request: SelectRequestBuilder.() -> Unit,
@@ -158,7 +154,7 @@ internal suspend fun OfflineStore.recordQueryShape(
             columns,
             SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply(request),
         )
-    queryShapes.remember(table, signature, shape, persist)
+    queryShapes.remember(table, cacheKey, shape, persist)
 }
 
 /**
@@ -167,12 +163,12 @@ internal suspend fun OfflineStore.recordQueryShape(
  * @param supabase the wrapped client.
  * @param store the offline store.
  * @param baseDirectoryProvider base directory for downloaded storage files.
- * @param sdkLogger the SDK logger.
+ * @param engineLogger the SDK logger.
  * @param onClose what the client's `close()` releases, as the factories wire the database.
  * @param coordinatorScope the parent of the client's own scope, whose dispatcher runs its
  *   background work (refresh loops, replay passes it starts itself); pass `runTest`'s
  *   `backgroundScope` to drive it from the test scheduler. The default's handler logs a background
- *   failure to [sdkLogger] instead of failing the test; build that logger from a
+ *   failure to [engineLogger] instead of failing the test; build that logger from a
  *   [RecordingOfflineLogger] to see one.
  * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
  *   database's scrub.
@@ -188,9 +184,9 @@ internal fun newTestOfflineClient(
     supabase: SupabaseClient = newTestSupabaseClient(),
     store: OfflineStore = newTestOfflineStore(),
     baseDirectoryProvider: () -> Path = { "/tmp".toPath() },
-    sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
     onClose: () -> Unit = {},
-    coordinatorScope: CoroutineScope = newEngineScope(sdkLogger),
+    coordinatorScope: CoroutineScope = newEngineScope(engineLogger),
     scrubDatabase: suspend () -> Unit = {},
     closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
@@ -201,7 +197,7 @@ internal fun newTestOfflineClient(
         supabase = supabase,
         store = store,
         baseDirectoryProvider = baseDirectoryProvider,
-        sdkLogger = sdkLogger,
+        engineLogger = engineLogger,
         coordinatorScope = coordinatorScope,
         scrubDatabase = scrubDatabase,
         onClose = onClose,
@@ -217,7 +213,7 @@ internal fun newTestOfflineClient(
  *
  * @param baseDirectory the offline data directory; files land under `<baseDirectory>/storage`.
  * @param store the offline store holding the cache rows.
- * @param sdkLogger the SDK logger.
+ * @param engineLogger the SDK logger.
  * @param fileSystem the file system; pass a [FakeFailingFileSystem] to make it fail.
  * @param maxSizeBytes the size bound, or `null` for none.
  * @param nowMillis the clock use times are stamped from.
@@ -226,7 +222,7 @@ internal fun newTestOfflineClient(
 internal fun newTestFileCache(
     baseDirectory: Path,
     store: OfflineStore = newTestOfflineStore(),
-    sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
     fileSystem: FileSystem = FileSystem.SYSTEM,
     maxSizeBytes: Long? = null,
     nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
@@ -235,7 +231,7 @@ internal fun newTestFileCache(
         store = store,
         dataDirectoryProvider = { baseDirectory },
         maxSizeBytes = maxSizeBytes,
-        sdkLogger = sdkLogger,
+        engineLogger = engineLogger,
         fileSystem = fileSystem,
         nowMillis = nowMillis,
     )
@@ -248,8 +244,8 @@ internal fun newTestFileCache(
  *   [RecordingStorageServer] client.
  * @param baseDirectory the offline data directory; files land under `<baseDirectory>/storage`.
  * @param store the offline store holding the cache rows.
- * @param sdkLogger the SDK logger.
- * @param cache the file cache; by default one over [baseDirectory], [store] and [sdkLogger].
+ * @param engineLogger the SDK logger.
+ * @param cache the file cache; by default one over [baseDirectory], [store] and [engineLogger].
  * @param backgroundScope where the bucket waits for resumable uploads to finish; by default an
  *   engine scope of its own, as the client's is.
  * @param operationGate the gate every member passes; pass one to close it as the client's close
@@ -260,16 +256,16 @@ internal fun newTestBucketApi(
     delegate: BucketApi,
     baseDirectory: Path,
     store: OfflineStore = newTestOfflineStore(),
-    sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
     cache: StorageFileCache =
-        newTestFileCache(baseDirectory = baseDirectory, store = store, sdkLogger = sdkLogger),
-    backgroundScope: CoroutineScope = newEngineScope(sdkLogger),
+        newTestFileCache(baseDirectory = baseDirectory, store = store, engineLogger = engineLogger),
+    backgroundScope: CoroutineScope = newEngineScope(engineLogger),
     operationGate: ClientOperationGate = ClientOperationGate(),
 ): CachingBucketApi =
     CachingBucketApi(
         delegate = delegate,
         cache = cache,
-        sdkLogger = sdkLogger,
+        engineLogger = engineLogger,
         backgroundScope = backgroundScope,
         operationGate = operationGate,
     )

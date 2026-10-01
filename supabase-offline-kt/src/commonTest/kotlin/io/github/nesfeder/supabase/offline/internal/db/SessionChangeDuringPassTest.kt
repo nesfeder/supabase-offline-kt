@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -36,7 +37,7 @@ class SessionChangeDuringPassTest {
                     okJson("[]")
                 }
             )
-        val syncer =
+        val replayer =
             MutationQueueReplayer(
                 store = store,
                 supabase = server.supabaseClient(),
@@ -44,7 +45,7 @@ class SessionChangeDuringPassTest {
             )
 
         // When
-        syncer.sync()
+        replayer.sync()
 
         // Then — nothing went out under B, and A's two remaining edits are still queued
         assertEquals(1, server.requests.size, "requests sent: ${server.requests.map { it.body }}")

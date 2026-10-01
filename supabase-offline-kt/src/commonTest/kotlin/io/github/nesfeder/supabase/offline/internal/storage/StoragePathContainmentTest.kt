@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
@@ -293,7 +293,7 @@ class StoragePathContainmentTest {
         val cache = newTestFileCache(baseDirectory = dataDirectory, store = store)
 
         // When
-        cache.clear { store.clearAll() }
+        cache.clear { store.clearLocalData() }
 
         // Then
         assertTrue(
@@ -364,7 +364,7 @@ class StoragePathContainmentTest {
                 .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
                 .toList(),
         )
-        assertTrue(store.allStorageRows().isEmpty())
+        assertTrue(store.allCachedFileRows().isEmpty())
         assertNothingEscaped()
     }
 

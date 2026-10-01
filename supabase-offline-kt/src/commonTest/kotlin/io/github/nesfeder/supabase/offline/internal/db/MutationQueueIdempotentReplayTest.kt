@@ -7,8 +7,9 @@ import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -183,9 +184,10 @@ class MutationQueueIdempotentReplayTest {
     @Test
     fun an_insert_whose_send_was_under_way_when_the_app_died_replays_as_an_upsert() = runTest {
         // Given — the send started and the process died before any answer
-        val objectDao = FakeObjectDao()
+        val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
-        val beforeTheCrash = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+        val beforeTheCrash =
+            newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
         val id =
             beforeTheCrash.enqueueInsert(
                 table = TABLE,
@@ -195,7 +197,8 @@ class MutationQueueIdempotentReplayTest {
 
         // When — the next launch replays it
         val server = RecordingPostgrestServer()
-        val afterTheCrash = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+        val afterTheCrash =
+            newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
         MutationQueueReplayer(store = afterTheCrash, supabase = server.supabaseClient())
             .syncAllTables()
 
@@ -212,15 +215,15 @@ class MutationQueueIdempotentReplayTest {
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
-        val syncer =
+        val replayer =
             MutationQueueReplayer(
                 store = store,
                 supabase = server.supabaseClient(),
-                sdkLogger = logger.asSdkLogger(),
+                engineLogger = logger.asEngineLogger(),
             )
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — synced once, and the count the server returned is logged without the row's values
         assertEquals(1, report.syncedCount)

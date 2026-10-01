@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationOperation as MutationQueueOperation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
@@ -41,7 +42,7 @@ class MutationIdAndSyncReportTest {
     private var clock = 7_000L
     private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock })
     private val server = RecordingPostgrestServer()
-    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+    private val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     @Test
     fun ids_are_assigned_in_order_and_survive_a_restart() = runTest {
@@ -61,7 +62,7 @@ class MutationIdAndSyncReportTest {
     fun an_id_is_never_reused_after_the_queue_empties() = runTest {
         // Given — a queue that was emptied
         val first = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"a"}]"""))
-        store.clearAll()
+        store.clearLocalData()
 
         // When
         val next = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"b"}]"""))
@@ -131,7 +132,7 @@ class MutationIdAndSyncReportTest {
         }
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then
         assertEquals(1, report.syncedCount)
@@ -147,7 +148,7 @@ class MutationIdAndSyncReportTest {
         server.answer = { connectivityFailure() }
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — one request, then back, with everything still pending
         assertEquals(1, server.requests.size)
@@ -159,7 +160,7 @@ class MutationIdAndSyncReportTest {
     @Test
     fun a_pass_over_an_empty_queue_reports_nothing_left() = runTest {
         // Given / When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then
         assertEquals(0, report.syncedCount)

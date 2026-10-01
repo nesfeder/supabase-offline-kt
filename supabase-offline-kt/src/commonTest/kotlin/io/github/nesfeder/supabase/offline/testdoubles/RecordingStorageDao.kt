@@ -4,8 +4,8 @@
 
 package io.github.nesfeder.supabase.offline.testdoubles
 
-import io.github.nesfeder.supabase.offline.internal.db.StorageRow
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -13,7 +13,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * The in-memory storage DAO, recording how often the file cache scans it, and with a database
  * failure a test can switch on.
  */
-internal class RecordingStorageDao : InMemoryStorageDao() {
+internal class RecordingCachedFileDao : InMemoryCachedFileDao() {
 
     /** When set, every row write throws, as SQLite does on a full disk. */
     var failUpserts: Boolean = false
@@ -40,13 +40,13 @@ internal class RecordingStorageDao : InMemoryStorageDao() {
         totalSizeCalls.store(0)
     }
 
-    override suspend fun upsert(row: StorageRow) {
+    override suspend fun upsert(row: CachedFileRow) {
         if (failUpserts)
             throw IllegalStateException("database or disk is full (code 13 SQLITE_FULL)")
         super.upsert(row)
     }
 
-    override suspend fun all(): List<StorageRow> {
+    override suspend fun all(): List<CachedFileRow> {
         allCalls.addAndFetch(1)
         return super.all()
     }

@@ -4,8 +4,14 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_BODY_CHARS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_LIST_CHARS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_TEXT_CHARS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -22,11 +28,11 @@ import kotlinx.coroutines.test.runTest
  */
 class RejectedListBoundsTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val logger = RecordingOfflineLogger()
     private val store =
-        newTestOfflineStore(objectDao = objectDao).also { store ->
-            store.sdkLogger = logger.asSdkLogger()
+        newTestOfflineStore(queryCacheDao = queryCacheDao).also { store ->
+            store.engineLogger = logger.asEngineLogger()
         }
 
     @Test
@@ -34,13 +40,13 @@ class RejectedListBoundsTest {
         // Given / When — ten refused writes of a megabyte each
         val body = "[{\"id\":\"x\",\"blob\":\"" + "a".repeat(1024 * 1024) + "\"}]"
         repeat(10) { index ->
-            store.mutationQueueState.addRejection(rejection(id = index + 1L, bodyJson = body))
+            store.rejectedList.addRejection(rejection(id = index + 1L, bodyJson = body))
         }
 
         // Then — every rejection is still listed, and the row stays small
-        assertEquals((1L..10L).toList(), store.mutationQueueState.rejections().map { it.id })
+        assertEquals((1L..10L).toList(), store.rejectedList.rejections().map { it.id })
         val rowLength =
-            objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)?.payload?.length
+            queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY)?.payload?.length
                 ?: 0
         assertTrue(rowLength < 1_200_000, "the rejected list row holds $rowLength characters")
     }
@@ -49,11 +55,11 @@ class RejectedListBoundsTest {
     fun an_entry_that_leaves_the_full_list_is_logged() = runTest {
         // Given / When — one more than the list keeps
         repeat(MAX_REJECTED_MUTATIONS + 1) { index ->
-            store.mutationQueueState.addRejection(rejection(id = index + 1L))
+            store.rejectedList.addRejection(rejection(id = index + 1L))
         }
 
         // Then — the oldest went, and a WARNING names it
-        assertEquals(2L, store.mutationQueueState.rejections().first().id)
+        assertEquals(2L, store.rejectedList.rejections().first().id)
         val warnings = logger.entriesAt(OfflineLogLevel.WARNING).map { it.message }
         assertTrue(
             warnings.any { it.contains("1") && it.contains("notes") && it.contains("INSERT") },
@@ -65,17 +71,17 @@ class RejectedListBoundsTest {
     fun a_body_too_long_to_keep_is_dropped_with_its_size_and_cannot_be_retried() = runTest {
         // Given / When
         val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS) + "\"}]"
-        store.mutationQueueState.addRejection(rejection(id = 1L, bodyJson = body))
+        store.rejectedList.addRejection(rejection(id = 1L, bodyJson = body))
 
         // Then — the entry stays, without its body, saying how long it was; a retry declines it
-        val entry = store.mutationQueueState.rejections().single()
+        val entry = store.rejectedList.rejections().single()
         assertEquals(body.length, entry.bodyOmittedChars)
         assertEquals(
             body.length,
             entry.toRejectedMutation(store.json, DefaultPrimaryKeys).bodyOmittedChars,
         )
         assertNull(store.retryRejectedMutation(1L, identity = null))
-        assertEquals(1, store.mutationQueueState.rejections().size)
+        assertEquals(1, store.rejectedList.rejections().size)
     }
 
     @Test
@@ -83,20 +89,21 @@ class RejectedListBoundsTest {
         // Given / When — fifty rejections whose bodies are just under the per-body limit
         val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS - 20) + "\"}]"
         repeat(50) { index ->
-            store.mutationQueueState.addRejection(rejection(id = index + 1L, bodyJson = body))
+            store.rejectedList.addRejection(rejection(id = index + 1L, bodyJson = body))
         }
 
         // Then — the newest are kept within the budget, and the count of dropped entries is
         // persisted
-        val row = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+        val row =
+            assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
         assertTrue(
             row.payload.length <= MAX_REJECTED_LIST_CHARS + 1_000,
             "the row holds ${row.payload.length} characters",
         )
-        val kept = store.mutationQueueState.rejections()
+        val kept = store.rejectedList.rejections()
         assertEquals(50L, kept.last().id)
-        val reloaded = newTestOfflineStore(objectDao = objectDao)
-        assertEquals(50L - kept.size, reloaded.mutationQueueState.droppedCount())
+        val reloaded = newTestOfflineStore(queryCacheDao = queryCacheDao)
+        assertEquals(50L - kept.size, reloaded.rejectedList.droppedCount())
     }
 
     @Test
@@ -104,8 +111,8 @@ class RejectedListBoundsTest {
         // Given — a list close to its size budget
         val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS - 20) + "\"}]"
         val entries = (1L..31L).map { id -> rejection(id = id, bodyJson = body) }
-        entries.forEach { entry -> store.mutationQueueState.addRejection(entry) }
-        val droppedBefore = store.mutationQueueState.droppedCount()
+        entries.forEach { entry -> store.rejectedList.addRejection(entry) }
+        val droppedBefore = store.rejectedList.droppedCount()
 
         // When — one entry with the longest body and server texts the list keeps
         val text = "t".repeat(MAX_REJECTED_TEXT_CHARS)
@@ -115,15 +122,15 @@ class RejectedListBoundsTest {
                     message = text,
                     serverError = StoredServerError(400, "x", text, details = text, hint = text),
                 )
-        store.mutationQueueState.addRejection(large)
+        store.rejectedList.addRejection(large)
 
         // Then — exactly the oldest entries that take the list over its budget went, and no more
-        val all = store.mutationQueueState.rejections()
+        val all = store.rejectedList.rejections()
         val kept = (entries + large).takeLastWhileWithin(MAX_REJECTED_LIST_CHARS)
         assertEquals(kept.map { it.id }, all.map { it.id })
         assertEquals(
             droppedBefore + (entries.size + 1 - kept.size),
-            store.mutationQueueState.droppedCount(),
+            store.rejectedList.droppedCount(),
         )
     }
 
@@ -142,17 +149,17 @@ class RejectedListBoundsTest {
     fun the_count_of_dropped_entries_can_be_reset() = runTest {
         // Given
         repeat(MAX_REJECTED_MUTATIONS + 3) { index ->
-            store.mutationQueueState.addRejection(rejection(id = index + 1L))
+            store.rejectedList.addRejection(rejection(id = index + 1L))
         }
-        assertEquals(3L, store.mutationQueueState.droppedCount())
+        assertEquals(3L, store.rejectedList.droppedCount())
 
         // When
-        store.mutationQueueState.resetDroppedCount()
+        store.rejectedList.resetDroppedCount()
 
         // Then
         assertEquals(
             0L,
-            newTestOfflineStore(objectDao = objectDao).mutationQueueState.droppedCount(),
+            newTestOfflineStore(queryCacheDao = queryCacheDao).rejectedList.droppedCount(),
         )
     }
 

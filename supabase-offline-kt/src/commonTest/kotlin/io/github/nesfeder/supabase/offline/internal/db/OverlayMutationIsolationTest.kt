@@ -3,12 +3,12 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -97,7 +97,7 @@ class OverlayMutationIsolationTest {
         val logger = RecordingOfflineLogger()
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
-        store.sdkLogger = logger.asSdkLogger()
+        store.engineLogger = logger.asEngineLogger()
         mutationDao.insert(
             mutation(id = 0, operation = MutationOperation.INSERT, body = "not json $PRIVATE_VALUE")
         )
@@ -117,7 +117,7 @@ class OverlayMutationIsolationTest {
         val logger = RecordingOfflineLogger()
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
-        store.sdkLogger = logger.asSdkLogger()
+        store.engineLogger = logger.asEngineLogger()
         mutationDao.insert(
             mutation(id = 0, operation = MutationOperation.INSERT, body = "not json")
         )
@@ -133,7 +133,7 @@ class OverlayMutationIsolationTest {
         onMutationFailure: (MutationRow, Exception) -> Unit = { _, _ -> }
     ): MutationOverlay =
         MutationOverlay(
-            json = OfflineJson,
+            json = EngineJson,
             admission = QueryAdmission.EVERY_ROW,
             primaryKeys = DefaultPrimaryKeys,
             mayAlreadyHold = { true },
@@ -151,7 +151,7 @@ class OverlayMutationIsolationTest {
             table = "todos",
             operation = operation,
             bodyJson = body,
-            filterJson = filter?.let { FilterEngine.encode(it, OfflineJson) },
+            filterJson = filter?.let { encodeFilter(it, EngineJson) },
             createdAtMs = id,
         )
 

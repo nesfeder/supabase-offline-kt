@@ -3,8 +3,8 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -27,8 +27,8 @@ import kotlinx.serialization.json.JsonElement
 class OnlineWriteJoinsQueueTest {
 
     private val server = RecordingPostgrestServer()
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val queryCacheDao = FakeQueryCacheDao()
+    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val builder =
         OfflinePostgrestQueryBuilderImpl(
             delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -41,7 +41,7 @@ class OnlineWriteJoinsQueueTest {
     @Test
     fun an_online_edit_behind_a_pending_offline_edit_reaches_the_server_last() = runTest {
         // Given — offline, the user renamed the task to A
-        objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1,"title":"original"}]""")
         server.answer = { connectivityFailure() }
         rename("A")
 
@@ -59,7 +59,7 @@ class OnlineWriteJoinsQueueTest {
     @Test
     fun the_screen_shows_the_latest_edit_while_the_older_one_is_still_queued() = runTest {
         // Given — a cached task, renamed to A offline
-        objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1,"title":"original"}]""")
         server.answer = { connectivityFailure() }
         rename("A")
 
@@ -77,7 +77,7 @@ class OnlineWriteJoinsQueueTest {
         )
         assertEquals(
             """[{"id":1,"title":"B"}]""",
-            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
+            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
     }
 
@@ -121,7 +121,7 @@ class OnlineWriteJoinsQueueTest {
     fun an_online_write_with_nothing_pending_is_applied_at_once_and_leaves_no_queue_row() =
         runTest {
             // Given — nothing pending
-            objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
+            queryCacheDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1,"title":"original"}]""")
 
             // When
             val outcome = rename("B")
@@ -129,7 +129,10 @@ class OnlineWriteJoinsQueueTest {
             // Then — applied, overlaid, and gone from the queue
             assertEquals(MutationOutcome.Applied::class, outcome::class)
             assertEquals(0, store.allPendingMutations().size)
-            assertEquals("""[{"id":1,"title":"B"}]""", objectDao.getRow(TABLE, SIGNATURE)?.payload)
+            assertEquals(
+                """[{"id":1,"title":"B"}]""",
+                queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload,
+            )
         }
 
     @Test
@@ -162,6 +165,6 @@ class OnlineWriteJoinsQueueTest {
 
     private companion object {
         const val TABLE = "todos"
-        const val SIGNATURE = "todos?id=eq.1"
+        const val CACHE_KEY = "todos?id=eq.1"
     }
 }

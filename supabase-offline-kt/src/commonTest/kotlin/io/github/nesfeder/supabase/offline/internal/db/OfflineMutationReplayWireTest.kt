@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -21,8 +22,8 @@ import kotlinx.serialization.json.JsonElement
 /**
  * What a queued mutation puts on the wire when it replays.
  *
- * The syncer runs over the real PostgREST handle (no test double between it and supabase-kt), and a
- * [RecordingPostgrestServer] records each request: method, table, query parameters, the `Prefer`
+ * The replayer runs over the real PostgREST handle (no test double between it and supabase-kt), and
+ * a [RecordingPostgrestServer] records each request: method, table, query parameters, the `Prefer`
  * header and the body. These cases pin that a replayed write carries everything that was queued —
  * its filter, `onConflict`, `ignoreDuplicates` and `defaultToNull` — and that a queued row whose
  * body no longer parses is dropped without a request.
@@ -33,7 +34,7 @@ class OfflineMutationReplayWireTest {
     private val mutationDao = FakeMutationDao()
     private var clock = 0L
     private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock++ })
-    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+    private val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     /**
      * Changed with idempotent replay: the rows carry their primary key, so the stored body is
@@ -45,7 +46,7 @@ class OfflineMutationReplayWireTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":1,"title":"Buy milk"}]"""))
 
         // When
-        val synced = syncer.syncTable(table = TABLE)
+        val synced = replayer.syncTable(table = TABLE)
 
         // Then
         assertEquals(1, synced)
@@ -68,7 +69,7 @@ class OfflineMutationReplayWireTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""), defaultToNull = false)
 
         // When
-        syncer.syncTable(table = TABLE)
+        replayer.syncTable(table = TABLE)
 
         // Then — missing columns take their database default, as the caller asked
         assertEquals("missing=default,return=minimal", server.requests.single().prefer)
@@ -85,7 +86,7 @@ class OfflineMutationReplayWireTest {
         )
 
         // When
-        val synced = syncer.syncTable(table = TABLE)
+        val synced = replayer.syncTable(table = TABLE)
 
         // Then — upserted on the natural key, merging into an existing row
         assertEquals(1, synced)
@@ -118,7 +119,7 @@ class OfflineMutationReplayWireTest {
         )
 
         // When
-        syncer.syncTable(table = TABLE)
+        replayer.syncTable(table = TABLE)
 
         // Then
         val request = server.requests.single()
@@ -136,7 +137,7 @@ class OfflineMutationReplayWireTest {
         )
 
         // When
-        val synced = syncer.syncTable(table = TABLE)
+        val synced = replayer.syncTable(table = TABLE)
 
         // Then — it targets exactly the captured rows, never the whole table
         assertEquals(1, synced)
@@ -159,7 +160,7 @@ class OfflineMutationReplayWireTest {
         store.enqueueDelete(table = TABLE, filter = IDS_OR_ARCHIVED)
 
         // When
-        val synced = syncer.syncTable(table = TABLE)
+        val synced = replayer.syncTable(table = TABLE)
 
         // Then — it deletes exactly the captured rows, never the whole table
         assertEquals(1, synced)
@@ -198,7 +199,7 @@ class OfflineMutationReplayWireTest {
         store.enqueueDelete(table = TABLE, filter = ID_AND_OWNER)
 
         // When
-        val synced = syncer.syncTable(table = TABLE)
+        val synced = replayer.syncTable(table = TABLE)
 
         // Then — all four replayed in order with their options. Nothing caches or observes the
         // table,
@@ -223,7 +224,7 @@ class OfflineMutationReplayWireTest {
         mutationDao.insert(queuedRow(MutationOperation.INSERT, bodyJson = "not-json-array"))
 
         // When
-        val synced = syncer.syncTable(table = TABLE)
+        val synced = replayer.syncTable(table = TABLE)
 
         // Then — dropped without a request
         assertEquals(0, synced)
@@ -237,7 +238,7 @@ class OfflineMutationReplayWireTest {
         mutationDao.insert(queuedRow(MutationOperation.UPSERT, bodyJson = "not-json-array"))
 
         // When
-        val synced = syncer.syncTable(table = TABLE)
+        val synced = replayer.syncTable(table = TABLE)
 
         // Then
         assertEquals(0, synced)
@@ -253,7 +254,7 @@ class OfflineMutationReplayWireTest {
         )
 
         // When
-        val synced = syncer.syncTable(table = TABLE)
+        val synced = replayer.syncTable(table = TABLE)
 
         // Then
         assertEquals(0, synced)
@@ -266,7 +267,7 @@ class OfflineMutationReplayWireTest {
         // Given — an empty queue
 
         // When
-        val synced = syncer.syncAllTables()
+        val synced = replayer.syncAllTables()
 
         // Then
         assertEquals(0, synced)
@@ -281,7 +282,7 @@ class OfflineMutationReplayWireTest {
         )
 
         // When
-        val synced = syncer.syncAllTables()
+        val synced = replayer.syncAllTables()
 
         // Then — it is not sent again
         assertEquals(0, synced)
@@ -304,7 +305,7 @@ class OfflineMutationReplayWireTest {
         }
 
         // When
-        val synced = syncer.syncAllTables()
+        val synced = replayer.syncAllTables()
 
         // Then — nothing after the failure is sent; both writes stay queued for a retry
         assertEquals(0, synced)

@@ -5,15 +5,18 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.CachedFile
-import io.github.nesfeder.supabase.offline.SdkLogger
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.db.StorageRow
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -46,13 +49,13 @@ private const val TEMPORARY_FILE_SUFFIX: String = ".tmp"
  * belong to a download still running — in a client that was closed and re-created on the same
  * directory, whose downloads outlive `close()` because they run in their callers' coroutines.
  */
-private const val STALE_TEMPORARY_FILE_MILLIS: Long = 24L * 60L * 60L * 1000L
+private val STALE_TEMPORARY_FILE_AGE: Duration = 24.hours
 
 /**
  * A file used this recently is never evicted. The download that just committed it has yet to
  * deliver it, or a caller was just handed its path and has yet to open it.
  */
-internal const val RECENT_USE_GRACE_MILLIS: Long = 30_000L
+internal val RECENT_USE_GRACE: Duration = 30.seconds
 
 /**
  * Once over its bound, the cache evicts a further 1/this of the bound below it, so the next
@@ -69,7 +72,7 @@ private const val LOW_WATER_FRACTION: Long = 10L
  *   untransformed object.
  * @property file where the entry's bytes live.
  */
-internal class StorageCacheEntry(
+internal class FileCacheEntry(
     val bucketId: String,
     val objectPath: String,
     val transform: String?,
@@ -95,7 +98,7 @@ internal class StorageCacheEntry(
  * @property sink an open sink to the temporary file; [StorageFileCache.commit] closes it.
  */
 internal class TemporaryDownload(
-    val entry: StorageCacheEntry,
+    val entry: FileCacheEntry,
     val path: Path,
     val sink: BufferedSink,
 )
@@ -128,7 +131,7 @@ internal class StorageFileCache(
     private val store: OfflineStore,
     private val dataDirectoryProvider: () -> Path,
     private val maxSizeBytes: Long?,
-    private val sdkLogger: SdkLogger,
+    private val engineLogger: EngineLogger,
     private val fileSystem: FileSystem = FileSystem.SYSTEM,
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val markUsed: (Path, Long) -> Unit = ::markFileUsed,
@@ -190,7 +193,7 @@ internal class StorageFileCache(
                 fileSystem.createDirectories(directory)
                 excludeFromBackup(directory)
             } catch (failure: IOException) {
-                sdkLogger.debug { "Storage cache could not prepare its directories: $failure" }
+                engineLogger.debug { "Storage cache could not prepare its directories: $failure" }
             }
         }
     }
@@ -200,9 +203,9 @@ internal class StorageFileCache(
      *
      * @return the entry, or `null` when the object cannot be cached.
      */
-    fun entryFor(bucketId: String, objectPath: String): StorageCacheEntry? {
+    fun entryFor(bucketId: String, objectPath: String): FileCacheEntry? {
         val file = objectFilePathOrNull(dataDirectory, bucketId, objectPath) ?: return null
-        return StorageCacheEntry(bucketId, objectPath, transform = null, file = file)
+        return FileCacheEntry(bucketId, objectPath, transform = null, file = file)
     }
 
     /**
@@ -215,10 +218,10 @@ internal class StorageFileCache(
         bucketId: String,
         objectPath: String,
         transform: String,
-    ): StorageCacheEntry? {
+    ): FileCacheEntry? {
         if (!isCacheableBucketId(bucketId) || !isCacheableObjectPath(objectPath)) return null
         val key = "$bucketId::$objectPath$VARIANT_SEPARATOR$transform"
-        return StorageCacheEntry(
+        return FileCacheEntry(
             bucketId,
             objectPath,
             transform,
@@ -239,7 +242,7 @@ internal class StorageFileCache(
      * @param entry the entry.
      * @return the cached file, reporting the size of the file on disk.
      */
-    suspend fun lookup(entry: StorageCacheEntry): CachedFile? =
+    suspend fun useCachedCopy(entry: FileCacheEntry): CachedFile? =
         withContext(Dispatchers.IO) {
             if (!store.cacheServesCurrentIdentity()) return@withContext null
             val row =
@@ -267,7 +270,7 @@ internal class StorageFileCache(
      * @param block the read.
      * @return what [block] returns.
      */
-    suspend fun <T> withPinned(entry: StorageCacheEntry, block: suspend () -> T): T {
+    suspend fun <T> withPinned(entry: FileCacheEntry, block: suspend () -> T): T {
         lock.withLock { pins[entry.key] = (pins[entry.key] ?: 0) + 1 }
         try {
             return block()
@@ -287,14 +290,14 @@ internal class StorageFileCache(
      * @param entry the entry.
      * @return the bytes.
      */
-    suspend fun readBytes(entry: StorageCacheEntry): ByteArray? =
+    suspend fun readBytes(entry: FileCacheEntry): ByteArray? =
         withPinned(entry) {
-            val cached = lookup(entry) ?: return@withPinned null
+            val cached = useCachedCopy(entry) ?: return@withPinned null
             withContext(Dispatchers.IO) {
                 try {
                     fileSystem.read(cached.path.toPath()) { readByteArray() }
                 } catch (failure: IOException) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache could not read a cached file (${failure::class.simpleName})"
                     }
                     null
@@ -309,9 +312,9 @@ internal class StorageFileCache(
      * @param channel where the bytes go.
      * @return `false` when nothing was cached, so nothing was written.
      */
-    suspend fun copyTo(entry: StorageCacheEntry, channel: ByteWriteChannel): Boolean =
+    suspend fun copyTo(entry: FileCacheEntry, channel: ByteWriteChannel): Boolean =
         withPinned(entry) {
-            val cached = lookup(entry) ?: return@withPinned false
+            val cached = useCachedCopy(entry) ?: return@withPinned false
             copyFile(cached.path.toPath(), channel)
             true
         }
@@ -346,13 +349,13 @@ internal class StorageFileCache(
      * @return the temporary download, or `null` when the file system refuses or the directory
      *   resolves outside the cache (logged).
      */
-    suspend fun openTemporaryDownload(entry: StorageCacheEntry): TemporaryDownload? {
+    suspend fun openTemporaryDownload(entry: FileCacheEntry): TemporaryDownload? {
         currentCoroutineContext().ensureActive()
         return onIoHandingBackItsResult { createTemporaryDownload(entry) }
     }
 
     /** [openTemporaryDownload]'s body: creates the file under the lock. */
-    private suspend fun createTemporaryDownload(entry: StorageCacheEntry): TemporaryDownload? =
+    private suspend fun createTemporaryDownload(entry: FileCacheEntry): TemporaryDownload? =
         lock.withLock {
             sweepTemporaryFilesOnce()
             val directory = entry.file.parent ?: return@withLock null
@@ -362,7 +365,7 @@ internal class StorageFileCache(
             try {
                 fileSystem.createDirectories(dataDirectory)
                 if (!resolvesInsideDataDirectory(directory)) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache refused a directory that resolves outside the cache; not caching"
                     }
                     return@withLock null
@@ -375,7 +378,7 @@ internal class StorageFileCache(
                 )
             } catch (failure: IOException) {
                 deleteQuietly(temporary)
-                sdkLogger.warning {
+                engineLogger.warning {
                     "Storage cache could not create a file (${failure::class.simpleName}); not caching"
                 }
                 null
@@ -388,14 +391,14 @@ internal class StorageFileCache(
      *
      * @param startedInGeneration [currentGeneration] as read before the download started.
      */
-    suspend fun write(entry: StorageCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
+    suspend fun write(entry: FileCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
         val temporary = openTemporaryDownload(entry) ?: return
         try {
             withContext(Dispatchers.IO) { temporary.sink.write(bytes) }
         } catch (failure: Throwable) {
             discard(temporary)
             if (failure !is IOException) throw failure
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not write a download (${failure::class.simpleName}); not caching"
             }
             return
@@ -418,7 +421,7 @@ internal class StorageFileCache(
                 try {
                     temporary.sink.close()
                 } catch (failure: IOException) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache could not finish a file (${failure::class.simpleName}); not caching"
                     }
                     return@withLock CommitOutcome.FAILED
@@ -427,14 +430,14 @@ internal class StorageFileCache(
                     generation.load() != startedInGeneration ||
                         !store.cacheTakesWritesOfCurrentIdentity()
                 ) {
-                    sdkLogger.info {
+                    engineLogger.info {
                         "Storage download from ${entry.bucketId} finished after local data was cleared; not caching"
                     }
                     return@withLock CommitOutcome.CLEARED
                 }
                 val directory = entry.file.parent
                 if (directory == null || !resolvesInsideDataDirectory(directory)) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache refused a directory that resolves outside the cache; not caching"
                     }
                     return@withLock CommitOutcome.FAILED
@@ -452,7 +455,7 @@ internal class StorageFileCache(
                             )
                         }
                     } catch (failure: Exception) {
-                        sdkLogger.warning {
+                        engineLogger.warning {
                             "Storage cache could not record a download (${failure::class.simpleName}); not caching"
                         }
                         return@withLock CommitOutcome.FAILED
@@ -461,7 +464,7 @@ internal class StorageFileCache(
                 try {
                     fileSystem.atomicMove(temporary.path, entry.file)
                 } catch (failure: IOException) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache could not store a file (${failure::class.simpleName}); not caching"
                     }
                     // The row describes bytes that never arrived: put back the one it replaced.
@@ -472,7 +475,7 @@ internal class StorageFileCache(
                 try {
                     evictOverLimit(protectedKey = entry.key)
                 } catch (failure: Exception) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache could not enforce its size bound (${failure::class.simpleName})"
                     }
                 }
@@ -566,7 +569,7 @@ internal class StorageFileCache(
      * The entry [row] describes, derived from its bucket and path — never from the file it
      * recorded.
      */
-    private fun entryForRow(row: StorageRow): StorageCacheEntry? {
+    private fun entryForRow(row: CachedFileRow): FileCacheEntry? {
         val separator = row.path.indexOf(VARIANT_SEPARATOR)
         if (separator < 0) return entryFor(row.bucketId, row.path)
         return variantEntryFor(
@@ -581,7 +584,7 @@ internal class StorageFileCache(
      * another path mapping. A recorded file outside the data directory only means the directory
      * moved.
      */
-    private fun StorageRow.recordsOutdatedPath(entry: StorageCacheEntry): Boolean {
+    private fun CachedFileRow.recordsOutdatedPath(entry: FileCacheEntry): Boolean {
         val recorded = localPath.toPath().normalized()
         return recorded != entry.file && recorded.isStrictlyInside(dataDirectory)
     }
@@ -590,21 +593,22 @@ internal class StorageFileCache(
 
     /** Drops every row and file of the object at [objectPath], its variants included. */
     private suspend fun removeObjectLocked(bucketId: String, objectPath: String) {
-        store.storageRowsForObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR").forEach {
-            row ->
-            removeRowLocked(row)
-            val entry = entryForRow(row) ?: return@forEach
-            deleteContained(entry.file)
-            if (row.recordsOutdatedPath(entry))
-                deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
-        }
+        store
+            .cachedFileRowsForObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR")
+            .forEach { row ->
+                removeRowLocked(row)
+                val entry = entryForRow(row) ?: return@forEach
+                deleteContained(entry.file)
+                if (row.recordsOutdatedPath(entry))
+                    deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
+            }
         // The object's own file even without a row: an outdated row may have recorded another path.
         entryFor(bucketId, objectPath)?.let { entry -> deleteContained(entry.file) }
     }
 
     /** Deletes [row] and takes its recorded size off [trackedBytes]. */
-    private suspend fun removeRowLocked(row: StorageRow) {
-        store.deleteStorageRow(row.key)
+    private suspend fun removeRowLocked(row: CachedFileRow) {
+        store.deleteCachedFileRow(row.key)
         trackedBytes = trackedBytes?.minus(row.sizeBytes ?: 0L)
     }
 
@@ -614,16 +618,16 @@ internal class StorageFileCache(
      * was none.
      */
     private suspend fun restoreRowLocked(
-        entry: StorageCacheEntry,
-        replaced: StorageRow?,
+        entry: FileCacheEntry,
+        replaced: CachedFileRow?,
         recordedSize: Long?,
     ) {
         try {
-            if (replaced != null) store.restoreStorageRow(replaced)
-            else store.deleteStorageRow(entry.key)
+            if (replaced != null) store.restoreCachedFileRow(replaced)
+            else store.deleteCachedFileRow(entry.key)
             trackedBytes = trackedBytes?.plus((replaced?.sizeBytes ?: 0L) - (recordedSize ?: 0L))
         } catch (failure: Exception) {
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not undo a failed download's row (${failure::class.simpleName})"
             }
         }
@@ -633,7 +637,7 @@ internal class StorageFileCache(
      * Drops [entry]'s row when it still records an outdated path, and that file when nothing owns
      * it.
      */
-    private suspend fun dropOutdatedRowLocked(entry: StorageCacheEntry) {
+    private suspend fun dropOutdatedRowLocked(entry: FileCacheEntry) {
         val row = store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return
         if (!row.recordsOutdatedPath(entry)) return
         removeRowLocked(row)
@@ -662,7 +666,7 @@ internal class StorageFileCache(
     }
 
     /** Moves [source]'s cached file to [destination]'s, recording the destination first. */
-    private suspend fun moveFileLocked(source: StorageCacheEntry, destination: StorageCacheEntry) {
+    private suspend fun moveFileLocked(source: FileCacheEntry, destination: FileCacheEntry) {
         val directory = destination.file.parent ?: return
         if (!resolvesInsideDataDirectory(source.file) || !resolvesInsideDataDirectory(directory))
             return
@@ -679,7 +683,7 @@ internal class StorageFileCache(
             )
             trackedBytes = trackedBytes?.plus(size)
         } catch (failure: Exception) {
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not move a cached file (${failure::class.simpleName})"
             }
             return
@@ -687,7 +691,7 @@ internal class StorageFileCache(
         try {
             fileSystem.atomicMove(source.file, destination.file)
         } catch (failure: IOException) {
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not move a cached file (${failure::class.simpleName})"
             }
             restoreRowLocked(destination, replaced = null, recordedSize = size)
@@ -696,9 +700,8 @@ internal class StorageFileCache(
 
     /**
      * Once the cache is over its bound, evicts the least recently used files until it is a tenth
-     * below it. It spares [protectedKey], pinned entries and files used within
-     * [RECENT_USE_GRACE_MILLIS], and skips the scan until the oldest file it had to spare ages out.
-     * Runs under [lock].
+     * below it. It spares [protectedKey], pinned entries and files used within [RECENT_USE_GRACE],
+     * and skips the scan until the oldest file it had to spare ages out. Runs under [lock].
      */
     private suspend fun evictOverLimit(protectedKey: String) {
         val limit = maxSizeBytes ?: return
@@ -707,10 +710,10 @@ internal class StorageFileCache(
         val now = nowMillis()
         if (now < evictionIdleUntilMillis) return
         val lowWater = limit - limit / LOW_WATER_FRACTION
-        val usedBefore = now - RECENT_USE_GRACE_MILLIS
+        val usedBefore = now - RECENT_USE_GRACE.inWholeMilliseconds
         val (evictable, recent) =
             store
-                .allStorageRows()
+                .allCachedFileRows()
                 .filter { row -> row.key != protectedKey && row.key !in pins }
                 .map { row -> row to lastUsedMillis(row) }
                 .partition { (_, lastUsed) -> lastUsed < usedBefore }
@@ -719,7 +722,7 @@ internal class StorageFileCache(
         for ((row, _) in evictable.sortedBy { (_, lastUsed) -> lastUsed }) {
             if (remaining <= lowWater) break
             entryForRow(row)?.let { entry -> deleteContained(entry.file) }
-            store.deleteStorageRow(row.key)
+            store.deleteCachedFileRow(row.key)
             remaining -= row.sizeBytes ?: 0L
             evicted++
         }
@@ -728,13 +731,13 @@ internal class StorageFileCache(
         val oldestRecentUse = recent.minOfOrNull { (_, lastUsed) -> lastUsed }
         evictionIdleUntilMillis =
             if (remaining > lowWater && oldestRecentUse != null)
-                oldestRecentUse + RECENT_USE_GRACE_MILLIS
+                oldestRecentUse + RECENT_USE_GRACE.inWholeMilliseconds
             else Long.MIN_VALUE
-        sdkLogger.debug { "Storage cache evicted $evicted file(s) to stay within $limit bytes" }
+        engineLogger.debug { "Storage cache evicted $evicted file(s) to stay within $limit bytes" }
     }
 
     /** When [row]'s file was last used, or the earliest time there is when it has no file. */
-    private fun lastUsedMillis(row: StorageRow): Long {
+    private fun lastUsedMillis(row: CachedFileRow): Long {
         val file = entryForRow(row)?.file ?: return Long.MIN_VALUE
         return fileSystem.metadataOrNull(file)?.lastModifiedAtMillis ?: Long.MIN_VALUE
     }
@@ -749,13 +752,13 @@ internal class StorageFileCache(
 
     /**
      * Deletes the temporary files a crash left behind, once per cache, under [lock]. It takes those
-     * last modified more than [STALE_TEMPORARY_FILE_MILLIS] ago that no cache row names, since an
+     * last modified more than [STALE_TEMPORARY_FILE_AGE] ago that no cache row names, since an
      * object can be named like one.
      */
     private suspend fun sweepTemporaryFilesOnce() {
         if (temporaryFilesSwept) return
         temporaryFilesSwept = true
-        val staleBefore = nowMillis() - STALE_TEMPORARY_FILE_MILLIS
+        val staleBefore = nowMillis() - STALE_TEMPORARY_FILE_AGE.inWholeMilliseconds
         cacheDirectories()
             .filter { fileSystem.exists(it) }
             .forEach { directory ->
@@ -774,7 +777,7 @@ internal class StorageFileCache(
                         .filterNot { file -> belongsToACachedEntry(file) }
                         .forEach(::deleteQuietly)
                 } catch (failure: IOException) {
-                    sdkLogger.debug { "Storage cache could not sweep temporary files: $failure" }
+                    engineLogger.debug { "Storage cache could not sweep temporary files: $failure" }
                 }
             }
     }
@@ -827,7 +830,7 @@ internal class StorageFileCache(
     private fun deleteContained(file: Path) {
         val directory = file.parent ?: return
         if (!resolvesInsideDataDirectory(directory)) {
-            sdkLogger.debug {
+            engineLogger.debug {
                 "Storage cache left a file whose directory resolves outside the cache"
             }
             return
@@ -839,7 +842,7 @@ internal class StorageFileCache(
         try {
             fileSystem.delete(path, mustExist = false)
         } catch (failure: IOException) {
-            sdkLogger.debug { "Storage cache could not delete a file: $failure" }
+            engineLogger.debug { "Storage cache could not delete a file: $failure" }
         }
     }
 }

@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
@@ -42,7 +42,7 @@ class StorageCancelledDownloadTest {
     private lateinit var store: OfflineStore
     private lateinit var delegate: FakeBucketApi
     private val fileSystem = FakeFailingFileSystem()
-    private val engine = newEngineScope(sdkLogger = null)
+    private val engine = newEngineScope(engineLogger = null)
 
     @BeforeTest
     fun setUp() {

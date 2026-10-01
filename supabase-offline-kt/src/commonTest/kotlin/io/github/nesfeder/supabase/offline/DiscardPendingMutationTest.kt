@@ -3,10 +3,10 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -32,11 +32,11 @@ import kotlinx.serialization.json.JsonElement
  */
 class DiscardPendingMutationTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val queryCacheDao = FakeQueryCacheDao()
+    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = USER_A
-    private val syncer =
+    private val replayer =
         MutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
@@ -47,7 +47,7 @@ class DiscardPendingMutationTest {
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
-            headSender = syncer,
+            headSender = replayer,
         )
 
     private suspend fun renameOffline(id: Int, title: String) {
@@ -65,12 +65,12 @@ class DiscardPendingMutationTest {
                 postgrestError(HttpStatusCode.InternalServerError, code = "54000")
             else okJson("[]")
         }
-        val stuck = syncer.sync()
+        val stuck = replayer.sync()
         val poison = store.allPendingMutations().first()
 
         // When
-        val discarded = syncer.discardPendingMutation(poison.id, session)
-        val report = syncer.sync()
+        val discarded = replayer.discardPendingMutation(poison.id, session)
+        val report = replayer.sync()
 
         // Then
         assertIs<SyncStop.TransientFailure>(stuck.stop)
@@ -83,20 +83,20 @@ class DiscardPendingMutationTest {
     @Test
     fun a_discarded_write_disappears_from_the_overlay() = runTest {
         // Given — a cached row renamed offline
-        objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1,"title":"original"}]""")
         renameOffline(1, "renamed")
         assertEquals(
             """[{"id":1,"title":"renamed"}]""",
-            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
+            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
 
         // When
-        syncer.discardPendingMutation(store.allPendingMutations().single().id, session)
+        replayer.discardPendingMutation(store.allPendingMutations().single().id, session)
 
         // Then
         assertEquals(
             """[{"id":1,"title":"original"}]""",
-            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
+            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
     }
 
@@ -107,7 +107,7 @@ class DiscardPendingMutationTest {
 
         // When — user B tries to discard it
         val discarded =
-            syncer.discardPendingMutation(store.allPendingMutations().single().id, USER_B)
+            replayer.discardPendingMutation(store.allPendingMutations().single().id, USER_B)
 
         // Then
         assertFalse(discarded)
@@ -129,7 +129,7 @@ class DiscardPendingMutationTest {
 
         // When
         val discarded =
-            syncer.discardPendingMutation(store.allPendingMutations().single().id, session)
+            replayer.discardPendingMutation(store.allPendingMutations().single().id, session)
         release.complete(Unit)
 
         // Then — too late: it is already going out
@@ -142,7 +142,7 @@ class DiscardPendingMutationTest {
 
     private companion object {
         const val TABLE = "tasks"
-        const val SIGNATURE = "tasks?id=eq.1"
+        const val CACHE_KEY = "tasks?id=eq.1"
         val USER_A = QueueIdentity.User("user-a")
         val USER_B = QueueIdentity.User("user-b")
     }

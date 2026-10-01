@@ -18,15 +18,15 @@ internal const val OFFLINE_DB_VERSION: Int = 1
 
 @ConstructedBy(OfflineDatabaseConstructor::class)
 @Database(
-    entities = [ObjectRow::class, StorageRow::class, MutationRow::class],
+    entities = [CachedQueryRow::class, CachedFileRow::class, MutationRow::class],
     version = OFFLINE_DB_VERSION,
     exportSchema = true,
 )
 internal abstract class OfflineDatabase : RoomDatabase() {
 
-    abstract fun objectDao(): ObjectDao
+    abstract fun queryCacheDao(): QueryCacheDao
 
-    abstract fun storageDao(): StorageDao
+    abstract fun cachedFileDao(): CachedFileDao
 
     abstract fun mutationDao(): MutationDao
 }
@@ -37,8 +37,8 @@ internal expect object OfflineDatabaseConstructor : RoomDatabaseConstructor<Offl
 }
 
 /**
- * The SQLite driver the offline database opens with when none is passed to [getRoomDatabase]: the
- * bundled SQLite everywhere, so every install runs one version.
+ * The SQLite driver the offline database opens with when none is passed to [buildOfflineDatabase]:
+ * the bundled SQLite everywhere, so every install runs one version.
  * `-Psupabase.offline.iosSqlite=system` swaps the iOS implementation for the system SQLite; the
  * module's build file says why at build time.
  *
@@ -54,7 +54,7 @@ internal expect fun defaultSQLiteDriver(): SQLiteDriver
  *   another. Internal on purpose: the published artifact always uses the default.
  * @return the database, not yet opened; Room opens it on first use.
  */
-internal fun getRoomDatabase(
+internal fun buildOfflineDatabase(
     builder: RoomDatabase.Builder<OfflineDatabase>,
     driver: SQLiteDriver = defaultSQLiteDriver(),
 ): OfflineDatabase {

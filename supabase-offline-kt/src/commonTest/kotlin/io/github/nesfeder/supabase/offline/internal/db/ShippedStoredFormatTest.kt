@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
+import io.github.nesfeder.supabase.offline.internal.EngineJson
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
+import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -23,14 +25,14 @@ class ShippedStoredFormatTest {
         val deleteFilterJson = ShippedDatabaseFixture.DELETE_FILTER_JSON
 
         // When
-        val updateFilter = FilterEngine.decodeOrNull(updateFilterJson, OfflineJson)
-        val deleteFilter = FilterEngine.decodeOrNull(deleteFilterJson, OfflineJson)
+        val updateFilter = decodeFilterOrNull(updateFilterJson, EngineJson)
+        val deleteFilter = decodeFilterOrNull(deleteFilterJson, EngineJson)
 
         // Then — both decode, and both still replay in full
         assertEquals(ShippedDatabaseFixture.UPDATE_FILTER, updateFilter)
         assertEquals(ShippedDatabaseFixture.DELETE_FILTER, deleteFilter)
-        assertTrue(FilterEngine.replaysFully(ShippedDatabaseFixture.UPDATE_FILTER))
-        assertTrue(FilterEngine.replaysFully(ShippedDatabaseFixture.DELETE_FILTER))
+        assertTrue(replaysFully(ShippedDatabaseFixture.UPDATE_FILTER))
+        assertTrue(replaysFully(ShippedDatabaseFixture.DELETE_FILTER))
     }
 
     @Test
@@ -40,8 +42,8 @@ class ShippedStoredFormatTest {
         val deleteFilter = ShippedDatabaseFixture.DELETE_FILTER
 
         // When
-        val encodedUpdateFilter = FilterEngine.encode(updateFilter, OfflineJson)
-        val encodedDeleteFilter = FilterEngine.encode(deleteFilter, OfflineJson)
+        val encodedUpdateFilter = encodeFilter(updateFilter, EngineJson)
+        val encodedDeleteFilter = encodeFilter(deleteFilter, EngineJson)
 
         // Then
         assertEquals(ShippedDatabaseFixture.UPDATE_FILTER_JSON, encodedUpdateFilter)

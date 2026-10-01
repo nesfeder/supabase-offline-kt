@@ -168,7 +168,7 @@ private fun RowMatch.negated(): RowMatch =
  */
 private fun membershipOf(value: JsonElement, literal: String, asUuid: Boolean): RowMatch {
     if (value == JsonNull) return RowMatch.EXCLUDED
-    val members = FilterEngine.inListMembersOf(literal) ?: return RowMatch.UNKNOWN
+    val members = inListMembersOf(literal) ?: return RowMatch.UNKNOWN
     return members.fold(RowMatch.EXCLUDED) { combined, member ->
         // An unquoted null may be SQL's NULL or the text "null"; only the column's value can say
         val match =
@@ -463,7 +463,7 @@ private fun isHexDigit(character: Char): Boolean =
     character in '0'..'9' || character in 'a'..'f' || character in 'A'..'F'
 
 /** A decimal number reduced to its value: sign, significant digits and exponent. */
-private data class DecimalValue(val negative: Boolean, val digits: String, val exponent: Long)
+private data class DecimalValue(val isNegative: Boolean, val digits: String, val exponent: Long)
 
 /** [text] as a [DecimalValue], or `null` when it is not a plain decimal or exponent literal. */
 private fun decimalOf(text: String): DecimalValue? {
@@ -472,11 +472,11 @@ private fun decimalOf(text: String): DecimalValue? {
     if (whole.isEmpty() && fraction.isEmpty()) return null
     val exponent = (exponentText.ifEmpty { "0" }.toLongOrNull() ?: return null) - fraction.length
     var digits = (whole + fraction).trimStart('0')
-    if (digits.isEmpty()) return DecimalValue(negative = false, digits = "0", exponent = 0)
+    if (digits.isEmpty()) return DecimalValue(isNegative = false, digits = "0", exponent = 0)
     val trailingZeros = digits.length - digits.trimEnd('0').length
     digits = digits.dropLast(trailingZeros)
     return DecimalValue(
-        negative = sign == "-",
+        isNegative = sign == "-",
         digits = digits,
         exponent = exponent + trailingZeros,
     )

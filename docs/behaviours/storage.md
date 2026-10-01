@@ -52,7 +52,7 @@ mirrors writes locally.
 Both `downloadAuthenticated(path)` and `downloadPublic(path)` cache successful responses to disk:
 
 1. Try the network call.
-2. On success, write the bytes to disk and `upsert` a `StorageRow` in the `storage_objects`
+2. On success, write the bytes to disk and `upsert` a `CachedFileRow` in the `storage_objects`
    table.
 3. On failure, attempt to serve the bytes from disk; otherwise rethrow.
 

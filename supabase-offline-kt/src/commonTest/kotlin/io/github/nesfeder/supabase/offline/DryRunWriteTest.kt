@@ -5,7 +5,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -33,9 +33,10 @@ class DryRunWriteTest {
         RecordingPostgrestServer(
             answer = { okJson("[]", mapOf(PREFERENCE_APPLIED to "tx=rollback")) }
         )
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+    private val store =
+        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
     private val builder =
         OfflinePostgrestQueryBuilderImpl(
             delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -45,7 +46,7 @@ class DryRunWriteTest {
     @Test
     fun an_online_dry_run_update_leaves_the_cache_untouched() = runTest {
         // Given
-        objectDao.seedPayload(TABLE, SIGNATURE, ORIGINAL)
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
 
         // When
         val outcome =
@@ -58,13 +59,13 @@ class DryRunWriteTest {
         // row
         assertIs<MutationOutcome.Applied>(outcome)
         assertTrue(server.requests.single().prefer.orEmpty().contains("tx=rollback"))
-        assertEquals(ORIGINAL, objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        assertEquals(ORIGINAL, queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload)
     }
 
     @Test
     fun an_online_dry_run_insert_is_not_materialized_into_the_cache() = runTest {
         // Given
-        objectDao.seedPayload(TABLE, SIGNATURE, ORIGINAL)
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
 
         // When
         builder.insertJson(
@@ -74,7 +75,7 @@ class DryRunWriteTest {
         }
 
         // Then
-        assertEquals(ORIGINAL, objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        assertEquals(ORIGINAL, queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload)
     }
 
     @Test
@@ -117,7 +118,7 @@ class DryRunWriteTest {
 
     private companion object {
         const val TABLE = "todos"
-        const val SIGNATURE = "todos?id=eq.1"
+        const val CACHE_KEY = "todos?id=eq.1"
         const val ORIGINAL = """[{"id":1,"title":"committed"}]"""
         const val PREFERENCE_APPLIED = "Preference-Applied"
     }

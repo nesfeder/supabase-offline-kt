@@ -51,8 +51,7 @@ import kotlinx.serialization.json.Json
 class ReadShapeProbeContractTest {
 
     private val server = RecordingPostgrestServer()
-    private val handle =
-        PostgrestQueryBuilderWrapperImpl(server.supabaseClient().postgrest.from("todos"))
+    private val handle = SupabaseRemoteTable(server.supabaseClient().postgrest.from("todos"))
 
     @Test
     fun each_read_shape_is_told_without_sending_the_read() = runTest {

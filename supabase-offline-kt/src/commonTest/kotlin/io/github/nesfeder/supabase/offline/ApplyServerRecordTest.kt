@@ -4,8 +4,9 @@
 
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -42,13 +43,13 @@ class ApplyServerRecordTest {
     @Test
     fun applyServerRecord_patches_existing_row_in_place_by_single_key() = runTest {
         // Given — one reports row cached under its per-period signature
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload(
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(
             table = "reports",
-            signature = "reports-period-sig",
+            cacheKey = "reports-period-sig",
             payload = """[{"id":"rep-1","user_id":"u-1","kind":"WEEK","total":80}]""",
         )
-        val client = buildClient(objectDao)
+        val client = buildClient(queryCacheDao)
 
         // When — a realtime UPDATE for the same id arrives
         client.applyServerRecord(
@@ -58,7 +59,7 @@ class ApplyServerRecordTest {
         )
 
         // Then — the cached row is merged in place, single row preserved
-        val updated = objectDao.getRow("reports", "reports-period-sig")?.payload
+        val updated = queryCacheDao.getRow("reports", "reports-period-sig")?.payload
         assertNotNull(updated)
         assertTrue(updated.contains("\"total\":92"), "expected merged rating, got $updated")
         assertFalse(updated.contains("\"total\":80"), "stale rating must not survive, got $updated")
@@ -67,13 +68,13 @@ class ApplyServerRecordTest {
     @Test
     fun applyServerRecord_appends_when_primary_key_absent_from_cache() = runTest {
         // Given
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload(
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(
             table = "reports",
-            signature = "reports-period-sig",
+            cacheKey = "reports-period-sig",
             payload = """[{"id":"rep-1","user_id":"u-1","kind":"WEEK","total":80}]""",
         )
-        val client = buildClient(objectDao)
+        val client = buildClient(queryCacheDao)
 
         // When — a different id arrives
         client.applyServerRecord(
@@ -83,7 +84,7 @@ class ApplyServerRecordTest {
         )
 
         // Then — the new row is appended alongside the existing one
-        val updated = objectDao.getRow("reports", "reports-period-sig")?.payload
+        val updated = queryCacheDao.getRow("reports", "reports-period-sig")?.payload
         assertNotNull(updated)
         assertTrue(updated.contains("\"id\":\"rep-1\""))
         assertTrue(updated.contains("\"id\":\"rep-2\""))
@@ -92,15 +93,15 @@ class ApplyServerRecordTest {
     @Test
     fun applyServerRecord_with_composite_key_patches_only_targeted_week() = runTest {
         // Given — two summary periods under the user_id-only signature (composite PK, no id)
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload(
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(
             table = "summaries",
-            signature = "summaries?user_id=eq.u-1",
+            cacheKey = "summaries?user_id=eq.u-1",
             payload =
                 """[{"user_id":"u-1","period_id":"2026-P26","total":50},""" +
                     """{"user_id":"u-1","period_id":"2026-P25","total":40}]""",
         )
-        val client = buildClient(objectDao)
+        val client = buildClient(queryCacheDao)
 
         // When — a regenerated P26 arrives with a new rating
         client.applyServerRecord(
@@ -116,7 +117,7 @@ class ApplyServerRecordTest {
         )
 
         // Then — P26 is patched, P25 untouched
-        val updated = objectDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload
+        val updated = queryCacheDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload
         assertNotNull(updated)
         assertTrue(updated.contains("\"total\":99"), "P26 should be recomputed, got $updated")
         assertTrue(updated.contains("\"total\":40"), "P25 must remain, got $updated")
@@ -129,14 +130,14 @@ class ApplyServerRecordTest {
     @Test
     fun applyServerRecord_with_composite_key_appends_new_week_at_end() = runTest {
         // Given — a single (older) period cached
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload(
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(
             table = "summaries",
-            signature = "summaries?user_id=eq.u-1",
+            cacheKey = "summaries?user_id=eq.u-1",
             payload =
                 """[{"user_id":"u-1","period_id":"2026-P25","generated_at":"2026-06-22T12:00:00Z"}]""",
         )
-        val client = buildClient(objectDao)
+        val client = buildClient(queryCacheDao)
 
         // When — a newer period arrives via realtime
         client.applyServerRecord(
@@ -153,7 +154,7 @@ class ApplyServerRecordTest {
 
         // Then — the merge appends the new period LAST (out of generated_at order); a consumer that
         // needs newest-first restores it with its own sort on the decode path.
-        val updated = objectDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload
+        val updated = queryCacheDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload
         assertNotNull(updated)
         assertTrue(
             updated.indexOf("2026-P25") < updated.indexOf("2026-P26"),
@@ -164,10 +165,10 @@ class ApplyServerRecordTest {
     @Test
     fun applyServerRecord_patches_every_cached_signature_for_the_table() = runTest {
         // Given — the same reports row cached under two different signatures (two live observers)
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload("reports", "sig-A", """[{"id":"rep-1","total":80}]""")
-        objectDao.seedPayload("reports", "sig-B", """[{"id":"rep-1","total":80}]""")
-        val client = buildClient(objectDao)
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("reports", "sig-A", """[{"id":"rep-1","total":80}]""")
+        queryCacheDao.seedPayload("reports", "sig-B", """[{"id":"rep-1","total":80}]""")
+        val client = buildClient(queryCacheDao)
 
         // When
         client.applyServerRecord(
@@ -177,15 +178,15 @@ class ApplyServerRecordTest {
         )
 
         // Then — both signatures are patched
-        assertTrue(objectDao.getRow("reports", "sig-A")!!.payload.contains("\"total\":92"))
-        assertTrue(objectDao.getRow("reports", "sig-B")!!.payload.contains("\"total\":92"))
+        assertTrue(queryCacheDao.getRow("reports", "sig-A")!!.payload.contains("\"total\":92"))
+        assertTrue(queryCacheDao.getRow("reports", "sig-B")!!.payload.contains("\"total\":92"))
     }
 
     @Test
     fun applyServerRecord_is_noop_when_no_cached_payloads() = runTest {
         // Given — nothing observing the table
-        val objectDao = FakeObjectDao()
-        val client = buildClient(objectDao)
+        val queryCacheDao = FakeQueryCacheDao()
+        val client = buildClient(queryCacheDao)
 
         // When
         client.applyServerRecord(
@@ -195,24 +196,25 @@ class ApplyServerRecordTest {
         )
 
         // Then — no writes, no crash
-        assertEquals(0, objectDao.writes)
+        assertEquals(0, queryCacheDao.writes)
     }
 
     @Test
     fun applyServerRecord_drops_record_missing_a_primary_key_and_warns() = runTest {
         // Given — a summaries cache and a record missing period_id (so the composite PK can't be
         // built)
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload(
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(
             table = "summaries",
-            signature = "summaries?user_id=eq.u-1",
+            cacheKey = "summaries?user_id=eq.u-1",
             payload = """[{"user_id":"u-1","period_id":"2026-P25"}]""",
         )
         val warnings = mutableListOf<String>()
         val logger = OfflineLogger { level, message ->
             if (level == OfflineLogLevel.WARNING) warnings += message
         }
-        val client = buildClient(objectDao, sdkLogger = SdkLogger(logger, OfflineLogLevel.DEBUG))
+        val client =
+            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, OfflineLogLevel.DEBUG))
 
         // When — the record lacks period_id
         client.applyServerRecord(
@@ -222,10 +224,10 @@ class ApplyServerRecordTest {
         )
 
         // Then — the cache is untouched and a warning was emitted
-        assertEquals(0, objectDao.writes, "unlocatable record must not patch the cache")
+        assertEquals(0, queryCacheDao.writes, "unlocatable record must not patch the cache")
         assertEquals(
             """[{"user_id":"u-1","period_id":"2026-P25"}]""",
-            objectDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload,
+            queryCacheDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload,
         )
         assertTrue(
             warnings.any { it.contains("applyServerRecord") },
@@ -238,12 +240,12 @@ class ApplyServerRecordTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given — a live collector on a seeded-empty cache slot, mirroring a subscribed
             // selectAsFlow
-            val objectDao = FakeObjectDao()
-            objectDao.seedPayload("reports", "reports-period-sig", "[]")
-            val client = buildClient(objectDao)
+            val queryCacheDao = FakeQueryCacheDao()
+            queryCacheDao.seedPayload("reports", "reports-period-sig", "[]")
+            val client = buildClient(queryCacheDao)
 
             val cacheFlow =
-                objectDao.observe("reports", "reports-period-sig").filterNotNull().map {
+                queryCacheDao.observe("reports", "reports-period-sig").filterNotNull().map {
                     it.payload
                 }
             val firstMergedEmission = async {
@@ -273,14 +275,14 @@ class ApplyServerRecordTest {
     @Test
     fun applyServerDelete_removes_row_by_composite_primary_key() = runTest {
         // Given — two periods cached
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload(
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(
             table = "summaries",
-            signature = "summaries?user_id=eq.u-1",
+            cacheKey = "summaries?user_id=eq.u-1",
             payload =
                 """[{"user_id":"u-1","period_id":"2026-P26"},{"user_id":"u-1","period_id":"2026-P25"}]""",
         )
-        val client = buildClient(objectDao)
+        val client = buildClient(queryCacheDao)
 
         // When — a DELETE event for P26 arrives
         client.applyServerDelete(
@@ -296,7 +298,7 @@ class ApplyServerRecordTest {
         )
 
         // Then — P26 is gone, P25 remains
-        val updated = objectDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload
+        val updated = queryCacheDao.getRow("summaries", "summaries?user_id=eq.u-1")?.payload
         assertNotNull(updated)
         assertFalse(updated.contains("2026-P26"), "deleted period must be removed, got $updated")
         assertTrue(updated.contains("2026-P25"), "other period must remain, got $updated")
@@ -305,17 +307,18 @@ class ApplyServerRecordTest {
     @Test
     fun applyServerDelete_drops_record_missing_a_primary_key_and_warns() = runTest {
         // Given
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload(
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(
             table = "summaries",
-            signature = "summaries?user_id=eq.u-1",
+            cacheKey = "summaries?user_id=eq.u-1",
             payload = """[{"user_id":"u-1","period_id":"2026-P25"}]""",
         )
         val warnings = mutableListOf<String>()
         val logger = OfflineLogger { level, message ->
             if (level == OfflineLogLevel.WARNING) warnings += message
         }
-        val client = buildClient(objectDao, sdkLogger = SdkLogger(logger, OfflineLogLevel.DEBUG))
+        val client =
+            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, OfflineLogLevel.DEBUG))
 
         // When — the old record lacks period_id
         client.applyServerDelete(
@@ -325,7 +328,7 @@ class ApplyServerRecordTest {
         )
 
         // Then — nothing removed, a warning emitted
-        assertEquals(0, objectDao.writes)
+        assertEquals(0, queryCacheDao.writes)
         assertTrue(
             warnings.any { it.contains("applyServerDelete") },
             "expected a warning, got $warnings",
@@ -355,11 +358,11 @@ class ApplyServerRecordTest {
     }
 
     private fun buildClient(
-        objectDao: FakeObjectDao,
-        sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+        queryCacheDao: FakeQueryCacheDao,
+        engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
     ): SupabaseOfflineClientImpl =
         newTestOfflineClient(
-            store = newTestOfflineStore(objectDao = objectDao),
-            sdkLogger = sdkLogger,
+            store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+            engineLogger = engineLogger,
         )
 }

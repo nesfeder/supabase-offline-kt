@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
@@ -69,12 +69,12 @@ class StorageStreamingDownloadTest {
             delegate = delegate,
             baseDirectory = dataDirectory,
             store = store,
-            sdkLogger = logger.asSdkLogger(),
+            engineLogger = logger.asEngineLogger(),
             cache =
                 newTestFileCache(
                     baseDirectory = dataDirectory,
                     store = store,
-                    sdkLogger = logger.asSdkLogger(),
+                    engineLogger = logger.asEngineLogger(),
                     fileSystem = fileSystem,
                 ),
         )

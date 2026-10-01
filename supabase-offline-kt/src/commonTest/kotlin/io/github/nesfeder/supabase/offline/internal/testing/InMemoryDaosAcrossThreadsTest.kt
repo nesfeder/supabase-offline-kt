@@ -4,9 +4,9 @@
 
 package io.github.nesfeder.supabase.offline.internal.testing
 
-import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
+import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.StorageRow
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -31,7 +31,7 @@ class InMemoryDaosAcrossThreadsTest {
     @Test
     fun the_object_dao_reads_while_another_thread_writes() = runTest {
         // Given
-        val dao = InMemoryObjectDao()
+        val dao = InMemoryQueryCacheDao()
         val failures = AtomicInt(0)
 
         // When — one thread writes payloads while another reads, and registers observers
@@ -39,11 +39,11 @@ class InMemoryDaosAcrossThreadsTest {
             whileWriting(write = { index -> dao.upsert(payloadRow(index)) }) {
                 repeat(READS) { read ->
                     countingFailures(failures) {
-                        dao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, "shape:")
+                        dao.rowsWithCacheKeyPrefix(RESERVED_TABLE_NAME, "shape:")
                         dao.maxSyncedThrough()
                         dao.minSyncedThroughForTable(TABLE)
-                        dao.signaturesForTable(TABLE)
-                        dao.observe(TABLE, "observed-${read % SIGNATURES}")
+                        dao.cacheKeysForTable(TABLE)
+                        dao.observe(TABLE, "observed-${read % CACHE_KEYS}")
                     }
                 }
             }
@@ -56,8 +56,8 @@ class InMemoryDaosAcrossThreadsTest {
     @Test
     fun writers_on_two_threads_leave_each_observer_on_what_the_dao_holds() = runTest {
         // Given — observers of every signature the writers touch
-        val dao = InMemoryObjectDao()
-        val observed = List(SIGNATURES) { index -> dao.observe(TABLE, "q$index") }
+        val dao = InMemoryQueryCacheDao()
+        val observed = List(CACHE_KEYS) { index -> dao.observe(TABLE, "q$index") }
 
         // When — two threads write the same signatures
         withContext(Dispatchers.Default) {
@@ -65,9 +65,9 @@ class InMemoryDaosAcrossThreadsTest {
                     launch {
                         repeat(WRITES) { round ->
                             dao.upsert(
-                                ObjectRow(
+                                CachedQueryRow(
                                     table = TABLE,
-                                    signature = "q${round % SIGNATURES}",
+                                    cacheKey = "q${round % CACHE_KEYS}",
                                     payload = "[$writer,$round]",
                                     updatedAt = 1L,
                                 )
@@ -87,22 +87,22 @@ class InMemoryDaosAcrossThreadsTest {
     @Test
     fun the_storage_dao_reads_while_another_thread_writes() = runTest {
         // Given
-        val dao = InMemoryStorageDao()
+        val dao = InMemoryCachedFileDao()
         val failures = AtomicInt(0)
 
         // When
         withContext(Dispatchers.Default) {
-            whileWriting(write = { index -> dao.upsert(storageRow(index)) }) {
+            whileWriting(write = { index -> dao.upsert(cachedFileRow(index)) }) {
                 repeat(READS) { read ->
                     countingFailures(failures) {
                         dao.all()
                         dao.totalSizeBytes()
                         dao.forObject(
                             BUCKET,
-                            "file-${read % SIGNATURES}",
-                            "file-${read % SIGNATURES}@",
+                            "file-${read % CACHE_KEYS}",
+                            "file-${read % CACHE_KEYS}@",
                         )
-                        dao.delete(BUCKET, "file-${read % SIGNATURES}")
+                        dao.delete(BUCKET, "file-${read % CACHE_KEYS}")
                     }
                 }
             }
@@ -138,20 +138,20 @@ class InMemoryDaosAcrossThreadsTest {
         }
     }
 
-    private fun payloadRow(index: Int): ObjectRow =
-        ObjectRow(
+    private fun payloadRow(index: Int): CachedQueryRow =
+        CachedQueryRow(
             table = TABLE,
-            signature = "q${index % SIGNATURES}",
+            cacheKey = "q${index % CACHE_KEYS}",
             payload = "[]",
             updatedAt = 1L,
             syncedThrough = index.toLong(),
         )
 
-    private fun storageRow(index: Int): StorageRow =
-        StorageRow(
-            key = "$BUCKET::file-${index % SIGNATURES}",
+    private fun cachedFileRow(index: Int): CachedFileRow =
+        CachedFileRow(
+            key = "$BUCKET::file-${index % CACHE_KEYS}",
             bucketId = BUCKET,
-            path = "file-${index % SIGNATURES}",
+            path = "file-${index % CACHE_KEYS}",
             localPath = "/in-memory/file-$index",
             sizeBytes = index.toLong(),
             eTag = null,
@@ -161,7 +161,7 @@ class InMemoryDaosAcrossThreadsTest {
     private companion object {
         const val TABLE = "todos"
         const val BUCKET = "avatars"
-        const val SIGNATURES = 500
+        const val CACHE_KEYS = 500
         const val READS = 20_000
         const val WRITES = 5_000
     }

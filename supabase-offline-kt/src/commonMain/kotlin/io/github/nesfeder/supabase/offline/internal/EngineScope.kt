@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
-import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,12 +13,12 @@ import kotlinx.coroutines.SupervisorJob
  * The handler every engine scope carries, so a background failure that reaches no caller never
  * crashes the process. It is logged by type, never by its message, which can carry row data.
  *
- * @param sdkLogger where to log, or `null` to only contain the failure.
+ * @param engineLogger where to log, or `null` to only contain the failure.
  * @return the handler.
  */
-internal fun engineExceptionHandler(sdkLogger: SdkLogger?): CoroutineExceptionHandler =
+internal fun engineExceptionHandler(engineLogger: EngineLogger?): CoroutineExceptionHandler =
     CoroutineExceptionHandler { _, failure ->
-        sdkLogger?.error {
+        engineLogger?.error {
             "Offline engine background work failed unexpectedly (${failure::class.simpleName})"
         }
     }
@@ -26,18 +26,18 @@ internal fun engineExceptionHandler(sdkLogger: SdkLogger?): CoroutineExceptionHa
 /**
  * A supervised engine scope on [Dispatchers.Default] carrying [engineExceptionHandler].
  *
- * @param sdkLogger where the handler logs.
+ * @param engineLogger where the handler logs.
  */
-internal fun newEngineScope(sdkLogger: SdkLogger?): CoroutineScope =
-    CoroutineScope(SupervisorJob() + Dispatchers.Default + engineExceptionHandler(sdkLogger))
+internal fun newEngineScope(engineLogger: EngineLogger?): CoroutineScope =
+    CoroutineScope(SupervisorJob() + Dispatchers.Default + engineExceptionHandler(engineLogger))
 
 /**
  * A supervised child of [parent] on [parent]'s dispatcher, carrying [engineExceptionHandler]:
  * cancelling it stops everything launched in it and leaves [parent] running.
  */
-internal fun childEngineScope(parent: CoroutineScope, sdkLogger: SdkLogger?): CoroutineScope =
+internal fun childEngineScope(parent: CoroutineScope, engineLogger: EngineLogger?): CoroutineScope =
     CoroutineScope(
         parent.coroutineContext +
             SupervisorJob(parent.coroutineContext[Job]) +
-            engineExceptionHandler(sdkLogger)
+            engineExceptionHandler(engineLogger)
     )

@@ -7,11 +7,11 @@ package io.github.nesfeder.supabase.offline.internal.testing
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
 import kotlinx.coroutines.CoroutineScope
@@ -49,20 +49,18 @@ public fun createInMemorySupabaseOfflineClient(
         supabase = supabase,
         store =
             OfflineStore(
-                objectDao = InMemoryObjectDao(),
-                storageDao = InMemoryStorageDao(),
+                queryCacheDao = InMemoryQueryCacheDao(),
+                cachedFileDao = InMemoryCachedFileDao(),
                 mutationDao = InMemoryMutationDao(),
-                dbPathProvider = InMemoryDbPathProvider,
-                settings =
-                    OfflineCacheSettings(
-                        maxDbSizeBytes = null,
+                queryCacheLimits =
+                    QueryCacheLimits(
+                        maxPayloadBytes = null,
                         evictionBatchSize = 0,
-                        minRetainedBytes = 0,
+                        evictionHeadroomBytes = 0,
                     ),
                 nowMillis = nowMillis,
-                dbSizeProvider = { null },
             ),
         baseDirectoryProvider = { IN_MEMORY_BASE_DIRECTORY.toPath() },
-        sdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+        engineLogger = EngineLogger(null, OfflineLogLevel.INFO),
         coordinatorScope = coordinatorScope,
     )
