@@ -46,7 +46,7 @@ Package.swift          SwiftPM manifest pointing at ios/distribution/
 - JDK 17
 - Android Studio with Android SDK 37 — for the Android sample
 - Xcode 15+ — for the iOS demo
-- A Supabase project (URL + anonymous API key)
+- A Supabase project of your own, for its URL and publishable key (see [Sample apps](#sample-apps))
 
 ## Sample apps
 

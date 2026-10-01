@@ -42,6 +42,12 @@ Or open the repository in Android Studio and run the app module in `samples/andr
 The first launch signs in anonymously and shows a few sample tasks. Then try the Sync tab's
 **Simulate offline** switch, change some tasks, and switch it off again.
 
+The Sync tab's **Try it** group shows how failures reach you. **Queue an invalid title** online is
+refused as soon as it is sent, and the app says why in a message; offline, the same write is
+refused when the queue replays and waits under **Refused changes**. **Make the server
+unreachable** stalls the refresh, and **Make Storage refuse** fails photo uploads, downloads and
+deletes.
+
 ## Troubleshooting
 
 - **The Sync screen says Supabase is not configured.** `local.properties` has no

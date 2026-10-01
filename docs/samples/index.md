@@ -26,6 +26,9 @@ Every screen is built to make the library's offline behavior visible:
   **Sync now**, the list's refresh state, the changes the server refused (dismiss or retry), and
   the two ways to start again: clearing the local cache, and starting over as a new anonymous user.
 
+When something fails, the app says so in a message and carries on: a write the server refuses as
+soon as it is sent, a refresh that cannot reach the server, a photo Storage will not take.
+
 The [guided tour](tour.md) walks through these in order.
 
 ## The Android sample today
