@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.sample.ui.photos
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,6 +13,8 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -38,8 +42,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
@@ -98,6 +105,7 @@ fun PhotoViewerScreen(
     modifier: Modifier = Modifier,
 ) {
     var chromeVisible by rememberSaveable { mutableStateOf(true) }
+    LightStatusBarIcons()
     Box(
         modifier =
             modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) {
@@ -149,13 +157,17 @@ fun PhotoViewerScreen(
                         ),
             )
         }
-        SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
+        SnackbarHost(
+            snackbarHostState,
+            Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
+        )
         if (state is PhotoViewerUiState.Showing && !state.canDelete && chromeVisible) {
             Text(
                 text = stringResource(R.string.photo_delete_offline),
                 color = Color.White.copy(alpha = 0.8f),
                 style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.align(Alignment.BottomCenter),
+                modifier =
+                    Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp),
             )
         }
     }
@@ -187,5 +199,18 @@ private fun ZoomablePhoto(photo: TaskPhoto, loadPhotoFile: suspend (TaskPhoto) -
                     translationY = offset.y
                 },
         )
+    }
+}
+
+/** White status bar icons while this screen shows, on its black, whatever the theme. */
+@Composable
+private fun LightStatusBarIcons() {
+    val window = LocalActivity.current?.window ?: return
+    val view = LocalView.current
+    DisposableEffect(window, view) {
+        val controller = WindowCompat.getInsetsController(window, view)
+        val previous = controller.isAppearanceLightStatusBars
+        controller.isAppearanceLightStatusBars = false
+        onDispose { controller.isAppearanceLightStatusBars = previous }
     }
 }

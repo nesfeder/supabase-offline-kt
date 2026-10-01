@@ -157,6 +157,8 @@ private fun DeleteBackground(state: SwipeToDismissBoxState, shapes: ListItemShap
             animationSpec = MaterialTheme.motionScheme.fastSpatialSpec(),
             label = "bin scale",
         )
+    // Nothing behind a row at rest, which a container transform leaves uncovered as it flies.
+    if (!swiping && !armed) return
     val progress = if (swiping) state.progress.coerceIn(0f, 1f) else 0f
     val background =
         if (armed) colors.errorContainer

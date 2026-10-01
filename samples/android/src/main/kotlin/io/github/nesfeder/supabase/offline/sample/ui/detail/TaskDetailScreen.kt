@@ -34,7 +34,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -43,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TwoRowsTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -148,21 +148,33 @@ fun TaskDetailScreen(
         Scaffold(
             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
             topBar = {
-                MediumFlexibleTopAppBar(
-                    title = {
-                        val title = (state as? TaskDetailUiState.Editing)?.title.orEmpty()
-                        SharedElement(SharedKeys.taskTitle(taskId)) {
-                            Text(
-                                text = title.ifBlank { stringResource(R.string.task_untitled) },
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                // The medium flexible app bar, built from the call that says which of its two
+                // titles is which: the row's title flies into the expanded one only, since one
+                // key on both would draw it twice.
+                val editing = state as? TaskDetailUiState.Editing
+                TwoRowsTopAppBar(
+                    title = { expanded ->
+                        val title =
+                            when {
+                                editing == null -> ""
+                                editing.title.isBlank() -> stringResource(R.string.task_untitled)
+                                else -> editing.title
+                            }
+                        if (expanded) {
+                            SharedElement(SharedKeys.taskTitle(taskId)) {
+                                Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        } else {
+                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     },
                     subtitle =
-                        (state as? TaskDetailUiState.Editing)?.let { editing ->
-                            { Text(stringResource(editing.syncState.label)) }
+                        editing?.let { loaded ->
+                            { _ -> Text(stringResource(loaded.syncState.label)) }
                         },
+                    collapsedHeight = TopAppBarDefaults.MediumAppBarCollapsedHeight,
+                    expandedHeight =
+                        TopAppBarDefaults.MediumFlexibleAppBarWithSubtitleExpandedHeight,
                     navigationIcon = {
                         if (showBackButton) {
                             IconButton(onClick = onBack) {
