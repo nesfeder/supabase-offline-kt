@@ -72,7 +72,7 @@ Semantic versioning in the usual sense:
 ## What it does not cover
 
 - Anything in a package whose name contains `internal`, and anything that needs an opt-in at
-  error level, such as `@InternalOfflineTestingApi`. These exist for the library's own testing
+  error level, such as `@OfflineInternal`. These exist for the library's own testing
   artifact and Swift package, and can change in any release.
 - API marked experimental, with an opt-in at warning level. It can change in any minor release; the
   changelog still lists the change.

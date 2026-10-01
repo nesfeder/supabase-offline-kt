@@ -5,7 +5,7 @@
 package io.github.nesfeder.supabase.offline.internal.testing
 
 import io.github.jan.supabase.SupabaseClient
-import io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
+import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
@@ -38,7 +38,7 @@ import okio.Path.Companion.toPath
  * @param nowMillis clock used for cache-row timestamps; defaults to a fixed `0L` for determinism.
  * @return an offline client whose cache, storage metadata and mutation queue live in memory.
  */
-@InternalOfflineTestingApi
+@OfflineInternal
 @HiddenFromObjC
 public fun createInMemorySupabaseOfflineClient(
     supabase: SupabaseClient,

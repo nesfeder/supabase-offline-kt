@@ -11,4 +11,4 @@
 # package: a public declaration in an internal package must carry one of these markers, and the
 # visibility check fails if it does not.
 
-annotation io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
+annotation io.github.nesfeder.supabase.offline.OfflineInternal

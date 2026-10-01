@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.testing
 
 import io.github.jan.supabase.SupabaseClient
-import io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
+import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.internal.testing.createInMemorySupabaseOfflineClient
 import kotlinx.coroutines.CoroutineScope
@@ -27,7 +27,7 @@ import kotlinx.coroutines.CoroutineScope
  * @param nowMillis clock used for cache-row timestamps; defaults to a fixed `0L` for determinism.
  * @return an offline client whose cache, storage metadata and mutation queue live in memory.
  */
-@OptIn(InternalOfflineTestingApi::class)
+@OptIn(OfflineInternal::class)
 public fun buildInMemorySupabaseOfflineClient(
     supabase: SupabaseClient,
     coordinatorScope: CoroutineScope,
