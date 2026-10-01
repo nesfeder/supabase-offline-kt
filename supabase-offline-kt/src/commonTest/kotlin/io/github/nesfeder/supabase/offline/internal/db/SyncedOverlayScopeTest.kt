@@ -258,6 +258,28 @@ class SyncedOverlayScopeTest {
         assertEquals(0, mutationDao.inserted.size)
     }
 
+    @Test
+    fun a_live_query_waiting_for_its_first_payload_keeps_showing_a_replayed_insert() = runTest {
+        // Given — a live query of L, nothing cached for it yet, showing an offline insert of x
+        store.liveSignatureProvider = { setOf(LIST_L) }
+        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        assertEquals(
+            """[{"id":"x","list_id":"L"}]""",
+            store.overlaidPayloadFlow(TABLE, LIST_L).first(),
+        )
+
+        // When — x replays, and both sweeps run before L's first payload arrives
+        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.retireCoveredSyncedMutations(TABLE)
+        store.retireUnneededSyncedMutations()
+
+        // Then — L still shows x
+        assertEquals(
+            """[{"id":"x","list_id":"L"}]""",
+            store.overlaidPayloadFlow(TABLE, LIST_L).first(),
+        )
+    }
+
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
 
     private fun element(json: String): JsonElement = Json.parseToJsonElement(json)
