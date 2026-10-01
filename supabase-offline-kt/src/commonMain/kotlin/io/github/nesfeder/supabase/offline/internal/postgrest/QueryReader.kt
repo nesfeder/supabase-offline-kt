@@ -10,6 +10,7 @@ import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineReadResult
@@ -175,7 +176,7 @@ internal class QueryReader(
                     cached
                 } else {
                     engineLogger.error { "SELECT $table no cached data available" }
-                    throw NoSuchElementException("No valid cached data found for this query")
+                    throw CacheMissException("No valid cached data found for this query")
                 }
             }
         }
@@ -701,8 +702,8 @@ internal class QueryReader(
      * What a cache-only read of [shape] fails with: the cache holds lists of rows, and it sends
      * nothing.
      */
-    private fun cacheCannotAnswer(shape: ReadShape.Uncacheable): NoSuchElementException =
-        NoSuchElementException(
+    private fun cacheCannotAnswer(shape: ReadShape.Uncacheable): CacheMissException =
+        CacheMissException(
             "A cache-only read cannot answer ${shape.kind}: the cache holds lists of rows. Read the list and take " +
                 "the rows you need, or read with a strategy that may use the network."
         )

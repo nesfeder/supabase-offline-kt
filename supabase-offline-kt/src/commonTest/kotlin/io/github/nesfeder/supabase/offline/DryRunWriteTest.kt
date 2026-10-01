@@ -10,10 +10,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
@@ -85,7 +85,7 @@ class DryRunWriteTest {
         server.answer = { connectivityFailure() }
 
         // When / Then — the connectivity failure surfaces, as it would under OnlineOnly
-        assertFailsWith<HttpRequestException> {
+        assertNotQueueable<HttpRequestException> {
             builder.update(patch(), MutationStrategy.QueueIfOffline) {
                 filter { eq("id", 1) }
                 dryRun()

@@ -11,6 +11,7 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
+import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
@@ -34,6 +35,7 @@ import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -305,4 +307,16 @@ internal fun assertClientClosedError(failure: Throwable?, context: String = "the
     assertTrue(failure !is CancellationException, "$context gave a cancellation: $failure")
     assertIs<IllegalStateException>(failure, "$context gave $failure")
     assertEquals(CLIENT_CLOSED_MESSAGE, failure.message, "$context gave $failure")
+}
+
+/**
+ * Asserts [block] throws [MutationNotQueueableException] whose cause is a [T]: a write the queue
+ * could not hold was sent at once, and that failure stopped it.
+ *
+ * @param block the write.
+ * @return the cause.
+ */
+internal inline fun <reified T : Throwable> assertNotQueueable(block: () -> Unit): T {
+    val failure = assertFailsWith<MutationNotQueueableException> { block() }
+    return assertIs<T>(failure.cause, "the cause was ${failure.cause}")
 }

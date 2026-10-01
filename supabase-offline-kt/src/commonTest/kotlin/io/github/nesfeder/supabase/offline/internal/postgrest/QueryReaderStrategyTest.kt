@@ -7,6 +7,7 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.ReadStrategy
@@ -318,7 +319,7 @@ class QueryReaderStrategyTest {
         val resolver = resolver(backgroundScope)
 
         // When / Then
-        assertFailsWith<NoSuchElementException> {
+        assertFailsWith<CacheMissException> {
             resolver.select(Columns.ALL, ReadStrategy.CacheOnly(maxAge = 1.hours)) {}
         }
     }
@@ -538,7 +539,7 @@ class QueryReaderStrategyTest {
         val resolver = resolver(backgroundScope, recorder)
 
         // When
-        assertFailsWith<NoSuchElementException> {
+        assertFailsWith<CacheMissException> {
             resolver.select(Columns.ALL, ReadStrategy.CacheOnly()) {}
         }
 

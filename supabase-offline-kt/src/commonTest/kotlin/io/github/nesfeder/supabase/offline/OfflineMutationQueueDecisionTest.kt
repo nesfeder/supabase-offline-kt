@@ -12,6 +12,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
@@ -316,7 +317,7 @@ class OfflineMutationQueueDecisionTest {
         failWithConnectivity()
 
         // When / Then
-        assertFailsWith<HttpRequestException> {
+        assertNotQueueable<HttpRequestException> {
             builder.update(PATCH, MutationStrategy.QueueIfOffline)
         }
         assertTrue(mutationDao.inserted.isEmpty())
@@ -332,7 +333,7 @@ class OfflineMutationQueueDecisionTest {
         failWithConnectivity()
 
         // When / Then
-        assertFailsWith<HttpRequestException> { builder.delete(MutationStrategy.QueueIfOffline) }
+        assertNotQueueable<HttpRequestException> { builder.delete(MutationStrategy.QueueIfOffline) }
         assertTrue(mutationDao.inserted.isEmpty())
     }
 
@@ -342,7 +343,7 @@ class OfflineMutationQueueDecisionTest {
         failWithConnectivity()
 
         // When / Then
-        assertFailsWith<HttpRequestException> {
+        assertNotQueueable<HttpRequestException> {
             builder.update(PATCH, MutationStrategy.QueueIfOffline) {
                 filter {
                     or {

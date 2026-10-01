@@ -11,6 +11,7 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
+import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
@@ -251,7 +252,7 @@ class MutationOutcomeTest {
             )
 
         // When / Then — the original failure is rethrown and nothing is queued
-        assertFailsWith<IOException> {
+        assertNotQueueable<IOException> {
             builder.update(
                 body = buildJsonObject { put("retired_at", "2026-07-12T00:00:00Z") },
                 mutationStrategy = MutationStrategy.QueueIfOffline,

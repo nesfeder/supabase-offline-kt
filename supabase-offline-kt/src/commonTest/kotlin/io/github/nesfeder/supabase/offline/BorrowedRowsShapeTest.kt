@@ -255,7 +255,7 @@ class BorrowedRowsShapeTest {
         reader.cancel()
 
         // Then — no payload of x without `headline` was made for it
-        assertFailsWith<NoSuchElementException> { cached(Columns.raw(ALIASED), "done" to true) }
+        assertFailsWith<CacheMissException> { cached(Columns.raw(ALIASED), "done" to true) }
     }
 
     private companion object {

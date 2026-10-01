@@ -15,6 +15,7 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
+import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
@@ -40,7 +41,6 @@ import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.io.IOException
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -564,9 +564,9 @@ internal class OfflineTable(
     /**
      * [executeMutation]'s body, run while the call holds the client's gate.
      *
-     * @throws IOException for a `QueueIfOffline` write to a schema other than the client's default
-     *   that could not be sent: the queue replays to the default schema only, so it is never
-     *   queued.
+     * @throws MutationNotQueueableException for a `QueueIfOffline` write the queue cannot hold
+     *   (another schema, a dry run, a filter it cannot record, an unknown identity) that could not
+     *   be sent for want of a connection.
      */
     private suspend fun executeMutationNow(
         operationLabel: String,
@@ -716,7 +716,8 @@ internal class OfflineTable(
      * cache cannot be patched from a write it cannot replay, so that schema's cached queries of
      * [table] are marked stale and fetched again.
      *
-     * @throws IOException when it cannot be sent for want of a connection, naming [schema].
+     * @throws MutationNotQueueableException when it cannot be sent for want of a connection, naming
+     *   [schema].
      */
     private suspend fun sendToAnotherSchema(
         operationLabel: String,
@@ -730,7 +731,7 @@ internal class OfflineTable(
                 performOnline()
             } catch (failure: Exception) {
                 if (!failure.isNetworkOrConnectivityFailure()) throw failure
-                throw IOException(
+                throw MutationNotQueueableException(
                     "$operationLabel $table in the \"$schema\" schema could not be sent, and a write to a schema " +
                         "other than the client's default is never queued: the queue replays to the " +
                         "default schema only",
@@ -773,8 +774,8 @@ internal class OfflineTable(
     ) {
 
         /**
-         * Sends the write. A connectivity failure is logged with [whyNotQueued] and rethrown, like
-         * every other failure.
+         * Sends the write. A connectivity failure is logged with [whyNotQueued] and thrown as a
+         * [MutationNotQueueableException] carrying it; every other failure is thrown as it is.
          *
          * @param level The level to log a connectivity failure at.
          * @param whyNotQueued Why the write was not queued, for the log line.
@@ -785,9 +786,12 @@ internal class OfflineTable(
                 try {
                     performOnline()
                 } catch (failure: Exception) {
-                    if (failure.isNetworkOrConnectivityFailure())
-                        engineLogger.log(level, whyNotQueued)
-                    throw failure
+                    if (!failure.isNetworkOrConnectivityFailure()) throw failure
+                    engineLogger.log(level, whyNotQueued)
+                    throw MutationNotQueueableException(
+                        "${whyNotQueued()}, and it could not be sent",
+                        failure,
+                    )
                 }
             return applied(result)
         }

@@ -211,7 +211,7 @@ class CacheBelongsToOneIdentityTest {
         client.supabaseClient.signInForTest("B")
 
         // Then — at once, and once the session has settled, B never gets the anonymous answer
-        assertFailsWith<NoSuchElementException> {
+        assertFailsWith<CacheMissException> {
             items.select(readStrategy = ReadStrategy.CacheOnly())
         }
         awaitCacheOwner("user:B")
@@ -398,7 +398,7 @@ class CacheBelongsToOneIdentityTest {
         client.supabaseClient.signInForTest("B")
 
         // Then — B is never served A's rows; once settled, A's rows are gone and A's write is not
-        assertFailsWith<NoSuchElementException> {
+        assertFailsWith<CacheMissException> {
             items.select(readStrategy = ReadStrategy.CacheOnly())
         }
         awaitCacheOwner("user:B")
@@ -415,7 +415,7 @@ class CacheBelongsToOneIdentityTest {
         client.supabaseClient.signInForTest("A")
 
         // Then — A's write still waits for A, and A is not served B's rows
-        assertFailsWith<NoSuchElementException> {
+        assertFailsWith<CacheMissException> {
             items.select(readStrategy = ReadStrategy.CacheOnly())
         }
         awaitCacheOwner("user:A")
@@ -464,7 +464,7 @@ class CacheBelongsToOneIdentityTest {
         val client = launchClient(newServer())
 
         // Then — nobody signed in cannot claim a cache an earlier user may have left: it is dropped
-        assertFailsWith<NoSuchElementException> {
+        assertFailsWith<CacheMissException> {
             client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly())
         }
         awaitCacheOwner("anonymous")
@@ -528,7 +528,7 @@ class CacheBelongsToOneIdentityTest {
             runCurrent()
 
             // Then — while it restores, A's rows are not served
-            assertFailsWith<NoSuchElementException> {
+            assertFailsWith<CacheMissException> {
                 items.select(readStrategy = ReadStrategy.CacheOnly())
             }
 

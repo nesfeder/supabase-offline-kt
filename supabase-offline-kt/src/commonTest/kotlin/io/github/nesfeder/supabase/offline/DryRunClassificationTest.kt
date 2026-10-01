@@ -12,6 +12,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
@@ -63,7 +64,7 @@ class DryRunClassificationTest {
 
             // When — two such writes
             repeat(2) {
-                assertFailsWith<ConnectTimeoutException> {
+                assertNotQueueable<ConnectTimeoutException> {
                     builder.update(patch(), MutationStrategy.QueueIfOffline) {
                         filter { eq("id", 1) }
                     }
@@ -139,7 +140,7 @@ class DryRunClassificationTest {
             )
 
         // When / Then
-        assertFailsWith<HttpRequestException> {
+        assertNotQueueable<HttpRequestException> {
             builder.update(patch(), MutationStrategy.QueueIfOffline) {
                 filter { eq("id", 1) }
                 dryRun()
