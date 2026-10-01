@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher tile and the window behind the first frame: Material's baseline primary. -->
+    <color name="launcher_background">#FF6750A4</color>
+</resources>

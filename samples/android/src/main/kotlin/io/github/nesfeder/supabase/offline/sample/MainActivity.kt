@@ -5,13 +5,15 @@ package io.github.nesfeder.supabase.offline.sample
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material3.MaterialExpressiveTheme
-import androidx.compose.material3.Text
+import androidx.activity.enableEdgeToEdge
+import io.github.nesfeder.supabase.offline.sample.ui.navigation.OfflineTasksApp
+import io.github.nesfeder.supabase.offline.sample.ui.theme.OfflineTasksTheme
 
-/** Placeholder. */
+/** The app's one activity: edge to edge, with everything drawn by Compose. */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        setContent { MaterialExpressiveTheme { Text(BuildConfig.APPLICATION_ID) } }
+        setContent { OfflineTasksTheme { OfflineTasksApp() } }
     }
 }
