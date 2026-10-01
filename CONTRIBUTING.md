@@ -250,8 +250,9 @@ Material for MkDocs prints a notice about MkDocs 2.0 on every run. Set
 
 - Every page must be listed under `nav` in `mkdocs.yml`.
 - Some pages are pulled in from elsewhere in the repository when the site is built: this file,
-  `CHANGELOG.md`, and the sample schema in `demo/supabase/schema.sql`. Edit those files, not the
-  pages that include them. Links inside them must be absolute URLs, because they are resolved
+  `CHANGELOG.md`, and the sample schema in
+  `samples/supabase/migrations/20260930000000_offline_tasks.sql`. Edit those files, not the pages
+  that include them. Links inside them must be absolute URLs, because they are resolved
   relative to the page that includes them.
 - A page that has not been written yet opens with a "Not written yet" note, and a page written
   for the engine before 0.1.0 opens with a "Written for an earlier engine" note. Both are plain
