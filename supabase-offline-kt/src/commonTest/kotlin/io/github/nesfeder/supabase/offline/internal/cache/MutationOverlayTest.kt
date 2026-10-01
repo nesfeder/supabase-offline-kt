@@ -6,8 +6,8 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -251,7 +251,7 @@ class MutationOverlayTest {
                     table = "assets",
                     operation = MutationOperation.DELETE,
                     bodyJson = "{}",
-                    filterJson = FilterEngine.encode(filter, json),
+                    filterJson = encodeFilter(filter, json),
                     createdAtMs = 0L,
                     syncedAtMs = null,
                     defaultToNull = null,

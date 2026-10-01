@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -205,8 +205,8 @@ class StorageCacheBoundTest {
     @Test
     fun a_full_cache_does_not_rescan_every_row_on_every_download() = runTest {
         // Given — 100 files of 10 bytes, a bound of exactly 1,000
-        val dao = RecordingStorageDao()
-        store = newTestOfflineStore(storageDao = dao)
+        val dao = RecordingCachedFileDao()
+        store = newTestOfflineStore(cachedFileDao = dao)
         val bucket = bucket(maxSizeBytes = 1_000)
         repeat(100) { index -> download(bucket, "fill-$index.bin", size = 10, at = index * MINUTE) }
         dao.resetCounts()
@@ -230,8 +230,8 @@ class StorageCacheBoundTest {
     fun a_cache_whose_files_were_all_used_moments_ago_is_not_rescanned_on_every_download() =
         runTest {
             // Given — a full cache whose every file was used within the last minute
-            val dao = RecordingStorageDao()
-            store = newTestOfflineStore(storageDao = dao)
+            val dao = RecordingCachedFileDao()
+            store = newTestOfflineStore(cachedFileDao = dao)
             val bucket = bucket(maxSizeBytes = 100)
             repeat(10) { index ->
                 download(bucket, "fill-$index.bin", size = 10, at = 10 * MINUTE + index)
@@ -258,12 +258,12 @@ class StorageCacheBoundTest {
     @Test
     fun eviction_leaves_the_mutation_queues_reserved_rows_alone() = runTest {
         // Given — the mutation queue's reserved rows, and a file cache at its bound
-        val objectDao = FakeObjectDao()
-        val reservedCacheKeys = listOf(REJECTED_MUTATIONS_SIGNATURE)
+        val queryCacheDao = FakeQueryCacheDao()
+        val reservedCacheKeys = listOf(REJECTED_MUTATIONS_CACHE_KEY)
         reservedCacheKeys.forEach { cacheKey ->
-            objectDao.seedPayload(RESERVED_TABLE_NAME, cacheKey, "{}")
+            queryCacheDao.seedPayload(RESERVED_TABLE_NAME, cacheKey, "{}")
         }
-        store = newTestOfflineStore(objectDao = objectDao)
+        store = newTestOfflineStore(queryCacheDao = queryCacheDao)
         val bucket = bucket(maxSizeBytes = 10)
 
         // When — downloads push the cache over its bound, again and again
@@ -272,9 +272,9 @@ class StorageCacheBoundTest {
         // Then — the size accounting and eviction worked on files only
         assertTrue(store.totalStorageSizeBytes() <= 10)
         reservedCacheKeys.forEach { cacheKey ->
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, cacheKey), cacheKey)
+            assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, cacheKey), cacheKey)
         }
-        assertEquals(0, objectDao.evictedRows)
+        assertEquals(0, queryCacheDao.evictedRows)
     }
 
     private companion object {

@@ -7,7 +7,7 @@ import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
@@ -28,10 +28,10 @@ import kotlinx.coroutines.test.runTest
  */
 class AcceptedWritePatchTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val logger = RecordingOfflineLogger()
     private val store =
-        newTestOfflineStore(objectDao = objectDao, nowMillis = { NOW }).apply {
+        newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW }).apply {
             engineLogger = logger.asEngineLogger(OfflineLogLevel.WARNING)
         }
 
@@ -47,8 +47,8 @@ class AcceptedWritePatchTest {
         // Given — list A's first answer being written, held inside the table's lock
         val reached = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
-        objectDao.onUpsert = { row ->
-            if (row.signature == LIST_A && !release.isCompleted) {
+        queryCacheDao.onUpsert = { row ->
+            if (row.cacheKey == LIST_A && !release.isCompleted) {
                 reached.complete(Unit)
                 release.await()
             }
@@ -80,13 +80,13 @@ class AcceptedWritePatchTest {
         patch.join()
 
         // Then — list A holds its own row alone: the patch saw which rows it admits
-        assertEquals(LIST_A_ROWS, objectDao.getRow(TASKS, LIST_A)?.payload)
+        assertEquals(LIST_A_ROWS, queryCacheDao.getRow(TASKS, LIST_A)?.payload)
     }
 
     @Test
     fun an_accepted_insert_a_refresh_already_holds_is_not_added_twice() = runTest {
         // Given — a refresh that landed after the insert reached the server holds its row
-        objectDao.seedPayload(TABLE, CACHE_KEY, """[{"id":7,"title":"new"}]""", updatedAt = NOW)
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, """[{"id":7,"title":"new"}]""", updatedAt = NOW)
         store.recordQueryShape(TABLE, CACHE_KEY) {}
 
         // When — the insert's patch arrives
@@ -98,14 +98,17 @@ class AcceptedWritePatchTest {
         )
 
         // Then — one row
-        assertEquals("""[{"id":7,"title":"new"}]""", objectDao.getRow(TABLE, CACHE_KEY)?.payload)
+        assertEquals(
+            """[{"id":7,"title":"new"}]""",
+            queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload,
+        )
     }
 
     @Test
     fun an_accepted_upsert_row_without_a_key_is_not_guessed_into_a_list_which_is_fetched_again() =
         runTest {
             // Given — a list of settings, a table keyed by `key` the engine has not been told of
-            objectDao.seedPayload(
+            queryCacheDao.seedPayload(
                 TABLE,
                 CACHE_KEY,
                 """[{"key":"theme","value":"dark"}]""",
@@ -122,7 +125,7 @@ class AcceptedWritePatchTest {
             )
 
             // Then — no second row by guess; the list is stale and fetched again
-            val row = objectDao.getRow(TABLE, CACHE_KEY)
+            val row = queryCacheDao.getRow(TABLE, CACHE_KEY)
             assertEquals("""[{"key":"theme","value":"dark"}]""", row?.payload)
             assertTrue(row != null && row.updatedAt < 0, "${row?.updatedAt}")
             assertEquals(listOf(TABLE to setOf(CACHE_KEY)), markedStale)
@@ -131,7 +134,7 @@ class AcceptedWritePatchTest {
     @Test
     fun each_accepted_write_the_patch_cannot_apply_is_logged() = runTest {
         // Given — a cached list
-        objectDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1}]""", updatedAt = NOW)
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1}]""", updatedAt = NOW)
 
         // When — two writes whose bodies the patch cannot read
         repeat(2) {

@@ -9,4 +9,4 @@ import kotlinx.serialization.json.Json
  * shared and the settings cannot drift. It ignores unknown keys and coerces no values: coercion
  * would change what the overlay decodes.
  */
-internal val OfflineJson: Json = Json { ignoreUnknownKeys = true }
+internal val EngineJson: Json = Json { ignoreUnknownKeys = true }

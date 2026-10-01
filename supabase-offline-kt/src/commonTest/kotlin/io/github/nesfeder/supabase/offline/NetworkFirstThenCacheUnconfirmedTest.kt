@@ -9,7 +9,7 @@ import io.github.jan.supabase.auth.MemoryCodeVerifierCache
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -37,8 +37,8 @@ import kotlinx.coroutines.test.runTest
  */
 class NetworkFirstThenCacheUnconfirmedTest {
 
-    private val objectDao =
-        FakeObjectDao().apply { seedPayload(TABLE, TABLE, CACHED, updatedAt = 1) }
+    private val queryCacheDao =
+        FakeQueryCacheDao().apply { seedPayload(TABLE, TABLE, CACHED, updatedAt = 1) }
 
     /** Whether the server can be reached. */
     private var online = false
@@ -62,7 +62,7 @@ class NetworkFirstThenCacheUnconfirmedTest {
                         install(Postgrest)
                         accessToken = { testJwt("u-1") }
                     },
-                store = newTestOfflineStore(objectDao = objectDao),
+                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                 coordinatorScope = backgroundScope,
             )
             .from(TABLE)
@@ -123,7 +123,7 @@ class NetworkFirstThenCacheUnconfirmedTest {
                                 enableLifecycleCallbacks = false
                             }
                         },
-                    store = newTestOfflineStore(objectDao = objectDao),
+                    store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                     coordinatorScope = backgroundScope,
                 )
                 .from(TABLE)

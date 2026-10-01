@@ -100,7 +100,7 @@ class TypeDependentComparisonTest {
                 mayAlreadyHold = { false },
             )
         val byCode =
-            FilterEngine.encode(
+            encodeFilter(
                 FilterDescriptor(
                     conditions = listOf(FilterDescriptor.Condition("code", "eq", "7"))
                 ),

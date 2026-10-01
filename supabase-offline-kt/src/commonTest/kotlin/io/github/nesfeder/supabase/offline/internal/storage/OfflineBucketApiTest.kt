@@ -5,7 +5,7 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi

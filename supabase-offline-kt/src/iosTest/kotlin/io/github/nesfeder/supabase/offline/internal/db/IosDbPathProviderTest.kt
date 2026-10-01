@@ -23,7 +23,7 @@ class IosDbPathProviderTest {
                 as String
 
         // When
-        val path = IosDbPathProvider().dbPath()
+        val path = defaultDatabasePath()
 
         // Then
         assertEquals("$documents/supabase_offline.db", path.toString())

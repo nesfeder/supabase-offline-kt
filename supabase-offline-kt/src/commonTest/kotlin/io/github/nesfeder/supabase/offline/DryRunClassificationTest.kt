@@ -5,7 +5,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -34,9 +34,10 @@ import kotlinx.serialization.json.JsonElement
  */
 class DryRunClassificationTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+    private val store =
+        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_write_whose_dry_run_status_cannot_be_told_is_never_queued_and_the_engine_says_so_once() =
@@ -80,7 +81,7 @@ class DryRunClassificationTest {
         // Given — a server on PostgREST's default db-tx-end: tx=rollback is ignored and the write
         // commits
         val server = RecordingPostgrestServer(answer = { okJson("[]") })
-        objectDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
         val builder =
             OfflinePostgrestQueryBuilderImpl(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -94,7 +95,10 @@ class DryRunClassificationTest {
         }
 
         // Then — the cache shows the committed write
-        assertEquals("""[{"id":1,"title":"new"}]""", objectDao.getRow(TABLE, CACHE_KEY)?.payload)
+        assertEquals(
+            """[{"id":1,"title":"new"}]""",
+            queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload,
+        )
     }
 
     @Test
@@ -104,7 +108,7 @@ class DryRunClassificationTest {
             RecordingPostgrestServer(
                 answer = { okJson("[]", mapOf(PREFERENCE_APPLIED to "tx=rollback")) }
             )
-        objectDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
         val builder =
             OfflinePostgrestQueryBuilderImpl(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -118,7 +122,7 @@ class DryRunClassificationTest {
         }
 
         // Then
-        assertEquals(ORIGINAL, objectDao.getRow(TABLE, CACHE_KEY)?.payload)
+        assertEquals(ORIGINAL, queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload)
         assertTrue(mutationDao.inserted.isEmpty())
     }
 

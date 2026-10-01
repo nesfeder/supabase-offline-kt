@@ -6,10 +6,11 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -28,9 +29,10 @@ import kotlinx.serialization.json.JsonArray
  */
 class QueueOwnershipTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+    private val store =
+        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity? = USER_A
     private val syncer =

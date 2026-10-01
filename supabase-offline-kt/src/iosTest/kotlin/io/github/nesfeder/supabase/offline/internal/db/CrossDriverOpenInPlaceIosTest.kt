@@ -49,7 +49,9 @@ class CrossDriverOpenInPlaceIosTest {
 
         // When — opened the way createSupabaseOfflineClient opens it, with this build's SQLite
         val database =
-            getRoomDatabase(getDatabaseBuilder(databaseFile.toString()).addCallback(callback))
+            buildOfflineDatabase(
+                offlineDatabaseBuilder(databaseFile.toString()).addCallback(callback)
+            )
         val contents =
             try {
                 database.readShippedFixtureContents()
@@ -68,7 +70,7 @@ class CrossDriverOpenInPlaceIosTest {
     fun the_other_sqlites_queue_replays_every_write_exactly_as_it_was_queued() = runTest {
         // Given
         writeOtherDriversFile()
-        val database = getRoomDatabase(getDatabaseBuilder(databaseFile.toString()))
+        val database = buildOfflineDatabase(offlineDatabaseBuilder(databaseFile.toString()))
         val server = shippedQueueServer()
 
         // When

@@ -12,7 +12,7 @@ import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -51,7 +51,7 @@ class QueryReaderStrategyTest {
     private val mutationDao = FakeMutationDao()
     private val store =
         newTestOfflineStore(
-            objectDao = FakeObjectDao(),
+            queryCacheDao = FakeQueryCacheDao(),
             mutationDao = mutationDao,
             nowMillis = { currentTime },
         )

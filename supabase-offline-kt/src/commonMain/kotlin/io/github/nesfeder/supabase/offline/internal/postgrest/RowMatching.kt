@@ -168,7 +168,7 @@ private fun RowMatch.negated(): RowMatch =
  */
 private fun membershipOf(value: JsonElement, literal: String, asUuid: Boolean): RowMatch {
     if (value == JsonNull) return RowMatch.EXCLUDED
-    val members = FilterEngine.inListMembersOf(literal) ?: return RowMatch.UNKNOWN
+    val members = inListMembersOf(literal) ?: return RowMatch.UNKNOWN
     return members.fold(RowMatch.EXCLUDED) { combined, member ->
         // An unquoted null may be SQL's NULL or the text "null"; only the column's value can say
         val match =

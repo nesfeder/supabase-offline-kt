@@ -4,8 +4,9 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,7 +38,7 @@ class OfflineStoreEmissionDedupTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given — a live overlay collector and a cached payload
             var now = 0L
-            val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { now })
+            val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { now })
             val emissions = mutableListOf<String?>()
             val collector = launch {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
@@ -64,7 +65,7 @@ class OfflineStoreEmissionDedupTest {
     fun mutation_write_for_an_unrelated_table_does_not_reemit() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a live overlay collector on `ratings` with a cached payload
-            val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { 1L })
+            val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { 1L })
             val emissions = mutableListOf<String?>()
             val collector = launch {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
@@ -101,7 +102,7 @@ class OfflineStoreEmissionDedupTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given — a live overlay collector and a cached payload
             var now = 0L
-            val store = buildStore(FakeObjectDao(), FakeMutationDao(), nowMillis = { now })
+            val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { now })
             val emissions = mutableListOf<String?>()
             val collector = launch {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
@@ -123,12 +124,12 @@ class OfflineStoreEmissionDedupTest {
         }
 
     private fun buildStore(
-        objectDao: ObjectDao,
+        queryCacheDao: QueryCacheDao,
         mutationDao: MutationDao,
         nowMillis: () -> Long,
     ): OfflineStore =
         newTestOfflineStore(
-            objectDao = objectDao,
+            queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             nowMillis = nowMillis,
         )

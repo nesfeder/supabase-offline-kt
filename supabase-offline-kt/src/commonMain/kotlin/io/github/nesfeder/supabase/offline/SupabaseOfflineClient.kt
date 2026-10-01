@@ -12,15 +12,15 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.childEngineScope
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -33,10 +33,10 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutat
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries
 import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installReadShapeCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
@@ -443,7 +443,7 @@ internal class SupabaseOfflineClientImpl(
         }
 
     /** Encodes the primary-key [FilterDescriptor] built for realtime records. */
-    private val json = OfflineJson
+    private val json = EngineJson
 
     /**
      * Client-scoped coordinator shared by every builder this client creates: single-flight refresh
@@ -723,7 +723,7 @@ internal class SupabaseOfflineClientImpl(
                 mode = FilterDescriptor.Mode.AND,
                 conditions = conditions,
             )
-        return FilterEngine.encode(descriptor, json)
+        return encodeFilter(descriptor, json)
     }
 
     /**

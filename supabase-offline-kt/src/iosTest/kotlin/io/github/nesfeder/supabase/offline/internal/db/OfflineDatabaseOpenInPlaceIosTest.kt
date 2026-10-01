@@ -34,12 +34,13 @@ class OfflineDatabaseOpenInPlaceIosTest {
     fun a_schema_version_1_database_opens_in_place_with_every_row() = runTest {
         // Given — the database file, written with the raw driver, never through Room
         FileSystem.SYSTEM.createDirectories(directory)
-        val dbPath = (directory / "supabase_offline.db").toString()
-        ShippedDatabaseFixture.writeTo(dbPath, defaultSQLiteDriver())
+        val databasePath = (directory / "supabase_offline.db").toString()
+        ShippedDatabaseFixture.writeTo(databasePath, defaultSQLiteDriver())
         val callback = RecordingRoomCallback()
 
         // When — opened the way createSupabaseOfflineClient opens it
-        val database = getRoomDatabase(getDatabaseBuilder(dbPath).addCallback(callback))
+        val database =
+            buildOfflineDatabase(offlineDatabaseBuilder(databasePath).addCallback(callback))
         val contents =
             try {
                 database.readShippedFixtureContents()
@@ -54,11 +55,11 @@ class OfflineDatabaseOpenInPlaceIosTest {
         assertEquals(1, callback.opens)
         assertEquals(
             ShippedDatabaseFixture.VERSION,
-            ShippedDatabaseFixture.readUserVersion(dbPath, defaultSQLiteDriver()),
+            ShippedDatabaseFixture.readUserVersion(databasePath, defaultSQLiteDriver()),
         )
         assertEquals(
             ShippedDatabaseFixture.IDENTITY_HASH,
-            ShippedDatabaseFixture.readIdentityHash(dbPath, defaultSQLiteDriver()),
+            ShippedDatabaseFixture.readIdentityHash(databasePath, defaultSQLiteDriver()),
         )
     }
 
@@ -66,9 +67,9 @@ class OfflineDatabaseOpenInPlaceIosTest {
     fun the_queue_on_disk_replays_every_write_exactly_as_it_was_queued() = runTest {
         // Given — the database, opened in place through the library's own builder
         FileSystem.SYSTEM.createDirectories(directory)
-        val dbPath = (directory / "supabase_offline.db").toString()
-        ShippedDatabaseFixture.writeTo(dbPath, defaultSQLiteDriver())
-        val database = getRoomDatabase(getDatabaseBuilder(dbPath))
+        val databasePath = (directory / "supabase_offline.db").toString()
+        ShippedDatabaseFixture.writeTo(databasePath, defaultSQLiteDriver())
+        val database = buildOfflineDatabase(offlineDatabaseBuilder(databasePath))
         val server = shippedQueueServer()
 
         // When — the queue replays through a real store over the database's DAOs

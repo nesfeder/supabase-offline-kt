@@ -15,10 +15,10 @@ import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
-import io.github.nesfeder.supabase.offline.internal.db.CacheWriteOutcome
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure

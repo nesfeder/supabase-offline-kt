@@ -16,10 +16,10 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.TOKEN_ENDPOINT
@@ -71,9 +71,9 @@ import okio.SYSTEM
  */
 class CacheBelongsToOneIdentityTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val storageDao = InMemoryStorageDao()
+    private val cachedFileDao = InMemoryCachedFileDao()
     private val dataDirectory =
         FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
             "supabase-offline-identity-${Random.nextLong().toULong()}"
@@ -151,8 +151,8 @@ class CacheBelongsToOneIdentityTest {
                 supabase = supabase,
                 store =
                     newTestOfflineStore(
-                        objectDao = objectDao,
-                        storageDao = storageDao,
+                        queryCacheDao = queryCacheDao,
+                        cachedFileDao = cachedFileDao,
                         mutationDao = mutationDao,
                     ),
                 baseDirectoryProvider = { dataDirectory },
@@ -183,7 +183,7 @@ class CacheBelongsToOneIdentityTest {
 
     /** The record of whose the cache is, as the engine wrote it. */
     private fun recordedOwner(): String? =
-        objectDao.getRow(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE)?.payload
+        queryCacheDao.getRow(RESERVED_TABLE_NAME, CACHE_OWNER_CACHE_KEY)?.payload
 
     /** The record of the cache belonging to [owner]. */
     private fun ownerRecordOf(owner: String): String = """{"version":1,"owner":"$owner"}"""
@@ -263,7 +263,7 @@ class CacheBelongsToOneIdentityTest {
     @Test
     fun a_restore_that_settles_signed_out_never_shows_what_was_cached_before() = runTest {
         // Given — rows cached by an earlier build, and no stored session to restore
-        objectDao.seedPayload(TABLE, TABLE, rowsOf("A"))
+        queryCacheDao.seedPayload(TABLE, TABLE, rowsOf("A"))
         val sessions = FakeHeldSessionManager(stored = null)
         val server = newServer()
         val client = launchClient(server, sessions = sessions, restoresStoredSession = true)
@@ -297,10 +297,10 @@ class CacheBelongsToOneIdentityTest {
     fun a_stored_session_whose_refresh_is_refused_shows_its_users_rows_until_it_settles() =
         runTest {
             // Given — A's rows cached as A's, and A's stored session expired, its refresh refused
-            objectDao.seedPayload(TABLE, TABLE, rowsOf("A"))
-            objectDao.seedPayload(
+            queryCacheDao.seedPayload(TABLE, TABLE, rowsOf("A"))
+            queryCacheDao.seedPayload(
                 RESERVED_TABLE_NAME,
-                CACHE_OWNER_SIGNATURE,
+                CACHE_OWNER_CACHE_KEY,
                 ownerRecordOf("user:A"),
             )
             val sessions = FakeHeldSessionManager(stored = expiredSessionOf("A"))
@@ -342,7 +342,7 @@ class CacheBelongsToOneIdentityTest {
             assertTrue(whileRestoring.isNotEmpty(), "$shown")
             assertTrue(whileRestoring.all { data -> data == rowsOf("A") }, "$whileRestoring")
             assertEquals("[]", shown.last())
-            assertEquals("[]", objectDao.getRow(TABLE, TABLE)?.payload)
+            assertEquals("[]", queryCacheDao.getRow(TABLE, TABLE)?.payload)
         }
 
     @Test
@@ -350,11 +350,11 @@ class CacheBelongsToOneIdentityTest {
         listOf(ReadStrategy.NetworkOnly, ReadStrategy.NetworkFirst(), ReadStrategy.CacheFirst())
             .forEach { strategy ->
                 // Given — A's rows cached as A's, and a restore that will find no session
-                objectDao.deleteAll()
-                objectDao.seedPayload(TABLE, TABLE, rowsOf("A"))
-                objectDao.seedPayload(
+                queryCacheDao.deleteAll()
+                queryCacheDao.seedPayload(TABLE, TABLE, rowsOf("A"))
+                queryCacheDao.seedPayload(
                     RESERVED_TABLE_NAME,
-                    CACHE_OWNER_SIGNATURE,
+                    CACHE_OWNER_CACHE_KEY,
                     ownerRecordOf("user:A"),
                 )
                 val sessions = FakeHeldSessionManager(stored = null)
@@ -373,7 +373,7 @@ class CacheBelongsToOneIdentityTest {
                 // Then — the anonymous answer; A's rows are dropped, and what is kept, if the
                 // answer landed after the drop, is that answer, for nobody signed in
                 assertEquals("[]", read.await(), "$strategy")
-                val stored = objectDao.rowsOf(TABLE).map { row -> row.payload }
+                val stored = queryCacheDao.rowsOf(TABLE).map { row -> row.payload }
                 assertTrue(stored == emptyList<String>() || stored == listOf("[]"), "$stored")
                 assertEquals(ownerRecordOf("anonymous"), recordedOwner(), "$strategy")
                 client.close()
@@ -401,7 +401,7 @@ class CacheBelongsToOneIdentityTest {
             items.select(readStrategy = ReadStrategy.CacheOnly())
         }
         awaitCacheOwner("user:B")
-        assertEquals(emptyList(), objectDao.rowsOf(TABLE).map { row -> row.payload })
+        assertEquals(emptyList(), queryCacheDao.rowsOf(TABLE).map { row -> row.payload })
         assertEquals(1, mutationDao.inserted.count { row -> row.syncedAtMs == null })
         assertEquals(
             listOf("user:A"),
@@ -424,7 +424,7 @@ class CacheBelongsToOneIdentityTest {
     @Test
     fun an_upgraded_install_signed_in_adopts_what_is_cached() = runTest {
         // Given — rows cached by an earlier build, which recorded no owner
-        objectDao.seedPayload(TABLE, TABLE, rowsOf("A"))
+        queryCacheDao.seedPayload(TABLE, TABLE, rowsOf("A"))
 
         // When — the app starts signed in
         val client = launchClient(newServer(), signedInAs = "A")
@@ -435,7 +435,7 @@ class CacheBelongsToOneIdentityTest {
             client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly()).data,
         )
         awaitCacheOwner("user:A")
-        assertEquals(listOf(rowsOf("A")), objectDao.rowsOf(TABLE).map { row -> row.payload })
+        assertEquals(listOf(rowsOf("A")), queryCacheDao.rowsOf(TABLE).map { row -> row.payload })
         assertEquals(ownerRecordOf("user:A"), recordedOwner())
     }
 
@@ -451,13 +451,13 @@ class CacheBelongsToOneIdentityTest {
 
         // Then — the empty cache is nobody's without a drop, and the answer is kept
         assertEquals(0, scrubs)
-        assertEquals(listOf("[]"), objectDao.rowsOf(TABLE).map { row -> row.payload })
+        assertEquals(listOf("[]"), queryCacheDao.rowsOf(TABLE).map { row -> row.payload })
     }
 
     @Test
     fun an_upgraded_install_signed_out_drops_what_is_cached() = runTest {
         // Given — rows cached by an earlier build, which recorded no owner
-        objectDao.seedPayload(TABLE, TABLE, rowsOf("A"))
+        queryCacheDao.seedPayload(TABLE, TABLE, rowsOf("A"))
 
         // When — the app starts signed out
         val client = launchClient(newServer())
@@ -467,7 +467,7 @@ class CacheBelongsToOneIdentityTest {
             client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly())
         }
         awaitCacheOwner("anonymous")
-        assertEquals(emptyList(), objectDao.rowsOf(TABLE).map { row -> row.payload })
+        assertEquals(emptyList(), queryCacheDao.rowsOf(TABLE).map { row -> row.payload })
     }
 
     @Test
@@ -478,8 +478,8 @@ class CacheBelongsToOneIdentityTest {
             )
             .forEach { (label, plugins) ->
                 // Given — rows cached by an earlier build, which recorded no owner
-                objectDao.deleteAll()
-                objectDao.seedPayload(TABLE, TABLE, rowsOf("A"))
+                queryCacheDao.deleteAll()
+                queryCacheDao.seedPayload(TABLE, TABLE, rowsOf("A"))
 
                 // When
                 val client = launchClient(newServer(), plugins = plugins)
@@ -541,7 +541,10 @@ class CacheBelongsToOneIdentityTest {
             // Then — never A's rows, and B's in the end
             assertFalse(rowsOf("A") in shown, "$shown")
             assertEquals(rowsOf("B"), shown.last())
-            assertEquals(listOf(rowsOf("B")), objectDao.rowsOf(TABLE).map { row -> row.payload })
+            assertEquals(
+                listOf(rowsOf("B")),
+                queryCacheDao.rowsOf(TABLE).map { row -> row.payload },
+            )
         }
 
     @Test
@@ -588,7 +591,7 @@ class CacheBelongsToOneIdentityTest {
         awaitCacheOwner("user:B")
         awaitUntil { !FileSystem.SYSTEM.exists(cached.path.toPath()) }
         assertFalse(FileSystem.SYSTEM.exists(cached.path.toPath()))
-        assertEquals(emptyList(), storageDao.all().map { row -> row.path })
+        assertEquals(emptyList(), cachedFileDao.all().map { row -> row.path })
         val fetched = bucket.ensureCachedFile(OBJECT_PATH)
         assertEquals("bytes of B", FileSystem.SYSTEM.read(fetched.path.toPath()) { readUtf8() })
     }
@@ -631,7 +634,7 @@ class CacheBelongsToOneIdentityTest {
         const val OBJECT_PATH = "me.png"
 
         /** Where the engine records whose the cache is, as pinned in `PersistedNamesTest`. */
-        const val CACHE_OWNER_SIGNATURE = "cache_owner"
+        const val CACHE_OWNER_CACHE_KEY = "cache_owner"
 
         val USERS = listOf("A", "B")
 

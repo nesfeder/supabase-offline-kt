@@ -11,11 +11,11 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -297,8 +297,9 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf(serverRows, postgrest)
                     },
                 )
-            val objectDao = FakeObjectDao()
-            val resolver = buildResolver(remoteTable, backgroundScope, objectDao = objectDao)
+            val queryCacheDao = FakeQueryCacheDao()
+            val resolver =
+                buildResolver(remoteTable, backgroundScope, queryCacheDao = queryCacheDao)
             val primingCollector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -329,7 +330,7 @@ class QueryReaderRecoveryTest {
             // collector, so only convergence is asserted, not the stale-then-empty sequence.)
             assertEquals(2, networkCalls, "the re-subscription must run its own refresh")
             assertEquals("[]", emissions.last(), "collector converges to the server's empty")
-            assertEquals("[]", objectDao.allForTable("plans").single().payload)
+            assertEquals("[]", queryCacheDao.allForTable("plans").single().payload)
 
             collector.cancelAndJoin()
         }
@@ -405,8 +406,9 @@ class QueryReaderRecoveryTest {
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
                 )
-            val objectDao = FakeObjectDao()
-            val resolver = buildResolver(remoteTable, backgroundScope, objectDao = objectDao)
+            val queryCacheDao = FakeQueryCacheDao()
+            val resolver =
+                buildResolver(remoteTable, backgroundScope, queryCacheDao = queryCacheDao)
             val primingCollector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -422,7 +424,7 @@ class QueryReaderRecoveryTest {
 
             // Then: the caller sees the server's answer and the cache converges to it
             assertEquals("[]", oneShot.data)
-            assertEquals("[]", objectDao.allForTable("plans").single().payload)
+            assertEquals("[]", queryCacheDao.allForTable("plans").single().payload)
         }
 
     @Test
@@ -440,13 +442,13 @@ class QueryReaderRecoveryTest {
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
                 )
-            val objectDao = FakeObjectDao()
+            val queryCacheDao = FakeQueryCacheDao()
             val resolver =
                 buildResolver(
                     remoteTable,
                     backgroundScope,
                     authState = { authState },
-                    objectDao = objectDao,
+                    queryCacheDao = queryCacheDao,
                 )
             val primingCollector = launch {
                 resolver
@@ -465,7 +467,7 @@ class QueryReaderRecoveryTest {
             // nothing about the signed-in user's data — the cached rows are preserved for
             // identity teardown (clearAllCache) to remove, not clobbered
             assertEquals("[]", oneShot.data)
-            assertEquals(freshPayload, objectDao.allForTable("plans").single().payload)
+            assertEquals(freshPayload, queryCacheDao.allForTable("plans").single().payload)
         }
 
     @Test
@@ -488,13 +490,13 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf(serverRows, postgrest)
                     },
                 )
-            val objectDao = FakeObjectDao()
+            val queryCacheDao = FakeQueryCacheDao()
             val resolver =
                 buildResolver(
                     remoteTable,
                     backgroundScope,
                     authState = { authState },
-                    objectDao = objectDao,
+                    queryCacheDao = queryCacheDao,
                 )
             val primingCollector = launch {
                 resolver
@@ -513,7 +515,7 @@ class QueryReaderRecoveryTest {
             // Then: the post-response check sees the session is gone — the [] is anon-shaped,
             // not authoritative, and the cached rows survive for identity teardown to clear
             assertEquals("[]", oneShot.data)
-            assertEquals(freshPayload, objectDao.allForTable("plans").single().payload)
+            assertEquals(freshPayload, queryCacheDao.allForTable("plans").single().payload)
         }
 
     @Test
@@ -606,14 +608,14 @@ class QueryReaderRecoveryTest {
                             postgrestResultOf(serverRows, postgrest)
                         },
                     )
-                val objectDao = FakeObjectDao()
+                val queryCacheDao = FakeQueryCacheDao()
                 val resolver =
                     buildResolver(
                         remoteTable = remoteTable,
                         scope = backgroundScope,
                         wakeUps = wakeUps,
                         authState = { authState },
-                        objectDao = objectDao,
+                        queryCacheDao = queryCacheDao,
                     )
 
                 // When: the one-shot read runs inside the restore window
@@ -641,7 +643,7 @@ class QueryReaderRecoveryTest {
                 assertEquals(freshPayload, oneShot.await().data, strategyName)
                 assertEquals(
                     freshPayload,
-                    objectDao.allForTable("plans").single().payload,
+                    queryCacheDao.allForTable("plans").single().payload,
                     strategyName,
                 )
             }
@@ -662,13 +664,13 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf("[]", postgrest)
                     },
                 )
-            val objectDao = FakeObjectDao()
+            val queryCacheDao = FakeQueryCacheDao()
             val resolver =
                 buildResolver(
                     remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { RequestSession.Restoring },
-                    objectDao = objectDao,
+                    queryCacheDao = queryCacheDao,
                 )
 
             // When: a one-shot read walks the whole ladder
@@ -699,7 +701,7 @@ class QueryReaderRecoveryTest {
             // exhausted ladder costs one render of "no data" and not a poisoned cache slot that
             // later cache-first reads would serve as the user's data.
             assertTrue(
-                objectDao.allForTable("plans").isEmpty(),
+                queryCacheDao.allForTable("plans").isEmpty(),
                 "an RLS-shaped empty must not reach a cold cache slot",
             )
         }
@@ -830,8 +832,8 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf("[]", postgrest)
                     },
                 )
-            val objectDao = FakeObjectDao()
-            val store = buildStore(objectDao)
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
             val resolver =
                 buildResolver(
                     remoteTable = remoteTable,
@@ -856,7 +858,7 @@ class QueryReaderRecoveryTest {
             assertEquals("[]", oneShot.await().data)
             assertEquals(1, networkCalls, "a teardown-refused response must not trigger a retry")
             assertEquals(0L, currentTime, "and must not spend a ladder step either")
-            assertTrue(objectDao.allForTable("plans").isEmpty())
+            assertTrue(queryCacheDao.allForTable("plans").isEmpty())
         }
 
     @Test
@@ -909,13 +911,13 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf("[]", postgrest)
                     },
                 )
-            val objectDao = FakeObjectDao()
+            val queryCacheDao = FakeQueryCacheDao()
             val resolver =
                 buildResolver(
                     remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { RequestSession.SignedOut },
-                    objectDao = objectDao,
+                    queryCacheDao = queryCacheDao,
                 )
 
             // When: a one-shot read runs on the anon key
@@ -926,7 +928,7 @@ class QueryReaderRecoveryTest {
             assertEquals("[]", oneShot.data)
             assertEquals(1, networkCalls, "an unauthenticated empty must not enter the ladder")
             assertEquals(0L, currentTime, "and must not spend a single backoff step")
-            assertTrue(objectDao.allForTable("plans").isEmpty())
+            assertTrue(queryCacheDao.allForTable("plans").isEmpty())
         }
 
     @Test
@@ -944,13 +946,13 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf("[]", postgrest)
                     },
                 )
-            val objectDao = FakeObjectDao()
+            val queryCacheDao = FakeQueryCacheDao()
             val resolver =
                 buildResolver(
                     remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { SIGNED_IN },
-                    objectDao = objectDao,
+                    queryCacheDao = queryCacheDao,
                 )
 
             // When: a one-shot read runs
@@ -962,7 +964,7 @@ class QueryReaderRecoveryTest {
             assertEquals("[]", oneShot.data)
             assertEquals(1, networkCalls, "an authenticated empty never enters the ladder")
             assertEquals(0L, currentTime)
-            assertEquals("[]", objectDao.allForTable("plans").single().payload)
+            assertEquals("[]", queryCacheDao.allForTable("plans").single().payload)
         }
 
     @Test
@@ -979,9 +981,9 @@ class QueryReaderRecoveryTest {
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
                 )
-            val objectDao = FakeObjectDao()
+            val queryCacheDao = FakeQueryCacheDao()
             val mutationDao = FakeMutationDao()
-            val store = buildStore(objectDao, mutationDao)
+            val store = buildStore(queryCacheDao, mutationDao)
             val resolver =
                 buildResolver(
                     remoteTable = remoteTable,
@@ -1024,7 +1026,7 @@ class QueryReaderRecoveryTest {
             assertEquals(1, mutationDao.inserted.size, "a refused empty must not retire the replay")
             assertEquals(
                 freshPayload,
-                objectDao.allForTable("plans").single().payload,
+                queryCacheDao.allForTable("plans").single().payload,
                 "and the cached rows it stood in for are still there",
             )
         }
@@ -1044,14 +1046,14 @@ class QueryReaderRecoveryTest {
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
                 )
-            val objectDao = FakeObjectDao()
+            val queryCacheDao = FakeQueryCacheDao()
             val resolver =
                 buildResolver(
                     remoteTable = remoteTable,
                     scope = backgroundScope,
                     wakeUps = wakeUps,
                     authState = { authState },
-                    objectDao = objectDao,
+                    queryCacheDao = queryCacheDao,
                 )
 
             // When: the subscription runs long enough to exhaust the fast ladder
@@ -1069,7 +1071,7 @@ class QueryReaderRecoveryTest {
             // written — a subscription that looks healthy while showing an empty screen, with no
             // retry left to fix it when the token refresh recovers.
             assertTrue(
-                objectDao.allForTable("plans").isEmpty(),
+                queryCacheDao.allForTable("plans").isEmpty(),
                 "the RLS-shaped empty is not cached",
             )
             assertNull(reads.last().result, "and the subscription is still at no-data")
@@ -1118,8 +1120,8 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf(answer, postgrest)
                     },
                 )
-            val objectDao = FakeObjectDao()
-            val store = buildStore(objectDao)
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
             val resolver = buildResolver(remoteTable, backgroundScope, store = store)
             val primingCollector = launch {
                 resolver
@@ -1167,7 +1169,7 @@ class QueryReaderRecoveryTest {
             // the insert) converged the cache on real server state.
             assertEquals(
                 bothProjects,
-                objectDao.allForTable("projects").single().payload,
+                queryCacheDao.allForTable("projects").single().payload,
                 "the pre-insert response must not erase the saved row",
             )
             assertEquals(bothProjects, emissions.last(), "the collector never loses the saved row")
@@ -1198,8 +1200,8 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf(freshPayload, postgrest)
                     },
                 )
-            val objectDao = FakeObjectDao()
-            val store = buildStore(objectDao)
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
             val resolver = buildResolver(remoteTable, backgroundScope, store = store)
             val collector = launch {
                 resolver
@@ -1220,7 +1222,7 @@ class QueryReaderRecoveryTest {
             // front of the next user, and a follow-up request during sign-out could still carry
             // the outgoing JWT — so neither happens.
             assertTrue(
-                objectDao.allForTable("projects").isEmpty(),
+                queryCacheDao.allForTable("projects").isEmpty(),
                 "a response that predates teardown must not repopulate the cache",
             )
             assertEquals(1, networkCalls, "a teardown-refused response must not trigger a re-fetch")
@@ -1235,8 +1237,8 @@ class QueryReaderRecoveryTest {
         scope: CoroutineScope,
         wakeUps: MutableSharedFlow<Unit> = MutableSharedFlow(),
         authState: () -> RequestSession = { SIGNED_IN },
-        objectDao: FakeObjectDao = FakeObjectDao(),
-        store: OfflineStore = buildStore(objectDao),
+        queryCacheDao: FakeQueryCacheDao = FakeQueryCacheDao(),
+        store: OfflineStore = buildStore(queryCacheDao),
     ): QueryReader =
         QueryReader(
             delegate = remoteTable,
@@ -1255,11 +1257,11 @@ class QueryReaderRecoveryTest {
     private fun testPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 
     private fun buildStore(
-        objectDao: FakeObjectDao = FakeObjectDao(),
+        queryCacheDao: FakeQueryCacheDao = FakeQueryCacheDao(),
         mutationDao: FakeMutationDao = FakeMutationDao(),
     ): OfflineStore =
         newTestOfflineStore(
-            objectDao = objectDao,
+            queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
         )
 

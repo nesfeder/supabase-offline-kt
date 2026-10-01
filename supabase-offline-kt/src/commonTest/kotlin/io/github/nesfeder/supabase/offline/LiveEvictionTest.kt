@@ -6,7 +6,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -39,7 +39,7 @@ class LiveEvictionTest {
         strategy: FlowReadStrategy
     ): Pair<List<String>, List<String?>> {
         var clock = 0L
-        val objectDao = FakeObjectDao()
+        val queryCacheDao = FakeQueryCacheDao()
         val dispatcher = StandardTestDispatcher(testScheduler)
         val server =
             RecordingPostgrestServer(
@@ -61,7 +61,7 @@ class LiveEvictionTest {
                         },
                     store =
                         newTestOfflineStore(
-                            objectDao = objectDao,
+                            queryCacheDao = queryCacheDao,
                             // The large list and list A fit together; one more list does not
                             queryCacheLimits =
                                 QueryCacheLimits(
@@ -98,7 +98,7 @@ class LiveEvictionTest {
         }
         advanceUntilIdle()
         scope.cancel()
-        return objectDao.rowsOf(TABLE).map { row -> row.payload } to shown
+        return queryCacheDao.rowsOf(TABLE).map { row -> row.payload } to shown
     }
 
     @Test

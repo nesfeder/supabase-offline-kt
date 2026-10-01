@@ -4,12 +4,12 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -35,8 +35,8 @@ import kotlinx.serialization.json.JsonElement
  */
 class HeadSendTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val queryCacheDao = FakeQueryCacheDao()
+    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
     private var syncRequests = 0
@@ -229,8 +229,8 @@ class HeadSendTest {
     @Test
     fun an_accepted_write_leaves_the_queue_even_if_patching_the_cache_fails() = runTest {
         // Given — a cached row whose rewrite fails
-        objectDao.seedPayload(TABLE, "tasks?id=eq.1", """[{"id":1,"title":"original"}]""")
-        objectDao.failUpsertOf = { row -> row.table == TABLE }
+        queryCacheDao.seedPayload(TABLE, "tasks?id=eq.1", """[{"id":1,"title":"original"}]""")
+        queryCacheDao.failUpsertOf = { row -> row.table == TABLE }
 
         // When
         val outcome = runCatching { rename("A") }

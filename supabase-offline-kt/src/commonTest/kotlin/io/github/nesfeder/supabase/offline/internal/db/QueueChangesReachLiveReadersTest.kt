@@ -4,9 +4,9 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -28,7 +28,7 @@ import kotlinx.serialization.json.JsonArray
 class QueueChangesReachLiveReadersTest {
 
     private val store =
-        newTestOfflineStore(objectDao = FakeObjectDao(), mutationDao = FakeMutationDao())
+        newTestOfflineStore(queryCacheDao = FakeQueryCacheDao(), mutationDao = FakeMutationDao())
 
     @Test
     fun a_rejected_write_leaves_a_live_reader() =
@@ -120,7 +120,7 @@ class QueueChangesReachLiveReadersTest {
         return shown
     }
 
-    private fun rows(json: String): JsonArray = OfflineJson.parseToJsonElement(json) as JsonArray
+    private fun rows(json: String): JsonArray = EngineJson.parseToJsonElement(json) as JsonArray
 
     private companion object {
         const val TABLE = "notes"

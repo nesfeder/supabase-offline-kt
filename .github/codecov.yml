@@ -67,10 +67,9 @@ flag_management:
         - "**/Sources/SupabaseOffline/**"
         - "**/Sources/SupabaseOfflineTesting/**"
 
-# Areas of the engine, by package. The mutation queue's state, replay, stored format and overlay
-# live in internal/db, so mutation-queue names those files and local-database leaves them out.
-# The internal root, internal/cache and internal/logging belong to no component; they still count
-# in the total.
+# Areas of the engine, by package. The reserved rows that hold the mutation queue's records live in
+# internal/db/ReservedRows.kt, so mutation-queue names that file and local-database leaves it out.
+# The internal root and internal/logging belong to no component; they still count in the total.
 component_management:
   individual_components:
     - component_id: public-api
@@ -81,19 +80,19 @@ component_management:
       name: PostgREST reads
       paths:
         - "supabase-offline-kt/src/**/internal/postgrest/**"
+    - component_id: query-cache
+      name: Query cache
+      paths:
+        - "supabase-offline-kt/src/**/internal/cache/**"
     - component_id: mutation-queue
       name: Mutation queue
       paths:
         - "supabase-offline-kt/src/**/internal/mutationqueue/**"
-        - "supabase-offline-kt/src/**/internal/db/MutationQueue*.kt"
-        - "supabase-offline-kt/src/**/internal/db/OfflineMutationOverlay.kt"
         - "supabase-offline-kt/src/**/internal/db/ReservedRows.kt"
     - component_id: local-database
       name: Local database
       paths:
         - "supabase-offline-kt/src/**/internal/db/**"
-        - "!supabase-offline-kt/src/**/internal/db/MutationQueue*.kt"
-        - "!supabase-offline-kt/src/**/internal/db/OfflineMutationOverlay.kt"
         - "!supabase-offline-kt/src/**/internal/db/ReservedRows.kt"
     - component_id: storage
       name: Storage cache

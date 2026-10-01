@@ -6,9 +6,9 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.auth.auth
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -122,8 +122,8 @@ class MutationQueueAcrossCloseTest {
     @Test
     fun a_reopened_client_resumes_the_queue_with_nothing_lost_or_duplicated() = runTest {
         // Given — two keyed INSERTs queued offline in client A, over one database
-        val objects = FakeObjectDao()
-        val storage = InMemoryStorageDao()
+        val objects = FakeQueryCacheDao()
+        val storage = InMemoryCachedFileDao()
         val mutations = FakeMutationDao()
         val server = FakeRelationalPostgrestServer()
         val serverAnswer = server.recorder.answer
@@ -141,8 +141,8 @@ class MutationQueueAcrossCloseTest {
                 supabase = server.supabaseClient(),
                 store =
                     newTestOfflineStore(
-                        objectDao = objects,
-                        storageDao = storage,
+                        queryCacheDao = objects,
+                        cachedFileDao = storage,
                         mutationDao = mutations,
                     ),
                 coordinatorScope = idleCoroutineScope(),
@@ -167,8 +167,8 @@ class MutationQueueAcrossCloseTest {
                 supabase = server.supabaseClient(),
                 store =
                     newTestOfflineStore(
-                        objectDao = objects,
-                        storageDao = storage,
+                        queryCacheDao = objects,
+                        cachedFileDao = storage,
                         mutationDao = mutations,
                     ),
                 coordinatorScope = idleCoroutineScope(),
@@ -196,8 +196,8 @@ class MutationQueueAcrossCloseTest {
         runTest {
             // Given — a keyless INSERT queued offline, over one database; the server commits it and
             // holds its answer
-            val objects = FakeObjectDao()
-            val storage = InMemoryStorageDao()
+            val objects = FakeQueryCacheDao()
+            val storage = InMemoryCachedFileDao()
             val mutations = FakeMutationDao()
             val online = AtomicBoolean(false)
             val committed = AtomicInt(0)
@@ -216,8 +216,8 @@ class MutationQueueAcrossCloseTest {
                     supabase = server.supabaseClient(),
                     store =
                         newTestOfflineStore(
-                            objectDao = objects,
-                            storageDao = storage,
+                            queryCacheDao = objects,
+                            cachedFileDao = storage,
                             mutationDao = mutations,
                         ),
                     coordinatorScope = idleCoroutineScope(),
@@ -240,8 +240,8 @@ class MutationQueueAcrossCloseTest {
                     supabase = server.supabaseClient(),
                     store =
                         newTestOfflineStore(
-                            objectDao = objects,
-                            storageDao = storage,
+                            queryCacheDao = objects,
+                            cachedFileDao = storage,
                             mutationDao = mutations,
                         ),
                     coordinatorScope = idleCoroutineScope(),

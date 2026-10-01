@@ -232,7 +232,7 @@ The overlay is implemented in [OfflineMutationOverlay.kt](https://github.com/nes
 - UPDATE → matching rows in the payload have their fields patched
 - DELETE → matching rows in the payload are removed
 
-Matching uses `FilterEngine.matchesRow`, which re-runs the same logical operators (`eq`, `neq`,
+Matching uses `rowMatch`, which re-runs the same logical operators (`eq`, `neq`,
 `ilike`, etc.) that PostgREST would apply server-side.
 
 ### Read strategy state machines
@@ -320,7 +320,7 @@ flowchart TD
 The `FlowReadStrategy` variants (`CacheFirstThenNetwork`, `NetworkFirstThenCache`, `CacheOnly`)
 are implemented just below in the same file via `cacheOnlyFlow`, `cacheFirstThenNetworkFlow`,
 and `networkFirstThenCacheFlow`. They observe `object_cache` rows reactively via
-`ObjectDao.observe(...)` and re-apply the mutation overlay on every emission.
+`QueryCacheDao.observe(...)` and re-apply the mutation overlay on every emission.
 
 ## Write path (mutation queueing)
 
@@ -426,7 +426,7 @@ Storage downloads (`bucket.downloadAuthenticated` / `downloadPublic`) get the sa
 SELECT. The wrapper is [OfflineBucketApi.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt):
 
 - Successful downloads are written to disk at `<offlineStoragePath>/storage/<bucket>/<path>`.
-- The location is tracked in the Room `storage_objects` table as a `StorageRow` keyed
+- The location is tracked in the Room `storage_objects` table as a `CachedFileRow` keyed
   `"$bucketId::$path"`.
 - A subsequent download failure falls back to the disk copy if it exists; otherwise the original
   error is rethrown.
@@ -462,7 +462,7 @@ state only the contract.
 ### One JSON configuration
 
 Every cached payload, overlay and stored filter descriptor is read and written with one `Json`
-instance, `OfflineJson`, so the serializer cache is shared on the read path and the settings
+instance, `EngineJson`, so the serializer cache is shared on the read path and the settings
 cannot drift between call sites. It ignores unknown keys, and it leaves `coerceInputValues` off,
 because coercion would change what the overlay decodes.
 

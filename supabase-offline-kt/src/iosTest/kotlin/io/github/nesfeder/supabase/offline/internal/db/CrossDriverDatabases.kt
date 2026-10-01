@@ -37,10 +37,10 @@ internal class CrossDriverDatabase(
 }
 
 /** The row each capture wrote through Room after opening the shipped fixture. */
-internal val CROSS_DRIVER_MARKER_ROW: ObjectRow =
-    ObjectRow(
+internal val CROSS_DRIVER_MARKER_ROW: CachedQueryRow =
+    CachedQueryRow(
         table = "todos",
-        signature = "todos?select=*&written_by=room",
+        cacheKey = "todos?select=*&written_by=room",
         payload = """[{"id":3,"title":"Written through Room"}]""",
         updatedAt = 1_727_000_000_200,
     )
@@ -50,8 +50,8 @@ internal val CROSS_DRIVER_MARKER_ROW: ObjectRow =
  */
 internal val CROSS_DRIVER_CONTENTS: OfflineDatabaseContents =
     SHIPPED_FIXTURE_CONTENTS.copy(
-        objectRows =
-            (SHIPPED_FIXTURE_CONTENTS.objectRows + CROSS_DRIVER_MARKER_ROW).sortedBy {
+        cachedQueryRows =
+            (SHIPPED_FIXTURE_CONTENTS.cachedQueryRows + CROSS_DRIVER_MARKER_ROW).sortedBy {
                 it.updatedAt
             }
     )

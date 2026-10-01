@@ -15,22 +15,21 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
+import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
-import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.DryRunVerdict
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader
 import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
@@ -40,7 +39,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.SupabaseRemoteTabl
 import io.github.nesfeder.supabase.offline.internal.postgrest.UncapturableFilterException
 import io.github.nesfeder.supabase.offline.internal.postgrest.captureFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.captureFilterExactly
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
+import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowsForCachePatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.wasRolledBack
 import kotlinx.coroutines.CancellationException
@@ -374,7 +375,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         operationGate = operationGate,
     )
 
-    private val json: Json = OfflineJson
+    private val json: Json = EngineJson
     private val queryReader =
         QueryReader(
             delegate = delegate,
@@ -433,7 +434,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     operation = MutationOperation.INSERT,
                     bodyJson =
                         preferResponseForCache(body, result.data, store.primaryKeys.of(table)),
-                    filterJson = descriptor?.let { FilterEngine.encode(it, json) },
+                    filterJson = descriptor?.let { encodeFilter(it, json) },
                     defaultToNull = insertBuilder.defaultToNull,
                     startedAtTick = startedAtTick,
                 )
@@ -506,7 +507,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     table = table,
                     operation = MutationOperation.UPSERT,
                     bodyJson = preferResponseForCache(body, result.data, conflictColumns),
-                    filterJson = descriptor?.let { FilterEngine.encode(it, json) },
+                    filterJson = descriptor?.let { encodeFilter(it, json) },
                     defaultToNull = upsertBuilder.defaultToNull,
                     onConflict = upsertBuilder.onConflict,
                     ignoreDuplicates = upsertBuilder.ignoreDuplicates,
@@ -679,7 +680,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             table = table,
             operation = operation,
             bodyJson = bodyJson,
-            filterJson = FilterEngine.encode(filter, json),
+            filterJson = encodeFilter(filter, json),
             startedAtTick = startedAtTick,
         )
     }
@@ -722,7 +723,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         return when {
             descriptor == null ->
                 QueueCapture.Refused("a write without a filter would reach every row")
-            !FilterEngine.replaysFully(descriptor) ->
+            !replaysFully(descriptor) ->
                 QueueCapture.Refused("its filter cannot be replayed in full")
             else -> QueueCapture.Queueable { enqueue(descriptor) }
         }

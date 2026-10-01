@@ -21,10 +21,9 @@ class AndroidDbPathProviderTest {
     fun `dbPath returns correct path in app database directory`() {
         // Given
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val provider = AndroidDbPathProvider(context)
 
         // When
-        val path = provider.dbPath()
+        val path = defaultDatabasePath(context)
 
         // Then
         val expectedPath = context.getDatabasePath("supabase_offline.db").absolutePath

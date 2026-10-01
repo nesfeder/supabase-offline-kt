@@ -4,10 +4,10 @@ package io.github.nesfeder.supabase.offline
 
 import android.content.Context
 import io.github.jan.supabase.SupabaseClient
-import io.github.nesfeder.supabase.offline.internal.db.AndroidDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.getDatabaseBuilder
-import io.github.nesfeder.supabase.offline.internal.db.getRoomDatabase
+import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
+import io.github.nesfeder.supabase.offline.internal.db.defaultDatabasePath
+import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
 import io.github.nesfeder.supabase.offline.internal.openOfflineClient
 import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
 
@@ -61,7 +61,7 @@ public fun createSupabaseOfflineClient(
     config: SupabaseOfflineConfig = SupabaseOfflineConfig(),
 ): SupabaseOfflineClient {
     val configuredDirectory = config.offlineStoragePath
-    val defaultDatabasePath = AndroidDbPathProvider(context).dbPath()
+    val defaultDatabasePath = defaultDatabasePath(context)
     return openOfflineClient(
         supabase = supabase,
         config = config,
@@ -69,7 +69,7 @@ public fun createSupabaseOfflineClient(
             configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
         dataDirectory = configuredDirectory ?: PlatformBaseDirectory(context).path,
         openDatabase = { databasePath ->
-            getRoomDatabase(getDatabaseBuilder(context, databasePath.toString()))
+            buildOfflineDatabase(offlineDatabaseBuilder(context, databasePath.toString()))
         },
         defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
     )

@@ -19,8 +19,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * The filter engine's encode/decode round trip and its replay onto a request builder
- * ([FilterEngine.replayOnto]), plus the lenient descriptor capture used for queued inserts and
- * upserts.
+ * ([replayOnto]), plus the lenient descriptor capture used for queued inserts and upserts.
  */
 class OfflineFilterTest {
 
@@ -43,8 +42,8 @@ class OfflineFilterTest {
             )
 
         // When
-        val encoded = FilterEngine.encode(descriptor, json)
-        val decoded = FilterEngine.decodeOrNull(encoded, json)
+        val encoded = encodeFilter(descriptor, json)
+        val decoded = decodeFilterOrNull(encoded, json)
 
         // Then
         assertNotNull(decoded)
@@ -57,7 +56,7 @@ class OfflineFilterTest {
         val invalidJson = "{not valid"
 
         // When
-        val decoded = FilterEngine.decodeOrNull(invalidJson, json)
+        val decoded = decodeFilterOrNull(invalidJson, json)
 
         // Then
         assertEquals(null, decoded)
@@ -82,7 +81,7 @@ class OfflineFilterTest {
             )
 
         // When
-        FilterEngine.replayOnto(builder, descriptor)
+        replayOnto(builder, descriptor)
 
         // Then
         val params = builder.params
@@ -115,7 +114,7 @@ class OfflineFilterTest {
             )
 
         // When
-        FilterEngine.replayOnto(builder, descriptor)
+        replayOnto(builder, descriptor)
 
         // Then
         val params = builder.params
@@ -184,7 +183,7 @@ class OfflineFilterTest {
             )
 
         // When
-        FilterEngine.replayOnto(builder, descriptor)
+        replayOnto(builder, descriptor)
 
         // Then
         val params = builder.params
@@ -301,8 +300,8 @@ class OfflineFilterTest {
      * Inverted from the previous standalone engine, which dropped an empty `in` list on replay.
      * Dropping it broadens a queued UPDATE / DELETE to every row the rest of the filter (or RLS)
      * allows, so the engine now replays an empty list as the caller wrote it — `in.()`, which
-     * matches nothing. A value that is not a list at all still does not apply, and
-     * [FilterEngine.replaysFully] reports it so the syncer refuses the replay instead.
+     * matches nothing. A value that is not a list at all still does not apply, and [replaysFully]
+     * reports it so the syncer refuses the replay instead.
      */
     @Test
     fun applyTo_inOperator_appliesEmptyListAsMatchNothing() {
@@ -315,16 +314,16 @@ class OfflineFilterTest {
         val notAListBuilder = requestBuilder()
 
         // When
-        val appliedEmptyList = FilterEngine.replayOnto(emptyListBuilder, emptyList)
-        val appliedNotAList = FilterEngine.replayOnto(notAListBuilder, notAList)
+        val appliedEmptyList = replayOnto(emptyListBuilder, emptyList)
+        val appliedNotAList = replayOnto(notAListBuilder, notAList)
 
         // Then — the empty list replays as match-nothing; the non-list is refused, never dropped
         assertEquals(1, appliedEmptyList)
         assertEquals(listOf("in.()"), emptyListBuilder.params["id"])
-        assertTrue(FilterEngine.replaysFully(emptyList))
+        assertTrue(replaysFully(emptyList))
         assertEquals(0, appliedNotAList)
         assertEquals(null, notAListBuilder.params["id"])
-        assertFalse(FilterEngine.replaysFully(notAList))
+        assertFalse(replaysFully(notAList))
     }
 
     private companion object {

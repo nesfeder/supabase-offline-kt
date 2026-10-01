@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingRoomCallback
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.assertEquals
@@ -41,7 +42,7 @@ internal class ReservedRowsDatabaseScenarios(
             try {
                 val store =
                     newTestOfflineStore(
-                        objectDao = reopened.objectDao(),
+                        queryCacheDao = reopened.queryCacheDao(),
                         mutationDao = reopened.mutationDao(),
                     )
                 Triple(
@@ -73,19 +74,21 @@ internal class ReservedRowsDatabaseScenarios(
         val database = open(path, RecordingRoomCallback())
         try {
             database.writeReservedRows()
-            val objectDao = database.objectDao()
+            val queryCacheDao = database.queryCacheDao()
 
             // When
-            val size = objectDao.totalPayloadBytes()
+            val size = queryCacheDao.totalPayloadBytes()
             val evicted =
-                objectDao.deleteOldestPayloadRows(limit = 10, keptSignatures = emptyList())
+                queryCacheDao.deleteOldestPayloadRows(limit = 10, keptCacheKeys = emptyList())
 
             // Then — only the cache rows counted and only they were evicted
             assertEquals(
-                ShippedDatabaseFixture.OBJECT_ROWS.sumOf { row -> row.payload.length.toLong() },
+                ShippedDatabaseFixture.CACHED_QUERY_ROWS.sumOf { row ->
+                    row.payload.length.toLong()
+                },
                 size,
             )
-            assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, evicted)
+            assertEquals(ShippedDatabaseFixture.CACHED_QUERY_ROWS.size, evicted)
             assertEquals(1L, RawDatabaseQueries.reservedRowCount(path))
         } finally {
             database.close()
@@ -101,18 +104,24 @@ internal class ReservedRowsDatabaseScenarios(
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
         try {
-            val objectDao = database.objectDao()
-            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "{}", 0))
-            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE, "{}", 0))
+            val queryCacheDao = database.queryCacheDao()
+            queryCacheDao.upsert(
+                CachedQueryRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "{}", 0)
+            )
+            queryCacheDao.upsert(
+                CachedQueryRow(RESERVED_TABLE_NAME, CACHE_OWNER_CACHE_KEY, "{}", 0)
+            )
             val reservedBefore = RawDatabaseQueries.reservedRowCount(path)
 
             // When
-            objectDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
+            queryCacheDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
 
             // Then
-            ShippedDatabaseFixture.OBJECT_ROWS.map { row -> row.table }
+            ShippedDatabaseFixture.CACHED_QUERY_ROWS.map { row -> row.table }
                 .distinct()
-                .forEach { table -> assertEquals(emptyList(), objectDao.signaturesForTable(table)) }
+                .forEach { table ->
+                    assertEquals(emptyList(), queryCacheDao.cacheKeysForTable(table))
+                }
             assertEquals(reservedBefore, RawDatabaseQueries.reservedRowCount(path))
             assertEquals(2L, reservedBefore)
         } finally {
@@ -129,29 +138,33 @@ internal class ReservedRowsDatabaseScenarios(
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
         try {
-            val objectDao = database.objectDao()
-            val payload = ShippedDatabaseFixture.OBJECT_ROWS.first()
-            val prefix = "$QUERY_SHAPE_SIGNATURE_PREFIX${payload.table}\u001F"
-            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, prefix + payload.signature, "{}", 0))
-            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, prefix + "gone?x=eq.1", "{}", 0))
+            val queryCacheDao = database.queryCacheDao()
+            val payload = ShippedDatabaseFixture.CACHED_QUERY_ROWS.first()
+            val prefix = "$QUERY_SHAPE_CACHE_KEY_PREFIX${payload.table}\u001F"
+            queryCacheDao.upsert(
+                CachedQueryRow(RESERVED_TABLE_NAME, prefix + payload.cacheKey, "{}", 0)
+            )
+            queryCacheDao.upsert(
+                CachedQueryRow(RESERVED_TABLE_NAME, prefix + "gone?x=eq.1", "{}", 0)
+            )
 
             // When / Then — both found by prefix; the orphan dropped; the rest by prefix
-            assertEquals(2, objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).size)
-            assertEquals(1, objectDao.deleteOrphanedQueryShapes())
+            assertEquals(2, queryCacheDao.rowsWithCacheKeyPrefix(RESERVED_TABLE_NAME, prefix).size)
+            assertEquals(1, queryCacheDao.deleteOrphanedQueryShapes())
             assertEquals(
-                listOf(prefix + payload.signature),
-                objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).map { row ->
-                    row.signature
+                listOf(prefix + payload.cacheKey),
+                queryCacheDao.rowsWithCacheKeyPrefix(RESERVED_TABLE_NAME, prefix).map { row ->
+                    row.cacheKey
                 },
             )
-            objectDao.deleteWithSignaturePrefix(RESERVED_TABLE_NAME, prefix)
+            queryCacheDao.deleteWithCacheKeyPrefix(RESERVED_TABLE_NAME, prefix)
             assertEquals(
                 emptyList(),
-                objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix),
+                queryCacheDao.rowsWithCacheKeyPrefix(RESERVED_TABLE_NAME, prefix),
             )
             assertEquals(
-                ShippedDatabaseFixture.OBJECT_ROWS.size,
-                objectDao.signaturesForTable(payload.table).size,
+                ShippedDatabaseFixture.CACHED_QUERY_ROWS.size,
+                queryCacheDao.cacheKeysForTable(payload.table).size,
             )
         } finally {
             database.close()
@@ -166,19 +179,19 @@ internal class ReservedRowsDatabaseScenarios(
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
         try {
-            val objectDao = database.objectDao()
-            val kept = ShippedDatabaseFixture.OBJECT_ROWS.first()
+            val queryCacheDao = database.queryCacheDao()
+            val kept = ShippedDatabaseFixture.CACHED_QUERY_ROWS.first()
 
             // When — every row is evicted but one a live reader shows
             val evicted =
-                objectDao.deleteOldestPayloadRows(
+                queryCacheDao.deleteOldestPayloadRows(
                     limit = 100,
-                    keptSignatures = listOf(kept.signature),
+                    keptCacheKeys = listOf(kept.cacheKey),
                 )
 
             // Then
-            assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size - 1, evicted)
-            assertEquals(listOf(kept.signature), objectDao.signaturesForTable(kept.table))
+            assertEquals(ShippedDatabaseFixture.CACHED_QUERY_ROWS.size - 1, evicted)
+            assertEquals(listOf(kept.cacheKey), queryCacheDao.cacheKeysForTable(kept.table))
         } finally {
             database.close()
         }
@@ -195,7 +208,7 @@ internal class ReservedRowsDatabaseScenarios(
         try {
             val store =
                 newTestOfflineStore(
-                    objectDao = database.objectDao(),
+                    queryCacheDao = database.queryCacheDao(),
                     mutationDao = database.mutationDao(),
                 )
 
@@ -210,7 +223,7 @@ internal class ReservedRowsDatabaseScenarios(
         try {
             val store =
                 newTestOfflineStore(
-                    objectDao = reopened.objectDao(),
+                    queryCacheDao = reopened.queryCacheDao(),
                     mutationDao = reopened.mutationDao(),
                 )
             assertEquals(
@@ -236,15 +249,16 @@ internal class ReservedRowsDatabaseScenarios(
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
         try {
-            val objectDao = database.objectDao()
+            val queryCacheDao = database.queryCacheDao()
             val mutationDao = database.mutationDao()
-            val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+            val store =
+                newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
             val (rejectedRow, _) = store.mutationQueueState.rejectedRowWith(add = ON_DISK_REJECTION)
 
             // When — a transaction that writes the rejection and deletes the write, then fails
             val failure = runCatching {
                 mutationDao.runInTransaction {
-                    objectDao.upsert(rejectedRow)
+                    queryCacheDao.upsert(rejectedRow)
                     mutationDao.deleteById(1L)
                     error("interrupted")
                 }
@@ -252,7 +266,7 @@ internal class ReservedRowsDatabaseScenarios(
 
             // Then
             assertTrue(failure.isFailure)
-            assertEquals(null, objectDao.get(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+            assertEquals(null, queryCacheDao.get(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
             assertEquals(listOf(1L, 2L, 3L, 4L), mutationDao.pendingAll().map { row -> row.id })
         } finally {
             database.close()
@@ -266,8 +280,8 @@ internal class ReservedRowsDatabaseScenarios(
     suspend fun aClearWhoseMutationDeleteFailsChangesNothing(path: String) {
         aClearThatFailsPartWayChangesNothing(path) { database ->
             newTestOfflineStore(
-                objectDao = database.objectDao(),
-                storageDao = database.storageDao(),
+                queryCacheDao = database.queryCacheDao(),
+                cachedFileDao = database.cachedFileDao(),
                 mutationDao = FakeDeleteAllFailingMutationDao(database.mutationDao()),
             )
         }
@@ -280,8 +294,8 @@ internal class ReservedRowsDatabaseScenarios(
     suspend fun aClearWhoseObjectCacheDeleteFailsChangesNothing(path: String) {
         aClearThatFailsPartWayChangesNothing(path) { database ->
             newTestOfflineStore(
-                objectDao = FakeDeleteAllFailingObjectDao(database.objectDao()),
-                storageDao = database.storageDao(),
+                queryCacheDao = FakeDeleteAllFailingQueryCacheDao(database.queryCacheDao()),
+                cachedFileDao = database.cachedFileDao(),
                 mutationDao = database.mutationDao(),
             )
         }
@@ -307,7 +321,7 @@ internal class ReservedRowsDatabaseScenarios(
         try {
             val store =
                 newTestOfflineStore(
-                    objectDao = reopened.objectDao(),
+                    queryCacheDao = reopened.queryCacheDao(),
                     mutationDao = reopened.mutationDao(),
                 )
 

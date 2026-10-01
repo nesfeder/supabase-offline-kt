@@ -14,7 +14,7 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -80,13 +80,13 @@ class IsDistinctOperatorTest {
 
         // When
         val match = rowMatch(row, descriptor)
-        val applied = FilterEngine.replayOnto(replayed, descriptor)
+        val applied = replayOnto(replayed, descriptor)
 
         // Then — replayed through the generic filter call, exactly as the caller wrote it
         assertEquals(FilterOperator.ISDISTINCT, ISDISTINCT_DONE.operator)
         assertEquals(1, applied)
         assertEquals(mapOf("status" to listOf("isdistinct.done")), replayed.params)
-        assertTrue(FilterEngine.replaysFully(descriptor))
+        assertTrue(replaysFully(descriptor))
         // And — the overlay does not evaluate it, so it never claims a match
         assertEquals(RowMatch.UNKNOWN, match)
     }

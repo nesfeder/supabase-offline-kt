@@ -5,7 +5,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -33,8 +33,8 @@ class ReactiveRefreshOfflineTest {
     fun offline_the_refresh_says_stalled_once_its_fast_ladder_is_spent() = runTest {
         listOf(true, false).forEach { cached ->
             // Given — no network, supabase-kt's default retries, the list cached or not
-            val objectDao = FakeObjectDao()
-            if (cached) objectDao.seedPayload(TABLE, TABLE, ROWS, updatedAt = 1)
+            val queryCacheDao = FakeQueryCacheDao()
+            if (cached) queryCacheDao.seedPayload(TABLE, TABLE, ROWS, updatedAt = 1)
             val dispatcher = StandardTestDispatcher(testScheduler)
             val server =
                 RecordingPostgrestServer(
@@ -48,7 +48,7 @@ class ReactiveRefreshOfflineTest {
                                 coroutineDispatcher = dispatcher
                                 install(Postgrest)
                             },
-                        store = newTestOfflineStore(objectDao = objectDao),
+                        store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                         coordinatorScope = backgroundScope,
                     )
                     .from(TABLE)

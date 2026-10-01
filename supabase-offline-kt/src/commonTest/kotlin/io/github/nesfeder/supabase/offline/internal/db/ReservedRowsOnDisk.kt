@@ -4,6 +4,8 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /**
@@ -83,8 +85,8 @@ internal val ON_DISK_OWNERS: Map<Long, String> = mapOf(1L to "user:user-a", 2L t
 internal suspend fun OfflineDatabase.writeReservedRows() {
     val store =
         newTestOfflineStore(
-            objectDao = objectDao(),
-            storageDao = storageDao(),
+            queryCacheDao = queryCacheDao(),
+            cachedFileDao = cachedFileDao(),
             mutationDao = mutationDao(),
             nowMillis = { 1_600_000_000_000 },
         )

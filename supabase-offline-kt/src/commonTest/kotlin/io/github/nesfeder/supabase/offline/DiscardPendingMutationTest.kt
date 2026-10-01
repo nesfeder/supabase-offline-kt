@@ -3,10 +3,10 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -32,8 +32,8 @@ import kotlinx.serialization.json.JsonElement
  */
 class DiscardPendingMutationTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val queryCacheDao = FakeQueryCacheDao()
+    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = USER_A
     private val syncer =
@@ -83,7 +83,7 @@ class DiscardPendingMutationTest {
     @Test
     fun a_discarded_write_disappears_from_the_overlay() = runTest {
         // Given — a cached row renamed offline
-        objectDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1,"title":"original"}]""")
+        queryCacheDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1,"title":"original"}]""")
         renameOffline(1, "renamed")
         assertEquals(
             """[{"id":1,"title":"renamed"}]""",

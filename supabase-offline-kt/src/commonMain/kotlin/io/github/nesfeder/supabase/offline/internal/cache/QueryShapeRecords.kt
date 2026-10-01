@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
-import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
-import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
-import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_SIGNATURE_PREFIX
+import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
+import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import kotlinx.coroutines.sync.Mutex
@@ -33,7 +33,7 @@ internal const val QUERY_SHAPE_RECORD_VERSION: Int = 1
  * in it. Records are loaded once per table per process and kept in memory. Its lock is always taken
  * last and held over no other.
  */
-internal class QueryShapeRecords(private val objectDao: ObjectDao, private val json: Json) {
+internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, private val json: Json) {
 
     private val mutex = Mutex()
 
@@ -59,7 +59,7 @@ internal class QueryShapeRecords(private val objectDao: ObjectDao, private val j
             val next = if (!recorded || existing == shape) shape else null
             perTable[cacheKey] = next
             if (persist && (next != existing || !recorded || (table to cacheKey) !in written)) {
-                objectDao.upsert(recordRow(table, cacheKey, next))
+                queryCacheDao.upsert(recordRow(table, cacheKey, next))
                 written += table to cacheKey
             }
         }
@@ -80,7 +80,7 @@ internal class QueryShapeRecords(private val objectDao: ObjectDao, private val j
         mutex.withLock {
             loadedTable(table).remove(cacheKey)
             written -= table to cacheKey
-            objectDao.delete(RESERVED_TABLE_NAME, reservedKeyOf(table, cacheKey))
+            queryCacheDao.delete(RESERVED_TABLE_NAME, reservedKeyOf(table, cacheKey))
         }
     }
 
@@ -89,7 +89,7 @@ internal class QueryShapeRecords(private val objectDao: ObjectDao, private val j
         mutex.withLock {
             shapes[table]?.clear()
             written.removeAll { (recordedTable, _) -> recordedTable == table }
-            objectDao.deleteWithSignaturePrefix(RESERVED_TABLE_NAME, tablePrefixOf(table))
+            queryCacheDao.deleteWithCacheKeyPrefix(RESERVED_TABLE_NAME, tablePrefixOf(table))
         }
     }
 
@@ -108,7 +108,7 @@ internal class QueryShapeRecords(private val objectDao: ObjectDao, private val j
      */
     suspend fun dropOrphans() {
         mutex.withLock {
-            if (objectDao.deleteOrphanedQueryShapes() > 0) written.clear()
+            if (queryCacheDao.deleteOrphanedQueryShapes() > 0) written.clear()
         }
     }
 
@@ -117,8 +117,8 @@ internal class QueryShapeRecords(private val objectDao: ObjectDao, private val j
         val perTable = shapes.getOrPut(table) { mutableMapOf() }
         if (loadedTables.add(table)) {
             val prefix = tablePrefixOf(table)
-            objectDao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, prefix).forEach { row ->
-                val cacheKey = row.signature.removePrefix(prefix)
+            queryCacheDao.rowsWithCacheKeyPrefix(RESERVED_TABLE_NAME, prefix).forEach { row ->
+                val cacheKey = row.cacheKey.removePrefix(prefix)
                 // A record this process wrote since is newer than the one read back
                 if (perTable.containsKey(cacheKey)) return@forEach
                 perTable[cacheKey] = decodedOrNull(row.payload)
@@ -143,10 +143,10 @@ internal class QueryShapeRecords(private val objectDao: ObjectDao, private val j
             null
         }
 
-    private fun recordRow(table: String, cacheKey: String, shape: QueryShape?): ObjectRow =
-        ObjectRow(
+    private fun recordRow(table: String, cacheKey: String, shape: QueryShape?): CachedQueryRow =
+        CachedQueryRow(
             table = RESERVED_TABLE_NAME,
-            signature = reservedKeyOf(table, cacheKey),
+            cacheKey = reservedKeyOf(table, cacheKey),
             payload =
                 json.encodeToString(
                     QueryShapeRecord.serializer(),
@@ -156,7 +156,7 @@ internal class QueryShapeRecords(private val objectDao: ObjectDao, private val j
         )
 
     private fun tablePrefixOf(table: String): String =
-        "$QUERY_SHAPE_SIGNATURE_PREFIX$table$SEPARATOR"
+        "$QUERY_SHAPE_CACHE_KEY_PREFIX$table$SEPARATOR"
 
     private fun reservedKeyOf(table: String, cacheKey: String): String =
         tablePrefixOf(table) + cacheKey

@@ -166,7 +166,10 @@ The script cannot see everything. A person reviews:
 The script errs towards breaking. If it calls a change breaking that is not, copy its finding into
 `compat/overrides.txt`, followed by two spaces, `# ` and the reason. The reviewer judges the reason.
 An override stays until the release after it empties the file, so the release check sees it too; a
-line your pull request adds must match one of its findings.
+line your pull request adds must match one of its findings. A rename inside a test that pins a
+stored format (a `persistedContract` file in `compat/policy.json`) takes the same route: override
+each `persisted-contract-changed` finding, and show in the pull request that only identifiers
+changed and every literal the test pins is byte for byte the same.
 
 The rules the script applies are in `compat/policy.json`. A pull request is rated under the stricter
 of its own rules and its base's: a change that loosens them applies from the next pull request on,

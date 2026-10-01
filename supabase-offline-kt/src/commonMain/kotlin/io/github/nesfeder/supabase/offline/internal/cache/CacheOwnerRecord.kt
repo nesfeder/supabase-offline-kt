@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
-import io.github.nesfeder.supabase.offline.internal.db.CACHE_OWNER_SIGNATURE
-import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
-import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.CACHE_OWNER_CACHE_KEY
+import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -30,7 +29,7 @@ internal const val CACHE_OWNER_RECORD_VERSION: Int = 1
  * [RESERVED_TABLE_NAME] and read once per process. An install whose earlier build recorded none has
  * no owner yet. Its lock is always taken last and held over no other.
  */
-internal class CacheOwnerRecord(private val objectDao: ObjectDao, private val json: Json) {
+internal class CacheOwnerRecord(private val queryCacheDao: QueryCacheDao, private val json: Json) {
 
     /** The owner as last read or written; `null` until it has been read. */
     private val state = MutableStateFlow<Owner?>(null)
@@ -60,17 +59,17 @@ internal class CacheOwnerRecord(private val objectDao: ObjectDao, private val js
         return mutex.withLock {
             val recorded = loaded().value
             if (recorded != null || claimant == null || !mayClaim()) return@withLock recorded
-            objectDao.upsert(rowOf(claimant))
+            queryCacheDao.upsert(rowOf(claimant))
             state.value = Owner(claimant)
             claimant
         }
     }
 
     /** The row recording [owner], for a caller that writes it in its own transaction. */
-    fun rowOf(owner: String): ObjectRow =
-        ObjectRow(
+    fun rowOf(owner: String): CachedQueryRow =
+        CachedQueryRow(
             table = RESERVED_TABLE_NAME,
-            signature = CACHE_OWNER_SIGNATURE,
+            cacheKey = CACHE_OWNER_CACHE_KEY,
             payload =
                 json.encodeToString(
                     CacheOwnerRow.serializer(),
@@ -96,7 +95,7 @@ internal class CacheOwnerRecord(private val objectDao: ObjectDao, private val js
     private suspend fun loaded(): Owner =
         state.value
             ?: Owner(
-                    objectDao.get(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE)?.let { row ->
+                    queryCacheDao.get(RESERVED_TABLE_NAME, CACHE_OWNER_CACHE_KEY)?.let { row ->
                         ownerOf(row.payload)
                     }
                 )

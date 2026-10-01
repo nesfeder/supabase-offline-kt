@@ -4,9 +4,8 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation as StoredOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
-import io.github.nesfeder.supabase.offline.internal.db.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import kotlin.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -112,7 +111,7 @@ private fun rowKeysOf(
         }
     if (fromBody.isNotEmpty()) return fromBody
 
-    val filter = FilterEngine.decodeOrNull(filterJson, json) ?: return emptyList()
+    val filter = decodeFilterOrNull(filterJson, json) ?: return emptyList()
     if (filter.mode != FilterDescriptor.Mode.AND) return emptyList()
     val keyValues = keyColumns.associateWith { column ->
         val condition =

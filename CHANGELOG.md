@@ -86,6 +86,9 @@ release.
 - `close()` lets a replay pass finish the request it has on the wire, and record the answer,
   before it stops, so the next client does not send the write again. A request the server does
   not answer holds `close()` for up to its 10-second bound.
+- The library's internal code is renamed and grouped into packages under
+  `io.github.nesfeder.supabase.offline.internal`. No public declaration, stored name or stored
+  format changed.
 
 ### Deprecated
 

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -22,12 +23,12 @@ import kotlinx.serialization.json.JsonArray
  */
 class SyncedRetirementScopeTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
     private var tick = 0L
     private val store =
         newTestOfflineStore(
-            objectDao = objectDao,
+            queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             monotonicTick = { tick },
         )
@@ -35,8 +36,8 @@ class SyncedRetirementScopeTest {
     @Test
     fun refreshing_one_query_keeps_a_synced_write_another_cached_query_still_needs() = runTest {
         // Given — two cached queries over one table, both fetched before the user's offline insert
-        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
-        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
+        queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
         tick = 10L
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         tick = 20L
@@ -62,8 +63,8 @@ class SyncedRetirementScopeTest {
     @Test
     fun a_synced_write_retires_once_every_cached_query_has_refreshed_past_it() = runTest {
         // Given — the same two cached queries and a synced insert
-        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
-        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
+        queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
         tick = 10L
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         tick = 20L

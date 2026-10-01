@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline.internal.db
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.exception.TokenExpiredException
@@ -9,28 +9,20 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.isPermanentMutationFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.ReplayOwner
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.installReplayOwnerCheck
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.replayOnto
 import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.SendOutcome
 import io.github.nesfeder.supabase.offline.internal.postgrest.SupabaseRemoteTable
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
+import io.github.nesfeder.supabase.offline.internal.postgrest.replayOnto
+import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import io.github.nesfeder.supabase.offline.internal.postgrest.sendCapturingEngineFailure
 import io.ktor.client.plugins.ResponseException
 import kotlin.time.Duration.Companion.seconds
@@ -718,7 +710,7 @@ internal class MutationQueueReplayer(
      */
     private fun requestFor(mutation: MutationRow, earlierSendUnconfirmed: Boolean): Prepared {
         val json = store.json
-        val filter = decodeOrNull(mutation.filterJson, json)
+        val filter = decodeFilterOrNull(mutation.filterJson, json)
         // A stored filter that no longer decodes is not a missing one: sending without it would
         // reach rows the write never targeted
         if (mutation.filterJson != null && filter == null)
@@ -804,7 +796,7 @@ internal class MutationQueueReplayer(
      */
     private fun replayableFilterOrNull(filter: FilterDescriptor?): FilterDescriptor? =
         filter?.takeIf { descriptor ->
-            FilterEngine.replaysFully(descriptor)
+            replaysFully(descriptor)
         }
 
     private fun refuseUnreplayableFilter(

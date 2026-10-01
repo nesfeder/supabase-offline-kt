@@ -6,6 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 /** A Room builder for the offline database at [databaseFilePath]. */
-internal fun getDatabaseBuilder(databaseFilePath: String): RoomDatabase.Builder<OfflineDatabase> {
+internal fun offlineDatabaseBuilder(
+    databaseFilePath: String
+): RoomDatabase.Builder<OfflineDatabase> {
     return Room.databaseBuilder<OfflineDatabase>(name = databaseFilePath)
 }

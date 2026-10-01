@@ -8,7 +8,7 @@ import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -19,15 +19,14 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Pins the replay path of [FilterEngine] against the wrapper-stripping defect: supabase-kt encodes
+ * Pins the replay path of [replayOnto] against the wrapper-stripping defect: supabase-kt encodes
  * `isIn` params as `in.(a,b,c)` (and range operators as `sl.(min,max)`, array operators as
  * `cs.{a,b}`), the strict capture stores the value with its wrapper intact, and replay must strip
  * that wrapper before splitting — otherwise the replayed filter targets corrupted values like
  * `"(a"` / `"c)"`. Each test drives the same pipeline the offline mutation queue uses: capture
- * ([captureFilterExactly]) → [FilterEngine.encode] → [FilterEngine.decodeOrNull] →
- * [FilterEngine.replayOnto], asserting the replayed request carries the caller's original param.
- * Overlay parity is asserted via [rowMatch]: a row the overlay treats as matched is one replay
- * reaches.
+ * ([captureFilterExactly]) → [encodeFilter] → [decodeFilterOrNull] → [replayOnto], asserting the
+ * replayed request carries the caller's original param. Overlay parity is asserted via [rowMatch]:
+ * a row the overlay treats as matched is one replay reaches.
  *
  * The later cases also pin that the parser tokenizes by *encoding* rather than by delimiter. Only
  * `in`'s `(a,b)` comes from an encoder that escapes its elements (`encodeAsList` → `escapeValue`);
@@ -35,7 +34,7 @@ import kotlinx.serialization.json.put
  * one of those is literal content. Unescaping it replays a filter against different rows, which is
  * why each of those cases asserts a byte-exact round trip in both directions.
  */
-class FilterEngineReplayTest {
+class FilterReplayTest {
 
     private val schema = "public"
 
@@ -45,14 +44,14 @@ class FilterEngineReplayTest {
 
     /** Runs a descriptor through the same persist/restore cycle the mutation queue uses. */
     private fun storeAndRestore(descriptor: FilterDescriptor): FilterDescriptor {
-        val encoded = FilterEngine.encode(descriptor, OfflineJson)
-        return assertNotNull(FilterEngine.decodeOrNull(encoded, OfflineJson))
+        val encoded = encodeFilter(descriptor, EngineJson)
+        return assertNotNull(decodeFilterOrNull(encoded, EngineJson))
     }
 
     /** Replays a descriptor onto a fresh request builder and returns the resulting params. */
     private fun replayParams(descriptor: FilterDescriptor): Map<String, List<String>> {
         val builder = SelectRequestBuilder(schema, conversion)
-        FilterEngine.replayOnto(builder, descriptor)
+        replayOnto(builder, descriptor)
         return builder.params
     }
 
@@ -472,7 +471,7 @@ class FilterEngineReplayTest {
         // it would rewrite every row of user u1 regardless of status — so the gate must say no
         assertEquals(listOf("eq.u1"), replayed["user_id"])
         assertEquals(null, replayed["status"])
-        assertFalse(FilterEngine.replaysFully(descriptor))
+        assertFalse(replaysFully(descriptor))
     }
 
     @Test
@@ -493,7 +492,7 @@ class FilterEngineReplayTest {
         // Then the condition does not replay at all, rather than replaying as the wrong range
         // sl.(a,b) — and the gate reports the shortfall so the mutation is refused upstream
         assertEquals(null, replayed["window"])
-        assertFalse(FilterEngine.replaysFully(descriptor))
+        assertFalse(replaysFully(descriptor))
     }
 
     @Test
@@ -505,7 +504,7 @@ class FilterEngineReplayTest {
         // When / Then: replaying it would issue the request with no filter at all, which is the
         // very thing the null-descriptor guard refuses. Vacuous truth must not open that door.
         assertEquals(emptyMap(), replayParams(descriptor))
-        assertFalse(FilterEngine.replaysFully(descriptor))
+        assertFalse(replaysFully(descriptor))
     }
 
     @Test
@@ -525,7 +524,7 @@ class FilterEngineReplayTest {
 
         // When / Then: nothing lands on the request, so the mutation must not be issued
         assertEquals(null, replayParams(descriptor)["status"])
-        assertFalse(FilterEngine.replaysFully(descriptor))
+        assertFalse(replaysFully(descriptor))
     }
 
     @Test
@@ -585,7 +584,7 @@ class FilterEngineReplayTest {
         replayable.forEach { (label, captured) ->
             val descriptor = assertNotNull(captured, "$label produced no descriptor")
             assertTrue(
-                FilterEngine.replaysFully(storeAndRestore(descriptor)),
+                replaysFully(storeAndRestore(descriptor)),
                 "$label must stay fully replayable",
             )
         }

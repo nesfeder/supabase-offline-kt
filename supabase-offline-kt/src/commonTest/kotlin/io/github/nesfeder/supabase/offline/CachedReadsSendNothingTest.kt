@@ -13,7 +13,7 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.postgrest.Postgrest
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingSupabaseLogs
@@ -43,7 +43,8 @@ import kotlinx.coroutines.withTimeout
  */
 class CachedReadsSendNothingTest {
 
-    private val objectDao = FakeObjectDao().apply { seedPayload(TABLE, TABLE, ROWS, updatedAt = 1) }
+    private val queryCacheDao =
+        FakeQueryCacheDao().apply { seedPayload(TABLE, TABLE, ROWS, updatedAt = 1) }
     private val logs = RecordingSupabaseLogs()
 
     /** The supabase-kt client [items] built last. */
@@ -61,7 +62,7 @@ class CachedReadsSendNothingTest {
             }
         return newTestOfflineClient(
                 supabase = supabase,
-                store = newTestOfflineStore(objectDao = objectDao),
+                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                 coordinatorScope = idleCoroutineScope(),
             )
             .from(TABLE)

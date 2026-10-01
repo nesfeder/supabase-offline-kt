@@ -4,9 +4,9 @@
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -173,8 +173,8 @@ class RowsForCachePatchTest {
         // the response, with the id the server assigned, not from the request body, which has none.
 
         // Given
-        val objectDao = FakeObjectDao()
-        val store = buildStore(objectDao)
+        val queryCacheDao = FakeQueryCacheDao()
+        val store = buildStore(queryCacheDao)
         val cacheKey = "sig-notes-user-1"
 
         // Request body: the parent's upsert DTO — no id (server will assign it).
@@ -201,7 +201,7 @@ class RowsForCachePatchTest {
         )
 
         // Then
-        val cached = objectDao.getRow("notes", cacheKey)
+        val cached = queryCacheDao.getRow("notes", cacheKey)
         assertNotNull(cached)
         val decoded = json.decodeFromString<List<NoteDtoForTest>>(cached.payload)
         assertEquals("server-log-id", decoded.single().id)
@@ -218,5 +218,5 @@ private data class NoteDtoForTest(
     @SerialName("notes") val notes: String? = null,
 )
 
-private fun RowsForCachePatchTest.buildStore(objectDao: FakeObjectDao): OfflineStore =
-    newTestOfflineStore(objectDao = objectDao)
+private fun RowsForCachePatchTest.buildStore(queryCacheDao: FakeQueryCacheDao): OfflineStore =
+    newTestOfflineStore(queryCacheDao = queryCacheDao)

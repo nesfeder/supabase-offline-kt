@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -166,7 +166,7 @@ class OfflineStoreQueueAndCacheTest {
 
         // Then — keyed "$bucket::$path", with an absolute local path and the fetch time
         assertEquals(
-            StorageRow(
+            CachedFileRow(
                 key = "avatars::u-1/me.png",
                 bucketId = "avatars",
                 path = "u-1/me.png",
@@ -403,6 +403,6 @@ class OfflineStoreQueueAndCacheTest {
 
         val ID_FILTER =
             FilterDescriptor(conditions = listOf(FilterDescriptor.Condition("id", "eq", "1")))
-        val ID_FILTER_JSON: String = FilterEngine.encode(ID_FILTER, OfflineJson)
+        val ID_FILTER_JSON: String = encodeFilter(ID_FILTER, EngineJson)
     }
 }

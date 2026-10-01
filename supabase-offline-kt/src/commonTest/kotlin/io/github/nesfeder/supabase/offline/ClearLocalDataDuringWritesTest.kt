@@ -3,10 +3,10 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.HttpRequestException
-import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
+import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -35,9 +35,10 @@ import kotlinx.serialization.json.JsonArray
 class ClearLocalDataDuringWritesTest {
 
     private val server = RecordingPostgrestServer()
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+    private val store =
+        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
     /** Passes run only when a test starts one, so none the engine starts can race the clear. */
     private val client =
         newTestOfflineClient(
@@ -90,7 +91,7 @@ class ClearLocalDataDuringWritesTest {
 
         // Then — the pass was stopped before it could record the outgoing user's write on the list
         assertEquals(emptyList(), store.mutationQueueState.rejections())
-        assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+        assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
     }
 
     @Test
@@ -120,7 +121,7 @@ class ClearLocalDataDuringWritesTest {
             write.await()
 
             // Then — the next user's cache holds only what their own read returned
-            assertEquals("[]", objectDao.getRow(TABLE, CACHE_KEY)?.payload)
+            assertEquals("[]", queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload)
         }
 
     @Test

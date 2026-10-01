@@ -4,8 +4,14 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_BODY_CHARS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_LIST_CHARS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_TEXT_CHARS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -22,10 +28,10 @@ import kotlinx.coroutines.test.runTest
  */
 class RejectedListBoundsTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val logger = RecordingOfflineLogger()
     private val store =
-        newTestOfflineStore(objectDao = objectDao).also { store ->
+        newTestOfflineStore(queryCacheDao = queryCacheDao).also { store ->
             store.engineLogger = logger.asEngineLogger()
         }
 
@@ -40,7 +46,7 @@ class RejectedListBoundsTest {
         // Then — every rejection is still listed, and the row stays small
         assertEquals((1L..10L).toList(), store.mutationQueueState.rejections().map { it.id })
         val rowLength =
-            objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)?.payload?.length
+            queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY)?.payload?.length
                 ?: 0
         assertTrue(rowLength < 1_200_000, "the rejected list row holds $rowLength characters")
     }
@@ -88,14 +94,15 @@ class RejectedListBoundsTest {
 
         // Then — the newest are kept within the budget, and the count of dropped entries is
         // persisted
-        val row = assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+        val row =
+            assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
         assertTrue(
             row.payload.length <= MAX_REJECTED_LIST_CHARS + 1_000,
             "the row holds ${row.payload.length} characters",
         )
         val kept = store.mutationQueueState.rejections()
         assertEquals(50L, kept.last().id)
-        val reloaded = newTestOfflineStore(objectDao = objectDao)
+        val reloaded = newTestOfflineStore(queryCacheDao = queryCacheDao)
         assertEquals(50L - kept.size, reloaded.mutationQueueState.droppedCount())
     }
 
@@ -152,7 +159,7 @@ class RejectedListBoundsTest {
         // Then
         assertEquals(
             0L,
-            newTestOfflineStore(objectDao = objectDao).mutationQueueState.droppedCount(),
+            newTestOfflineStore(queryCacheDao = queryCacheDao).mutationQueueState.droppedCount(),
         )
     }
 

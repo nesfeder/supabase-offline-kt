@@ -15,11 +15,11 @@ import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.db.StorageDao
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -29,7 +29,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
@@ -50,8 +50,8 @@ import okio.SYSTEM
 /*
  * The one place the engine's tests build the offline stack. Start here when writing a test:
  *
- * - newTestOfflineStore — a real OfflineStore over the in-memory DAOs (FakeObjectDao /
- *   FakeMutationDao add recording and scripting hooks; InMemoryStorageDao has none to add).
+ * - newTestOfflineStore — a real OfflineStore over the in-memory DAOs (FakeQueryCacheDao /
+ *   FakeMutationDao add recording and scripting hooks; InMemoryCachedFileDao has none to add).
  * - newTestSupabaseClient / newTestPostgrest — a real supabase-kt client on a Ktor MockEngine.
  * - newTestOfflineClient — the real SupabaseOfflineClientImpl over the two.
  *
@@ -77,8 +77,9 @@ internal val UNLIMITED_TEST_CACHE_SETTINGS: QueryCacheLimits =
  * Builds a real [OfflineStore] over in-memory DAOs, so a test drives the store's real logic without
  * Room or a filesystem.
  *
- * @param objectDao object-cache DAO; pass a [FakeObjectDao] to seed or inspect cached payloads.
- * @param storageDao storage-metadata DAO.
+ * @param queryCacheDao object-cache DAO; pass a [FakeQueryCacheDao] to seed or inspect cached
+ *   payloads.
+ * @param cachedFileDao storage-metadata DAO.
  * @param mutationDao mutation-queue DAO; pass a [FakeMutationDao] to inspect what was queued.
  * @param queryCacheLimits eviction settings; eviction is off by default.
  * @param nowMillis clock for row timestamps; defaults to a fixed `0L`.
@@ -86,8 +87,8 @@ internal val UNLIMITED_TEST_CACHE_SETTINGS: QueryCacheLimits =
  * @return a store wired to the given DAOs.
  */
 internal fun newTestOfflineStore(
-    objectDao: ObjectDao = FakeObjectDao(),
-    storageDao: StorageDao = InMemoryStorageDao(),
+    queryCacheDao: QueryCacheDao = FakeQueryCacheDao(),
+    cachedFileDao: CachedFileDao = InMemoryCachedFileDao(),
     mutationDao: MutationDao = FakeMutationDao(),
     queryCacheLimits: QueryCacheLimits = UNLIMITED_TEST_CACHE_SETTINGS,
     nowMillis: () -> Long = { 0L },
@@ -95,16 +96,16 @@ internal fun newTestOfflineStore(
 ): OfflineStore =
     if (monotonicTick == null) {
         OfflineStore(
-            objectDao = objectDao,
-            storageDao = storageDao,
+            queryCacheDao = queryCacheDao,
+            cachedFileDao = cachedFileDao,
             mutationDao = mutationDao,
             queryCacheLimits = queryCacheLimits,
             nowMillis = nowMillis,
         )
     } else {
         OfflineStore(
-            objectDao = objectDao,
-            storageDao = storageDao,
+            queryCacheDao = queryCacheDao,
+            cachedFileDao = cachedFileDao,
             mutationDao = mutationDao,
             queryCacheLimits = queryCacheLimits,
             nowMillis = nowMillis,

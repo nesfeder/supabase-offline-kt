@@ -22,7 +22,7 @@ internal data class StorageQueryResults(
 )
 
 private fun row(bucketId: String, path: String, size: Long?) =
-    StorageRow(
+    CachedFileRow(
         key = "$bucketId::$path",
         bucketId = bucketId,
         path = path,
@@ -38,7 +38,7 @@ private fun row(bucketId: String, path: String, size: Long?) =
  * size, then runs every query the file cache uses.
  */
 internal suspend fun OfflineDatabase.runStorageQueries(): StorageQueryResults {
-    val dao = storageDao()
+    val dao = cachedFileDao()
     listOf(
             row("avatars", "u-1/me.png", 10),
             row("avatars", "u-1/me.png${VARIANT_SEPARATOR}height=64&width=64", 3),

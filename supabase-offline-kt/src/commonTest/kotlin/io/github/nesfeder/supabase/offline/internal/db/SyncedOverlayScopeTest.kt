@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -23,13 +24,13 @@ import kotlinx.serialization.json.JsonElement
  */
 class SyncedOverlayScopeTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
     private var tick = 0L
     private var clock = 1_000_000L
     private val store =
         newTestOfflineStore(
-            objectDao = objectDao,
+            queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             monotonicTick = { tick },
             nowMillis = { clock },
@@ -38,8 +39,8 @@ class SyncedOverlayScopeTest {
     @Test
     fun a_refreshed_query_does_not_show_a_retained_synced_insert_twice() = runTest {
         // Given — two cached queries, an offline insert of x, then its replay
-        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
-        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
+        queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
         tick = 10L
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         tick = 20L
@@ -71,8 +72,8 @@ class SyncedOverlayScopeTest {
     @Test
     fun a_refreshed_query_is_not_overwritten_by_a_retained_synced_update() = runTest {
         // Given — two cached queries, an offline rename to A, then its replay
-        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L","title":"orig"}]""")
-        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"orig"}]""")
+        queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L","title":"orig"}]""")
+        queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"orig"}]""")
         tick = 10L
         store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
         tick = 20L
@@ -102,8 +103,12 @@ class SyncedOverlayScopeTest {
         runTest {
             // Given — as above: an offline rename to A replayed, then ALL refreshed with another
             // device's C
-            objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L","title":"orig"}]""")
-            objectDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"orig"}]""")
+            queryCacheDao.seedPayload(
+                TABLE,
+                LIST_L,
+                """[{"id":"a","list_id":"L","title":"orig"}]""",
+            )
+            queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"orig"}]""")
             tick = 10L
             store.enqueueUpdate(
                 table = TABLE,
@@ -141,7 +146,7 @@ class SyncedOverlayScopeTest {
     fun a_clock_set_back_or_forward_neither_keeps_nor_retires_a_synced_write() = runTest {
         // Given — a detail query cached once and not refreshed since, and a replayed insert it
         // shows
-        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
         val replayer =
@@ -185,7 +190,7 @@ class SyncedOverlayScopeTest {
     @Test
     fun a_table_keeps_the_newest_synced_writes_up_to_its_bound() = runTest {
         // Given — a query never refreshed, and one more replayed insert than a table keeps
-        objectDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
+        queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
         repeat(RETAINED_BOUND + 1) { index ->
             val id = store.enqueueInsert(TABLE, rows("""[{"id":"x$index","list_id":"L"}]"""))
             store.markMutationSynced(id = id, table = TABLE)
@@ -205,8 +210,8 @@ class SyncedOverlayScopeTest {
         // Given — a keyless insert and an update replayed; ALL refreshed afterwards with the
         // server's rows, while another query stays unrefreshed and so keeps the synced mutations
         // around
-        objectDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
-        objectDao.seedPayload(TABLE, ALL, """[{"id":"a","title":"orig"}]""")
+        queryCacheDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
+        queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","title":"orig"}]""")
         tick = 10L
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"keyless"}]"""))
         store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
@@ -230,7 +235,7 @@ class SyncedOverlayScopeTest {
         clock += 60 * 60 * 1000
         val afterRestart =
             newTestOfflineStore(
-                    objectDao = objectDao,
+                    queryCacheDao = queryCacheDao,
                     mutationDao = mutationDao,
                     nowMillis = { clock },
                 )
@@ -245,7 +250,7 @@ class SyncedOverlayScopeTest {
     @Test
     fun a_pass_retires_the_synced_writes_of_a_table_nothing_caches() = runTest {
         // Given — a replayed update a cached query showed, and then that query's payload dropped
-        objectDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
+        queryCacheDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
         store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
         store.deleteTablePayload(TABLE, ORPHAN)

@@ -8,6 +8,7 @@ import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -18,9 +19,9 @@ import kotlinx.coroutines.flow.Flow
     tableName = "object_cache",
     primaryKeys = ["table_name", "signature"],
 )
-internal data class ObjectRow(
+internal data class CachedQueryRow(
     @ColumnInfo(name = "table_name") val table: String,
-    @ColumnInfo(name = "signature") val signature: String,
+    @ColumnInfo(name = "signature") val cacheKey: String,
     /** Full JSON payload from PostgREST (usually a JSON array string). */
     @ColumnInfo(name = "payload") val payload: String,
     /**
@@ -46,17 +47,13 @@ internal fun staleStampOf(updatedAt: Long): Long =
     if (updatedAt < 0) updatedAt else -maxOf(updatedAt, 1L)
 
 @Dao
-internal interface ObjectDao {
+internal interface QueryCacheDao {
 
-    @Query(
-        "SELECT * FROM object_cache WHERE table_name = :table AND signature = :signature LIMIT 1"
-    )
-    suspend fun get(table: String, signature: String): ObjectRow?
+    @Query("SELECT * FROM object_cache WHERE table_name = :table AND signature = :cacheKey LIMIT 1")
+    suspend fun get(table: String, cacheKey: String): CachedQueryRow?
 
-    @Query(
-        "SELECT * FROM object_cache WHERE table_name = :table AND signature = :signature LIMIT 1"
-    )
-    fun observe(table: String, signature: String): Flow<ObjectRow?>
+    @Query("SELECT * FROM object_cache WHERE table_name = :table AND signature = :cacheKey LIMIT 1")
+    fun observe(table: String, cacheKey: String): Flow<CachedQueryRow?>
 
     /**
      * All cached SELECT payloads for [table], across every signature currently observed.
@@ -65,15 +62,15 @@ internal interface ObjectDao {
      * live `selectAsFlow` subscription's underlying cache without requiring a round-trip SELECT.
      */
     @Query("SELECT * FROM object_cache WHERE table_name = :table")
-    suspend fun allForTable(table: String): List<ObjectRow>
+    suspend fun allForTable(table: String): List<CachedQueryRow>
 
-    /** The highest [ObjectRow.syncedThrough] of any row; `0` when there is none. */
+    /** The highest [CachedQueryRow.syncedThrough] of any row; `0` when there is none. */
     @Query("SELECT COALESCE(MAX(synced_through), 0) FROM object_cache")
     suspend fun maxSyncedThrough(): Long
 
     /**
-     * The lowest [ObjectRow.syncedThrough] of [table]'s cached payloads: the synced mutations at or
-     * below it are held by every one. `null` when the table has no cached payload.
+     * The lowest [CachedQueryRow.syncedThrough] of [table]'s cached payloads: the synced mutations
+     * at or below it are held by every one. `null` when the table has no cached payload.
      */
     @Query("SELECT MIN(synced_through) FROM object_cache WHERE table_name = :table")
     suspend fun minSyncedThroughForTable(table: String): Long?
@@ -88,7 +85,7 @@ internal interface ObjectDao {
      * @return Every cached signature of [table], in no particular order.
      */
     @Query("SELECT signature FROM object_cache WHERE table_name = :table")
-    suspend fun signaturesForTable(table: String): List<String>
+    suspend fun cacheKeysForTable(table: String): List<String>
 
     /**
      * The rows of [table] whose signature starts with [prefix]; for the engine's per-query records
@@ -97,33 +94,33 @@ internal interface ObjectDao {
     @Query(
         "SELECT * FROM object_cache WHERE table_name = :table AND substr(signature, 1, length(:prefix)) = :prefix"
     )
-    suspend fun rowsWithSignaturePrefix(table: String, prefix: String): List<ObjectRow>
+    suspend fun rowsWithCacheKeyPrefix(table: String, prefix: String): List<CachedQueryRow>
 
     /** Deletes the rows of [table] whose signature starts with [prefix]. */
     @Query(
         "DELETE FROM object_cache WHERE table_name = :table AND substr(signature, 1, length(:prefix)) = :prefix"
     )
-    suspend fun deleteWithSignaturePrefix(table: String, prefix: String)
+    suspend fun deleteWithCacheKeyPrefix(table: String, prefix: String)
 
     /**
-     * Deletes each query-shape record (see [QUERY_SHAPE_SIGNATURE_PREFIX]) whose cached payload is
+     * Deletes each query-shape record (see [QUERY_SHAPE_CACHE_KEY_PREFIX]) whose cached payload is
      * gone, as eviction leaves them.
      *
      * @return how many records were deleted.
      */
     @Query(
         "DELETE FROM object_cache WHERE table_name = '$RESERVED_TABLE_NAME' " +
-            "AND substr(signature, 1, $QUERY_SHAPE_SIGNATURE_PREFIX_LENGTH) = '$QUERY_SHAPE_SIGNATURE_PREFIX_NAME' || char(31) " +
-            "AND substr(signature, ${QUERY_SHAPE_SIGNATURE_PREFIX_LENGTH + 1}) NOT IN (" +
+            "AND substr(signature, 1, $QUERY_SHAPE_CACHE_KEY_PREFIX_LENGTH) = '$QUERY_SHAPE_CACHE_KEY_PREFIX_NAME' || char(31) " +
+            "AND substr(signature, ${QUERY_SHAPE_CACHE_KEY_PREFIX_LENGTH + 1}) NOT IN (" +
             "SELECT table_name || char(31) || signature FROM object_cache WHERE table_name != '$RESERVED_TABLE_NAME'" +
             ")"
     )
     suspend fun deleteOrphanedQueryShapes(): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(row: ObjectRow)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(row: CachedQueryRow)
 
-    @Query("DELETE FROM object_cache WHERE table_name = :table AND signature = :signature")
-    suspend fun delete(table: String, signature: String)
+    @Query("DELETE FROM object_cache WHERE table_name = :table AND signature = :cacheKey")
+    suspend fun delete(table: String, cacheKey: String)
 
     @Query("DELETE FROM object_cache WHERE table_name = :table")
     suspend fun deleteTable(table: String)
@@ -166,7 +163,7 @@ internal interface ObjectDao {
      * the cache's owner and the query shapes, which no refetch restores.
      *
      * @param limit maximum number of rows to delete in this batch.
-     * @param keptSignatures signatures that are never candidates: queries a live reader shows. A
+     * @param keptCacheKeys signatures that are never candidates: queries a live reader shows. A
      *   signature begins with its table, so it names one row.
      * @return the number of rows actually deleted; `0` once nothing is left to evict, which the
      *   eviction loop relies on as its progress guard to guarantee termination.
@@ -175,9 +172,9 @@ internal interface ObjectDao {
         "DELETE FROM object_cache " +
             "WHERE rowid IN (" +
             "SELECT rowid FROM object_cache WHERE table_name != '$RESERVED_TABLE_NAME' " +
-            "AND signature NOT IN (:keptSignatures) " +
+            "AND signature NOT IN (:keptCacheKeys) " +
             "ORDER BY abs(updated_at) ASC LIMIT :limit" +
             ")"
     )
-    suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int
+    suspend fun deleteOldestPayloadRows(limit: Int, keptCacheKeys: List<String>): Int
 }

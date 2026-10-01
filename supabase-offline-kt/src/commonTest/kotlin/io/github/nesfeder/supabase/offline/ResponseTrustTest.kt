@@ -13,7 +13,7 @@ import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -45,7 +45,7 @@ import kotlinx.coroutines.test.runTest
  */
 class ResponseTrustTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
 
     /** What every read of `todos` returns, as the scripted server's answer. */
     private var rows = "[]"
@@ -71,7 +71,7 @@ class ResponseTrustTest {
         val offline =
             newTestOfflineClient(
                 supabase = client,
-                store = newTestOfflineStore(objectDao = objectDao),
+                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                 coordinatorScope = scope,
                 responseTrust = responseTrust,
             )
@@ -159,7 +159,7 @@ class ResponseTrustTest {
     @Test
     fun without_auth_a_row_deleted_elsewhere_leaves_the_cached_list() = runTest {
         // Given — the cache holds a row the server no longer has
-        objectDao.seedPayload(TABLE, TABLE, """[{"id":1}]""")
+        queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":1}]""")
 
         observing(::withoutAuth) { server, observed ->
             // When
@@ -188,7 +188,7 @@ class ResponseTrustTest {
 
     @Test
     fun with_its_own_token_provider_a_row_deleted_elsewhere_leaves_the_cached_list() = runTest {
-        objectDao.seedPayload(TABLE, TABLE, """[{"id":1}]""")
+        queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":1}]""")
 
         observing(::withTokenProvider) { server, observed ->
             settle()
@@ -247,7 +247,7 @@ class ResponseTrustTest {
     @Test
     fun a_narrowed_response_while_restoring_does_not_overwrite_the_users_cache() = runTest {
         // Given — the signed-in user's list, cached; the anon key sees only the public row
-        objectDao.seedPayload(TABLE, TABLE, """[{"id":"public"},{"id":"my-draft"}]""")
+        queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"public"},{"id":"my-draft"}]""")
         rows = """[{"id":"public"}]"""
         val sessions = FakeHeldSessionManager(signedInSession())
         observing({ dispatcher -> withAuth(dispatcher, sessions, autoLoad = true) }) { _, observed
@@ -259,7 +259,7 @@ class ResponseTrustTest {
             // Then — the cache still holds the user's rows, and the refresh has not settled
             assertEquals(
                 """[{"id":"public"},{"id":"my-draft"}]""",
-                objectDao.getRow(TABLE, TABLE)?.payload,
+                queryCacheDao.getRow(TABLE, TABLE)?.payload,
             )
             assertEquals(
                 listOf<String?>("""[{"id":"public"},{"id":"my-draft"}]"""),
@@ -280,7 +280,7 @@ class ResponseTrustTest {
             assertEquals(RefreshState.Idle, observed.refresh)
             assertEquals(
                 """[{"id":"public"},{"id":"my-draft"}]""",
-                objectDao.getRow(TABLE, TABLE)?.payload,
+                queryCacheDao.getRow(TABLE, TABLE)?.payload,
             )
         }
     }
@@ -309,7 +309,7 @@ class ResponseTrustTest {
     fun under_the_authenticated_only_rule_a_narrowed_response_while_restoring_is_not_written() =
         runTest {
             // Given — the signed-in user's list, cached; the anon key sees only the public row
-            objectDao.seedPayload(TABLE, TABLE, """[{"id":"public"},{"id":"my-draft"}]""")
+            queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"public"},{"id":"my-draft"}]""")
             rows = """[{"id":"public"}]"""
             val sessions = FakeHeldSessionManager(signedInSession())
             observing(
@@ -323,7 +323,7 @@ class ResponseTrustTest {
                 // Then — the user's rows stay, and the refresh has not settled
                 assertEquals(
                     """[{"id":"public"},{"id":"my-draft"}]""",
-                    objectDao.getRow(TABLE, TABLE)?.payload,
+                    queryCacheDao.getRow(TABLE, TABLE)?.payload,
                 )
                 assertEquals(
                     true,
@@ -356,7 +356,7 @@ class ResponseTrustTest {
             settle()
 
             // Then — written and settled, as under the rule before
-            assertEquals(rows, objectDao.getRow(TABLE, TABLE)?.payload)
+            assertEquals(rows, queryCacheDao.getRow(TABLE, TABLE)?.payload)
             assertEquals(RefreshState.Idle, observed.refresh)
             assertEquals(1, server.reads())
         }
@@ -369,7 +369,7 @@ class ResponseTrustTest {
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store = newTestOfflineStore(objectDao = objectDao),
+                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
             )
 
         // When

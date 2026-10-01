@@ -2,40 +2,41 @@
 // SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class, ExperimentalAtomicApi::class)
 
-package io.github.nesfeder.supabase.offline.internal.db
+package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.internal.OfflineJson
-import io.github.nesfeder.supabase.offline.internal.cache.CacheOwnerRecord
-import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
-import io.github.nesfeder.supabase.offline.internal.cache.KeyedUpdates
-import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
-import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
-import io.github.nesfeder.supabase.offline.internal.cache.Projection
-import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
-import io.github.nesfeder.supabase.offline.internal.cache.QueryShapeRecords
-import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
-import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
-import io.github.nesfeder.supabase.offline.internal.cache.keyNamedBy
-import io.github.nesfeder.supabase.offline.internal.cache.keyOf
-import io.github.nesfeder.supabase.offline.internal.cache.mayGainRowsBy
-import io.github.nesfeder.supabase.offline.internal.cache.patchMayLeaveWrong
-import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
-import io.github.nesfeder.supabase.offline.internal.cache.projectionOf
-import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
+import io.github.nesfeder.supabase.offline.internal.EngineJson
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
+import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
+import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
+import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
+import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
+import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
+import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
+import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
+import io.github.nesfeder.supabase.offline.internal.db.staleStampOf
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueState
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.equalityDecidedByContent
 import io.github.nesfeder.supabase.offline.internal.postgrest.isPlainColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
@@ -147,13 +148,13 @@ internal sealed interface EnqueueOutcome {
 /**
  * Central persistence for offline features:
  *
- * - PostgREST object cache (SELECT payloads) via [ObjectDao]
- * - Storage metadata (downloaded files) via [StorageDao]
+ * - PostgREST object cache (SELECT payloads) via [QueryCacheDao]
+ * - Storage metadata (downloaded files) via [CachedFileDao]
  * - Mutation queue (insert/upsert/update/delete) via [MutationDao]
  */
 internal class OfflineStore(
-    objectDao: ObjectDao,
-    private val storageDao: StorageDao,
+    queryCacheDao: QueryCacheDao,
+    private val cachedFileDao: CachedFileDao,
     private val mutationDao: MutationDao,
     private val queryCacheLimits: QueryCacheLimits,
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
@@ -167,7 +168,7 @@ internal class OfflineStore(
     private val monotonicTick: () -> Long = monotonicTickSource(),
 ) {
 
-    internal val json: Json = OfflineJson
+    internal val json: Json = EngineJson
     private val evictionMutex = Mutex()
 
     /**
@@ -178,16 +179,16 @@ internal class OfflineStore(
     private val payloadWrites = MutableStateFlow(ChangeCounts())
 
     /** The object cache, every write to it counted in [payloadWrites]. */
-    private val objectDao: ObjectDao =
-        PayloadWriteCountingDao(objectDao) { table -> notePayloadsWritten(table) }
+    private val queryCacheDao: QueryCacheDao =
+        PayloadWriteCountingDao(queryCacheDao) { table -> notePayloadsWritten(table) }
 
     /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
-    internal val queryShapes: QueryShapeRecords = QueryShapeRecords(this.objectDao, json)
+    internal val queryShapes: QueryShapeRecords = QueryShapeRecords(this.queryCacheDao, json)
 
     /**
      * The identity the query cache and the Storage file cache belong to; see [CacheOwnerRecord].
      */
-    internal val cacheOwner: CacheOwnerRecord = CacheOwnerRecord(this.objectDao, json)
+    internal val cacheOwner: CacheOwnerRecord = CacheOwnerRecord(this.queryCacheDao, json)
 
     /**
      * Whether the cache belongs to one identity at a time, checked on every read and write: `true`
@@ -245,8 +246,8 @@ internal class OfflineStore(
     /** The mutation queue's record kept beside the rows: the rejected list. */
     internal val mutationQueueState: MutationQueueState =
         MutationQueueState(
-            objectDao = this.objectDao,
-            json = OfflineJson,
+            queryCacheDao = this.queryCacheDao,
+            json = EngineJson,
             nowMillis = nowMillis,
             logger = { engineLogger },
         )
@@ -272,7 +273,7 @@ internal class OfflineStore(
 
     /**
      * The highest [MutationRow.syncSequence] handed out, read from the database once; guarded by
-     * [mutationQueueMutex]. It never goes back, so a payload's [ObjectRow.syncedThrough] never
+     * [mutationQueueMutex]. It never goes back, so a payload's [CachedQueryRow.syncedThrough] never
      * covers a mutation that syncs after the payload was written.
      */
     private var latestSyncSequence: Long? = null
@@ -280,7 +281,8 @@ internal class OfflineStore(
     /** [latestSyncSequence], read once. Caller holds [mutationQueueMutex]. */
     private suspend fun latestSyncSequence(): Long =
         latestSyncSequence
-            ?: maxOf(mutationDao.maxSyncSequence(), objectDao.maxSyncedThrough()).also { loaded ->
+            ?: maxOf(mutationDao.maxSyncSequence(), queryCacheDao.maxSyncedThrough()).also { loaded
+                ->
                 latestSyncSequence = loaded
             }
 
@@ -325,8 +327,8 @@ internal class OfflineStore(
 
     /**
      * Whether [mutation] belongs on a payload that holds the synced mutations through
-     * [payloadSyncedThrough] (see [ObjectRow.syncedThrough]): a pending one always does, a synced
-     * one only when it replayed after them. Without a sequence it is taken as held by none.
+     * [payloadSyncedThrough] (see [CachedQueryRow.syncedThrough]): a pending one always does, a
+     * synced one only when it replayed after them. Without a sequence it is taken as held by none.
      */
     private fun belongsOnPayload(mutation: MutationRow, payloadSyncedThrough: Long): Boolean {
         if (mutation.syncedAtMs == null) return true
@@ -522,7 +524,7 @@ internal class OfflineStore(
             claimant = identity,
             mayClaim = {
                 if (identity != QueueIdentity.Anonymous.storedValue) claimsForUser
-                else objectDao.totalPayloadBytes() == 0L && storageDao.all().isEmpty()
+                else queryCacheDao.totalPayloadBytes() == 0L && cachedFileDao.all().isEmpty()
             },
         )
 
@@ -560,7 +562,7 @@ internal class OfflineStore(
      * before the table's last local write (it would roll that write back), and
      * [CacheWriteOutcome.REFUSED_EMPTY] for an empty payload that is not [authoritativeEmpty]. A
      * payload written with a start tick is recorded as holding the synced mutations so far
-     * ([ObjectRow.syncedThrough]). Runs under the table's write lock.
+     * ([CachedQueryRow.syncedThrough]). Runs under the table's write lock.
      *
      * @param authoritativeEmpty Whether an empty [payload] is the server's real answer (the request
      *   went out signed in), so it may replace cached rows or seed a cold slot.
@@ -624,10 +626,10 @@ internal class OfflineStore(
                                 // A response whose request started after the table's last local
                                 // write holds every mutation synced so far; a payload with no
                                 // request behind it holds none for certain
-                                objectDao.upsert(
-                                    ObjectRow(
+                                queryCacheDao.upsert(
+                                    CachedQueryRow(
                                         table = table,
-                                        signature = cacheKey,
+                                        cacheKey = cacheKey,
                                         payload = payload,
                                         updatedAt = nowMillis(),
                                         syncedThrough =
@@ -697,19 +699,19 @@ internal class OfflineStore(
      */
     suspend fun getPayloadWithTimestamp(table: String, cacheKey: String): Pair<String, Long>? {
         if (isReservedTable(table) || !cacheServesCurrentIdentity()) return null
-        val row = objectDao.get(table, cacheKey) ?: return null
+        val row = queryCacheDao.get(table, cacheKey) ?: return null
         return row.payload to row.updatedAt
     }
 
     fun observePayload(table: String, cacheKey: String): Flow<String?> {
         if (isReservedTable(table)) return flowOf(null)
-        return objectDao.observe(table, cacheKey).map { row -> row?.payload }
+        return queryCacheDao.observe(table, cacheKey).map { row -> row?.payload }
     }
 
     suspend fun deleteTablePayload(table: String, cacheKey: String) {
         requireUserTable(table)
         tableWriteLock(table).withLock {
-            objectDao.delete(table, cacheKey)
+            queryCacheDao.delete(table, cacheKey)
             queryShapes.forget(table, cacheKey)
         }
     }
@@ -728,7 +730,7 @@ internal class OfflineStore(
         requireUserTable(table)
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
-            objectDao.deleteTable(table)
+            queryCacheDao.deleteTable(table)
             queryShapes.forgetTable(table)
         }
     }
@@ -759,9 +761,9 @@ internal class OfflineStore(
                 cacheOwner.emptying(owner) {
                     mutationDao.runInTransaction {
                         mutationDao.deleteAll()
-                        storageDao.deleteAll()
-                        objectDao.deleteAll()
-                        if (owner != null) objectDao.upsert(cacheOwner.rowOf(owner))
+                        cachedFileDao.deleteAll()
+                        queryCacheDao.deleteAll()
+                        if (owner != null) queryCacheDao.upsert(cacheOwner.rowOf(owner))
                     }
                     mutationQueueState.resetCaches()
                     unconfirmedSendIds.value = emptySet()
@@ -793,13 +795,13 @@ internal class OfflineStore(
                 cacheDroppedTick.update { existing -> if (existing >= tick) existing else tick }
                 cacheOwner.emptying(owner) {
                     mutationDao.runInTransaction {
-                        storageDao.deleteAll()
-                        objectDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
-                        objectDao.deleteWithSignaturePrefix(
+                        cachedFileDao.deleteAll()
+                        queryCacheDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
+                        queryCacheDao.deleteWithCacheKeyPrefix(
                             RESERVED_TABLE_NAME,
-                            QUERY_SHAPE_SIGNATURE_PREFIX,
+                            QUERY_SHAPE_CACHE_KEY_PREFIX,
                         )
-                        objectDao.upsert(cacheOwner.rowOf(owner))
+                        queryCacheDao.upsert(cacheOwner.rowOf(owner))
                     }
                 }
                 queryShapes.forgetAll()
@@ -820,7 +822,7 @@ internal class OfflineStore(
         eTag: String?,
     ) {
         val row =
-            StorageRow(
+            CachedFileRow(
                 key = storageKey(bucketId, path),
                 bucketId = bucketId,
                 path = path,
@@ -829,21 +831,21 @@ internal class OfflineStore(
                 eTag = eTag,
                 lastFetchedEpochMs = nowMillis(),
             )
-        storageDao.upsert(row)
+        cachedFileDao.upsert(row)
     }
 
     suspend fun getStorageByKey(
         bucketId: String,
         path: String,
-    ): StorageRow? {
-        return storageDao.getByKey(storageKey(bucketId, path))
+    ): CachedFileRow? {
+        return cachedFileDao.getByKey(storageKey(bucketId, path))
     }
 
     suspend fun deleteStorageByKey(
         bucketId: String,
         path: String,
     ) {
-        storageDao.delete(storageKey(bucketId, path))
+        cachedFileDao.delete(storageKey(bucketId, path))
     }
 
     private fun storageKey(bucketId: String, path: String) = "$bucketId::$path"
@@ -856,25 +858,25 @@ internal class OfflineStore(
      * @param variantPrefix [path] followed by the variant separator.
      * @return the rows.
      */
-    suspend fun storageRowsForObject(
+    suspend fun cachedFileRowsForObject(
         bucketId: String,
         path: String,
         variantPrefix: String,
-    ): List<StorageRow> = storageDao.forObject(bucketId, path, variantPrefix)
+    ): List<CachedFileRow> = cachedFileDao.forObject(bucketId, path, variantPrefix)
 
     /** Every storage row. */
-    suspend fun allStorageRows(): List<StorageRow> = storageDao.all()
+    suspend fun allCachedFileRows(): List<CachedFileRow> = cachedFileDao.all()
 
     /** The summed recorded size of every cached file, in bytes. */
-    suspend fun totalStorageSizeBytes(): Long = storageDao.totalSizeBytes()
+    suspend fun totalStorageSizeBytes(): Long = cachedFileDao.totalSizeBytes()
 
     /**
      * Writes [row] back as it was, replacing whatever row has its key.
      *
      * @param row the row to restore.
      */
-    suspend fun restoreStorageRow(row: StorageRow) {
-        storageDao.upsert(row)
+    suspend fun restoreCachedFileRow(row: CachedFileRow) {
+        cachedFileDao.upsert(row)
     }
 
     /**
@@ -882,8 +884,8 @@ internal class OfflineStore(
      *
      * @param key the row's key, `"$bucket::$path"`.
      */
-    suspend fun deleteStorageRow(key: String) {
-        storageDao.delete(key)
+    suspend fun deleteCachedFileRow(key: String) {
+        cachedFileDao.delete(key)
     }
 
     /* ────────────────────────────── Mutation queue ────────────────────────────── */
@@ -1017,7 +1019,7 @@ internal class OfflineStore(
                         table = table,
                         operation = operation,
                         bodyJson = bodyJson,
-                        filterJson = filter?.let { encode(it, json) },
+                        filterJson = filter?.let { encodeFilter(it, json) },
                         createdAtMs = nowMillis(),
                         syncedAtMs = null,
                         defaultToNull = defaultToNull,
@@ -1321,7 +1323,7 @@ internal class OfflineStore(
                 }
             mutationDao.runInTransaction {
                 idSet.forEach { id -> mutationDao.deleteById(id) }
-                rejected?.let { (row, _) -> objectDao.upsert(row) }
+                rejected?.let { (row, _) -> queryCacheDao.upsert(row) }
             }
             unconfirmedSendIds.update { current -> current?.minus(idSet) }
             rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
@@ -1364,7 +1366,7 @@ internal class OfflineStore(
         // Loaded first, so the change below reaches it.
         unconfirmedSends()
         mutationDao.runInTransaction {
-            objectDao.upsert(rejectedRow)
+            queryCacheDao.upsert(rejectedRow)
             mutationDao.deleteById(mutation.id)
         }
         mutationQueueState.rejectedWritten(list)
@@ -1396,7 +1398,7 @@ internal class OfflineStore(
             var newId = 0L
             mutationDao.runInTransaction {
                 newId = mutationDao.insert(row)
-                objectDao.upsert(rejectedRow)
+                queryCacheDao.upsert(rejectedRow)
             }
             mutationQueueState.rejectedWritten(list)
             noteMutationsChanged(row.table)
@@ -1558,7 +1560,7 @@ internal class OfflineStore(
         // The stored payload's coverage, read only when a synced mutation may be held by it
         val syncedThrough =
             if (cacheKey == null || visible.all { mutation -> mutation.syncedAtMs == null }) 0L
-            else objectDao.get(table, cacheKey)?.syncedThrough ?: 0L
+            else queryCacheDao.get(table, cacheKey)?.syncedThrough ?: 0L
         val all = visible.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
         if (all.isEmpty()) return cachedJson
 
@@ -1596,7 +1598,7 @@ internal class OfflineStore(
             var last: OverlaidInputs? = null
             var lastOverlaid: String? = null
             combine(
-                    objectDao
+                    queryCacheDao
                         .observe(table, cacheKey)
                         .map { row -> row?.let(::StoredPayload) }
                         .distinctUntilChanged(),
@@ -1610,7 +1612,7 @@ internal class OfflineStore(
                         if (emptiedCount == trustedEmptiedCount) {
                             stored
                         } else {
-                            objectDao.get(table, cacheKey)?.let(::StoredPayload).also { read ->
+                            queryCacheDao.get(table, cacheKey)?.let(::StoredPayload).also { read ->
                                 if (read == stored) trustedEmptiedCount = emptiedCount
                             }
                         }
@@ -1640,7 +1642,7 @@ internal class OfflineStore(
 
     /** A cached payload's text and what it holds of the synced mutations. */
     private data class StoredPayload(val payload: String, val syncedThrough: Long) {
-        constructor(row: ObjectRow) : this(row.payload, row.syncedThrough)
+        constructor(row: CachedQueryRow) : this(row.payload, row.syncedThrough)
     }
 
     /**
@@ -1746,9 +1748,8 @@ internal class OfflineStore(
             }
         }
         val sameSelect =
-            objectDao.allForTable(table).filter { row ->
-                row.signature != cacheKey &&
-                    shapes[row.signature]?.let(::projectionOf) == projection
+            queryCacheDao.allForTable(table).filter { row ->
+                row.cacheKey != cacheKey && shapes[row.cacheKey]?.let(::projectionOf) == projection
             }
         if (sameSelect.isEmpty()) return emptyList()
         val parsed = sameSelect.map { row -> row to parsedPayloadOf(row) }
@@ -1799,7 +1800,7 @@ internal class OfflineStore(
                         shapes[held.cacheKey]?.let(::projectionOf) == projection
                 } ?: continue
             // The index is read with the payload writes it counted; this checks the row is there
-            val row = objectDao.get(table, holder.cacheKey) ?: return null
+            val row = queryCacheDao.get(table, holder.cacheKey) ?: return null
             val payload = parsedPayloadOf(row)
             if (payload.keysFor(keyColumns).getOrNull(holder.position) != key) return null
             borrowed += payload.rows?.getOrNull(holder.position) as? JsonObject ?: return null
@@ -1819,7 +1820,7 @@ internal class OfflineStore(
         }
         // Most recently fetched first, as KnownRows orders the copies of one row
         val newestFirst =
-            objectDao
+            queryCacheDao
                 .allForTable(table)
                 .map { row -> row to parsedPayloadOf(row) }
                 .sortedByDescending { (row, _) -> fetchedAtOf(row.updatedAt) }
@@ -1829,7 +1830,7 @@ internal class OfflineStore(
             payload.keysFor(keyColumns).forEachIndexed { position, key ->
                 if (key == null) return@forEachIndexed
                 if (++indexed > MAX_KEY_INDEXED_ROWS) return null
-                holders.getOrPut(key) { mutableListOf() } += KeyHolder(row.signature, position)
+                holders.getOrPut(key) { mutableListOf() } += KeyHolder(row.cacheKey, position)
             }
         }
         val index = TableKeyIndex(writes, keyColumns, holders)
@@ -1990,7 +1991,7 @@ internal class OfflineStore(
         /** [write]'s filter, or `null` when it has none that reads. */
         fun filterOf(write: MutationRow): FilterDescriptor? {
             if (write.id in filters) return filters[write.id]
-            return decodeOrNull(write.filterJson, json).also { filters[write.id] = it }
+            return decodeFilterOrNull(write.filterJson, json).also { filters[write.id] = it }
         }
 
         /** An UPDATE's body; `null` when it is not a JSON object. */
@@ -2011,7 +2012,7 @@ internal class OfflineStore(
     private fun keyedUpdatesOf(
         writes: List<MutationRow>,
         keyColumns: List<String>,
-        parsed: List<Pair<ObjectRow, ParsedPayload>>,
+        parsed: List<Pair<CachedQueryRow, ParsedPayload>>,
         batch: PatchWrites,
     ): KeyedUpdates? {
         if (keyColumns.isEmpty()) return null
@@ -2146,7 +2147,7 @@ internal class OfflineStore(
                     table = table,
                     operation = MutationOperation.UPDATE,
                     bodyJson = JsonObject(bodyColumns + row).toString(),
-                    filterJson = encode(byKey, json),
+                    filterJson = encodeFilter(byKey, json),
                     createdAtMs = nowMillis(),
                     syncedAtMs = null,
                 )
@@ -2171,10 +2172,10 @@ internal class OfflineStore(
         val toFetchAgain = mutableSetOf<String>()
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
-            val cached = objectDao.allForTable(table)
+            val cached = queryCacheDao.allForTable(table)
             val uncachedLive =
                 (liveCacheKeys ?: liveCacheKeysOf(table)) -
-                    cached.mapTo(mutableSetOf()) { row -> row.signature }
+                    cached.mapTo(mutableSetOf()) { row -> row.cacheKey }
             // Only a patch that may write claims an unowned cache for the current identity
             if (cached.isEmpty() && uncachedLive.isEmpty()) return@withLock
             if (!cacheTakesWritesOfCurrentIdentity()) return@withLock
@@ -2192,11 +2193,11 @@ internal class OfflineStore(
             val known = lazy { KnownRows(parsed, shapes, keyColumns, mayMatter) }
             for ((row, payload) in parsed) {
                 val rows = payload.rows ?: continue
-                val shape = shapes[row.signature]
+                val shape = shapes[row.cacheKey]
                 val target =
                     if (writes.any { write -> mayJoinKnownRows(write, shape, batch) }) {
                         known.value.targetFor(
-                            row.signature,
+                            row.cacheKey,
                             shape,
                             rows,
                             rowKeys = payload.keysFor(keyColumns),
@@ -2213,7 +2214,7 @@ internal class OfflineStore(
                 val stamp = if (wrong) staleStampOf(row.updatedAt) else row.updatedAt
                 val next = row.copy(payload = overlay.encode(patched.visible), updatedAt = stamp)
                 if (!writeUnlessCleared(guardTick, next)) return@withLock
-                if (wrong) toFetchAgain += row.signature
+                if (wrong) toFetchAgain += row.cacheKey
             }
             toFetchAgain +=
                 createLivePayloads(
@@ -2262,7 +2263,7 @@ internal class OfflineStore(
      *   [rowsThatMayMatter]. It is asked of the copy a query would be given, never of another.
      */
     private class KnownRows(
-        parsed: List<Pair<ObjectRow, ParsedPayload>>,
+        parsed: List<Pair<CachedQueryRow, ParsedPayload>>,
         shapes: Map<String, QueryShape?>,
         private val keyColumns: List<String>,
         mayMatter: (JsonObject, List<String>) -> Boolean,
@@ -2297,11 +2298,11 @@ internal class OfflineStore(
             }
             if (indexed.isNotEmpty()) {
                 newestFirst.forEach { (row, payload) ->
-                    val projection = shapes[row.signature]?.let(::projectionOf)
+                    val projection = shapes[row.cacheKey]?.let(::projectionOf)
                     forEachKeyedRow(payload) { key, candidate ->
                         if (key !in indexed) return@forEachKeyedRow
                         byKey.getOrPut(key) { mutableListOf() } +=
-                            Held(row.signature, projection, candidate, mayMatter(candidate, key))
+                            Held(row.cacheKey, projection, candidate, mayMatter(candidate, key))
                         if (projection != null)
                             keysByProjection.getOrPut(projection) { LinkedHashSet() } += key
                     }
@@ -2394,7 +2395,7 @@ internal class OfflineStore(
         val filters =
             mutations
                 .filter { mutation -> mutation.operation == MutationOperation.UPDATE }
-                .mapNotNull { mutation -> decodeOrNull(mutation.filterJson, json) }
+                .mapNotNull { mutation -> decodeFilterOrNull(mutation.filterJson, json) }
                 .map { filter -> RowFilter(filter, uuidColumns) }
                 .filter { filter -> unknownMatters || filter.canMatch }
         val reached =
@@ -2437,7 +2438,8 @@ internal class OfflineStore(
                 MutationOperation.UPSERT ->
                     conflictColumnsOf(mutation).forEach { column -> read += jsonNameOf(column) }
                 MutationOperation.UPDATE ->
-                    decodeOrNull(mutation.filterJson, json)?.conditions?.forEach { condition ->
+                    decodeFilterOrNull(mutation.filterJson, json)?.conditions?.forEach { condition
+                        ->
                         if (isPlainColumn(condition.column)) read += jsonNameOf(condition.column)
                         else readsEveryColumn = true
                     }
@@ -2466,8 +2468,8 @@ internal class OfflineStore(
      * [row]'s rows, parsed once for each text the payload holds. What is kept is dropped whole when
      * it would pass [PARSED_PAYLOAD_TEXT_KEPT] characters, and when the cache is emptied.
      */
-    private fun parsedPayloadOf(row: ObjectRow): ParsedPayload =
-        parsedTextOf(row.table, row.signature, row.payload)
+    private fun parsedPayloadOf(row: CachedQueryRow): ParsedPayload =
+        parsedTextOf(row.table, row.cacheKey, row.payload)
 
     /** [parsedPayloadOf] for [text], the rows the query cached under [cacheKey] shows. */
     private fun parsedTextOf(table: String, cacheKey: String, text: String): ParsedPayload {
@@ -2537,9 +2539,9 @@ internal class OfflineStore(
             // Local rows alone are not the query's answer: stale, so a read asks the server when it
             // can
             val row =
-                ObjectRow(
+                CachedQueryRow(
                     table = table,
-                    signature = cacheKey,
+                    cacheKey = cacheKey,
                     payload = overlay.encode(created),
                     updatedAt = staleStampOf(nowMillis()),
                 )
@@ -2593,7 +2595,7 @@ internal class OfflineStore(
         tableWriteLock(table).withLock {
             recordLocalMutation(table)
             val shapes = queryShapes.shapesOf(table)
-            val cached = objectDao.allForTable(table)
+            val cached = queryCacheDao.allForTable(table)
             for (row in cached) {
                 val reached =
                     narrowing == null ||
@@ -2601,9 +2603,9 @@ internal class OfflineStore(
                             element !is JsonObject ||
                                 rowMatch(element, narrowing) != RowMatch.EXCLUDED
                         } ||
-                        (patch != null && mayGainRowsBy(patch, shapes[row.signature]))
+                        (patch != null && mayGainRowsBy(patch, shapes[row.cacheKey]))
                 if (!reached) continue
-                toFetchAgain += row.signature
+                toFetchAgain += row.cacheKey
                 if (isStaleStamp(row.updatedAt)) continue
                 val next = row.copy(updatedAt = staleStampOf(row.updatedAt))
                 if (!writeUnlessCleared(startedAtTick, next)) return@withLock
@@ -2611,7 +2613,7 @@ internal class OfflineStore(
             // A live query with nothing cached may gain the rows an UPDATE changes
             if (patch != null) {
                 toFetchAgain +=
-                    liveCacheKeysOf(table) - cached.mapTo(mutableSetOf()) { row -> row.signature }
+                    liveCacheKeysOf(table) - cached.mapTo(mutableSetOf()) { row -> row.cacheKey }
             }
         }
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
@@ -2623,12 +2625,12 @@ internal class OfflineStore(
      *
      * @return `false` when a teardown voided the write.
      */
-    private suspend fun writeUnlessCleared(guardTick: Long, row: ObjectRow): Boolean =
+    private suspend fun writeUnlessCleared(guardTick: Long, row: CachedQueryRow): Boolean =
         clearMutex.withLock {
             if (predatesCacheClear(guardTick)) {
                 false
             } else {
-                objectDao.upsert(row)
+                queryCacheDao.upsert(row)
                 true
             }
         }
@@ -2651,7 +2653,7 @@ internal class OfflineStore(
                 else null
             mutationDao.runInTransaction {
                 mutationDao.markSynced(id = id, syncedAtMs = nowMillis(), syncSequence = sequence)
-                rejected?.let { (row, _) -> objectDao.upsert(row) }
+                rejected?.let { (row, _) -> queryCacheDao.upsert(row) }
             }
             latestSyncSequence = sequence
             unconfirmedSendIds.update { current -> current?.minus(id) }
@@ -2751,17 +2753,17 @@ internal class OfflineStore(
 
     /**
      * Retires [table]'s synced mutations that every cached payload of the table already holds
-     * ([ObjectRow.syncedThrough]), when no live query is waiting for its first payload, and the
-     * oldest beyond the newest [MAX_RETAINED_SYNCED_PER_TABLE] whatever still shows them. No clock
-     * is read, so a clock set back or forward neither keeps one nor retires one. Caller holds the
-     * table's write lock.
+     * ([CachedQueryRow.syncedThrough]), when no live query is waiting for its first payload, and
+     * the oldest beyond the newest [MAX_RETAINED_SYNCED_PER_TABLE] whatever still shows them. No
+     * clock is read, so a clock set back or forward neither keeps one nor retires one. Caller holds
+     * the table's write lock.
      */
     private suspend fun retireSyncedMutationsOf(table: String) {
         val synced = mutationDao.syncedForTable(table)
         if (synced.isEmpty()) return
         val waiting =
-            (liveCacheKeysOf(table) - objectDao.signaturesForTable(table).toSet()).isNotEmpty()
-        val heldByEvery = objectDao.minSyncedThroughForTable(table)
+            (liveCacheKeysOf(table) - queryCacheDao.cacheKeysForTable(table).toSet()).isNotEmpty()
+        val heldByEvery = queryCacheDao.minSyncedThroughForTable(table)
         val held =
             if (waiting) {
                 emptyList()
@@ -2785,7 +2787,7 @@ internal class OfflineStore(
      * Evict the oldest cached SELECT payloads until the cache is back within
      * [QueryCacheLimits.maxPayloadBytes].
      *
-     * Size is measured **logically** via [ObjectDao.totalPayloadBytes] (summed payload length),
+     * Size is measured **logically** via [QueryCacheDao.totalPayloadBytes] (summed payload length),
      * never the on-disk database file size. SQLite returns pages freed by `DELETE` to its internal
      * freelist rather than to the OS, so the file never shrinks after eviction; driving the loop
      * off file size therefore empties the cache and then spins forever holding [evictionMutex].
@@ -2817,7 +2819,7 @@ internal class OfflineStore(
         // Cheap pre-check outside the lock: eviction triggers only once the cache exceeds the
         // ceiling, so skip acquiring the mutex when already within budget (the common case even
         // on the writes that reach enforcement).
-        if (objectDao.totalPayloadBytes() <= max) return
+        if (queryCacheDao.totalPayloadBytes() <= max) return
 
         // Once triggered, drain a little below the ceiling to this hysteresis floor so a burst of
         // writes crossing the limit doesn't re-trigger a pass on every subsequent write. When
@@ -2830,22 +2832,22 @@ internal class OfflineStore(
 
         evictionMutex.withLock {
             var iterations = 0
-            var currentBytes = objectDao.totalPayloadBytes()
+            var currentBytes = queryCacheDao.totalPayloadBytes()
             while (currentBytes > evictionFloorBytes && iterations < MAX_EVICTION_ITERATIONS) {
                 // Coerce to at least one row so a misconfigured non-positive evictionBatchSize
                 // can't stall eviction — a zero-row batch trips the progress guard immediately
                 // and would otherwise leave the cache permanently over budget.
                 val deleted =
-                    objectDao.deleteOldestPayloadRows(
+                    queryCacheDao.deleteOldestPayloadRows(
                         limit = queryCacheLimits.evictionBatchSize.coerceAtLeast(1),
                         // A payload a live reader shows stays, or the reader would drop to no data
-                        keptSignatures = allLiveCacheKeys().take(MAX_KEPT_LIVE_CACHE_KEYS),
+                        keptCacheKeys = allLiveCacheKeys().take(MAX_KEPT_LIVE_CACHE_KEYS),
                     )
                 // Progress guard: no rows removed means the cache can't shrink further, so stop
                 // instead of re-measuring the same over-limit size forever.
                 if (deleted == 0) break
                 iterations++
-                currentBytes = objectDao.totalPayloadBytes()
+                currentBytes = queryCacheDao.totalPayloadBytes()
             }
             if (iterations > 0) queryShapes.dropOrphans()
         }

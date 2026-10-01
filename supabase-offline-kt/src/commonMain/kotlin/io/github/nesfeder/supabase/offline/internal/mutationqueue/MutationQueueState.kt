@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalSerializationApi::class)
 
-package io.github.nesfeder.supabase.offline.internal.db
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
+import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -138,7 +144,7 @@ internal data class StoredRejectionList(
  * logged, and started afresh.
  */
 internal class MutationQueueState(
-    private val objectDao: ObjectDao,
+    private val queryCacheDao: QueryCacheDao,
     private val json: Json,
     private val nowMillis: () -> Long,
     private val logger: () -> EngineLogger,
@@ -186,7 +192,7 @@ internal class MutationQueueState(
      */
     suspend fun addRejection(entry: StoredRejection) {
         val (row, list) = rejectedRowWith(add = entry)
-        objectDao.upsert(row)
+        queryCacheDao.upsert(row)
         rejectedWritten(list)
     }
 
@@ -199,7 +205,7 @@ internal class MutationQueueState(
     suspend fun removeRejection(id: Long): StoredRejection? {
         val removed = rejectedList().entries.firstOrNull { entry -> entry.id == id } ?: return null
         val (row, list) = rejectedRowWith(removeId = id)
-        objectDao.upsert(row)
+        queryCacheDao.upsert(row)
         rejectedWritten(list)
         return removed
     }
@@ -229,7 +235,7 @@ internal class MutationQueueState(
         add: StoredRejection? = null,
         removeId: Long? = null,
         removeIds: Set<Long> = emptySet(),
-    ): Pair<ObjectRow, StoredRejectionList> {
+    ): Pair<CachedQueryRow, StoredRejectionList> {
         val current = rejectedList()
         var entries =
             current.entries.filterNot { entry ->
@@ -275,7 +281,7 @@ internal class MutationQueueState(
         rejectedCache.value?.let {
             return it
         }
-        val payload = objectDao.get(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)?.payload
+        val payload = queryCacheDao.get(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY)?.payload
         val loaded =
             if (payload == null) {
                 StoredRejectionList()
@@ -290,8 +296,8 @@ internal class MutationQueueState(
     /** Keeps an unreadable rejected-list payload aside and starts a new list. */
     private suspend fun moveAsideUnreadable(payload: String): StoredRejectionList {
         val fresh = StoredRejectionList()
-        keepAsideUnreadable(REJECTED_MUTATIONS_SIGNATURE, payload)
-        objectDao.upsert(rejectedRow(fresh))
+        keepAsideUnreadable(REJECTED_MUTATIONS_CACHE_KEY, payload)
+        queryCacheDao.upsert(rejectedRow(fresh))
         return fresh
     }
 
@@ -300,29 +306,29 @@ internal class MutationQueueState(
      */
     private suspend fun keepAsideUnreadable(cacheKey: String, payload: String) {
         val asideCacheKey = "$cacheKey.unreadable.${nowMillis()}"
-        objectDao.upsert(reservedRow(asideCacheKey, payload))
+        queryCacheDao.upsert(reservedRow(asideCacheKey, payload))
         logger().error {
             "The mutation queue's $cacheKey record could not be read; kept it aside as $asideCacheKey and started a new one"
         }
     }
 
-    private fun reservedRow(cacheKey: String, payload: String): ObjectRow =
-        ObjectRow(
+    private fun reservedRow(cacheKey: String, payload: String): CachedQueryRow =
+        CachedQueryRow(
             table = RESERVED_TABLE_NAME,
-            signature = cacheKey,
+            cacheKey = cacheKey,
             payload = payload,
             updatedAt = nowMillis(),
         )
 
     private suspend fun writeRejected(list: StoredRejectionList) {
-        objectDao.upsert(rejectedRow(list))
+        queryCacheDao.upsert(rejectedRow(list))
         rejectedWritten(list)
     }
 
-    private fun rejectedRow(list: StoredRejectionList): ObjectRow =
-        ObjectRow(
+    private fun rejectedRow(list: StoredRejectionList): CachedQueryRow =
+        CachedQueryRow(
             table = RESERVED_TABLE_NAME,
-            signature = REJECTED_MUTATIONS_SIGNATURE,
+            cacheKey = REJECTED_MUTATIONS_CACHE_KEY,
             payload = json.encodeToString(StoredRejectionList.serializer(), list),
             updatedAt = nowMillis(),
         )

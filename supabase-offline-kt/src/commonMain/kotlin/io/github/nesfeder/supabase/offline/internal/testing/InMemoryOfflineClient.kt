@@ -9,8 +9,8 @@ import io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
@@ -49,8 +49,8 @@ public fun createInMemorySupabaseOfflineClient(
         supabase = supabase,
         store =
             OfflineStore(
-                objectDao = InMemoryObjectDao(),
-                storageDao = InMemoryStorageDao(),
+                queryCacheDao = InMemoryQueryCacheDao(),
+                cachedFileDao = InMemoryCachedFileDao(),
                 mutationDao = InMemoryMutationDao(),
                 queryCacheLimits =
                     QueryCacheLimits(

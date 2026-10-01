@@ -8,9 +8,9 @@ import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.MIN_CACHE_SIZE_BYTES
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.scrubDeletedRows
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
@@ -45,8 +45,8 @@ internal fun openOfflineClient(
         val database = openDatabase(openedPath)
         val store =
             OfflineStore(
-                objectDao = database.objectDao(),
-                storageDao = database.storageDao(),
+                queryCacheDao = database.queryCacheDao(),
+                cachedFileDao = database.cachedFileDao(),
                 mutationDao = database.mutationDao(),
                 queryCacheLimits = config.toQueryCacheLimits(),
             )

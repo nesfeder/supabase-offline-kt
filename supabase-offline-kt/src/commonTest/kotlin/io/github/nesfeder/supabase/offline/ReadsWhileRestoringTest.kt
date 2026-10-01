@@ -9,7 +9,7 @@ import io.github.jan.supabase.auth.MemoryCodeVerifierCache
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -37,7 +37,7 @@ import kotlinx.coroutines.test.runTest
  */
 class ReadsWhileRestoringTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
 
     /**
      * A table handle of a client whose stored session restores until [sessions] is released, with
@@ -86,7 +86,7 @@ class ReadsWhileRestoringTest {
         val client =
             newTestOfflineClient(
                 supabase = supabase,
-                store = newTestOfflineStore(objectDao = objectDao),
+                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                 coordinatorScope = backgroundScope,
             )
         // The plugin starts loading the stored session, the load the held store keeps waiting
@@ -104,7 +104,7 @@ class ReadsWhileRestoringTest {
             listOf(ReadStrategy.NetworkOnly, ReadStrategy.NetworkFirst(), ReadStrategy.CacheFirst())
                 .forEach { strategy ->
                     // Given — nothing cached, and a session still restoring
-                    objectDao.deleteAll()
+                    queryCacheDao.deleteAll()
                     val (server, items, sessions) = restoringClient()
 
                     // When — the read starts before the session has loaded
@@ -118,7 +118,7 @@ class ReadsWhileRestoringTest {
                         "$strategy returned while the session was restoring",
                     )
                     assertTrue(
-                        objectDao.rowsOf(TABLE).isEmpty(),
+                        queryCacheDao.rowsOf(TABLE).isEmpty(),
                         "$strategy stored the anon key's answer",
                     )
                     assertTrue(server.reads() >= 1, "$strategy sent nothing")
@@ -132,7 +132,7 @@ class ReadsWhileRestoringTest {
                     assertEquals(USER_ROWS, read.await().data, "$strategy")
                     assertEquals(
                         listOf(USER_ROWS),
-                        objectDao.rowsOf(TABLE).map { row -> row.payload },
+                        queryCacheDao.rowsOf(TABLE).map { row -> row.payload },
                         "$strategy",
                     )
                 }
@@ -152,13 +152,13 @@ class ReadsWhileRestoringTest {
         // answer
         assertEquals("[]", read.await().data)
         assertTrue(server.reads() >= 1)
-        assertTrue(objectDao.rowsOf(TABLE).isEmpty(), "the anon key's answer was stored")
+        assertTrue(queryCacheDao.rowsOf(TABLE).isEmpty(), "the anon key's answer was stored")
     }
 
     @Test
     fun a_read_the_cache_answers_sends_nothing_while_the_session_restores() = runTest {
         // Given — the list cached, and a session still restoring
-        objectDao.seedPayload(table = TABLE, signature = TABLE, payload = USER_ROWS)
+        queryCacheDao.seedPayload(table = TABLE, cacheKey = TABLE, payload = USER_ROWS)
         val (server, items, _) = restoringClient()
 
         // When

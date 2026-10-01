@@ -6,10 +6,10 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -90,7 +90,7 @@ private fun mayLeaveWrong(
             else updateMayLeaveWrong(write, target, json)
         }
         MutationOperation.DELETE -> {
-            val filter = FilterEngine.decodeOrNull(write.filterJson, json)
+            val filter = decodeFilterOrNull(write.filterJson, json)
             filter != null &&
                 target.rows.any { row -> reachIsUnknown(row, filter, target.keyColumns) }
         }
@@ -115,7 +115,7 @@ private fun keyedUpdateMayLeaveWrong(
 }
 
 private fun updateMayLeaveWrong(write: MutationRow, target: PatchTarget, json: Json): Boolean {
-    val filter = FilterEngine.decodeOrNull(write.filterJson, json) ?: return false
+    val filter = decodeFilterOrNull(write.filterJson, json) ?: return false
     val patch = json.parseToJsonElement(write.bodyJson) as? JsonObject ?: return false
     if (target.rows.any { row -> reachIsUnknown(row, filter, target.keyColumns) }) return true
     val mayJoin = mayGainRowsBy(patch, target.shape)

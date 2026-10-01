@@ -10,8 +10,10 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -43,9 +45,10 @@ import kotlinx.serialization.json.JsonObject
  */
 class UnconfirmedSendProofTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+    private val store =
+        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_retried_send_whose_first_attempt_committed_is_not_taken_for_never_sent() = runTest {
@@ -318,7 +321,7 @@ class UnconfirmedSendProofTest {
     }
 
     private fun relaunch(): OfflineStore =
-        newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     private fun builderOn(supabase: SupabaseClient): OfflinePostgrestQueryBuilderImpl =
         OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from(TABLE), store = store)

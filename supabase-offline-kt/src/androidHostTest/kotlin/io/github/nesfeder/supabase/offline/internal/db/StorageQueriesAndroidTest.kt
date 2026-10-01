@@ -30,8 +30,8 @@ class StorageQueriesAndroidTest {
         // Given
         directory.mkdirs()
         val database =
-            getRoomDatabase(
-                getDatabaseBuilder(context, File(directory, "supabase_offline.db").absolutePath)
+            buildOfflineDatabase(
+                offlineDatabaseBuilder(context, File(directory, "supabase_offline.db").absolutePath)
             )
 
         // When

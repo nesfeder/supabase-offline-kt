@@ -5,8 +5,8 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.CachedFile
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.db.StorageRow
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
@@ -569,7 +569,7 @@ internal class StorageFileCache(
      * The entry [row] describes, derived from its bucket and path — never from the file it
      * recorded.
      */
-    private fun entryForRow(row: StorageRow): StorageCacheEntry? {
+    private fun entryForRow(row: CachedFileRow): StorageCacheEntry? {
         val separator = row.path.indexOf(VARIANT_SEPARATOR)
         if (separator < 0) return entryFor(row.bucketId, row.path)
         return variantEntryFor(
@@ -584,7 +584,7 @@ internal class StorageFileCache(
      * another path mapping. A recorded file outside the data directory only means the directory
      * moved.
      */
-    private fun StorageRow.recordsOutdatedPath(entry: StorageCacheEntry): Boolean {
+    private fun CachedFileRow.recordsOutdatedPath(entry: StorageCacheEntry): Boolean {
         val recorded = localPath.toPath().normalized()
         return recorded != entry.file && recorded.isStrictlyInside(dataDirectory)
     }
@@ -593,21 +593,22 @@ internal class StorageFileCache(
 
     /** Drops every row and file of the object at [objectPath], its variants included. */
     private suspend fun removeObjectLocked(bucketId: String, objectPath: String) {
-        store.storageRowsForObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR").forEach {
-            row ->
-            removeRowLocked(row)
-            val entry = entryForRow(row) ?: return@forEach
-            deleteContained(entry.file)
-            if (row.recordsOutdatedPath(entry))
-                deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
-        }
+        store
+            .cachedFileRowsForObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR")
+            .forEach { row ->
+                removeRowLocked(row)
+                val entry = entryForRow(row) ?: return@forEach
+                deleteContained(entry.file)
+                if (row.recordsOutdatedPath(entry))
+                    deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
+            }
         // The object's own file even without a row: an outdated row may have recorded another path.
         entryFor(bucketId, objectPath)?.let { entry -> deleteContained(entry.file) }
     }
 
     /** Deletes [row] and takes its recorded size off [trackedBytes]. */
-    private suspend fun removeRowLocked(row: StorageRow) {
-        store.deleteStorageRow(row.key)
+    private suspend fun removeRowLocked(row: CachedFileRow) {
+        store.deleteCachedFileRow(row.key)
         trackedBytes = trackedBytes?.minus(row.sizeBytes ?: 0L)
     }
 
@@ -618,12 +619,12 @@ internal class StorageFileCache(
      */
     private suspend fun restoreRowLocked(
         entry: StorageCacheEntry,
-        replaced: StorageRow?,
+        replaced: CachedFileRow?,
         recordedSize: Long?,
     ) {
         try {
-            if (replaced != null) store.restoreStorageRow(replaced)
-            else store.deleteStorageRow(entry.key)
+            if (replaced != null) store.restoreCachedFileRow(replaced)
+            else store.deleteCachedFileRow(entry.key)
             trackedBytes = trackedBytes?.plus((replaced?.sizeBytes ?: 0L) - (recordedSize ?: 0L))
         } catch (failure: Exception) {
             engineLogger.warning {
@@ -712,7 +713,7 @@ internal class StorageFileCache(
         val usedBefore = now - RECENT_USE_GRACE.inWholeMilliseconds
         val (evictable, recent) =
             store
-                .allStorageRows()
+                .allCachedFileRows()
                 .filter { row -> row.key != protectedKey && row.key !in pins }
                 .map { row -> row to lastUsedMillis(row) }
                 .partition { (_, lastUsed) -> lastUsed < usedBefore }
@@ -721,7 +722,7 @@ internal class StorageFileCache(
         for ((row, _) in evictable.sortedBy { (_, lastUsed) -> lastUsed }) {
             if (remaining <= lowWater) break
             entryForRow(row)?.let { entry -> deleteContained(entry.file) }
-            store.deleteStorageRow(row.key)
+            store.deleteCachedFileRow(row.key)
             remaining -= row.sizeBytes ?: 0L
             evicted++
         }
@@ -736,7 +737,7 @@ internal class StorageFileCache(
     }
 
     /** When [row]'s file was last used, or the earliest time there is when it has no file. */
-    private fun lastUsedMillis(row: StorageRow): Long {
+    private fun lastUsedMillis(row: CachedFileRow): Long {
         val file = entryForRow(row)?.file ?: return Long.MIN_VALUE
         return fileSystem.metadataOrNull(file)?.lastModifiedAtMillis ?: Long.MIN_VALUE
     }

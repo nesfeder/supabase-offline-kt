@@ -15,7 +15,7 @@ import androidx.room.Query
     tableName = "storage_objects",
     indices = [Index(value = ["bucketId", "path"], unique = true)],
 )
-internal data class StorageRow(
+internal data class CachedFileRow(
     @PrimaryKey val key: String, // "$bucketId::$path"
     val bucketId: String,
     val path: String,
@@ -26,12 +26,12 @@ internal data class StorageRow(
 )
 
 @Dao
-internal interface StorageDao {
+internal interface CachedFileDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(row: StorageRow)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(row: CachedFileRow)
 
     @Query("SELECT * FROM storage_objects WHERE `key` = :key LIMIT 1")
-    suspend fun getByKey(key: String): StorageRow?
+    suspend fun getByKey(key: String): CachedFileRow?
 
     @Query("DELETE FROM storage_objects WHERE `key` = :key") suspend fun delete(key: String)
 
@@ -54,10 +54,14 @@ internal interface StorageDao {
         "SELECT * FROM storage_objects WHERE bucketId = :bucketId AND " +
             "(path = :path OR substr(path, 1, length(:variantPrefix)) = :variantPrefix)"
     )
-    suspend fun forObject(bucketId: String, path: String, variantPrefix: String): List<StorageRow>
+    suspend fun forObject(
+        bucketId: String,
+        path: String,
+        variantPrefix: String,
+    ): List<CachedFileRow>
 
     /** Every cached storage-object row, for the size bound's least-recently-used pass. */
-    @Query("SELECT * FROM storage_objects") suspend fun all(): List<StorageRow>
+    @Query("SELECT * FROM storage_objects") suspend fun all(): List<CachedFileRow>
 
     /** The summed size of every cached file whose size is recorded, in bytes; `0` when none is. */
     @Query("SELECT COALESCE(SUM(sizeBytes), 0) FROM storage_objects")

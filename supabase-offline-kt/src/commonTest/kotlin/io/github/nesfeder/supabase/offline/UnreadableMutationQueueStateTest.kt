@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
-import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
+import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
@@ -25,14 +25,14 @@ import kotlinx.serialization.json.JsonArray
  */
 class UnreadableMutationQueueStateTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val queryCacheDao = FakeQueryCacheDao()
+    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
 
     @Test
     fun an_unreadable_rejected_list_is_moved_aside_so_the_queue_does_not_wedge() = runTest {
         // Given — an unreadable list, and a queued write the server refuses
-        objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "not a list")
+        queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"refused"}]"""))
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"fine"}]"""))
         server.answer = { request ->
@@ -47,12 +47,12 @@ class UnreadableMutationQueueStateTest {
         // payload was kept aside rather than discarded
         assertEquals(1, report.syncedCount)
         assertEquals(1, store.mutationQueueState.rejections().size)
-        assertTrue(objectDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
+        assertTrue(queryCacheDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
     }
 
     private fun keptAsideCopiesOf(cacheKey: String): Int =
-        objectDao.rowsOf(RESERVED_TABLE_NAME).count { row ->
-            row.signature.startsWith("$cacheKey.unreadable.")
+        queryCacheDao.rowsOf(RESERVED_TABLE_NAME).count { row ->
+            row.cacheKey.startsWith("$cacheKey.unreadable.")
         }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

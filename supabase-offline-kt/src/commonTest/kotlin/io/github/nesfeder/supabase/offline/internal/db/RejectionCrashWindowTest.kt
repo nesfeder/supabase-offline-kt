@@ -3,7 +3,10 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestPostgrest

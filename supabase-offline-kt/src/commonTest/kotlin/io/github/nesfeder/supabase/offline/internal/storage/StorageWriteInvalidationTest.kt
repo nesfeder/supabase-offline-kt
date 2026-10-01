@@ -6,7 +6,7 @@ import io.github.jan.supabase.exceptions.UnauthorizedRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
-import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer

@@ -7,6 +7,7 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 /**
  * Serializable description of a PostgREST filter expression.
@@ -49,7 +50,7 @@ internal data class FilterDescriptor(
  *
  * Every capture path and the stored-condition lookup resolve through here. Resolving an operator
  * does not mean the engine can evaluate it locally: [rowMatch] evaluates only a few, while
- * [FilterEngine.replayOnto] replays every one of them faithfully.
+ * [replayOnto] replays every one of them faithfully.
  *
  * @param identifier The operator prefix of a PostgREST filter value, e.g. `"eq"`.
  * @return The operator, or `null` when the identifier is unknown (including a `not.` negation).
@@ -60,3 +61,16 @@ internal fun filterOperatorOrNull(identifier: String): FilterOperator? =
 /** Every [FilterOperator] by its identifier, so a lookup per row and condition is one hash. */
 private val OPERATORS_BY_IDENTIFIER: Map<String, FilterOperator> =
     FilterOperator.entries.associateBy { operator -> operator.identifier }
+
+/** The stored form of [descriptor], as it is written to `filter_json`. */
+internal fun encodeFilter(descriptor: FilterDescriptor, json: Json): String =
+    json.encodeToString(FilterDescriptor.serializer(), descriptor)
+
+/** The filter stored as [filterJson], or `null` when there is none or it cannot be read. */
+internal fun decodeFilterOrNull(filterJson: String?, json: Json): FilterDescriptor? {
+    if (filterJson.isNullOrBlank()) return null
+    return runCatching {
+        json.decodeFromString(FilterDescriptor.serializer(), filterJson)
+    }
+        .getOrNull()
+}

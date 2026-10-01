@@ -14,7 +14,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -88,11 +88,11 @@ class ReadShapeTest {
                 }
             }
         )
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val client =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
-            store = newTestOfflineStore(objectDao = objectDao),
+            store = newTestOfflineStore(queryCacheDao = queryCacheDao),
             coordinatorScope = idleCoroutineScope(),
         )
     private val items = client.from(TABLE)
@@ -184,7 +184,7 @@ class ReadShapeTest {
             // Then — the server's answer as it came, and the cached list untouched
             assertEquals(answer, read.data, name)
             assertEquals(ROWS, cachedList(), "$name wrote over the cached list")
-            assertEquals(1, objectDao.rowsOf(TABLE).size, "$name was stored")
+            assertEquals(1, queryCacheDao.rowsOf(TABLE).size, "$name was stored")
         }
     }
 
@@ -278,7 +278,7 @@ class ReadShapeTest {
                     assertEquals(RefreshState.Idle, emissions.single().refresh)
                 }
             }
-        assertEquals(emptyList(), objectDao.rowsOf(TABLE), "a shape read was stored")
+        assertEquals(emptyList(), queryCacheDao.rowsOf(TABLE), "a shape read was stored")
     }
 
     @Test
@@ -332,7 +332,7 @@ class ReadShapeTest {
         val reader =
             newTestOfflineClient(
                 supabase = restoring,
-                store = newTestOfflineStore(objectDao = objectDao),
+                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                 coordinatorScope = idleCoroutineScope(),
             )
 
@@ -347,7 +347,7 @@ class ReadShapeTest {
         assertEquals("", read.data)
         assertEquals(1, server.requests.size)
         assertEquals(0L, currentTime)
-        if (objectDao.rowsOf(TABLE).isNotEmpty()) fail("the empty result was stored")
+        if (queryCacheDao.rowsOf(TABLE).isNotEmpty()) fail("the empty result was stored")
     }
 
     /**
@@ -412,7 +412,7 @@ class ReadShapeTest {
             val cached =
                 newTestOfflineClient(
                         supabase = build(),
-                        store = newTestOfflineStore(objectDao = objectDao),
+                        store = newTestOfflineStore(queryCacheDao = queryCacheDao),
                         coordinatorScope = idleCoroutineScope(),
                     )
                     .from(TABLE)

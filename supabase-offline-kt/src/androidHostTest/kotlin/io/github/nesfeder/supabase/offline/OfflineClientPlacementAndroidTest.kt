@@ -5,8 +5,8 @@ package io.github.nesfeder.supabase.offline
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import io.github.nesfeder.supabase.offline.internal.db.getDatabaseBuilder
-import io.github.nesfeder.supabase.offline.internal.db.getRoomDatabase
+import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
+import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
 import io.github.nesfeder.supabase.offline.internal.openOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -164,7 +164,7 @@ class OfflineClientPlacementAndroidTest {
         // Given — a client whose files live in a directory
         val data = root / "data"
         val open = { databasePath: Path ->
-            getRoomDatabase(getDatabaseBuilder(context, databasePath.toString()))
+            buildOfflineDatabase(offlineDatabaseBuilder(context, databasePath.toString()))
         }
         val first =
             openOfflineClient(

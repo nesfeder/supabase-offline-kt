@@ -7,7 +7,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -41,7 +41,7 @@ import kotlinx.serialization.json.JsonObject
  */
 class StaleQueriesTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
 
     /** Whether the server can be reached. */
@@ -93,7 +93,7 @@ class StaleQueriesTest {
                     },
                 store =
                     newTestOfflineStore(
-                        objectDao = objectDao,
+                        queryCacheDao = queryCacheDao,
                         mutationDao = mutationDao,
                         nowMillis = { NOW },
                     ),

@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -26,7 +30,7 @@ import kotlinx.serialization.json.JsonArray
  */
 class ReservedRowsTest {
 
-    private val objectDao = FakeObjectDao()
+    private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
 
     @Test
@@ -40,7 +44,7 @@ class ReservedRowsTest {
         // Given — a cache over its limit, holding a rejected list as its oldest row
         val store =
             newTestOfflineStore(
-                objectDao = objectDao,
+                queryCacheDao = queryCacheDao,
                 queryCacheLimits =
                     QueryCacheLimits(
                         maxPayloadBytes = 100,
@@ -50,14 +54,14 @@ class ReservedRowsTest {
             )
         store.queueOwnedWrite("user:user-a")
         store.mutationQueueState.addRejection(rejection(id = 1))
-        objectDao.seedPayload(
+        queryCacheDao.seedPayload(
             "todos",
             "todos",
             "[" + "\"x\",".repeat(60) + "\"x\"]",
             updatedAt = 10L,
         )
         val reservedBytes =
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+            assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
                 .payload
                 .length
 
@@ -65,33 +69,33 @@ class ReservedRowsTest {
         store.evictOverBudget()
 
         // Then — the cache row went; the reserved rows stayed and never counted towards the size
-        assertNull(objectDao.getRow("todos", "todos"))
-        assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+        assertNull(queryCacheDao.getRow("todos", "todos"))
+        assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
         assertTrue(reservedBytes > 0)
-        assertEquals(0L, objectDao.totalPayloadBytes())
+        assertEquals(0L, queryCacheDao.totalPayloadBytes())
     }
 
     @Test
     fun reserved_rows_are_never_returned_by_a_read() = runTest {
         // Given
-        val store = newTestOfflineStore(objectDao = objectDao)
+        val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
         store.mutationQueueState.addRejection(rejection(id = 1))
 
         // When / Then — no read path serves them, even asked for them by name
-        assertNull(store.getPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
-        assertNull(store.getPayloadWithTimestamp(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
-        assertNull(store.observePayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE).first())
+        assertNull(store.getPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
+        assertNull(store.getPayloadWithTimestamp(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
+        assertNull(store.observePayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY).first())
         assertNull(
-            store.overlaidPayloadFlow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE).first()
+            store.overlaidPayloadFlow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY).first()
         )
     }
 
     @Test
     fun reserved_rows_are_never_touched_by_a_write_or_an_overlay() = runTest {
         // Given
-        val store = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
+        val store = newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
         store.mutationQueueState.addRejection(rejection(id = 1))
-        val before = objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE)
+        val before = queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY)
 
         // When / Then — every write path refuses the reserved table
         assertFailsWith<IllegalArgumentException> {
@@ -109,12 +113,15 @@ class ReservedRowsTest {
         assertFailsWith<IllegalArgumentException> {
             store.addPayload(
                 RESERVED_TABLE_NAME,
-                REJECTED_MUTATIONS_SIGNATURE,
+                REJECTED_MUTATIONS_CACHE_KEY,
                 "[]",
                 authoritativeEmpty = true,
             )
         }
-        assertEquals(before, objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+        assertEquals(
+            before,
+            queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY),
+        )
         assertTrue(mutationDao.inserted.isEmpty())
     }
 
@@ -130,7 +137,7 @@ class ReservedRowsTest {
     @Test
     fun clearing_local_data_removes_the_reserved_rows() = runTest {
         // Given
-        val store = newTestOfflineStore(objectDao = objectDao)
+        val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
         store.queueOwnedWrite("user:user-a")
         store.mutationQueueState.addRejection(rejection(id = 1))
 
@@ -138,7 +145,7 @@ class ReservedRowsTest {
         store.clearLocalData()
 
         // Then
-        assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+        assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
         assertEquals(emptyList(), store.mutationQueueState.rejections())
         assertEquals(emptySet(), store.unconfirmedSends())
     }
@@ -146,7 +153,7 @@ class ReservedRowsTest {
     @Test
     fun reserved_rows_record_their_format_version() = runTest {
         // Given
-        val store = newTestOfflineStore(objectDao = objectDao)
+        val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
 
         // When
         store.mutationQueueState.addRejection(rejection(id = 1))
@@ -154,7 +161,7 @@ class ReservedRowsTest {
 
         // Then — a later build can tell which format it is reading
         val rejected =
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
+            assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
                 .payload
         assertTrue(rejected.contains("\"version\":1"), rejected)
     }
