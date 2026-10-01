@@ -5,8 +5,8 @@ package io.github.nesfeder.supabase.offline.internal.db
 import androidx.sqlite.execSQL
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -117,7 +117,7 @@ internal suspend fun runClearLocalDataForensics(
                 )
             }
         )
-        check((client as SupabaseOfflineClientImpl).rejectedMutationList().size == 1) {
+        check((client as OfflineClient).rejectedMutationList().size == 1) {
             "the rejection was not recorded"
         }
         check(client.pendingMutationCount() == 1) { "the offline write was not queued" }

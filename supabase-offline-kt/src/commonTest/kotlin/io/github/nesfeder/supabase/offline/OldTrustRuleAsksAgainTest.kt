@@ -10,6 +10,7 @@ import io.github.jan.supabase.auth.MemorySessionManager
 import io.github.jan.supabase.auth.SessionManager
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -69,7 +70,7 @@ class OldTrustRuleAsksAgainTest {
         server: RecordingPostgrestServer,
         sessions: SessionManager,
         restoresStoredSession: Boolean,
-    ): SupabaseOfflineClientImpl {
+    ): OfflineClient {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val supabase =
             newTestSupabaseClient(engine = server.engine) {

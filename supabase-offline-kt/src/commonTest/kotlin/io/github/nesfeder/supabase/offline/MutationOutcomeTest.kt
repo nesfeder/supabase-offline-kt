@@ -8,6 +8,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -28,8 +29,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Behavioral contract for the mutation verbs on [OfflinePostgrestQueryBuilderImpl], which return a
- * [MutationOutcome] ([MutationOutcome.Applied] online / [MutationOutcome.Queued] offline).
+ * Behavioral contract for the mutation verbs on [OfflineTable], which return a [MutationOutcome]
+ * ([MutationOutcome.Applied] online / [MutationOutcome.Queued] offline).
  *
  * Verbs run against a scripted [FakeRemoteTable] delegate (no HTTP transport) and a real
  * [OfflineStore] over in-memory DAO fakes, so the enqueue side effect is observable via the fake
@@ -312,8 +313,8 @@ class MutationOutcomeTest {
     private fun buildBuilder(
         remoteTable: FakeRemoteTable,
         mutationDao: MutationDao,
-    ): OfflinePostgrestQueryBuilderImpl =
-        OfflinePostgrestQueryBuilderImpl(
+    ): OfflineTable =
+        OfflineTable(
             delegate = remoteTable,
             store = buildStore(mutationDao),
         )

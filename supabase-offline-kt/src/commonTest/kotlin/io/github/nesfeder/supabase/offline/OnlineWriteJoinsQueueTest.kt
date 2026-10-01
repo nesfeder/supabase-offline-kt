@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -30,7 +31,7 @@ class OnlineWriteJoinsQueueTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val builder =
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
         )
@@ -101,7 +102,7 @@ class OnlineWriteJoinsQueueTest {
     fun an_online_write_waits_behind_a_pending_write_in_another_table() = runTest {
         // Given — another table has a pending write, this one has none
         server.answer = { connectivityFailure() }
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
                 delegate = server.supabaseClient().postgrest.from("other"),
                 store = store,
             )

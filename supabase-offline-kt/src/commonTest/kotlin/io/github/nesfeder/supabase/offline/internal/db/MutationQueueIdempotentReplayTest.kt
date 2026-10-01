@@ -6,8 +6,8 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
@@ -48,7 +48,7 @@ class MutationQueueIdempotentReplayTest {
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
             )
@@ -323,14 +323,14 @@ class MutationQueueIdempotentReplayTest {
             assertEquals(2, server.rows(TABLE).size)
         }
 
-    private fun builderOn(server: FakeRelationalPostgrestServer): OfflinePostgrestQueryBuilderImpl =
-        OfflinePostgrestQueryBuilderImpl(
+    private fun builderOn(server: FakeRelationalPostgrestServer): OfflineTable =
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
         )
 
-    private fun builderOn(server: RecordingPostgrestServer): OfflinePostgrestQueryBuilderImpl =
-        OfflinePostgrestQueryBuilderImpl(
+    private fun builderOn(server: RecordingPostgrestServer): OfflineTable =
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
         )

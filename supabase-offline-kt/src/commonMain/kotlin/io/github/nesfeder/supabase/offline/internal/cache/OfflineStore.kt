@@ -537,7 +537,7 @@ internal class OfflineStore(
 
     /**
      * Signatures of a table that currently have a live `selectAsFlow` collector. Wired by
-     * [io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl] to the client-scoped
+     * [io.github.nesfeder.supabase.offline.OfflineClient] to the client-scoped
      * [io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries] so [patchCachedQueries]
      * can materialize a server-successful mutation into a real cache row for a cache-less-but-
      * observed signature (the "save then stale UI" fix), and self-GC when nothing observes the

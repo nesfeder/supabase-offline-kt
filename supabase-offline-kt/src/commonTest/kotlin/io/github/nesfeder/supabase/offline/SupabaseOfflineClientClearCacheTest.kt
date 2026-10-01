@@ -4,6 +4,7 @@
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -23,8 +24,8 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
- * Verifies [SupabaseOfflineClientImpl.clearAllCache] wipes downloaded storage files from disk (not
- * just the Room metadata rows), so identity-clearing flows leave no cached objects behind.
+ * Verifies [OfflineClient.clearAllCache] wipes downloaded storage files from disk (not just the
+ * Room metadata rows), so identity-clearing flows leave no cached objects behind.
  *
  * Runs against the real okio [FileSystem.SYSTEM] with a per-test temp base dir; the Supabase client
  * is a never-hit [MockEngine] stub since `clearAllCache` is a local-only operation.

@@ -6,6 +6,7 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.TOKEN_ENDPOINT
@@ -46,7 +47,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
@@ -69,7 +70,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
@@ -95,7 +96,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )

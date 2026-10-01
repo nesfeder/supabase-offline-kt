@@ -9,9 +9,9 @@ import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
@@ -323,8 +323,8 @@ class UnconfirmedSendProofTest {
     private fun relaunch(): OfflineStore =
         newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
-    private fun builderOn(supabase: SupabaseClient): OfflinePostgrestQueryBuilderImpl =
-        OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from(TABLE), store = store)
+    private fun builderOn(supabase: SupabaseClient): OfflineTable =
+        OfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)
 
     /** A client on [server] whose app retries a failed request once, on an exception or a 5xx. */
     private fun clientRetryingOn(server: RecordingPostgrestServer): SupabaseClient =

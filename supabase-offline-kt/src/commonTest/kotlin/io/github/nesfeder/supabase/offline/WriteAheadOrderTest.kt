@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer.ForeignKey
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -50,7 +51,7 @@ class WriteAheadOrderTest {
                     }
                 )
             val builder =
-                OfflinePostgrestQueryBuilderImpl(
+                OfflineTable(
                     delegate = server.supabaseClient().postgrest.from(TABLE),
                     store = store,
                 )
@@ -84,7 +85,7 @@ class WriteAheadOrderTest {
             )
         store.enqueueInsert(table = TASKS, body = rows("""[{"id":"T","title":"new task"}]"""))
         val photos =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = server.supabaseClient().postgrest.from(PHOTOS),
                 store = store,
             )

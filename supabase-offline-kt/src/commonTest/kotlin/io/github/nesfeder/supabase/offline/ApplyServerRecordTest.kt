@@ -4,6 +4,7 @@
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -32,9 +33,9 @@ import kotlinx.serialization.json.put
  * the realtime primitives that merge a server-authored row into every cached SELECT payload for a
  * table by primary key, without a caller-visible cache signature.
  *
- * These run the real [SupabaseOfflineClientImpl] over a real [OfflineStore] backed by in-memory
- * fake DAOs; the [SupabaseClient][io.github.jan.supabase.SupabaseClient] is a mock-engine stub that
- * these methods never touch (they read/write only the local store).
+ * These run the real [OfflineClient] over a real [OfflineStore] backed by in-memory fake DAOs; the
+ * [SupabaseClient][io.github.jan.supabase.SupabaseClient] is a mock-engine stub that these methods
+ * never touch (they read/write only the local store).
  */
 class ApplyServerRecordTest {
 
@@ -360,7 +361,7 @@ class ApplyServerRecordTest {
     private fun buildClient(
         queryCacheDao: FakeQueryCacheDao,
         engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
-    ): SupabaseOfflineClientImpl =
+    ): OfflineClient =
         newTestOfflineClient(
             store = newTestOfflineStore(queryCacheDao = queryCacheDao),
             engineLogger = engineLogger,

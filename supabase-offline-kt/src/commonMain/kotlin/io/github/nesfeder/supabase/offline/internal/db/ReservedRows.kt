@@ -9,7 +9,7 @@ package io.github.nesfeder.supabase.offline.internal.db
  * It cannot collide with a table reachable through PostgREST: Postgres truncates identifiers to
  * `NAMEDATALEN - 1` = 63 bytes, so no table can be *named* anything longer, and this name is far
  * longer. A `from(table)` call only ever produces cache rows under the name it was given, and
- * `SupabaseOfflineClientImpl.from` refuses this one.
+ * `OfflineClient.from` refuses this one.
  *
  * Rows under this name are never evicted, never counted towards the cache size, never returned by a
  * read and never touched by an overlay; `clearLocalData` removes them with everything else, and a

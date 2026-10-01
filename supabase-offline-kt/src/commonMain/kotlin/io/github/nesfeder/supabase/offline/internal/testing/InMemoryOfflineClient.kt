@@ -8,7 +8,7 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
@@ -22,7 +22,7 @@ import okio.Path.Companion.toPath
  * platform database driver, no filesystem — so it runs deterministically in `commonTest` across
  * every target.
  *
- * The client is wired exactly like the production one (real [SupabaseOfflineClientImpl] over a real
+ * The client is wired exactly like the production one (real [OfflineClient] over a real
  * [OfflineStore]); only the storage substrate is swapped for in-memory maps that mirror Room's
  * per-table invalidation semantics. Size-based eviction is disabled (unlimited cache).
  *
@@ -45,7 +45,7 @@ public fun createInMemorySupabaseOfflineClient(
     coordinatorScope: CoroutineScope,
     nowMillis: () -> Long = { 0L },
 ): SupabaseOfflineClient =
-    SupabaseOfflineClientImpl(
+    OfflineClient(
         supabase = supabase,
         store =
             OfflineStore(

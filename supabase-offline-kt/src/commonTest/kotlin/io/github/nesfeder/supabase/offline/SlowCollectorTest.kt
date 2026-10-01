@@ -5,6 +5,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -47,7 +48,7 @@ class SlowCollectorTest {
             ?.toInt()
     }
 
-    private fun TestScope.newClient(): SupabaseOfflineClientImpl {
+    private fun TestScope.newClient(): OfflineClient {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val server =
             RecordingPostgrestServer(

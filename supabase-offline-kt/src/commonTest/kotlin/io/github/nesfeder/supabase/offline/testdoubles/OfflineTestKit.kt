@@ -13,8 +13,8 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
@@ -53,7 +53,7 @@ import okio.SYSTEM
  * - newTestOfflineStore — a real OfflineStore over the in-memory DAOs (FakeQueryCacheDao /
  *   FakeMutationDao add recording and scripting hooks; InMemoryCachedFileDao has none to add).
  * - newTestSupabaseClient / newTestPostgrest — a real supabase-kt client on a Ktor MockEngine.
- * - newTestOfflineClient — the real SupabaseOfflineClientImpl over the two.
+ * - newTestOfflineClient — the real OfflineClient over the two.
  *
  * To observe what goes on the wire, build the client from a RecordingPostgrestServer. To script
  * the PostgREST handle without HTTP, use FakeRemoteTable.
@@ -158,7 +158,7 @@ internal suspend fun OfflineStore.recordQueryShape(
 }
 
 /**
- * Builds the real [SupabaseOfflineClientImpl] over a test store and client.
+ * Builds the real [OfflineClient] over a test store and client.
  *
  * @param supabase the wrapped client.
  * @param store the offline store.
@@ -188,12 +188,12 @@ internal fun newTestOfflineClient(
     onClose: () -> Unit = {},
     coordinatorScope: CoroutineScope = newEngineScope(engineLogger),
     scrubDatabase: suspend () -> Unit = {},
-    closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
+    closeWait: Duration = OfflineClient.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
-): SupabaseOfflineClientImpl =
-    SupabaseOfflineClientImpl(
+): OfflineClient =
+    OfflineClient(
         supabase = supabase,
         store = store,
         baseDirectoryProvider = baseDirectoryProvider,

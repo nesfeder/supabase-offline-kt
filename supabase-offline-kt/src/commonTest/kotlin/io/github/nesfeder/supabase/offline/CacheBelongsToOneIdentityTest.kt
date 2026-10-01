@@ -14,6 +14,7 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
@@ -133,7 +134,7 @@ class CacheBelongsToOneIdentityTest {
                 enableLifecycleCallbacks = false
             }
         },
-    ): SupabaseOfflineClientImpl {
+    ): OfflineClient {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val supabase: SupabaseClient =
             newTestSupabaseClient(engine = server.engine) {

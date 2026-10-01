@@ -12,6 +12,7 @@ import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -45,8 +46,7 @@ class AuthPluginQueueIdentityTest {
             }
         }
     private val store = newTestOfflineStore()
-    private val builder =
-        OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from(TABLE), store = store)
+    private val builder = OfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)
     private val replayer = MutationQueueReplayer(store = store, supabase = supabase)
 
     private fun sentBodies(): List<String> =

@@ -7,7 +7,6 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_URL
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -132,7 +131,7 @@ class DryRunDetectionContractTest {
                 }
             }
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from("todos"),
                 store = newTestOfflineStore(),
             )
