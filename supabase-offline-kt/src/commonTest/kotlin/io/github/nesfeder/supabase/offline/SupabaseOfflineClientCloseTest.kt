@@ -30,6 +30,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -569,15 +570,20 @@ class SupabaseOfflineClientCloseTest {
                     okJson("[]")
                 }
             )
+        val gaveUp = AtomicInt(0)
         val client =
-            newTestOfflineClient(supabase = server.supabaseClient(), coordinatorScope = callerScope)
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                coordinatorScope = callerScope,
+                onStillClosing = { gaveUp.addAndFetch(1) },
+            )
         val builder = client.from("todos")
         builder.insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
         builder.insertJson(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
         assertEquals(2, client.pendingMutationCount())
 
         // When — back online, a replay and an online write are in flight, held at the server, when
-        // the client closes; then the server answers
+        // the client closes; the server answers while close() waits for them
         online.store(1)
         val replay = callerScope.launch { runCatching { client.syncAllPendingMutations() } }
         val write = callerScope.launch {
@@ -589,18 +595,21 @@ class SupabaseOfflineClientCloseTest {
             withTimeout(5.seconds) { while (sent.load() == 0) delay(5) }
             delay(SETTLE_MILLIS)
         }
-        client.close()
+        val closing = callerScope.async(start = CoroutineStart.UNDISPATCHED) { client.close() }
         val sentAtClose = sent.load()
         held.complete(Unit)
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) {
+                closing.await()
                 replay.join()
                 write.join()
             }
             delay(SETTLE_MILLIS)
         }
 
-        // Then — nothing reached the server after close(), and the client refuses another replay
+        // Then — close() returned once the answers landed, nothing reached the server after it
+        // began, and the client refuses another replay
+        assertEquals(0, gaveUp.load())
         assertEquals(sentAtClose, sent.load(), "a request was sent after close()")
         assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
     }
