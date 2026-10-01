@@ -22,20 +22,15 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.TOKEN_ENDPOINT
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.refreshRefused
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
-import io.ktor.client.engine.mock.MockRequestHandleScope
-import io.ktor.client.engine.mock.respond
-import io.ktor.client.request.HttpResponseData
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -659,19 +654,6 @@ class CacheBelongsToOneIdentityTest {
                 refreshToken = "refresh-token",
                 expiresIn = -60,
                 tokenType = "bearer",
-            )
-
-        /** The last path segment of the Auth server's token endpoint. */
-        const val TOKEN_ENDPOINT = "token"
-
-        /** The Auth server refusing a refresh token, as it does one revoked. */
-        fun MockRequestHandleScope.refreshRefused(): HttpResponseData =
-            respond(
-                content =
-                    """{"error":"invalid_grant","error_description":"Invalid Refresh Token"}""",
-                status = HttpStatusCode.BadRequest,
-                headers =
-                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
     }
 }
