@@ -385,8 +385,11 @@ library in `gradle/libs.versions.toml` at the patched version, with a comment na
 and the plugin release that will make it unnecessary. The build applies every floor as a
 dependency constraint, which only ever raises a version, to the classpaths those plugins and tools
 resolve: the root build script's, build-logic's, and each module's lint and Swift export tools,
-the Kotlin Gradle plugin's publishing validation and Dokka's generator (the
-`supabase-offline.build-tool-floors` convention plugin, which every role plugin applies).
+the Kotlin Gradle plugin's publishing validation, Dokka's generator and every configuration of the
+Android Gradle plugin's unified test platform (`unified-test-platform-…`, which an application
+module creates to run instrumented tests), through the `supabase-offline.build-tool-floors`
+convention plugin, which every role plugin applies. A tool configuration a new plugin or module
+brings that resolves a flagged version is added there and to the check's lists.
 Nothing that ships is affected. `python3 scripts/check-build-tool-floors.py` resolves those
 classpaths, for every module Gradle lists, and fails when a floor does not hold, or when nothing
 asks for less than a floor any more, which means a plugin release has made it unnecessary: remove
