@@ -3,19 +3,19 @@
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.jan.supabase.SupabaseClient
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.MIN_CACHE_SIZE_BYTES
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.FixedDbPathProvider
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.resolvedOrNormalized
 import io.github.nesfeder.supabase.offline.internal.db.scrubDeletedRows
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import okio.FileSystem
 import okio.IOException
 import okio.Path

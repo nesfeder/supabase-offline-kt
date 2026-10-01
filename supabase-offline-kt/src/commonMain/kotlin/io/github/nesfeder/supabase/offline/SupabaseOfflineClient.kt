@@ -18,6 +18,7 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.BackgroundSyncTrigger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
@@ -36,6 +37,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator
 import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.postgrest.buildRefreshAccelerator
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installReadShapeCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture

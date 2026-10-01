@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline.internal.util
+package io.github.nesfeder.supabase.offline.internal.cache
 
 /**
  * Canonical empty JSON array — what PostgREST returns for a SELECT that matched nothing, and the

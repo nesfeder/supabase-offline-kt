@@ -1,12 +1,11 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline
+package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.status.SessionStatus
-import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
-import io.github.nesfeder.supabase.offline.internal.util.isReplaySafeSessionStatus
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.isReplaySafeSessionStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop

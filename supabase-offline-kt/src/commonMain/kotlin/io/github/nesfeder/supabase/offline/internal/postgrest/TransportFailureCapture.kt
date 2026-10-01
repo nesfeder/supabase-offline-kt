@@ -6,7 +6,6 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
-import io.github.nesfeder.supabase.offline.internal.util.provesRequestNeverSent
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.plugin
 import io.ktor.util.AttributeKey

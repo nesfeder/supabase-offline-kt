@@ -6,7 +6,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.util.awaitReplaySafeSession
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitReplaySafeSession
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -642,8 +642,7 @@ class MutationQueueReplayerTest {
     /**
      * Builds a real [ResponseException] carrying [status] by letting a `MockEngine`-backed client
      * fail an `expectSuccess` request — the only reliable way to produce the HTTP-status-bearing
-     * exception type that [io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull]
-     * inspects.
+     * exception type that [io.github.nesfeder.supabase.offline.internal.httpStatusOrNull] inspects.
      */
     private suspend fun responseExceptionWithStatus(status: HttpStatusCode): ResponseException {
         val client =

@@ -12,15 +12,15 @@ import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageDao
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.newEngineScope

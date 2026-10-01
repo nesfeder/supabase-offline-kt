@@ -39,26 +39,3 @@ public fun interface OfflineLogger {
      */
     public fun log(level: OfflineLogLevel, message: String)
 }
-
-/**
- * Internal logger wrapper that gates on [minLevel] and uses lazy message construction so
- * filtered-out levels incur zero string-building overhead.
- */
-internal class SdkLogger(
-    private val logger: OfflineLogger?,
-    private val minLevel: OfflineLogLevel,
-) {
-    inline fun log(level: OfflineLogLevel, message: () -> String) {
-        if (logger != null && level.ordinal >= minLevel.ordinal) {
-            logger.log(level, message())
-        }
-    }
-
-    inline fun debug(message: () -> String) = log(OfflineLogLevel.DEBUG, message)
-
-    inline fun info(message: () -> String) = log(OfflineLogLevel.INFO, message)
-
-    inline fun warning(message: () -> String) = log(OfflineLogLevel.WARNING, message)
-
-    inline fun error(message: () -> String) = log(OfflineLogLevel.ERROR, message)
-}

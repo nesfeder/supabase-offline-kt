@@ -6,7 +6,7 @@ package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineLogger
-import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 

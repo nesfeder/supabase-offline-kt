@@ -10,7 +10,7 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.ReadStrategy
-import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper

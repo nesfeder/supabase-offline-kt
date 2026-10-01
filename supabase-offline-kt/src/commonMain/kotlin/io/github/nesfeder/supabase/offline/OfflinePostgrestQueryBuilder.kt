@@ -16,12 +16,14 @@ import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
-import io.github.nesfeder.supabase.offline.internal.cache.indexOfKey
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
 import io.github.nesfeder.supabase.offline.internal.db.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
+import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
@@ -38,10 +40,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.postgrest.UnsupportedOfflineFilterException
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorFromBuilder
 import io.github.nesfeder.supabase.offline.internal.postgrest.buildDescriptorStrict
+import io.github.nesfeder.supabase.offline.internal.postgrest.preferResponseForCacheOverlay
 import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.wasRolledBack
-import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
-import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -51,7 +52,6 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.jsonArray
 
@@ -1040,37 +1040,4 @@ internal class OfflinePostgrestQueryBuilderImpl(
         private fun defaultRefreshCoordinator(): RefreshCoordinator =
             RefreshCoordinator(newEngineScope(sdkLogger = null))
     }
-}
-
-/**
- * The rows to patch into the cache for an INSERT or UPSERT: those the server returned, each with
- * the columns the caller wrote in its place that the response leaves out; the request body when the
- * response holds no row (`return=minimal`, or not JSON).
- *
- * A returned row stands for the written row with its [keyColumns]. Failing that, when as many came
- * back as were written, it stands for the one at its position that carries no key, as a row whose
- * key the server assigns does not. The server's values win: they include what it assigned, such as
- * an `id` or `created_at`.
- */
-internal fun preferResponseForCacheOverlay(
-    requestBody: JsonArray,
-    responseData: String,
-    json: Json,
-    keyColumns: List<String> = listOf("id"),
-): String {
-    val returned = returnedRowsOf(json, responseData)
-    if (returned.isEmpty()) return requestBody.toString()
-    val written = requestBody.filterIsInstance<JsonObject>()
-    val merged = returned.mapIndexed { index, row ->
-        val source =
-            written.firstOrNull { candidate ->
-                indexOfKey(listOf(row), candidate, keyColumns) != null
-            }
-                ?: written
-                    .getOrNull(index)
-                    ?.takeIf { returned.size == written.size }
-                    ?.takeIf { candidate -> primaryKeyOf(candidate, keyColumns) == null }
-        if (source == null) row else JsonObject(row + (source - row.keys))
-    }
-    return JsonArray(merged).toString()
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient

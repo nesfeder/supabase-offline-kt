@@ -1,7 +1,8 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline
+package io.github.nesfeder.supabase.offline.internal.logging
 
+import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import kotlin.test.Test
 import kotlin.test.assertEquals

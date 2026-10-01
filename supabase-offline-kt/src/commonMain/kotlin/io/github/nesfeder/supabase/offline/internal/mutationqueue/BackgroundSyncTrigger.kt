@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
-import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException

@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer

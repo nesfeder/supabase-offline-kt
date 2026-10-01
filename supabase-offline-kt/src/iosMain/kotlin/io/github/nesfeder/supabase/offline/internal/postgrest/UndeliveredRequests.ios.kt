@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline.internal.util
+package io.github.nesfeder.supabase.offline.internal.postgrest
 
 /**
  * The `NSURLErrorDomain` codes that mean the request never left the device. They are host not

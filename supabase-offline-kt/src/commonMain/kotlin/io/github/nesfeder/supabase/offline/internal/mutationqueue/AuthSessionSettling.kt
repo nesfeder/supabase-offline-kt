@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline.internal.util
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth

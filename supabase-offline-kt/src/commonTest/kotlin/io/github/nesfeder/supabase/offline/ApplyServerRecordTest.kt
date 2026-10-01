@@ -5,6 +5,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore

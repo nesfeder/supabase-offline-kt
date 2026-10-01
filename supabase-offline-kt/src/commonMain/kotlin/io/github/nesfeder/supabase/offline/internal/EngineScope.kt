@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
-import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

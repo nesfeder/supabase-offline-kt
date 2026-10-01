@@ -20,9 +20,9 @@ import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
-import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
+import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.utils.io.ByteChannel

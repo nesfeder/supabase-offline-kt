@@ -57,11 +57,7 @@ MODULES="supabase-offline-kt supabase-offline-kt-testing"
 
 # rule|path relative to the repository root|declaration name|reason
 GRANDFATHERED='
-internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/OfflineLogger.kt|SdkLogger|the level-gating logger wrapper the engine threads everywhere; moves to an internal package with the public-API freeze
 internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder.kt|OfflinePostgrestQueryBuilderImpl|the implementation behind the public builder interface; moves with the public-API freeze
-internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder.kt|preferResponseForCacheOverlay|a helper of the builder implementation; moves with it
-internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/RefreshAccelerator.kt|buildRefreshAccelerator|wiring for the public RefreshAccelerator; moves with the public-API freeze
-internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/RefreshAccelerator.kt|refreshReadyEdges|a helper of buildRefreshAccelerator; moves with it
 internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/SupabaseOfflineClient.kt|SupabaseOfflineClientImpl|the implementation behind the public client interface; moves with the public-API freeze
 '
 

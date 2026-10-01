@@ -1,7 +1,11 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline.internal.db
+package io.github.nesfeder.supabase.offline.internal.cache
 
+import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
+import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
+import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_SIGNATURE_PREFIX
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

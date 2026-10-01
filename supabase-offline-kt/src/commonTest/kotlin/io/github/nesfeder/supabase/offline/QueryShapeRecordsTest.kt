@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_SIGNATURE_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME

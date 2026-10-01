@@ -5,9 +5,9 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.CachedFile
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageRow
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
 import kotlin.concurrent.atomics.AtomicLong

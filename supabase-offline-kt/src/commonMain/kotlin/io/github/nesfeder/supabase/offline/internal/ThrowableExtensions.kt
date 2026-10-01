@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline.internal.util
+package io.github.nesfeder.supabase.offline.internal
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.ktor.client.network.sockets.ConnectTimeoutException

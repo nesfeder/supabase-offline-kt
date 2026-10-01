@@ -7,11 +7,11 @@ package io.github.nesfeder.supabase.offline.internal.testing
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
-import io.github.nesfeder.supabase.offline.internal.db.OfflineCacheSettings
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
 import kotlinx.coroutines.CoroutineScope

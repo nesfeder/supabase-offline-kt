@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalTime::class)
 
-package io.github.nesfeder.supabase.offline
+package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore

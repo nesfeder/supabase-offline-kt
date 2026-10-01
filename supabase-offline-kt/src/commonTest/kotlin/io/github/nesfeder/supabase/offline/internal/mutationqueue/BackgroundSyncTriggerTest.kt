@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.milliseconds

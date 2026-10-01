@@ -5,13 +5,17 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
+import io.github.nesfeder.supabase.offline.internal.cache.CacheOwnerRecord
+import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.cache.KeyedUpdates
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
+import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
 import io.github.nesfeder.supabase.offline.internal.cache.Projection
+import io.github.nesfeder.supabase.offline.internal.cache.QueryShapeRecords
 import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
+import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.cache.keyNamedBy
 import io.github.nesfeder.supabase.offline.internal.cache.keyOf
 import io.github.nesfeder.supabase.offline.internal.cache.mayGainRowsBy
@@ -19,6 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.patchMayLeaveWrong
 import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
 import io.github.nesfeder.supabase.offline.internal.cache.projectionOf
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
+import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -34,8 +39,6 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.equalityDecidedByContent
 import io.github.nesfeder.supabase.offline.internal.postgrest.isPlainColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
-import io.github.nesfeder.supabase.offline.internal.util.EMPTY_JSON_ARRAY
-import io.github.nesfeder.supabase.offline.internal.util.isEmptyJsonArrayPayload
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong

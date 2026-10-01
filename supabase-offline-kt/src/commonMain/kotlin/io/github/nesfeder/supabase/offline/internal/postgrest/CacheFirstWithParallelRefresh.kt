@@ -70,11 +70,11 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long =
  *
  * ### Recovery accelerator
  * [accelerator] is an optional edge-triggered wake-up (auth restored / connectivity regained, built
- * by [io.github.nesfeder.supabase.offline.buildRefreshAccelerator]). An edge that lands while the
- * loop is sleeping cancels the current backoff delay and retries immediately. Edges are conflated,
- * so a burst buys exactly one immediate attempt, and — being strict transitions — a
- * persistently-failing refresh can never hot-loop. The accelerator is a hint only: with an empty
- * [accelerator] the loop still recovers on its capped schedule.
+ * by [buildRefreshAccelerator]). An edge that lands while the loop is sleeping cancels the current
+ * backoff delay and retries immediately. Edges are conflated, so a burst buys exactly one immediate
+ * attempt, and — being strict transitions — a persistently-failing refresh can never hot-loop. The
+ * accelerator is a hint only: with an empty [accelerator] the loop still recovers on its capped
+ * schedule.
  *
  * ### State reporting
  * [onRefreshState] observes the refresh lifecycle: [RefreshState.InFlight] at start,
