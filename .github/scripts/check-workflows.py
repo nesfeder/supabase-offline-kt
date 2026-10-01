@@ -24,6 +24,15 @@ It fails when:
      the self-hosted guard and the home record, or does not end with the clean-up and the
      comparison, both under always(); or a step sets IOS_RUNNER for itself; or the job or one of
      those four steps may continue on error.
+  8. a workflow other than ci.yml runs on a schedule and is not listed below; or a listed one
+     triggers on anything but its schedule and a manual run, grants default permissions, has
+     other jobs than its own, or reads a secret (a stored token would bypass the permissions
+     below); or one of its jobs holds other permissions than its own, does not start with the
+     repository guard as a conjunct of its own, or holds a write permission and runs an action
+     (a checkout or a reusable workflow included); or a step runs Gradle other than as the
+     unprivileged build user, with only Gradle arguments, between a step that prepares that user
+     and a step under always() that stops it; or a step after that build runs an action, or runs
+     without the absolute shell below or with a first command that is not an absolute path.
   9. Releases (RELEASING.md).
      - Who holds the secrets: only the jobs listed below use the `release` environment, each with
        a condition that starts with the Dependabot guard, as its own conjunct, followed by one
@@ -114,6 +123,25 @@ CACHE_ACTIONS = ("actions/cache", "gradle/actions/setup-gradle", "$/.github/acti
 # A Gradle task that can publish to Maven Central: the aggregate `publish` or any Central task.
 CENTRAL_TASK = re.compile(r"\bpublish(?:\b|\w*MavenCentral\w*)")
 CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
+# Workflows that only their schedule or a maintainer can start, never a pull request, a push or
+# Dependabot, with each job's exact permissions. Every other scheduled workflow but ci.yml fails.
+# The canary builds an unreviewed upstream release with a read-only token; only `report`, which
+# checks out and runs nothing from that build, may write.
+SCHEDULED_WORKFLOWS = {
+    "upstream-canary.yml": {"canary": {"contents": "read"}, "report": {"issues": "write"}},
+}
+SCHEDULED_TRIGGERS = {"schedule", "workflow_dispatch"}
+REPOSITORY_GUARD = "github.repository == 'nesfeder/supabase-offline-kt'"
+# The one way a listed workflow may run Gradle: as the unprivileged build user, after the step that
+# prepares it and before the step that stops it, so the build never holds the runner's tokens.
+BUILD_USER_SCRIPT = "bash .github/scripts/build-as-unprivileged-user.sh"
+# After the build, nothing is found through the PATH the build ran beside: the shell and the first
+# command are absolute, and collect is the script run by /usr/bin/bash.
+ABSOLUTE_SHELL = "/usr/bin/bash --noprofile --norc -e -o pipefail {0}"
+COLLECT = "/" + "usr/bin/" + BUILD_USER_SCRIPT + " collect "
+RUNS_GRADLE = re.compile(r"gradlew|run-gradle|gradle-wrapper|GradleWrapperMain"
+                         r"|(^|[\s;&|(`/])gradle(\s|$)")
+GRADLE_ARGUMENT = re.compile(r"[-:A-Za-z0-9=._]+")
 
 
 def load_yaml(path: Path) -> object:
@@ -123,13 +151,19 @@ def load_yaml(path: Path) -> object:
     return json.loads(converted.stdout)
 
 
+def trigger_mapping(triggers: object) -> dict | None:
+    """The `on` value as a mapping of event to its settings, or None when it has no valid shape."""
+    if isinstance(triggers, str):
+        return {triggers: None}
+    if isinstance(triggers, list):
+        return {trigger: None for trigger in triggers}
+    return triggers if isinstance(triggers, dict) else None
+
+
 def trigger_problems(name: str, triggers: object) -> list[str]:
     """Rules 1 and 2."""
-    if isinstance(triggers, str):
-        triggers = {triggers: None}
-    elif isinstance(triggers, list):
-        triggers = {trigger: None for trigger in triggers}
-    if not isinstance(triggers, dict):
+    triggers = trigger_mapping(triggers)
+    if triggers is None:
         return [f"{name}: `on` is not a string, list or mapping"]
     problems = [f"{name}: triggers on {event}" for event in ("pull_request_target", "workflow_run")
                 if event in triggers]
@@ -242,14 +276,14 @@ def grants_oidc(permissions: object) -> bool:
     return isinstance(permissions, dict) and permissions.get("id-token") == "write"
 
 
-def starts_with_guard(condition: object) -> bool:
-    """Whether a job's `if` is the Dependabot guard alone or `guard && (...)`, one bracketed term."""
+def starts_with_guard(condition: object, guard: str = DEPENDABOT_GUARD) -> bool:
+    """Whether a job's `if` is the guard alone or `guard && (...)`, with one bracketed term."""
     text = " ".join(str(condition or "").split())
     if text.startswith("${{") and text.endswith("}}"):
         text = " ".join(text[3:-2].split())
-    if text == DEPENDABOT_GUARD:
+    if text == guard:
         return True
-    prefix = DEPENDABOT_GUARD + " && ("
+    prefix = guard + " && ("
     if not (text.startswith(prefix) and text.endswith(")")):
         return False
     term = text[len(prefix) - 1:]
@@ -451,6 +485,86 @@ def release_problems(name: str, document: dict) -> list[str]:
     return problems
 
 
+def scheduled_problems(name: str, document: dict) -> list[str]:
+    """Rule 8."""
+    triggers = trigger_mapping(document.get("on")) or {}
+    allowed_jobs = SCHEDULED_WORKFLOWS.get(name)
+    if allowed_jobs is None:
+        if name != "ci.yml" and "schedule" in triggers:
+            return [f"{name}: runs on a schedule and is not one of the listed scheduled workflows"]
+        return []
+    problems = []
+    if set(triggers) != SCHEDULED_TRIGGERS:
+        problems.append(f"{name}: triggers {sorted(triggers)}, not {sorted(SCHEDULED_TRIGGERS)}")
+    if document.get("permissions") != {}:
+        problems.append(f"{name}: default permissions {document.get('permissions')!r}, not {{}}")
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    if set(jobs) != set(allowed_jobs):
+        problems.append(f"{name}: jobs {sorted(jobs)}, not {sorted(allowed_jobs)}")
+    for job_id, permissions in allowed_jobs.items():
+        job = jobs.get(job_id)
+        if not isinstance(job, dict):
+            continue
+        if job.get("permissions") != permissions:
+            problems.append(f"{name}: job {job_id} holds {job.get('permissions')}, not exactly"
+                            f" {permissions}")
+        if not starts_with_guard(job.get("if"), REPOSITORY_GUARD):
+            problems.append(f"{name}: job {job_id} runs if {job.get('if')!r}, which does not"
+                            f" start with {REPOSITORY_GUARD!r}")
+        held = job.get("permissions")
+        writes = held == "write-all" or (isinstance(held, dict) and "write" in held.values())
+        steps = job.get("steps") if isinstance(job.get("steps"), list) else []
+        runs_action = "uses" in job or any(isinstance(step, dict) and "uses" in step
+                                           for step in steps)
+        if writes and runs_action:
+            problems.append(f"{name}: job {job_id} holds a write permission and runs an action")
+        problems += build_user_problems(f"{name}: job {job_id}", steps)
+    if reads_secrets(document):
+        problems.append(f"{name}: reads a secret")
+    return problems
+
+
+def build_user_problems(where: str, steps: list) -> list[str]:
+    """Rule 8: Gradle runs only as the build user, prepared before the build and stopped after."""
+    steps = [step if isinstance(step, dict) else {} for step in steps]
+    runs = [" ".join(str(step.get("run", "")).split()) for step in steps]
+    build = BUILD_USER_SCRIPT + " build "
+    problems = []
+    for index, text in enumerate(runs):
+        if not text.startswith(build):
+            if RUNS_GRADLE.search(text):
+                problems.append(f"{where} runs Gradle outside the unprivileged build user")
+            continue
+        if not all(GRADLE_ARGUMENT.fullmatch(argument) for argument in text[len(build):].split()):
+            problems.append(f"{where} passes the build user more than Gradle arguments")
+        prepared = [before for before in range(index)
+                    if runs[before] == BUILD_USER_SCRIPT + " prepare"]
+        if not prepared or steps[prepared[-1]].get("continue-on-error", False) is not False:
+            problems.append(f"{where} builds without first preparing the build user")
+        collected = [after for after in range(index + 1, len(runs))
+                     if runs[after].startswith(COLLECT)]
+        condition = " ".join(str(steps[collected[0]].get("if", "")).split()) if collected else ""
+        if (not collected or not condition.startswith("always()")
+                or steps[collected[0]].get("continue-on-error", False) is not False):
+            problems.append(f"{where} does not stop the build user under always() after the build")
+        # An action has neither a shell nor a run line, so it fails this too.
+        for after in range(index + 1, len(steps)):
+            if steps[after].get("shell") != ABSOLUTE_SHELL or not runs[after].startswith("/"):
+                problems.append(f"{where} has a step after the build that is not an absolute"
+                                " command in the absolute shell")
+                break
+    return problems
+
+
+def reads_secrets(document: dict) -> bool:
+    """Whether any expression in the workflow names `secrets`, or a job passes secrets on."""
+    expressions = re.findall(r"\$\{\{(.*?)\}\}", json.dumps(document), re.DOTALL)
+    if any(re.search(r"\bsecrets\b", expression) for expression in expressions):
+        return True
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    return any(isinstance(job, dict) and "secrets" in job for job in jobs.values())
+
+
 def self_reference_problems(root: Path, name: str, document: object) -> list[str]:
     """Rule 5: every `$/` reference in the document names a path that exists."""
     problems = []
@@ -498,6 +612,7 @@ def check_tree(root: Path) -> list[str]:
         problems += self_reference_problems(root, path.name, document)
         problems += oidc_problems(path.name, document)
         problems += release_problems(path.name, document)
+        problems += scheduled_problems(path.name, document)
     workflows = root / ".github" / "workflows"
     if (workflows / "release.yml").is_file() and not (workflows / "release-resume.yml").is_file():
         problems.append("release.yml has no resume path: release-resume.yml is missing")
@@ -653,6 +768,41 @@ on:
     tags: ['v*']
 jobs:
   check: {runs-on: ubuntu-latest, steps: [{run: echo supabase-offline-kt}]}
+"""
+COMPLIANT_CANARY = f"""\
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      pretend_pinned: {{type: string}}
+permissions: {{}}
+jobs:
+  canary:
+    if: {REPOSITORY_GUARD}
+    runs-on: ubuntu-latest
+    permissions: {{contents: read}}
+    steps:
+      - uses: $/.github/actions/setup
+      - run: {BUILD_USER_SCRIPT} prepare
+      - id: build
+        continue-on-error: true
+        run: >-
+          {BUILD_USER_SCRIPT} build
+          :a:testAndroidHostTest --continue
+      - if: always() && steps.versions.outputs.newer == 'true'
+        shell: {ABSOLUTE_SHELL}
+        run: /usr/bin/{BUILD_USER_SCRIPT} collect "$RUNNER_TEMP/results" testAndroidHostTest a
+      - shell: {ABSOLUTE_SHELL}
+        run: /usr/bin/python3 -I -c pass
+  report:
+    needs: canary
+    if: {REPOSITORY_GUARD} && (needs.canary.outputs.newer == 'true')
+    runs-on: ubuntu-latest
+    permissions: {{issues: write}}
+    steps:
+      - env: {{GH_TOKEN: '${{{{ github.token }}}}'}}
+        run: echo
 """
 COMPLIANT_ACTION = "runs: {using: composite, steps: [{run: echo, shell: bash}]}\n"
 ROUTING_LINE = "      ${{ needs.changes.outputs.ios-runner == 'local'"
@@ -985,6 +1135,132 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("an `|| true` inside the release guard", "release.yml",
      COMPLIANT_RELEASE.replace("github.ref == 'refs/heads/main')", "github.ref == 'refs/heads/main' || true)"),
      "or has an `||`"),
+    # The scheduled workflows: only their schedule and a maintainer start them.
+    ("the canary gains a pull_request trigger", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("  workflow_dispatch:\n", "  pull_request:\n  workflow_dispatch:\n"),
+     "upstream-canary.yml: triggers"),
+    ("the canary gains a push to main", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("  workflow_dispatch:\n",
+                              "  push:\n    branches: [main]\n  workflow_dispatch:\n"),
+     "upstream-canary.yml: triggers"),
+    ("the canary loses its schedule", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("  schedule:\n    - cron: '0 7 * * 1'\n", ""),
+     "upstream-canary.yml: triggers"),
+    ("the canary grants default permissions", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {}\n", "permissions: {contents: write}\n"),
+     "default permissions"),
+    ("the build job gains issues: write", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {contents: read}",
+                              "permissions: {contents: read, issues: write}"),
+     "job canary holds a write permission and runs an action"),
+    ("the build job holds write-all", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {contents: read}", "permissions: write-all"),
+     "job canary holds a write permission and runs an action"),
+    ("the build job writes contents", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {contents: read}", "permissions: {contents: write}"),
+     "job canary holds"),
+    ("the build job without permissions", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("    permissions: {contents: read}\n", ""),
+     "job canary holds None"),
+    ("the report job gains a permission", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("permissions: {issues: write}",
+                              "permissions: {issues: write, pull-requests: write}"),
+     "job report holds"),
+    ("the report job checks out the repository", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("    steps:\n      - env:",
+                              "    steps:\n      - uses: actions/checkout@v7\n      - env:"),
+     "job report holds a write permission and runs an action"),
+    ("the build job without its repository guard", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"    if: {REPOSITORY_GUARD}\n", ""), "job canary runs if None"),
+    ("the report job without its repository guard", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"    if: {REPOSITORY_GUARD} && (needs",
+                              "    if: (needs"),
+     "job report runs if"),
+    ("the repository guard only one side of an or", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"    if: {REPOSITORY_GUARD} && (needs",
+                              f"    if: {REPOSITORY_GUARD} || (needs"),
+     "job report runs if"),
+    ("the report job reads a personal access token", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("github.token", "secrets.MAINTAINER_PAT"),
+     "upstream-canary.yml: reads a secret"),
+    ("a job passes secrets on", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("    needs: canary\n", "    needs: canary\n    secrets: inherit\n"),
+     "upstream-canary.yml: reads a secret"),
+    ("a reporting job that calls a reusable workflow", "upstream-canary.yml",
+     COMPLIANT_CANARY[:COMPLIANT_CANARY.index("  report:")]
+     + "  report:\n    needs: canary\n"
+     + f"    if: {REPOSITORY_GUARD} && (needs.canary.outputs.newer == 'true')\n"
+     + "    permissions: {issues: write}\n    uses: $/.github/workflows/docs-check.yml\n",
+     "job report holds a write permission and runs an action"),
+    ("the build runs the Gradle wrapper directly", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"{BUILD_USER_SCRIPT} build\n", "./gradlew\n"),
+     "runs Gradle outside the unprivileged build user"),
+    ("the build runs run-gradle.sh as the runner user", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"{BUILD_USER_SCRIPT} build\n",
+                              "bash .github/scripts/run-gradle.sh\n"),
+     "runs Gradle outside the unprivileged build user"),
+    ("a command after the build user's Gradle arguments", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(":a:testAndroidHostTest --continue\n",
+                              ":a:testAndroidHostTest --continue; curl example.com\n"),
+     "passes the build user more than Gradle arguments"),
+    ("no step prepares the build user", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n", ""),
+     "builds without first preparing the build user"),
+    ("the build user is prepared after the build", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n", "").replace(
+         "  report:\n",
+         f"      - run: {BUILD_USER_SCRIPT} prepare\n  report:\n"),
+     "builds without first preparing the build user"),
+    ("preparing the build user may continue on error", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n",
+                              f"      - run: {BUILD_USER_SCRIPT} prepare\n"
+                              "        continue-on-error: true\n"),
+     "builds without first preparing the build user"),
+    ("the build user is stopped only when the build passed", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("      - if: always() && steps", "      - if: steps"),
+     "does not stop the build user under always()"),
+    ("stopping the build user may continue on error", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("      - if: always() && steps",
+                              "      - continue-on-error: true\n        if: always() && steps"),
+     "does not stop the build user under always()"),
+    ("no step stops the build user", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("      - if: always() && steps.versions.outputs.newer == 'true'\n"
+                              f"        shell: {ABSOLUTE_SHELL}\n"
+                              f"        run: /usr/bin/{BUILD_USER_SCRIPT} collect"
+                              " \"$RUNNER_TEMP/results\" testAndroidHostTest a\n", ""),
+     "does not stop the build user under always()"),
+    ("the build user is stopped through the inherited PATH", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"        run: /usr/bin/{BUILD_USER_SCRIPT} collect",
+                              f"        run: {BUILD_USER_SCRIPT} collect"),
+     "does not stop the build user under always()"),
+    ("a step after the build in the default shell", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - shell: {ABSOLUTE_SHELL}\n        run: /usr/bin/python3",
+                              "      - run: /usr/bin/python3"),
+     "a step after the build that is not an absolute command"),
+    ("a step after the build finds python3 through the PATH", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("run: /usr/bin/python3 -I -c pass", "run: python3 -I -c pass"),
+     "a step after the build that is not an absolute command"),
+    ("an action after the build", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - shell: {ABSOLUTE_SHELL}\n"
+                              "        run: /usr/bin/python3 -I -c pass\n",
+                              "      - uses: $/.github/actions/setup\n"),
+     "a step after the build that is not an absolute command"),
+    ("the image's own gradle command", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n",
+                              f"      - run: gradle -p . help\n"
+                              f"      - run: {BUILD_USER_SCRIPT} prepare\n"),
+     "runs Gradle outside the unprivileged build user"),
+    ("the image's gradle by its path", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n",
+                              f"      - run: /usr/bin/gradle help\n"
+                              f"      - run: {BUILD_USER_SCRIPT} prepare\n"),
+     "runs Gradle outside the unprivileged build user"),
+    ("the canary gains a third job", "upstream-canary.yml",
+     COMPLIANT_CANARY + "  other: {runs-on: ubuntu-latest, steps: [{run: echo}]}\n",
+     "upstream-canary.yml: jobs"),
+    ("another workflow on a schedule", "extra.yml",
+     "on: {schedule: [{cron: '0 0 * * 0'}]}\njobs: {a: {runs-on: ubuntu-latest}}\n",
+     "not one of the listed scheduled workflows"),
 ]
 
 
@@ -995,6 +1271,7 @@ def write_compliant_tree(root: Path) -> None:
     (root / ".github" / "workflows" / "docs-check.yml").write_text(COMPLIANT_DOCS)
     (root / ".github" / "workflows" / "release.yml").write_text(COMPLIANT_RELEASE)
     (root / ".github" / "workflows" / "release-resume.yml").write_text(COMPLIANT_RESUME)
+    (root / ".github" / "workflows" / "upstream-canary.yml").write_text(COMPLIANT_CANARY)
     for action in ("setup", "home-snapshot"):
         (root / ".github" / "actions" / action).mkdir(parents=True)
         (root / ".github" / "actions" / action / "action.yml").write_text(COMPLIANT_ACTION)
@@ -1012,10 +1289,16 @@ def self_test() -> None:
         for index, (name, file_name, content, expected) in enumerate(CASES):
             root = Path(work) / f"case-{index}"
             write_compliant_tree(root)
+            target = root / ".github" / "workflows" / file_name
             if content is None:
-                (root / ".github" / "workflows" / file_name).unlink()
+                target.unlink()
             else:
-                (root / ".github" / "workflows" / file_name).write_text(content)
+                # A replacement that matched nothing would test the compliant file again.
+                if target.exists() and target.read_text() == content:
+                    print(f"FAIL {name}: the case changes nothing in {file_name}")
+                    failures += 1
+                    continue
+                target.write_text(content)
             problems = check_tree(root)
             caught = any(expected in problem for problem in problems)
             print(f"{'ok  ' if caught else 'FAIL'} {name}: {'caught' if caught else problems}")
