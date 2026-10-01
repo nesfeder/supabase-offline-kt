@@ -98,6 +98,9 @@ internal class MutationQueueReplayer(
      */
     private val schemaCacheMissesCountedAt = mutableMapOf<Long, Long>()
 
+    /** Whether this replayer has warned of a session whose token does not name its user. */
+    private val warnedOfTokenNotNamingUser = MutableStateFlow(false)
+
     init {
         // Before anything is sent: a mutation goes out with its owner's token, or not at all
         supabase.installReplayOwnerCheck()
@@ -242,7 +245,7 @@ internal class MutationQueueReplayer(
                     is SendOutcome.Failed ->
                         return sendLock.withLock {
                             if (owner.stoppedForAnotherSession) {
-                                stoppedForAnotherSession(mutationId, newlyUnconfirmed)
+                                stoppedForAnotherSession(mutationId, newlyUnconfirmed, identity)
                                 HeadSendOutcome.NotAtHead
                             } else {
                                 headFailureOutcome(mutationId, sent, newlyUnconfirmed, generation)
@@ -272,10 +275,24 @@ internal class MutationQueueReplayer(
 
     /**
      * Keeps a mutation whose request the owner check stopped queued for its owner's next session:
-     * it never left the device, so a send record this attempt made is cleared.
+     * it never left the device, so a send record this attempt made is cleared. When the session is
+     * still [owner]'s, its token names another user or none, which holds the queue: said once.
      */
-    private suspend fun stoppedForAnotherSession(mutationId: Long, newlyUnconfirmed: Boolean) {
+    private suspend fun stoppedForAnotherSession(
+        mutationId: Long,
+        newlyUnconfirmed: Boolean,
+        owner: QueueIdentity,
+    ) {
         if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+        if (currentIdentity() == owner) {
+            if (warnedOfTokenNotNamingUser.compareAndSet(expect = false, update = true)) {
+                sdkLogger.warning {
+                    "The session's access token does not name the session's user; its queued " +
+                        "mutations are held until the two agree"
+                }
+            }
+            return
+        }
         sdkLogger.info {
             "The session changed before a queued mutation was sent; it stays queued for its owner"
         }
@@ -621,7 +638,7 @@ internal class MutationQueueReplayer(
                             if (newlyUnconfirmed) store.clearUnconfirmedSend(mutation.id)
                             throw CancellationException("The replay pass was stopped")
                         } else if (owner.stoppedForAnotherSession) {
-                            stoppedForAnotherSession(mutation.id, newlyUnconfirmed)
+                            stoppedForAnotherSession(mutation.id, newlyUnconfirmed, identity)
                             ReplayOutcome.SessionChanged
                         } else {
                             if (newlyUnconfirmed && sent.provesWriteNotApplied())
