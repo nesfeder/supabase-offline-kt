@@ -111,3 +111,5 @@ release.
   and replays as never sent once the session is good again.
 - A replay refused because its stored filter can no longer be read says so, instead of saying the
   write has no filter.
+- The in-memory client of the testing artifact is safe across threads: a live read while another
+  thread writes no longer fails with `ConcurrentModificationException`.
