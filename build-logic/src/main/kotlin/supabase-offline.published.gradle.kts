@@ -138,16 +138,22 @@ extensions.configure<MavenPublishBaseExtension> {
     )
 }
 
-// Signing reads only the in-memory key (ORG_GRADLE_PROJECT_signingInMemoryKey and
-// …KeyPassword in the environment). Without it nothing is signed, so no key ring or `signing.*`
-// property from a file is ever used, and a build without secrets still publishes locally.
-if (!providers.gradleProperty("signingInMemoryKey").isPresent) {
+/** Whether the Gradle property is set to something other than blank. */
+private fun hasGradleProperty(name: String): Boolean =
+    providers.gradleProperty(name).orNull?.isNotBlank() == true
+
+// Signing uses only the in-memory key, the Gradle properties signingInMemoryKey and
+// …KeyPassword (ORG_GRADLE_PROJECT_<name> in the release job's environment). Without the key
+// nothing is signed, so a key ring named by `signing.*` properties is never used, and a build
+// without secrets still publishes to the build directory.
+if (!hasGradleProperty("signingInMemoryKey")) {
     tasks.withType<Sign>().configureEach { enabled = false }
 }
 
-// Maven Central needs the Portal token (ORG_GRADLE_PROJECT_mavenCentralUsername and …Password),
-// and a release version also the signing key. Checked before a publish task writes anything; the
-// upload happens at the end of a build that succeeded, so nothing is sent.
+// Maven Central needs the Portal token (the Gradle properties mavenCentralUsername and …Password),
+// and a release version also the signing key; a blank value counts as missing. Checked before a
+// publish task writes anything; the upload happens at the end of a build that succeeded, so
+// nothing is sent.
 tasks
     .withType<PublishToMavenRepository>()
     .matching { it.name.endsWith("ToMavenCentralRepository") }
@@ -155,9 +161,9 @@ tasks
         val releaseVersion = !version.toString().endsWith("-SNAPSHOT")
         val missing = buildList {
             listOf("mavenCentralUsername", "mavenCentralPassword").forEach { property ->
-                if (!providers.gradleProperty(property).isPresent) add(property)
+                if (!hasGradleProperty(property)) add(property)
             }
-            if (releaseVersion && !providers.gradleProperty("signingInMemoryKey").isPresent) {
+            if (releaseVersion && !hasGradleProperty("signingInMemoryKey")) {
                 add("signingInMemoryKey")
             }
         }
