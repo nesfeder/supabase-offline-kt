@@ -1,9 +1,43 @@
 # Contributing
 
 Thank you for helping. Instructions for building and testing the library itself will follow; for
-now, this file covers formatting, changing the public API, what is published, test coverage, the
-documentation site, how dependency updates are handled, and what to do when CI fails for a reason
-outside the change.
+now, this file covers reporting a problem, labels, formatting, changing the public API, what is
+published, releasing, test coverage, the documentation site, how dependency updates are handled,
+and continuous integration: the `full-ci` label, and what to do when CI fails for a reason outside
+the change.
+
+## Reporting a problem
+
+Open an issue from one of the
+[forms](https://github.com/nesfeder/supabase-offline-kt/issues/new/choose): a bug report asks for
+the versions, the platform, whether it happens online, offline or on reconnect, and a minimal
+reproduction; a feature request asks for the problem you want solved. Questions go to
+[Discussions](https://github.com/nesfeder/supabase-offline-kt/discussions), which open when the
+repository goes public.
+
+**A security vulnerability is never reported in an issue.** Report it privately, as
+[SECURITY.md](https://github.com/nesfeder/supabase-offline-kt/blob/main/SECURITY.md) describes.
+
+Everyone taking part in issues, discussions and pull requests follows the
+[code of conduct](https://github.com/nesfeder/supabase-offline-kt/blob/main/CODE_OF_CONDUCT.md).
+
+## Labels
+
+The maintainer who merges a pull request labels it from the type in its title, so that a release's
+generated notes (`.github/release.yml`) put it in the right group:
+
+| Title type | Label |
+| --- | --- |
+| `feat` | `enhancement` |
+| `fix` | `bug` |
+| `docs` | `documentation` |
+| `ci` | `ci` |
+
+A pull request that moves a held dependency by hand (see "Held dependencies") also gets
+`upstream-pin`, `toolchain` or `persistence`, the labels the Dependabot triage workflow gives
+Dependabot's updates of the same dependencies. Any other type needs no label and is listed under
+"Other changes". `dependencies`, `gradle`, `github-actions` and `docs-toolchain` are Dependabot's
+own, and no person applies them. `full-ci` is described under "Continuous integration".
 
 ## Formatting
 
@@ -393,6 +427,16 @@ that entry first (the repository's Actions → Caches page, or `gh cache delete 
 the restore step printed), then find out how it got there: the job saves the files only after both
 have passed their checksums.
 
+### Dependabot's pull requests and the `full-ci` label, while the repository is private
+
+While the repository is private, CI holds the iOS tests on every run of a Dependabot pull request,
+and its check reads `All Green (iOS tests held)`, which does not satisfy the required `All Green`.
+To run them, a maintainer reads Dependabot's push and then adds the `full-ci` label: that labeled
+event, and only that one, runs the whole graph, the iOS tests included. The label counts only when a
+person adds it. When Dependabot pushes again, the check reads held again: read the new push, then
+remove the label and add it again. Adding any other label runs nothing. Once the repository is
+public, the iOS tests run on every pull request and the label is not needed.
+
 ### The self-hosted runner, while the repository is private
 
 While the repository is private, the iOS tests may run on a self-hosted Mac instead of GitHub's
@@ -407,11 +451,11 @@ changed it or something else running as the same user did. If the path is not on
 re-run the job; if the same path comes back, it belongs in the snapshot's exclusion list, with its
 reason.
 
-Two kinds of red come from the runners themselves, and are read, not excluded. A red that names
-only a runner's directory with its `.runner_migrated` or `.credentials_migrated` is GitHub
-refreshing that runner's settings; one that names a runner's new `bin.*`, `externals.*` or
-`update.finished` is the runner updating itself. The runner's `_diag` log records either. Re-run the
-job.
+One kind of red comes from the runners themselves, and is read, not excluded: a red that names
+only a runner's directory with its new `bin.*`, `externals.*` or `update.finished` is the runner
+updating itself, which its `_diag` log records. Re-run the job. (The two marker files a runner's
+service rewrites daily, `.runner_migrated` and `.credentials_migrated`, are excluded: a job cannot
+reconfigure a runner.)
 
 **A job killed before its last two steps** (the Mac restarted or slept, or the runner service
 stopped) cleans up nothing itself. What the next job on the runner does about it:

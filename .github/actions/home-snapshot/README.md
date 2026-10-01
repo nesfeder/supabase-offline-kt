@@ -72,18 +72,18 @@ the change: the job, or anything else running as the same user while the job ran
 not one the job writes, re-run the job. If the same path comes back, add it to the exclusion list
 with its reason, in a pull request that shows the samples behind it.
 
-**A runner's own writes.** The runners write two kinds of their own files, which are watched on
-purpose:
+**A runner's own writes.** The runners write two kinds of their own files:
 
-- `.runner_migrated` and `.credentials_migrated`, rewritten (deleted, then written again) when
-  GitHub refreshes the runner's settings. A red that names only a runner's directory and one of
-  these is that refresh. It is rare, not per job: one landed inside a job's record-to-comparison
-  window on 2026-09-29.
+- `.runner_migrated` and `.credentials_migrated`, rewritten (deleted, then written again) once a
+  day when the runner's service refreshes its settings — measured at 23:04 UTC, 24 hours and one
+  second apart, inside whatever job was running. They are **excluded**: a job cannot reconfigure
+  a runner (that needs the registration token), so nothing a job does shows in them, and a daily
+  red that spans that minute would be noise. Two such reds landed on 2026-09-29 and 2026-09-30
+  before the exclusion.
 - `bin.*`, `externals.*` and `update.finished`, written when a runner updates itself, with its
-  `bin` and `externals` links moved to the new folders.
-
-The runner's `_diag` log records either one. Re-run the job, and do not exclude these files: the
-listener runs from `.runner_migrated`, so it is the runner's live configuration.
+  `bin` and `externals` links moved to the new folders. These stay **watched**: a red that names
+  only a runner's directory and these is that update, recorded in the runner's `_diag` log.
+  Re-run the job, and do not exclude them.
 
 ## A job that never compared
 

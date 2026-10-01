@@ -1,0 +1,39 @@
+# How GitHub groups the merged pull requests in a release's generated notes, by label. The release
+# body is the version's section of CHANGELOG.md; these notes list the pull requests beneath it.
+#
+# Who applies each label (CONTRIBUTING.md, "Labels"): the maintainer who merges a pull request labels
+# it from its title's type (feat: enhancement, fix: bug, docs: documentation, ci: ci), and a pull
+# request that moves a held dependency by hand with upstream-pin, toolchain or persistence.
+# Dependabot labels its own updates `dependencies`, which no person applies, so its group is its own
+# however GitHub treats a pull request that matches two groups. Every other pull request goes under
+# "Other changes".
+changelog:
+  categories:
+    - title: Features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: CI
+      labels:
+        - ci
+    - title: Dependabot updates
+      labels:
+        - dependencies
+    - title: Dependencies
+      labels:
+        - upstream-pin
+        - toolchain
+        - persistence
+      # The triage workflow gives Dependabot's held updates these labels too; they belong above.
+      exclude:
+        authors:
+          - dependabot
+          - "dependabot[bot]"
+    - title: Other changes
+      labels:
+        - "*"
