@@ -45,9 +45,8 @@ ignore:
   - "**/src/*Test/**"
   - "Tests/"
   - "**/Tests/**"
-  - "composeApp/"
   - "iosApp/"
-  - "demo/"
+  - "samples/"
 
 # One flag per upload. Carry-forward keeps a flag's last coverage when its job did not run, so a
 # change that runs only one language's tests does not report the other's coverage as gone.

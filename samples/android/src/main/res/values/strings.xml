@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Offline Tasks</string>
+
+    <!-- Shared actions -->
+    <string name="action_add">Add</string>
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_undo">Undo</string>
+    <string name="action_view">View</string>
+
+    <!-- The sync status: the Tasks subtitle and the banner under it -->
+    <string name="status_offline">Offline — changes are saved on this device</string>
+    <plurals name="status_offline_with_changes">
+        <item quantity="one">Offline — %d change is saved on this device</item>
+        <item quantity="other">Offline — %d changes are saved on this device</item>
+    </plurals>
+    <plurals name="status_syncing">
+        <item quantity="one">Syncing %d change</item>
+        <item quantity="other">Syncing %d changes</item>
+    </plurals>
+    <plurals name="status_waiting">
+        <item quantity="one">%d change waiting</item>
+        <item quantity="other">%d changes waiting</item>
+    </plurals>
+    <string name="status_showing_saved_data">Showing saved data — can’t reach the server</string>
+    <string name="status_just_synced">All changes synced</string>
+    <string name="subtitle_synced">all synced</string>
+    <string name="subtitle_offline">offline</string>
+    <string name="subtitle_syncing">syncing…</string>
+    <string name="subtitle_saved_copy">showing saved data</string>
+    <plurals name="subtitle_waiting">
+        <item quantity="one">%d waiting to sync</item>
+        <item quantity="other">%d waiting to sync</item>
+    </plurals>
+
+    <!-- Tasks -->
+    <string name="tasks_title">Tasks</string>
+    <!-- "3 open · 2 waiting to sync" -->
+    <string name="tasks_subtitle">%1$s · %2$s</string>
+    <plurals name="tasks_open_count">
+        <item quantity="one">%d open</item>
+        <item quantity="other">%d open</item>
+    </plurals>
+    <string name="new_task">New task</string>
+    <string name="filter_all">All</string>
+    <string name="filter_open">Open</string>
+    <string name="filter_done">Done</string>
+    <plurals name="section_open">
+        <item quantity="one">Open · %d</item>
+        <item quantity="other">Open · %d</item>
+    </plurals>
+    <plurals name="section_done">
+        <item quantity="one">Done · %d</item>
+        <item quantity="other">Done · %d</item>
+    </plurals>
+    <string name="task_untitled">(no title)</string>
+    <string name="task_done_checkbox">Done: %1$s</string>
+    <string name="task_not_synced">Not synced yet</string>
+    <string name="tasks_loading_title">Loading your tasks</string>
+    <string name="tasks_loading_body">Nothing is saved on this device yet, so the list comes from the server this once.</string>
+    <string name="tasks_no_data_title">Nothing saved on this device yet</string>
+    <string name="tasks_no_data_body">Connect to the internet once to load your tasks. After that they’re here offline too.</string>
+    <string name="tasks_empty_title">No tasks yet</string>
+    <string name="tasks_empty_body">Add one with New task. It’s saved on this device at once and synced when you’re online.</string>
+    <string name="tasks_empty_open_title">Nothing open</string>
+    <string name="tasks_empty_open_body">Every task is done.</string>
+    <string name="tasks_empty_done_title">Nothing done yet</string>
+    <string name="tasks_empty_done_body">Tick a task and it moves here.</string>
+    <string name="tasks_deleted">Deleted “%1$s”</string>
+    <string name="tasks_rejected">Couldn’t save “%1$s” — the server refused it</string>
+    <string name="tasks_refresh_offline">You’re offline — showing what’s saved on this device</string>
+
+    <!-- New task and the task fields -->
+    <string name="field_title">Title</string>
+    <string name="field_notes">Notes</string>
+    <string name="field_title_required">A task needs a title</string>
+    <!-- "12 / 200" -->
+    <string name="field_counter">%1$d / %2$d</string>
+
+    <!-- Task detail -->
+    <string name="detail_sync_synced">Synced</string>
+    <string name="detail_sync_saved_on_device">Saved on this device — will sync when online</string>
+    <string name="detail_sync_waiting">Waiting to sync</string>
+    <string name="detail_sync_syncing">Syncing…</string>
+    <string name="detail_done">Done</string>
+    <string name="detail_done_supporting">Done tasks move to the end of the list</string>
+    <string name="detail_photos">Photos</string>
+    <string name="detail_photos_supporting">Photos are uploaded as you add them.</string>
+    <string name="detail_photos_offline">Photos upload when you’re online. The ones already here still show.</string>
+    <string name="detail_add_photo">Add photo</string>
+    <string name="detail_delete">Delete task</string>
+    <string name="detail_delete_title">Delete this task?</string>
+    <string name="detail_delete_body">It’s removed from this device now and from the server when it syncs.</string>
+    <string name="detail_delete_body_photos">It’s removed from this device now and from the server when it syncs. Its photos are deleted too.</string>
+    <string name="detail_delete_body_photos_offline">It’s removed from this device now and from the server when it syncs. You’re offline, so its photo files stay on the server; delete it while online to remove them too.</string>
+    <string name="detail_gone_title">This task is gone</string>
+    <string name="detail_gone_body">It was deleted, here or on the server, or the server refused it.</string>
+    <string name="detail_placeholder_title">Pick a task</string>
+    <string name="detail_placeholder_body">Its details open here, beside the list.</string>
+
+    <!-- Photos -->
+    <string name="photos_title">Photos</string>
+    <plurals name="photos_count">
+        <item quantity="one">%d photo</item>
+        <item quantity="other">%d photos</item>
+    </plurals>
+    <string name="photos_offline_subtitle">offline — showing photos saved on this device</string>
+    <string name="photos_loading_title">Loading your photos</string>
+    <string name="photos_loading_body">Nothing is saved on this device yet.</string>
+    <string name="photos_no_data_title">Nothing saved on this device yet</string>
+    <string name="photos_no_data_body">Connect to the internet once to load your photos.</string>
+    <string name="photos_empty_title">No photos yet</string>
+    <string name="photos_empty_body">Open a task and add one. Every photo you’ve opened stays available offline.</string>
+    <string name="photo_description">Task photo</string>
+    <string name="photo_on_device">Available offline</string>
+    <string name="photo_not_on_device">Not on this device yet; it loads when you’re online</string>
+    <string name="photo_missing">This photo’s file is missing</string>
+    <string name="photo_unavailable">This photo couldn’t be loaded</string>
+    <string name="photo_delete">Delete photo</string>
+    <string name="photo_delete_offline">Photos can be deleted only while you’re online.</string>
+    <string name="photo_unreadable">That image couldn’t be read.</string>
+
+    <!-- Sync -->
+    <string name="sync_title">Sync</string>
+    <string name="sync_connection">Connection</string>
+    <string name="network_unknown">Checking the network…</string>
+    <string name="network_unknown_body">The app hasn’t heard from the system yet.</string>
+    <string name="network_online">Online</string>
+    <string name="network_online_body">Changes go to the server as you make them.</string>
+    <string name="network_offline">Offline</string>
+    <string name="network_offline_body">The device has no network. Changes are saved here and sync when it’s back.</string>
+    <string name="network_disabled">Offline (simulated)</string>
+    <string name="network_disabled_body">This app’s network is switched off. Everything else on the device is online.</string>
+    <string name="sync_simulate_offline">Simulate offline</string>
+    <string name="sync_simulate_offline_body">Cuts this app off from the server, as airplane mode would.</string>
+    <string name="sync_queue">Changes waiting</string>
+    <string name="sync_queue_empty">Nothing waiting</string>
+    <string name="sync_queue_by_table">Tasks: %1$d · Photos: %2$d</string>
+    <string name="sync_last_synced">Last synced %1$s</string>
+    <string name="sync_never_synced">Not synced yet</string>
+    <string name="sync_last_stopped">The last sync stopped early; the rest waits for the server.</string>
+    <string name="sync_last_report">Sent %1$d · refused %2$d · still waiting %3$d</string>
+    <string name="sync_now">Sync now</string>
+    <string name="sync_now_running">Syncing</string>
+    <string name="sync_now_needs_network">Sync needs the network.</string>
+    <string name="sync_refresh">Refresh</string>
+    <string name="sync_refresh_task_list">Task list</string>
+    <string name="sync_refresh_idle">Up to date with the server</string>
+    <string name="sync_refresh_running">Asking the server…</string>
+    <string name="sync_refresh_paused">Paused while offline</string>
+    <string name="sync_refresh_stalled">Can’t reach the server — showing saved data</string>
+    <string name="sync_rejected">Refused changes</string>
+    <string name="sync_rejected_none">Nothing refused</string>
+    <string name="sync_rejected_none_body">If the server refuses a change made offline, it shows here.</string>
+    <string name="sync_rejected_item">Couldn’t save “%1$s”</string>
+    <string name="refused_title">The server refused it: a title can’t be blank or longer than 200 characters.</string>
+    <string name="refused_notes">The server refused it: notes can’t be longer than 2,000 characters.</string>
+    <string name="refused_missing_task">The server refused it: its task isn’t on the server.</string>
+    <string name="refused_other">The server refused it (%1$d): %2$s</string>
+    <string name="failure_refused">Couldn’t save “%1$s”. %2$s</string>
+    <string name="failure_needs_network">That needs the network, and you’re offline.</string>
+    <string name="failure_server_unreachable">The server couldn’t be reached. Try again in a moment.</string>
+    <string name="failure_storage">Storage refused it (%1$d): %2$s</string>
+    <string name="failure_other">Something went wrong. Try again.</string>
+    <string name="sync_developer">Try it</string>
+    <string name="sync_queue_invalid">Queue an invalid title</string>
+    <string name="sync_queue_invalid_body">Adds a task with a blank title. Online, the server refuses it at once; offline, when it syncs.</string>
+    <string name="sync_server_outage">Make the server unreachable</string>
+    <string name="sync_server_outage_body">Every request fails while the network stays up, so refreshes stall.</string>
+    <string name="sync_storage_failing">Make Storage refuse</string>
+    <string name="sync_storage_failing_body">Photo uploads, downloads and deletes fail, as when Storage refuses a request.</string>
+    <string name="sync_local_data">Local data</string>
+    <string name="sync_clear">Clear local cache</string>
+    <string name="sync_clear_body">Deletes what this device holds. The server’s copy stays.</string>
+    <string name="sync_clear_title">Clear the local cache?</string>
+    <string name="sync_clear_confirm_body">Saved tasks, photos and changes not yet synced are deleted from this device. Anything already on the server comes back when you’re online.</string>
+    <string name="sync_start_over">Start over</string>
+    <string name="sync_start_over_body">Deletes this user’s tasks and photos, then continues as a new anonymous user.</string>
+    <string name="sync_start_over_title">Start over as a new user?</string>
+    <string name="sync_start_over_confirm_body">You get an empty list. Online, this user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them. Offline, they stay there.</string>
+    <string name="sync_about">About this build</string>
+    <string name="sync_session">Supabase</string>
+    <string name="sync_session_not_configured">Not configured: add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to local.properties</string>
+    <string name="sync_session_signing_in">Signing in…</string>
+    <string name="sync_session_signed_in">Signed in anonymously</string>
+    <string name="sync_session_failed">Couldn’t sign in; tries again when online</string>
+    <string name="sync_data_source">Where tasks are kept</string>
+    <string name="sync_data_source_in_memory">In memory, with a simulated server: a stand-in for the library. Everything resets when the app restarts.</string>
+</resources>

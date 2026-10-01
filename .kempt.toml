@@ -19,11 +19,6 @@ style = "kotlinlang"
 [license-header]
 file = "config/license-header.txt"
 
-[paths]
-# The old demo module is not part of the build; formatting it would only add churn. Remove this
-# line when the module goes.
-exclude = { extend = ["composeApp/**"] }
-
 [whitespace.paths]
 # Kotlin and Kotlin script are covered by default. Markdown carries the documentation site.
 include = { extend = ["**/*.md", ".gitignore"] }

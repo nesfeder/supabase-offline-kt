@@ -3,8 +3,10 @@ name: CI
 # One workflow, one required check: `All Green`.
 #
 #   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules and their
-#            │                   │                    coverage; the public API records (Android
-#            │                   │                    and iOS); the build-tool floors check; the
+#            │                   │                    coverage; the Android sample's tests, lint and
+#            │                   │                    debug build (when `sample` says so); the
+#            │                   │                    public API records (Android and iOS); the
+#            │                   │                    build-tool floors check; the
 #            │                   │                    published-artifacts check
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
 #            │                                        SQLite; iOS device framework link
@@ -101,6 +103,7 @@ jobs:
       kotlin: ${{ steps.classify.outputs.kotlin }}
       docs: ${{ steps.classify.outputs.docs }}
       workflows: ${{ steps.classify.outputs.workflows }}
+      sample: ${{ steps.classify.outputs.sample }}
       formatting: ${{ steps.formatter.outputs.configured }}
       ios-runner: ${{ steps.ios.outputs.ios-runner }}
       ios-allowed: ${{ steps.ios.outputs.ios-allowed }}
@@ -116,6 +119,10 @@ jobs:
       # and a change to CI itself runs everything. A push or manual run whose changed files cannot
       # be listed runs everything; on a pull request a failed diff fails this job, and with it
       # All Green.
+      # `sample` builds the Android sample too: for its own sources, the build (Gradle, the
+      # version catalog, build-logic, any build script or gradle.properties), a change to the
+      # library's public API records, and this workflow. Every push to main builds it, so a
+      # library change that breaks the sample without moving the API records shows up there.
       - name: Classify the changed files
         id: classify
         env:
@@ -152,7 +159,13 @@ jobs:
           kotlin=false
           docs=false
           workflows=false
+          sample=false
           while IFS= read -r file; do
+            case "$file" in
+              samples/android/* | gradle/* | build-logic/* | *.gradle.kts | gradle.properties \
+                | */gradle.properties | supabase-offline-kt*/api/* | .github/workflows/ci.yml)
+                sample=true ;;
+            esac
             case "$file" in
               .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/* \
                 | .github/codecov.yml)
@@ -161,7 +174,7 @@ jobs:
                 docs=true; workflows=true ;;
               .github/workflows/* | .github/dependabot.yml)
                 workflows=true ;;
-              docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | demo/supabase/*)
+              docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | samples/supabase/*)
                 docs=true ;;
               .github/* | *.md | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
                 | .kempt.toml | config/license-header* | *.properties.example)
@@ -173,6 +186,9 @@ jobs:
           if [[ "$everything" == true ]]; then
             kotlin=true; docs=true; workflows=true
           fi
+          if [[ "$everything" == true || "$EVENT_NAME" == push ]]; then
+            sample=true
+          fi
 
           # Between stop-commands markers with a random token, so no file name is read as a
           # workflow command: the runner trims leading spaces, so indenting would not do.
@@ -181,11 +197,12 @@ jobs:
           echo "::stop-commands::$token"
           sed 's/^/  /' "$changed_files"
           echo "::$token::"
-          echo "  kotlin=$kotlin docs=$docs workflows=$workflows everything=$everything"
+          echo "  kotlin=$kotlin docs=$docs workflows=$workflows sample=$sample everything=$everything"
           {
             echo "kotlin=$kotlin"
             echo "docs=$docs"
             echo "workflows=$workflows"
+            echo "sample=$sample"
           } >> "$GITHUB_OUTPUT"
 
       # The formatter's configuration lands in its own pull request; until then the job is skipped.
@@ -401,21 +418,42 @@ jobs:
       # Robolectric on the JVM; the host SQLite comes from the JVM driver's binary for this machine.
       # The Kover tasks read the coverage these test runs record and never run a test again.
       # koverVerify is what `check` runs: a 50% floor that fails only when measurement broke.
-      - name: Run the Android host tests
-        run: >-
-          ./gradlew
-          :supabase-offline-kt:testAndroidHostTest
-          :supabase-offline-kt-testing:testAndroidHostTest
-          :supabase-offline-kt:koverXmlReport
-          :supabase-offline-kt:koverVerify
-          :supabase-offline-kt-testing:koverVerify
-          --continue --stacktrace
+      # When `sample` says so, the same invocation (one configuration, not two) also runs the
+      # Android sample (samples/android): its host tests, Robolectric's Compose tests among them,
+      # lint against its own baseline, and its debug APK. The APK is also the build-tool floors'
+      # signing proof: the build creates a debug keystore and signs the APK with the Bouncy Castle
+      # the floors raise.
+      - name: Run the Android host tests, and the Android sample's
+        env:
+          SAMPLE: ${{ needs.changes.outputs.sample }}
+        run: |
+          tasks=(
+            :supabase-offline-kt:testAndroidHostTest
+            :supabase-offline-kt-testing:testAndroidHostTest
+            :supabase-offline-kt:koverXmlReport
+            :supabase-offline-kt:koverVerify
+            :supabase-offline-kt-testing:koverVerify
+          )
+          if [[ "$SAMPLE" == true ]]; then
+            tasks+=(
+              :samples:android:testDebugUnitTest
+              :samples:android:lint
+              :samples:android:assembleDebug
+            )
+          fi
+          ./gradlew "${tasks[@]}" --continue --stacktrace
 
       - name: Count the tests that ran
         if: ${{ !cancelled() }}
         run: >-
           python3 .github/scripts/count-test-results.py "Android host tests" testAndroidHostTest
           supabase-offline-kt supabase-offline-kt-testing
+
+      - name: Count the Android sample's tests
+        if: ${{ !cancelled() && needs.changes.outputs.sample == 'true' }}
+        run: >-
+          python3 .github/scripts/count-test-results.py "Android sample tests" testDebugUnitTest
+          samples/android
 
       # The core module's report: it covers some lines, and every file in it is one Codecov can
       # place in the repository.
@@ -466,6 +504,8 @@ jobs:
           path: |
             */build/reports/tests/
             */build/test-results/
+            samples/android/build/reports/
+            samples/android/build/test-results/
           retention-days: 7
 
   ios-tests:
