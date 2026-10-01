@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryObjectDao
+import kotlinx.coroutines.flow.update
 
 /*
  * Recording and scripting extensions of the engine's in-memory DAOs, which live in
@@ -85,20 +86,22 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * defaults to `0L` for callers that don't care about age.
      */
     fun seedPayload(table: String, signature: String, payload: String, updatedAt: Long = 0L) {
-        rows[table to signature] =
+        val row =
             ObjectRow(
                 table = table,
                 signature = signature,
                 payload = payload,
                 updatedAt = updatedAt,
             )
+        rows.update { current -> current + ((table to signature) to row) }
     }
 
     /** Look up a row without going through the suspend contract. */
-    fun getRow(table: String, signature: String): ObjectRow? = rows[table to signature]
+    fun getRow(table: String, signature: String): ObjectRow? = rows.value[table to signature]
 
     /** Every row of [table], without going through the suspend contract. */
-    fun rowsOf(table: String): List<ObjectRow> = rows.values.filter { row -> row.table == table }
+    fun rowsOf(table: String): List<ObjectRow> =
+        rows.value.values.filter { row -> row.table == table }
 
     override suspend fun get(table: String, signature: String): ObjectRow? {
         val row = super.get(table, signature)

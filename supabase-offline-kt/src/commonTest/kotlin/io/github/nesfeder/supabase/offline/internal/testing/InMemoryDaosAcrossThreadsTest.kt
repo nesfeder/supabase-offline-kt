@@ -43,7 +43,7 @@ class InMemoryDaosAcrossThreadsTest {
                         dao.maxSyncedThrough()
                         dao.minSyncedThroughForTable(TABLE)
                         dao.signaturesForTable(TABLE)
-                        dao.observe(TABLE, "observed-$read")
+                        dao.observe(TABLE, "observed-${read % SIGNATURES}")
                     }
                 }
             }

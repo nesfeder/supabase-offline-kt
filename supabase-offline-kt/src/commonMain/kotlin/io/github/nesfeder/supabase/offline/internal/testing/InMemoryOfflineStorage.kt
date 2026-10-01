@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okio.Path
 import okio.Path.Companion.toPath
 
@@ -31,139 +33,175 @@ internal object InMemoryDbPathProvider : DbPathProvider {
 /**
  * In-memory [ObjectDao] mirroring Room's per-table invalidation: any write fans out to observers.
  *
- * `open`, with its state `protected`, so test doubles can extend it with recording and scripting
- * hooks while every in-memory store — the testing artifact's and the engine's own tests' — runs on
- * this one implementation.
+ * Safe across threads, as Room's DAOs are. The rows are one immutable map: reads take it whole,
+ * writes replace it one at a time under [writeLock], and observers are set after the lock is let
+ * go. `open`, with its state `protected`, so test doubles can add recording and scripting hooks.
  */
 internal open class InMemoryObjectDao : ObjectDao {
-    /** Cached payloads keyed by `(table, signature)`. */
-    protected val rows: MutableMap<Pair<String, String>, ObjectRow> = mutableMapOf()
+    /** Cached payloads keyed by `(table, signature)`. Replace it only under [writeLock]. */
+    protected val rows: MutableStateFlow<Map<Pair<String, String>, ObjectRow>> =
+        MutableStateFlow(emptyMap())
 
     /** One observable slot per observed `(table, signature)`. */
-    protected val observers: MutableMap<Pair<String, String>, MutableStateFlow<ObjectRow?>> =
-        mutableMapOf()
+    protected val observers:
+        MutableStateFlow<Map<Pair<String, String>, MutableStateFlow<ObjectRow?>>> =
+        MutableStateFlow(emptyMap())
+
+    /** Serializes the writes, so a slow one is never starved by fast ones. */
+    private val writeLock = Mutex()
 
     override suspend fun get(table: String, signature: String): ObjectRow? =
-        rows[table to signature]
+        rows.value[table to signature]
 
-    override fun observe(table: String, signature: String): Flow<ObjectRow?> =
-        observers
-            .getOrPut(table to signature) { MutableStateFlow(rows[table to signature]) }
-            .asStateFlow()
-            .map { it }
-
-    override suspend fun allForTable(table: String): List<ObjectRow> =
-        rows.values.filter { it.table == table }
-
-    override suspend fun maxSyncedThrough(): Long =
-        rows.values.maxOfOrNull { it.syncedThrough } ?: 0L
-
-    override suspend fun minSyncedThroughForTable(table: String): Long? =
-        rows.values.filter { it.table == table }.minOfOrNull { it.syncedThrough }
-
-    override suspend fun signaturesForTable(table: String): List<String> =
-        rows.values.filter { it.table == table }.map { it.signature }
-
-    override suspend fun rowsWithSignaturePrefix(table: String, prefix: String): List<ObjectRow> =
-        rows.values.filter { it.table == table && it.signature.startsWith(prefix) }
-
-    override suspend fun deleteWithSignaturePrefix(table: String, prefix: String) {
-        rows.keys
-            .filter { (rowTable, signature) -> rowTable == table && signature.startsWith(prefix) }
-            .forEach { key -> rows.remove(key) }
+    override fun observe(table: String, signature: String): Flow<ObjectRow?> {
+        val key = table to signature
+        observers.update { current ->
+            if (key in current) current else current + (key to MutableStateFlow(rows.value[key]))
+        }
+        val slot = observers.value.getValue(key)
+        // A write that read the observers before this one joined them did not set it
+        publish(key, slot)
+        return slot.asStateFlow().map { it }
     }
 
-    override suspend fun deleteOrphanedQueryShapes(): Int {
+    override suspend fun allForTable(table: String): List<ObjectRow> =
+        rows.value.values.filter { it.table == table }
+
+    override suspend fun maxSyncedThrough(): Long =
+        rows.value.values.maxOfOrNull { it.syncedThrough } ?: 0L
+
+    override suspend fun minSyncedThroughForTable(table: String): Long? =
+        rows.value.values.filter { it.table == table }.minOfOrNull { it.syncedThrough }
+
+    override suspend fun signaturesForTable(table: String): List<String> =
+        rows.value.values.filter { it.table == table }.map { it.signature }
+
+    override suspend fun rowsWithSignaturePrefix(table: String, prefix: String): List<ObjectRow> =
+        rows.value.values.filter { it.table == table && it.signature.startsWith(prefix) }
+
+    override suspend fun deleteWithSignaturePrefix(table: String, prefix: String) {
+        removeWhere { (rowTable, signature), _ ->
+            rowTable == table && signature.startsWith(prefix)
+        }
+    }
+
+    override suspend fun deleteOrphanedQueryShapes(): Int = removeChosen { current ->
         val payloads =
-            rows.values
+            current.values
                 .filter { it.table != RESERVED_TABLE_NAME }
                 .mapTo(mutableSetOf()) { "${it.table}\u001F${it.signature}" }
-        val orphans =
-            rows.keys.filter { (table, signature) ->
+        current.keys
+            .filter { (table, signature) ->
                 table == RESERVED_TABLE_NAME &&
                     signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) &&
                     signature.removePrefix(QUERY_SHAPE_SIGNATURE_PREFIX) !in payloads
             }
-        orphans.forEach { key -> rows.remove(key) }
-        return orphans.size
+            .toSet()
     }
 
     override suspend fun upsert(row: ObjectRow) {
-        rows[row.table to row.signature] = row
-        observers
-            .filterKeys { it.first == row.table }
-            .forEach { (key, flow) -> flow.value = rows[key] }
+        writeLock.withLock {
+            rows.update { current -> current + ((row.table to row.signature) to row) }
+        }
+        observers.value.forEach { (key, slot) -> if (key.first == row.table) publish(key, slot) }
     }
 
     override suspend fun delete(table: String, signature: String) {
-        rows.remove(table to signature)
-        observers[table to signature]?.value = null
+        removeWhere { key, _ -> key == (table to signature) }
     }
 
     override suspend fun deleteTable(table: String) {
-        rows.keys
-            .filter { it.first == table }
-            .toList()
-            .forEach {
-                rows.remove(it)
-                observers[it]?.value = null
-            }
+        removeWhere { (rowTable, _), _ -> rowTable == table }
     }
 
     override suspend fun deleteAll() {
-        val keys = rows.keys.toList()
-        rows.clear()
-        keys.forEach { observers[it]?.value = null }
+        removeWhere { _, _ -> true }
     }
 
     override suspend fun deleteAllExceptTable(table: String) {
-        rows.keys
-            .filter { (rowTable, _) -> rowTable != table }
-            .forEach { key ->
-                rows.remove(key)
-                observers[key]?.value = null
-            }
+        removeWhere { (rowTable, _), _ -> rowTable != table }
     }
 
     override suspend fun totalPayloadBytes(): Long =
-        rows.values.filter { it.table != RESERVED_TABLE_NAME }.sumOf { it.payload.length.toLong() }
+        rows.value.values
+            .filter { it.table != RESERVED_TABLE_NAME }
+            .sumOf { it.payload.length.toLong() }
 
     override suspend fun deleteOldestPayloadRows(limit: Int, keptSignatures: List<String>): Int {
         if (limit <= 0) return 0
-        val oldest =
-            rows.values
+        return removeChosen { current ->
+            current.values
                 .filter { it.table != RESERVED_TABLE_NAME && it.signature !in keptSignatures }
                 .sortedBy { fetchedAtOf(it.updatedAt) }
                 .take(limit)
-        oldest.forEach { row ->
-            rows.remove(row.table to row.signature)
-            observers[row.table to row.signature]?.value = null
+                .mapTo(mutableSetOf()) { it.table to it.signature }
         }
-        return oldest.size
+    }
+
+    /** Removes the rows [matches] accepts, as one write, and tells their observers. */
+    private suspend fun removeWhere(matches: (Pair<String, String>, ObjectRow) -> Boolean) {
+        removeChosen { current -> current.filter { (key, row) -> matches(key, row) }.keys }
+    }
+
+    /**
+     * Removes the keys [choose] picks from the current rows, as one write, and tells their
+     * observers.
+     *
+     * @return how many rows it removed.
+     */
+    private suspend fun removeChosen(
+        choose: (Map<Pair<String, String>, ObjectRow>) -> Set<Pair<String, String>>
+    ): Int {
+        val removed = writeLock.withLock {
+            val chosen = choose(rows.value)
+            rows.update { current -> current - chosen }
+            chosen
+        }
+        removed.forEach { key -> observers.value[key]?.let { slot -> publish(key, slot) } }
+        return removed.size
+    }
+
+    /**
+     * Sets [slot] to the row at [key], again until the row read after the set is the one set: a
+     * writer that set an older row after a newer write had published reads the newer row back.
+     */
+    private fun publish(key: Pair<String, String>, slot: MutableStateFlow<ObjectRow?>) {
+        do {
+            val row = rows.value[key]
+            slot.value = row
+        } while (rows.value[key] != row)
     }
 }
 
-/** In-memory [StorageDao] keyed by [StorageRow.key]. */
+/**
+ * In-memory [StorageDao] keyed by [StorageRow.key]. Safe across threads: reads take one immutable
+ * map whole, and writes replace it one at a time under a lock.
+ */
 internal open class InMemoryStorageDao : StorageDao {
-    /** Storage-object rows keyed by [StorageRow.key]. */
-    protected val rows: MutableMap<String, StorageRow> = mutableMapOf()
+    /** Storage-object rows keyed by [StorageRow.key]. Replace it only under [writeLock]. */
+    protected val rows: MutableStateFlow<Map<String, StorageRow>> = MutableStateFlow(emptyMap())
+
+    /** Serializes the writes, so a slow one is never starved by fast ones. */
+    private val writeLock = Mutex()
 
     override suspend fun upsert(row: StorageRow) {
-        rows[row.key] = row
+        write { current -> current + (row.key to row) }
     }
 
-    override suspend fun getByKey(key: String): StorageRow? = rows[key]
+    override suspend fun getByKey(key: String): StorageRow? = rows.value[key]
 
     override suspend fun delete(key: String) {
-        rows.remove(key)
+        write { current -> current - key }
     }
 
     override suspend fun delete(bucketId: String, path: String) {
-        rows.values.removeAll { it.bucketId == bucketId && it.path == path }
+        write { current ->
+            current.filterValues { row -> !(row.bucketId == bucketId && row.path == path) }
+        }
     }
 
     override suspend fun deleteAll() {
-        rows.clear()
+        write { emptyMap() }
     }
 
     override suspend fun forObject(
@@ -171,13 +209,18 @@ internal open class InMemoryStorageDao : StorageDao {
         path: String,
         variantPrefix: String,
     ): List<StorageRow> =
-        rows.values.filter {
+        rows.value.values.filter {
             it.bucketId == bucketId && (it.path == path || it.path.startsWith(variantPrefix))
         }
 
-    override suspend fun all(): List<StorageRow> = rows.values.toList()
+    override suspend fun all(): List<StorageRow> = rows.value.values.toList()
 
-    override suspend fun totalSizeBytes(): Long = rows.values.sumOf { it.sizeBytes ?: 0L }
+    override suspend fun totalSizeBytes(): Long = rows.value.values.sumOf { it.sizeBytes ?: 0L }
+
+    /** Replaces the rows with what [change] makes of them, one write at a time. */
+    private suspend fun write(change: (Map<String, StorageRow>) -> Map<String, StorageRow>) {
+        writeLock.withLock { rows.update(change) }
+    }
 }
 
 /**
