@@ -216,10 +216,13 @@ prepare() {
         checked=$((checked + 1))
     done < <(runner_directories "$runner_root")
     echo "::endgroup::"
+    # As root, so nothing is unreadable; on output alone, since a link back into the directory
+    # (Ubuntu's /usr/bin/X11) makes find exit 1 after reporting the loop.
     local writable_program
     for entry in "${entries[@]}"; do
         if [[ -d "$entry" ]]; then
-            writable_program=$(find -L "$entry" -maxdepth 1 -type f -perm -o+w -print -quit 2> /dev/null)
+            writable_program=$(sudo find -L "$entry" -maxdepth 1 -type f -perm -o+w -print -quit \
+                2> /dev/null || true)
             if [[ -n "$writable_program" ]]; then
                 echo "::error::$writable_program, on the runner's PATH, is writable by other users."
                 exit 1
