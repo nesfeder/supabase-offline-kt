@@ -112,6 +112,8 @@ release.
 
 ### Changed
 
+- The Android artifact depends on `androidx.startup:startup-runtime` itself, at the version
+  supabase-kt's Auth already brings, instead of reaching it through Auth.
 - A locally written row shows only in the cached lists whose filters it matches, leaves a list it
   stops matching, and joins one it starts matching when another cached list read with the same
   columns holds it. `eq`, `neq`, `in` and `is` are evaluated with Postgres's null rules; a
