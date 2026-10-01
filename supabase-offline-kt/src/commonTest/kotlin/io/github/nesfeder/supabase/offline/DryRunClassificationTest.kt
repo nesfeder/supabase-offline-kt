@@ -171,6 +171,40 @@ class DryRunClassificationTest {
         )
     }
 
+    @Test
+    fun a_write_whose_request_cannot_be_built_fails_to_its_caller_and_is_never_queued() = runTest {
+        // Given — a request lambda that throws from its second run: the queue's capture is the
+        // first, so the dry-run check is the run that cannot build the request
+        val logger = RecordingOfflineLogger()
+        val server = RecordingPostgrestServer(answer = { okJson("[]") })
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from(TABLE),
+                store = store,
+                sdkLogger = logger.asSdkLogger(),
+            )
+        var runs = 0
+
+        // When
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+                    runs++
+                    check(runs < 2) { "cannot build" }
+                    filter { eq("id", 1) }
+                }
+            }
+
+        // Then — the caller gets the write's own failure; nothing queued, sent or reported
+        assertEquals("cannot build", failure.message)
+        assertEquals(0, mutationDao.insertCalls)
+        assertTrue(server.requests.isEmpty(), "${server.requests}")
+        assertEquals(
+            0,
+            logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
+        )
+    }
+
     private fun patch(): JsonElement = Json.parseToJsonElement("""{"title":"new"}""")
 
     private companion object {

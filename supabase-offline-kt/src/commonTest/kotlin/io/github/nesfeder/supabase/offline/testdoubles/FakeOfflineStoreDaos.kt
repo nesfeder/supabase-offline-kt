@@ -163,6 +163,10 @@ internal class FakeMutationDao : InMemoryMutationDao() {
 
     private val tableListReadCounts = mutableMapOf<String, Int>()
 
+    /** How many rows were ever inserted into the queue, whether removed since or not. */
+    var insertCalls: Int = 0
+        private set
+
     /** When set, the next [deleteAll] fails, as a process dying part-way through clearing would. */
     var failNextDeleteAll: Boolean = false
 
@@ -187,6 +191,11 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     override suspend fun runInTransaction(block: suspend () -> Unit) {
         super.runInTransaction(block)
         afterTransaction?.invoke()
+    }
+
+    override suspend fun insert(row: MutationRow): Long {
+        insertCalls++
+        return super.insert(row)
     }
 
     override suspend fun pendingAll(): List<MutationRow> {
