@@ -38,8 +38,7 @@ class FilterCaptureFidelityTest {
         }
 
         // When
-        val descriptor =
-            assertNotNull(buildDescriptorStrictFromRequest(SCHEMA, CONVERSION, request))
+        val descriptor = assertNotNull(captureFilterExactly(SCHEMA, CONVERSION, request))
 
         // Then
         assertEquals(
@@ -60,7 +59,7 @@ class FilterCaptureFidelityTest {
             }
 
         // When
-        val descriptor = assertNotNull(buildDescriptorFromBuilder(builder))
+        val descriptor = assertNotNull(captureFilter(builder))
 
         // Then
         assertEquals(listOf("'X'", " Bob "), descriptor.conditions.map { it.value })

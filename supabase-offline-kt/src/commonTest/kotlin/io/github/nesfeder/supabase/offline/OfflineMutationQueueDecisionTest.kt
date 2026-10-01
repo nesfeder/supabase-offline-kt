@@ -44,7 +44,7 @@ class OfflineMutationQueueDecisionTest {
         OfflinePostgrestQueryBuilderImpl(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = newTestOfflineStore(mutationDao = mutationDao),
-            sdkLogger = logger.asSdkLogger(),
+            engineLogger = logger.asEngineLogger(),
         )
 
     private suspend fun insert(strategy: MutationStrategy): MutationOutcome =

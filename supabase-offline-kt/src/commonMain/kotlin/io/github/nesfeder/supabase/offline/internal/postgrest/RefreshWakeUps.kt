@@ -44,7 +44,7 @@ import kotlinx.coroutines.flow.merge
  * @return A merged edge-triggered accelerator flow, or an effectively-empty flow when no source is
  *   available.
  */
-internal fun buildRefreshAccelerator(
+internal fun refreshWakeUps(
     supabase: SupabaseClient,
     networkAvailability: Flow<Boolean>?,
     trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
@@ -58,10 +58,10 @@ internal fun buildRefreshAccelerator(
         }
     val authEdges =
         supabase.pluginManager.getPluginOrNull(Auth)?.sessionStatus?.let { statuses ->
-            refreshReadyEdges(statuses.map(sessionReady))
+            risingEdges(statuses.map(sessionReady))
         } ?: emptyFlow()
     val connectivityEdges =
-        networkAvailability?.let { availability -> refreshReadyEdges(availability) } ?: emptyFlow()
+        networkAvailability?.let { availability -> risingEdges(availability) } ?: emptyFlow()
     return merge(authEdges, connectivityEdges)
 }
 
@@ -76,5 +76,5 @@ internal fun buildRefreshAccelerator(
  * @param readiness Source stream of ready/not-ready values; duplicates are conflated.
  * @return One [Unit] per false→true transition observed after subscription.
  */
-internal fun refreshReadyEdges(readiness: Flow<Boolean>): Flow<Unit> =
+internal fun risingEdges(readiness: Flow<Boolean>): Flow<Unit> =
     readiness.distinctUntilChanged().drop(1).filter { ready -> ready }.map {}

@@ -27,7 +27,7 @@ class RefusedCaptureLogTest {
         OfflinePostgrestQueryBuilderImpl(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = newTestOfflineStore(),
-            sdkLogger = logger.asSdkLogger(),
+            engineLogger = logger.asEngineLogger(),
         )
 
     @Test

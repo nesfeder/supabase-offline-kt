@@ -70,7 +70,7 @@ class LogPrivacyTest {
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                sdkLogger = logger.asSdkLogger(),
+                engineLogger = logger.asEngineLogger(),
             )
         scenario(client, server)
         return logger.entries.filter { it.level != OfflineLogLevel.DEBUG }.map { it.message }

@@ -97,7 +97,7 @@ class OverlayMutationIsolationTest {
         val logger = RecordingOfflineLogger()
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
-        store.sdkLogger = logger.asSdkLogger()
+        store.engineLogger = logger.asEngineLogger()
         mutationDao.insert(
             mutation(id = 0, operation = MutationOperation.INSERT, body = "not json $PRIVATE_VALUE")
         )
@@ -117,7 +117,7 @@ class OverlayMutationIsolationTest {
         val logger = RecordingOfflineLogger()
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
-        store.sdkLogger = logger.asSdkLogger()
+        store.engineLogger = logger.asEngineLogger()
         mutationDao.insert(
             mutation(id = 0, operation = MutationOperation.INSERT, body = "not json")
         )

@@ -134,7 +134,7 @@ class OfflineStoreAddPayloadGuardTest {
         // damage: with no prior row to protect, it used to be upserted with a fresh updatedAt and
         // every later cache-first read served that phantom empty as the user's data. A genuinely
         // empty table still seeds the cache — via `authoritativeEmpty`, not via this path.
-        assertEquals(AddPayloadOutcome.DROPPED_EMPTY, outcome)
+        assertEquals(CacheWriteOutcome.REFUSED_EMPTY, outcome)
         assertNull(objectDao.getRow("attachments", "sig-A"))
         assertEquals(0, objectDao.writes)
     }
@@ -152,7 +152,7 @@ class OfflineStoreAddPayloadGuardTest {
         // Then — refused as well. Nothing is lost by dropping it (the payload is identical), and
         // rewriting would only stamp a fresh updatedAt, keeping a possibly-phantom empty alive
         // past the cache duration that would otherwise expire it.
-        assertEquals(AddPayloadOutcome.DROPPED_EMPTY, outcome)
+        assertEquals(CacheWriteOutcome.REFUSED_EMPTY, outcome)
         val row = objectDao.getRow("ratings", "sig-A")
         assertNotNull(row)
         assertEquals("[]", row.payload)
@@ -177,7 +177,7 @@ class OfflineStoreAddPayloadGuardTest {
         // Then — the attributed empty seeds the cold slot, so collectors observe an empty list
         // instead of waiting forever for a row that is never coming. This is the half of the
         // cold-slot rule that must NOT change: only *unattributed* empties are dropped.
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         val row = objectDao.getRow("attachments", "sig-A")
         assertNotNull(row)
         assertEquals("[]", row.payload)
@@ -203,7 +203,7 @@ class OfflineStoreAddPayloadGuardTest {
         // doing this even though the unattributed one now refuses it: a cache-duration read that
         // has just re-confirmed the emptiness with the server should not immediately expire and
         // re-fetch, which is exactly what a frozen timestamp would cause.
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         val row = objectDao.getRow("ratings", "sig-A")
         assertNotNull(row)
         assertEquals("[]", row.payload)

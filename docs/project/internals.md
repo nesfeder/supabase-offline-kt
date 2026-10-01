@@ -441,13 +441,13 @@ See [storage.md](../behaviours/storage.md) for the user-facing API around `ensur
 `SupabaseOfflineConfig.cacheSizeBytes` (default 100 MB) bounds the summed length of the cached
 query payloads, not the size of the database file: SQLite keeps the pages a `DELETE` frees, so the
 file never shrinks and could never tell an eviction pass to stop. Eviction is
-`OfflineStore.enforceDbSizeLimitIfNeeded()`, with the settings in `OfflineCacheSettings`:
+`OfflineStore.enforceDbSizeLimitIfNeeded()`, with the settings in `QueryCacheLimits`:
 
-- `maxDbSizeBytes`: the bound; `null` (when `cacheSizeBytes == CACHE_SIZE_UNLIMITED`) turns
+- `maxPayloadBytes`: the bound; `null` (when `cacheSizeBytes == CACHE_SIZE_UNLIMITED`) turns
   size-based eviction off. Any other value is at least `MIN_CACHE_SIZE_BYTES`.
 - `evictionBatchSize = 10`: how many of the oldest rows one step of a pass deletes. A value below
   one is treated as one.
-- `minRetainedBytes = 50 MB`: headroom. A pass that starts above the bound drains to 50 MB below it,
+- `drainHeadroomBytes = 50 MB`: headroom. A pass that starts above the bound drains to 50 MB below it,
   so a burst of writes does not start a pass on every write. When the bound is 50 MB or less, a
   pass drains to the bound itself.
 
@@ -471,7 +471,7 @@ because coercion would change what the overlay decodes.
 supabase-kt keeps `dryRun()` private and records it nowhere but the request's `Prefer` header, as
 `tx=rollback`. The mutation queue does not keep that header, so a dry run that was queued would
 replay as a real write. Before a write can be queued, the engine therefore builds its request and
-reads the header: the write runs under a `PreferHeaderProbe` coroutine-context element, and a
+reads the header: the write runs under a `PreferHeaderCapture` coroutine-context element, and a
 request-pipeline phase installed ahead of every plugin (`installDryRunCheck`, once per client,
 claimed by compare-and-set on a flag in the client's attributes) records the header of a PostgREST
 write sent under the probe and stops it. No plugin, such as a retry or logging plugin, sees the

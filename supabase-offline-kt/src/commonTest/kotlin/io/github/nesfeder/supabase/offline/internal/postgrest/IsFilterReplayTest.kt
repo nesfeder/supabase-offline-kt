@@ -27,7 +27,7 @@ class IsFilterReplayTest {
     private fun replayed(value: String): List<String>? {
         val captured =
             assertNotNull(
-                buildDescriptorStrict(
+                captureFilterExactly(
                     newBuilder().apply { filter { filter("deleted_at", FilterOperator.IS, value) } }
                 )
             )

@@ -69,12 +69,12 @@ class StorageStreamingDownloadTest {
             delegate = delegate,
             baseDirectory = dataDirectory,
             store = store,
-            sdkLogger = logger.asSdkLogger(),
+            engineLogger = logger.asEngineLogger(),
             cache =
                 newTestFileCache(
                     baseDirectory = dataDirectory,
                     store = store,
-                    sdkLogger = logger.asSdkLogger(),
+                    engineLogger = logger.asEngineLogger(),
                     fileSystem = fileSystem,
                 ),
         )

@@ -25,7 +25,7 @@ class OverlayTargetingTest {
     private val logger = RecordingOfflineLogger()
     private val store =
         newTestOfflineStore(mutationDao = FakeMutationDao()).also {
-            it.sdkLogger = logger.asSdkLogger()
+            it.engineLogger = logger.asEngineLogger()
         }
 
     private fun condition(column: String, operator: String, value: String) =

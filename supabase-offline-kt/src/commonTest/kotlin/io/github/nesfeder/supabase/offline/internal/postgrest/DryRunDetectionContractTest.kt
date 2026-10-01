@@ -36,11 +36,10 @@ import kotlinx.serialization.json.Json
  * touches nothing but PostgREST writes — supabase-kt refreshes an expired session inline, in the
  * same coroutine, and that request must go through.
  */
-class PreferHeaderProbeContractTest {
+class DryRunDetectionContractTest {
 
     private val server = RecordingPostgrestServer()
-    private val handle =
-        PostgrestQueryBuilderWrapperImpl(server.supabaseClient().postgrest.from("todos"))
+    private val handle = SupabaseRemoteTable(server.supabaseClient().postgrest.from("todos"))
 
     @Test
     fun a_dry_run_is_told_apart_from_a_write_without_sending_either() = runTest {
@@ -67,16 +66,16 @@ class PreferHeaderProbeContractTest {
         // Given — a probe that stops PostgREST writes, and a session refresh in the same coroutine
         val supabase = server.supabaseClient()
         supabase.installDryRunCheck()
-        val probe = PreferHeaderProbe()
+        val capture = PreferHeaderCapture()
 
         // When
-        withContext(probe) {
+        withContext(capture) {
             supabase.httpClient.httpClient.post("$TEST_SUPABASE_URL/auth/v1/token")
         }
 
         // Then — it reached the server, and the probe did not record it as a write
         assertEquals(listOf("token"), server.requests.map { it.table })
-        assertFalse(probe.observed)
+        assertFalse(capture.observed)
     }
 
     @Test
@@ -105,14 +104,14 @@ class PreferHeaderProbeContractTest {
         // Given
         val supabase = server.supabaseClient()
         supabase.installDryRunCheck()
-        val probe = PreferHeaderProbe()
+        val capture = PreferHeaderCapture()
 
         // When
-        withContext(probe) { supabase.postgrest.from("todos").select { filter { eq("id", 1) } } }
+        withContext(capture) { supabase.postgrest.from("todos").select { filter { eq("id", 1) } } }
 
         // Then — reads are not the probe's business
         assertEquals(1, server.requests.size)
-        assertFalse(probe.observed)
+        assertFalse(capture.observed)
     }
 
     @Test

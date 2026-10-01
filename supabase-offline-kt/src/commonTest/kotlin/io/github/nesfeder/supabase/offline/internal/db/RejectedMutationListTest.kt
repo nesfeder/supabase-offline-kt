@@ -243,7 +243,7 @@ class RejectedMutationListTest {
     fun an_unreadable_rejected_list_is_kept_aside_and_a_fresh_one_started() = runTest {
         // Given — the reserved row holds something this build cannot decode
         val logger = RecordingOfflineLogger()
-        store.sdkLogger = logger.asSdkLogger()
+        store.engineLogger = logger.asEngineLogger()
         objectDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "not a list")
 
         // When

@@ -26,7 +26,7 @@ class RejectedListBoundsTest {
     private val logger = RecordingOfflineLogger()
     private val store =
         newTestOfflineStore(objectDao = objectDao).also { store ->
-            store.sdkLogger = logger.asSdkLogger()
+            store.engineLogger = logger.asEngineLogger()
         }
 
     @Test

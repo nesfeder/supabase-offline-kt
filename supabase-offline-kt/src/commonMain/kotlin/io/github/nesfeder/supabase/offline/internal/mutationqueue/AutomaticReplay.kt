@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -33,14 +33,14 @@ import kotlinx.coroutines.launch
  * of it, and only those passes send it. So the switch goes at each trigger, not in this class.
  *
  * @property scope Hosts the worker; cancelling it stops the trigger.
- * @property sdkLogger Where a pass that throws is logged.
+ * @property engineLogger Where a pass that throws is logged.
  * @property initialBackoff The wait after the first failed pass.
  * @property maxBackoff The longest wait.
  * @property pass Runs one replay pass.
  */
-internal class BackgroundSyncTrigger(
+internal class AutomaticReplay(
     private val scope: CoroutineScope,
-    private val sdkLogger: SdkLogger,
+    private val engineLogger: EngineLogger,
     private val initialBackoff: Duration = 1.seconds,
     private val maxBackoff: Duration = 60.seconds,
     private val pass: suspend () -> SyncReport,
@@ -66,7 +66,7 @@ internal class BackgroundSyncTrigger(
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Background mutation replay failed: ${failure::class.simpleName}"
                     }
                     null

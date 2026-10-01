@@ -216,7 +216,7 @@ class MutationQueueIdempotentReplayTest {
             MutationQueueReplayer(
                 store = store,
                 supabase = server.supabaseClient(),
-                sdkLogger = logger.asSdkLogger(),
+                engineLogger = logger.asEngineLogger(),
             )
 
         // When

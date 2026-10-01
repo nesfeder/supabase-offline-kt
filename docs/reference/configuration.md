@@ -107,7 +107,7 @@ fun interface OfflineLogger {
 }
 ```
 
-The internal `SdkLogger` gates on `minLogLevel` and uses lazy message construction so filtered-out
+The internal `EngineLogger` gates on `minLogLevel` and uses lazy message construction so filtered-out
 levels skip the string-building work entirely.
 
 ### `minLogLevel`
@@ -190,5 +190,5 @@ should not be emitted in shipped builds.
 
 ### Disabling logging
 
-Leave `logger` as `null` (the default). No `OfflineLogger` is ever called and the `SdkLogger`
+Leave `logger` as `null` (the default). No `OfflineLogger` is ever called and the `EngineLogger`
 short-circuits before constructing any message string.

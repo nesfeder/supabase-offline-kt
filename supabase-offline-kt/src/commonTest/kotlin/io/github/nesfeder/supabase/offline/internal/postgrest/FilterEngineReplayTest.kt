@@ -24,7 +24,7 @@ import kotlinx.serialization.json.put
  * `cs.{a,b}`), the strict capture stores the value with its wrapper intact, and replay must strip
  * that wrapper before splitting — otherwise the replayed filter targets corrupted values like
  * `"(a"` / `"c)"`. Each test drives the same pipeline the offline mutation queue uses: capture
- * ([buildDescriptorStrict]) → [FilterEngine.encode] → [FilterEngine.decodeOrNull] →
+ * ([captureFilterExactly]) → [FilterEngine.encode] → [FilterEngine.decodeOrNull] →
  * [FilterEngine.applyTo], asserting the replayed request carries the caller's original param.
  * Overlay parity is asserted via [rowMatch]: a row the overlay treats as matched is one replay
  * reaches.
@@ -67,7 +67,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { isIn("status", listOf("active", "pending", "archived")) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When the descriptor is persisted, restored, and replayed
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -84,7 +84,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { isIn("id", listOf("row-1")) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -99,7 +99,7 @@ class FilterEngineReplayTest {
         // Given a captured isIn filter
         val descriptor =
             assertNotNull(
-                buildDescriptorStrictFromRequest(schema, conversion) {
+                captureFilterExactly(schema, conversion) {
                     filter { isIn("status", listOf("active", "pending")) }
                 }
             )
@@ -125,7 +125,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { sl("distance", 1 to 10) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -142,7 +142,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { cs("tags", listOf("tag1", "tag2")) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -160,7 +160,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { isIn("region", listOf("north,south", "east")) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -179,7 +179,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { isIn("key", listOf("plain", "has.dot", "has:colon", "has(paren)")) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -197,7 +197,7 @@ class FilterEngineReplayTest {
         // Given a captured isIn filter whose first element contains a comma
         val descriptor =
             assertNotNull(
-                buildDescriptorStrictFromRequest(schema, conversion) {
+                captureFilterExactly(schema, conversion) {
                     filter { isIn("status", listOf("on,hold", "active")) }
                 }
             )
@@ -221,7 +221,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { filter("span", FilterOperator.CS, 1 to 5) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -240,7 +240,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { filter("window", FilterOperator.OV, "lo" to "hi") }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -257,7 +257,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { ov("tags", listOf("p", "q")) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -276,7 +276,7 @@ class FilterEngineReplayTest {
                 filter { cs("tags", listOf("""a\b""")) }
             }
         assertEquals(listOf("""cs.{a\b}"""), original.params["tags"])
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -295,7 +295,7 @@ class FilterEngineReplayTest {
                 filter { cs("tags", listOf("""a"b""")) }
             }
         assertEquals(listOf("""cs.{a"b}"""), original.params["tags"])
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -313,7 +313,7 @@ class FilterEngineReplayTest {
                 filter { ov("tags", listOf("""a\"b""")) }
             }
         assertEquals(listOf("""ov.{a\"b}"""), original.params["tags"])
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -332,7 +332,7 @@ class FilterEngineReplayTest {
                 filter { sl("window", """a"b""" to "z") }
             }
         assertEquals(listOf("""sl.(a"b,z)"""), original.params["window"])
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -351,7 +351,7 @@ class FilterEngineReplayTest {
                 filter { sl("window", """a\b""" to "z") }
             }
         assertEquals(listOf("""sl.(a\b,z)"""), original.params["window"])
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -369,7 +369,7 @@ class FilterEngineReplayTest {
                 filter { filter("span", FilterOperator.CS, """a\b""" to "z") }
             }
         assertEquals(listOf("""cs.[a\b,z]"""), original.params["span"])
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -411,7 +411,7 @@ class FilterEngineReplayTest {
         // Given the captured match-nothing filter, encoded as in.()
         val descriptor =
             assertNotNull(
-                buildDescriptorStrictFromRequest(schema, conversion) {
+                captureFilterExactly(schema, conversion) {
                     filter { isIn("status", emptyList()) }
                 }
             )
@@ -431,7 +431,7 @@ class FilterEngineReplayTest {
             SelectRequestBuilder(schema, conversion).apply {
                 filter { isIn("status", emptyList<String>()) }
             }
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -485,7 +485,7 @@ class FilterEngineReplayTest {
                 filter { sl("window", "a,b" to "c") }
             }
         assertEquals(listOf("sl.(a,b,c)"), original.params["window"])
-        val descriptor = assertNotNull(buildDescriptorStrict(original))
+        val descriptor = assertNotNull(captureFilterExactly(original))
 
         // When
         val replayed = replayParams(storeAndRestore(descriptor))
@@ -536,47 +536,47 @@ class FilterEngineReplayTest {
         val replayable =
             listOf(
                 "eq" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { eq("user_id", "u1") }
                     },
                 "in multi" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { isIn("status", listOf("a", "b", "c")) }
                     },
                 "in empty" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { isIn("status", emptyList<String>()) }
                     },
                 "in embedded comma" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { isIn("status", listOf("a,b", "c")) }
                     },
                 "cs list" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { cs("tags", listOf("a", "b")) }
                     },
                 "cs range" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { filter("span", FilterOperator.CS, "a" to "z") }
                     },
                 "ov list" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { ov("tags", listOf("a", "b")) }
                     },
                 "sl range" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { sl("window", "a" to "z") }
                     },
                 "adj range" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { adjacent("window", "a" to "z") }
                     },
                 "is null" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { exact("deleted_at", null) }
                     },
                 "ilike" to
-                    buildDescriptorStrictFromRequest(schema, conversion) {
+                    captureFilterExactly(schema, conversion) {
                         filter { ilike("name", "%foo%") }
                     },
             )

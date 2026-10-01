@@ -24,7 +24,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * its wait budget from this: the two ladders are deliberately the same shape, and deriving one from
  * the other keeps them from drifting apart if this is retuned.
  */
-internal const val FAST_LADDER_ATTEMPTS: Int = 4
+internal const val FAST_RETRY_COUNT: Int = 4
 
 /**
  * Backoff sleep applied after the [failures]-th consecutive failed refresh attempt.
@@ -62,16 +62,16 @@ internal fun defaultRefreshBackoffMillis(failures: Int): Long =
  *
  * ### Self-healing refresh
  * The refresh retries for the **life of the subscription**: the fast ladder for the first
- * [FAST_LADDER_ATTEMPTS] attempts (300/900/2400ms between them), then capped exponential backoff
- * (5s, 15s, 60s, 60s, …). The first success ends the loop permanently — a broken network never
- * tears down the flow, and cached emissions keep flowing in parallel regardless. This replaces the
- * old give-up-after-a-fixed-budget behavior that pinned first-run subscriptions on empty caches
- * until process restart.
+ * [FAST_RETRY_COUNT] attempts (300/900/2400ms between them), then capped exponential backoff (5s,
+ * 15s, 60s, 60s, …). The first success ends the loop permanently — a broken network never tears
+ * down the flow, and cached emissions keep flowing in parallel regardless. This replaces the old
+ * give-up-after-a-fixed-budget behavior that pinned first-run subscriptions on empty caches until
+ * process restart.
  *
  * ### Recovery accelerator
  * [accelerator] is an optional edge-triggered wake-up (auth restored / connectivity regained, built
- * by [buildRefreshAccelerator]). An edge that lands while the loop is sleeping cancels the current
- * backoff delay and retries immediately. Edges are conflated, so a burst buys exactly one immediate
+ * by [refreshWakeUps]). An edge that lands while the loop is sleeping cancels the current backoff
+ * delay and retries immediately. Edges are conflated, so a burst buys exactly one immediate
  * attempt, and — being strict transitions — a persistently-failing refresh can never hot-loop. The
  * accelerator is a hint only: with an empty [accelerator] the loop still recovers on its capped
  * schedule.
@@ -116,14 +116,14 @@ internal fun <T> cacheFirstWithParallelRefresh(
     }
     // In parallel, refresh the cache with self-healing backoff, and again on each later request.
     launch {
-        runSelfHealingRefresh(
+        refreshUntilSuccess(
             refresh = refresh,
             accelerator = accelerator,
             onRefreshState = onRefreshState,
             backoffMillis = backoffMillis,
         )
         refreshRequests.conflate().collect {
-            runSelfHealingRefresh(
+            refreshUntilSuccess(
                 refresh = refresh,
                 accelerator = accelerator,
                 onRefreshState = onRefreshState,
@@ -144,7 +144,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
  *   [RefreshState.Idle]).
  * @param backoffMillis Backoff schedule keyed by consecutive-failure count.
  */
-internal suspend fun runSelfHealingRefresh(
+internal suspend fun refreshUntilSuccess(
     refresh: suspend () -> Unit,
     accelerator: Flow<Unit>,
     onRefreshState: (RefreshState) -> Unit,
@@ -177,7 +177,7 @@ internal suspend fun runSelfHealingRefresh(
             }
 
             failures++
-            if (failures == FAST_LADDER_ATTEMPTS) {
+            if (failures == FAST_RETRY_COUNT) {
                 // The fast ladder exhausted: report the stall exactly once, then keep retrying on
                 // the capped schedule (state stays Stalled until a success flips it to Idle).
                 onRefreshState(RefreshState.Stalled(failure))

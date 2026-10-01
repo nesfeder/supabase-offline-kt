@@ -53,7 +53,7 @@ internal fun interface DryRunProbe {
 
 /**
  * The [DryRunProbe] over supabase-kt's HTTP pipeline. supabase-kt records `dryRun()` nowhere but
- * the `Prefer` header, as `tx=rollback`, so the write runs under a [PreferHeaderProbe], and the
+ * the `Prefer` header, as `tx=rollback`, so the write runs under a [PreferHeaderCapture], and the
  * phase that [installDryRunCheck] puts ahead of every plugin reads that header and stops the
  * request.
  *
@@ -69,20 +69,20 @@ internal class PreferHeaderDryRunProbe(
 ) : DryRunProbe {
 
     override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict {
-        if (!supabase.hasPreferHeaderProbe()) return DryRunVerdict.Unavailable
-        val probe = PreferHeaderProbe(stopsEveryRequest)
+        if (!supabase.hasDryRunCheck()) return DryRunVerdict.Unavailable
+        val capture = PreferHeaderCapture(stopsEveryRequest)
         val result =
             try {
-                withContext(probe) { write() }
+                withContext(capture) { write() }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                if (!probe.observed) return DryRunVerdict.NotBuilt(failure)
+                if (!capture.observed) return DryRunVerdict.NotBuilt(failure)
                 null
             }
         return when {
             result != null -> DryRunVerdict.Sent(result)
-            probe.requestedRollback -> DryRunVerdict.DryRun
+            capture.requestedRollback -> DryRunVerdict.DryRun
             else -> DryRunVerdict.NotDryRun
         }
     }
@@ -95,27 +95,27 @@ internal class PreferHeaderDryRunProbe(
  * @property stopsEveryRequest whether the phase stops every request sent from its coroutine, a
  *   write or not.
  */
-internal class PreferHeaderProbe(val stopsEveryRequest: Boolean = false) :
+internal class PreferHeaderCapture(val stopsEveryRequest: Boolean = false) :
     AbstractCoroutineContextElement(Key) {
 
-    /** The key a probe is found under in a coroutine context. */
-    companion object Key : CoroutineContext.Key<PreferHeaderProbe>
+    /** The key a capture is found under in a coroutine context. */
+    companion object Key : CoroutineContext.Key<PreferHeaderCapture>
 
-    /** The `Prefer` header of the request the probe saw, or `null` while it has seen none. */
+    /** The `Prefer` header of the request the capture saw, or `null` while it has seen none. */
     var prefer: String? = null
         private set
 
-    /** How many PostgREST write requests the probe saw. */
+    /** How many PostgREST write requests the capture saw. */
     var observations: Int = 0
         private set
 
-    /** Whether the probe saw a PostgREST write request. */
+    /** Whether the capture saw a PostgREST write request. */
     val observed: Boolean
         get() = observations > 0
 
-    /** Whether the request the probe saw asked PostgREST to roll its transaction back. */
+    /** Whether the request the capture saw asked PostgREST to roll its transaction back. */
     val requestedRollback: Boolean
-        get() = requestsRollback(prefer)
+        get() = namesRollback(prefer)
 
     /** Records the `Prefer` header of a request, or `null` when it carried none. */
     fun record(preferHeader: String?) {
@@ -125,7 +125,7 @@ internal class PreferHeaderProbe(val stopsEveryRequest: Boolean = false) :
 }
 
 /** Whether a `Prefer` or `Preference-Applied` header value carries `tx=rollback`. */
-internal fun requestsRollback(header: String?): Boolean =
+internal fun namesRollback(header: String?): Boolean =
     header.orEmpty().split(',').any { preference -> preference.trim() == TX_ROLLBACK_PREFERENCE }
 
 /**
@@ -133,7 +133,7 @@ internal fun requestsRollback(header: String?): Boolean =
  * header says `tx=rollback`, which PostgREST sends only when it honored the preference.
  */
 internal val PostgrestResult.wasRolledBack: Boolean
-    get() = requestsRollback(headers[PREFERENCE_APPLIED_HEADER])
+    get() = namesRollback(headers[PREFERENCE_APPLIED_HEADER])
 
 /** The preference supabase-kt's `dryRun()` writes into the `Prefer` header. */
 private const val TX_ROLLBACK_PREFERENCE = "tx=rollback"
@@ -148,15 +148,15 @@ private class DryRunCheckStop : Exception("Request stopped by the offline engine
 private val DryRunCheckPhase = PipelinePhase("SupabaseOfflineDryRunCheck")
 
 /** Set on a client's HTTP client once the dry-run check is installed. */
-private val PreferProbeInstallation =
+private val DryRunCheckInstallation =
     AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.PreferHeaderProbe")
 
 /**
  * Installs the dry-run check on this client's request pipeline, in a phase ahead of every other,
  * once however many threads call it. A flag in the client's attributes, claimed by compare-and-set,
- * admits one installer. The check acts only on a PostgREST write sent under a [PreferHeaderProbe];
- * no plugin sees the request it stops, but an `HttpRequestCreated` monitor subscriber does, since
- * that event fires before the pipeline runs.
+ * admits one installer. The check acts only on a PostgREST write sent under a
+ * [PreferHeaderCapture]; no plugin sees the request it stops, but an `HttpRequestCreated` monitor
+ * subscriber does, since that event fires before the pipeline runs.
  *
  * @return `true` when this call installed it.
  */
@@ -166,22 +166,22 @@ internal fun SupabaseClient.installDryRunCheck(): Boolean {
     // computeIfAbsent may run its block more than once under a race, but every caller gets the one
     // instance that was stored; the compare-and-set on it is what admits a single installer.
     val installation =
-        client.attributes.computeIfAbsent(PreferProbeInstallation) { AtomicBoolean(false) }
+        client.attributes.computeIfAbsent(DryRunCheckInstallation) { AtomicBoolean(false) }
     if (!installation.compareAndSet(expectedValue = false, newValue = true)) return false
     client.requestPipeline.insertPhaseBefore(HttpRequestPipeline.Before, DryRunCheckPhase)
     client.requestPipeline.intercept(DryRunCheckPhase) {
-        val probe = currentCoroutineContext()[PreferHeaderProbe] ?: return@intercept
+        val capture = currentCoroutineContext()[PreferHeaderCapture] ?: return@intercept
         val write = isPostgrestWrite(context)
-        if (write) probe.record(context.headers[PostgrestQueryBuilder.HEADER_PREFER])
-        if (write || probe.stopsEveryRequest) throw DryRunCheckStop()
+        if (write) capture.record(context.headers[PostgrestQueryBuilder.HEADER_PREFER])
+        if (write || capture.stopsEveryRequest) throw DryRunCheckStop()
     }
     return true
 }
 
 /** Whether the dry-run check is on this client's pipeline. */
 @OptIn(SupabaseInternal::class)
-private fun SupabaseClient.hasPreferHeaderProbe(): Boolean =
-    httpClient.httpClient.attributes.getOrNull(PreferProbeInstallation)?.load() == true
+private fun SupabaseClient.hasDryRunCheck(): Boolean =
+    httpClient.httpClient.attributes.getOrNull(DryRunCheckInstallation)?.load() == true
 
 /** Whether [request] is a write to this client's PostgREST: not a read, and under its URL. */
 private fun SupabaseClient.isPostgrestWrite(request: HttpRequestBuilder): Boolean {

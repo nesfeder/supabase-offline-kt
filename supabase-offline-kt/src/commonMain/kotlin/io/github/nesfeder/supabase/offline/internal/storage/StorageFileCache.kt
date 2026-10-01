@@ -7,7 +7,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.StorageRow
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
 import kotlin.concurrent.atomics.AtomicLong
@@ -128,7 +128,7 @@ internal class StorageFileCache(
     private val store: OfflineStore,
     private val dataDirectoryProvider: () -> Path,
     private val maxSizeBytes: Long?,
-    private val sdkLogger: SdkLogger,
+    private val engineLogger: EngineLogger,
     private val fileSystem: FileSystem = FileSystem.SYSTEM,
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val markUsed: (Path, Long) -> Unit = ::markFileUsed,
@@ -190,7 +190,7 @@ internal class StorageFileCache(
                 fileSystem.createDirectories(directory)
                 excludeFromBackup(directory)
             } catch (failure: IOException) {
-                sdkLogger.debug { "Storage cache could not prepare its directories: $failure" }
+                engineLogger.debug { "Storage cache could not prepare its directories: $failure" }
             }
         }
     }
@@ -294,7 +294,7 @@ internal class StorageFileCache(
                 try {
                     fileSystem.read(cached.path.toPath()) { readByteArray() }
                 } catch (failure: IOException) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache could not read a cached file (${failure::class.simpleName})"
                     }
                     null
@@ -362,7 +362,7 @@ internal class StorageFileCache(
             try {
                 fileSystem.createDirectories(dataDirectory)
                 if (!resolvesInsideDataDirectory(directory)) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache refused a directory that resolves outside the cache; not caching"
                     }
                     return@withLock null
@@ -375,7 +375,7 @@ internal class StorageFileCache(
                 )
             } catch (failure: IOException) {
                 deleteQuietly(temporary)
-                sdkLogger.warning {
+                engineLogger.warning {
                     "Storage cache could not create a file (${failure::class.simpleName}); not caching"
                 }
                 null
@@ -395,7 +395,7 @@ internal class StorageFileCache(
         } catch (failure: Throwable) {
             discard(temporary)
             if (failure !is IOException) throw failure
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not write a download (${failure::class.simpleName}); not caching"
             }
             return
@@ -418,7 +418,7 @@ internal class StorageFileCache(
                 try {
                     temporary.sink.close()
                 } catch (failure: IOException) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache could not finish a file (${failure::class.simpleName}); not caching"
                     }
                     return@withLock CommitOutcome.FAILED
@@ -427,14 +427,14 @@ internal class StorageFileCache(
                     generation.load() != startedInGeneration ||
                         !store.cacheTakesWritesOfCurrentIdentity()
                 ) {
-                    sdkLogger.info {
+                    engineLogger.info {
                         "Storage download from ${entry.bucketId} finished after local data was cleared; not caching"
                     }
                     return@withLock CommitOutcome.CLEARED
                 }
                 val directory = entry.file.parent
                 if (directory == null || !resolvesInsideDataDirectory(directory)) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache refused a directory that resolves outside the cache; not caching"
                     }
                     return@withLock CommitOutcome.FAILED
@@ -452,7 +452,7 @@ internal class StorageFileCache(
                             )
                         }
                     } catch (failure: Exception) {
-                        sdkLogger.warning {
+                        engineLogger.warning {
                             "Storage cache could not record a download (${failure::class.simpleName}); not caching"
                         }
                         return@withLock CommitOutcome.FAILED
@@ -461,7 +461,7 @@ internal class StorageFileCache(
                 try {
                     fileSystem.atomicMove(temporary.path, entry.file)
                 } catch (failure: IOException) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache could not store a file (${failure::class.simpleName}); not caching"
                     }
                     // The row describes bytes that never arrived: put back the one it replaced.
@@ -472,7 +472,7 @@ internal class StorageFileCache(
                 try {
                     evictOverLimit(protectedKey = entry.key)
                 } catch (failure: Exception) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Storage cache could not enforce its size bound (${failure::class.simpleName})"
                     }
                 }
@@ -623,7 +623,7 @@ internal class StorageFileCache(
             else store.deleteStorageRow(entry.key)
             trackedBytes = trackedBytes?.plus((replaced?.sizeBytes ?: 0L) - (recordedSize ?: 0L))
         } catch (failure: Exception) {
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not undo a failed download's row (${failure::class.simpleName})"
             }
         }
@@ -679,7 +679,7 @@ internal class StorageFileCache(
             )
             trackedBytes = trackedBytes?.plus(size)
         } catch (failure: Exception) {
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not move a cached file (${failure::class.simpleName})"
             }
             return
@@ -687,7 +687,7 @@ internal class StorageFileCache(
         try {
             fileSystem.atomicMove(source.file, destination.file)
         } catch (failure: IOException) {
-            sdkLogger.warning {
+            engineLogger.warning {
                 "Storage cache could not move a cached file (${failure::class.simpleName})"
             }
             restoreRowLocked(destination, replaced = null, recordedSize = size)
@@ -730,7 +730,7 @@ internal class StorageFileCache(
             if (remaining > lowWater && oldestRecentUse != null)
                 oldestRecentUse + RECENT_USE_GRACE_MILLIS
             else Long.MIN_VALUE
-        sdkLogger.debug { "Storage cache evicted $evicted file(s) to stay within $limit bytes" }
+        engineLogger.debug { "Storage cache evicted $evicted file(s) to stay within $limit bytes" }
     }
 
     /** When [row]'s file was last used, or the earliest time there is when it has no file. */
@@ -774,7 +774,7 @@ internal class StorageFileCache(
                         .filterNot { file -> belongsToACachedEntry(file) }
                         .forEach(::deleteQuietly)
                 } catch (failure: IOException) {
-                    sdkLogger.debug { "Storage cache could not sweep temporary files: $failure" }
+                    engineLogger.debug { "Storage cache could not sweep temporary files: $failure" }
                 }
             }
     }
@@ -827,7 +827,7 @@ internal class StorageFileCache(
     private fun deleteContained(file: Path) {
         val directory = file.parent ?: return
         if (!resolvesInsideDataDirectory(directory)) {
-            sdkLogger.debug {
+            engineLogger.debug {
                 "Storage cache left a file whose directory resolves outside the cache"
             }
             return
@@ -839,7 +839,7 @@ internal class StorageFileCache(
         try {
             fileSystem.delete(path, mustExist = false)
         } catch (failure: IOException) {
-            sdkLogger.debug { "Storage cache could not delete a file: $failure" }
+            engineLogger.debug { "Storage cache could not delete a file: $failure" }
         }
     }
 }

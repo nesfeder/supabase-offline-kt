@@ -22,11 +22,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * [preferResponseForCacheOverlay]: a write that asked for its rows back patches the cache with the
- * server's rows. Columns the server assigns, such as `id`, then reach live readers at once; without
- * usable rows in the response, the request body patches it.
+ * [rowsForCachePatch]: a write that asked for its rows back patches the cache with the server's
+ * rows. Columns the server assigns, such as `id`, then reach live readers at once; without usable
+ * rows in the response, the request body patches it.
  */
-class PreferResponseForCacheOverlayTest {
+class RowsForCachePatchTest {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -44,7 +44,7 @@ class PreferResponseForCacheOverlayTest {
         val serverResponse = """[{"id":"server-assigned","user_id":"u-1","external_id":42}]"""
 
         // When
-        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+        val chosen = rowsForCachePatch(requestBody, serverResponse, json)
 
         // Then
         assertEquals(serverResponse, chosen)
@@ -60,7 +60,7 @@ class PreferResponseForCacheOverlayTest {
         val serverResponse = """[{"id":1},{"id":2}]"""
 
         // When
-        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+        val chosen = rowsForCachePatch(requestBody, serverResponse, json)
 
         // Then — each returned row, with the columns written in its place
         assertEquals("""[{"id":1,"title":"a"},{"id":2,"title":"b"}]""", chosen)
@@ -86,7 +86,7 @@ class PreferResponseForCacheOverlayTest {
         val serverResponse = """[{"id":2,"updated_at":"t1"}]"""
 
         // When
-        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+        val chosen = rowsForCachePatch(requestBody, serverResponse, json)
 
         // Then
         assertEquals("""[{"id":2,"updated_at":"t1","title":"b"}]""", chosen)
@@ -112,7 +112,7 @@ class PreferResponseForCacheOverlayTest {
         val serverResponse = """[{"id":2},{"id":1}]"""
 
         // When
-        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+        val chosen = rowsForCachePatch(requestBody, serverResponse, json)
 
         // Then — each keeps its own title
         assertEquals("""[{"id":2,"title":"b"},{"id":1,"title":"a"}]""", chosen)
@@ -125,7 +125,7 @@ class PreferResponseForCacheOverlayTest {
         val serverResponse = """{"id":"server-assigned","user_id":"u-1"}"""
 
         // When
-        val chosen = preferResponseForCacheOverlay(requestBody, serverResponse, json)
+        val chosen = rowsForCachePatch(requestBody, serverResponse, json)
 
         // Then
         assertEquals("""[$serverResponse]""", chosen)
@@ -146,7 +146,7 @@ class PreferResponseForCacheOverlayTest {
         val emptyResponse = "[]"
 
         // When
-        val chosen = preferResponseForCacheOverlay(requestBody, emptyResponse, json)
+        val chosen = rowsForCachePatch(requestBody, emptyResponse, json)
 
         // Then
         assertEquals(requestBody.toString(), chosen)
@@ -161,7 +161,7 @@ class PreferResponseForCacheOverlayTest {
         val garbageResponse = "not json at all"
 
         // When
-        val chosen = preferResponseForCacheOverlay(requestBody, garbageResponse, json)
+        val chosen = rowsForCachePatch(requestBody, garbageResponse, json)
 
         // Then
         assertEquals(requestBody.toString(), chosen)
@@ -194,7 +194,7 @@ class PreferResponseForCacheOverlayTest {
         store.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.UPSERT,
-            bodyJson = preferResponseForCacheOverlay(requestBody, serverResponse, json),
+            bodyJson = rowsForCachePatch(requestBody, serverResponse, json),
             filterJson = null,
             onConflict = "user_id,external_id",
             liveSignatures = setOf(signature),
@@ -218,5 +218,5 @@ private data class NoteDtoForTest(
     @SerialName("notes") val notes: String? = null,
 )
 
-private fun PreferResponseForCacheOverlayTest.buildStore(objectDao: FakeObjectDao): OfflineStore =
+private fun RowsForCachePatchTest.buildStore(objectDao: FakeObjectDao): OfflineStore =
     newTestOfflineStore(objectDao = objectDao)

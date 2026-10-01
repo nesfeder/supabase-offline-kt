@@ -31,7 +31,7 @@ class MutationQueueReplayerLoggingTest {
         MutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
-            sdkLogger = logger.asSdkLogger(),
+            engineLogger = logger.asEngineLogger(),
         )
 
     private fun messagesAt(level: OfflineLogLevel): List<String> =
@@ -119,7 +119,7 @@ class MutationQueueReplayerLoggingTest {
                 MutationQueueReplayer(
                     store = storeWithCorruptRow,
                     supabase = server.supabaseClient(),
-                    sdkLogger = logger.asSdkLogger(),
+                    engineLogger = logger.asEngineLogger(),
                 )
 
             // When

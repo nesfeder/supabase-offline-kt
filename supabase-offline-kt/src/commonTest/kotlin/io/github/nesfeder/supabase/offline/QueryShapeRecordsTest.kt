@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_SIGNATURE_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
@@ -54,9 +54,9 @@ class QueryShapeRecordsTest {
     private lateinit var store: OfflineStore
 
     /** A client over the same database, as each launch of the app builds one. */
-    private fun launch(settings: OfflineCacheSettings? = null): SupabaseOfflineClient {
+    private fun launch(queryCacheLimits: QueryCacheLimits? = null): SupabaseOfflineClient {
         store =
-            if (settings == null) {
+            if (queryCacheLimits == null) {
                 newTestOfflineStore(
                     objectDao = objectDao,
                     mutationDao = mutationDao,
@@ -66,7 +66,7 @@ class QueryShapeRecordsTest {
                 newTestOfflineStore(
                     objectDao = objectDao,
                     mutationDao = mutationDao,
-                    settings = settings,
+                    queryCacheLimits = queryCacheLimits,
                     nowMillis = { ++clock },
                 )
             }
@@ -161,10 +161,10 @@ class QueryShapeRecordsTest {
         // Given — a cache with room for one list, and two lists read into it
         val client =
             launch(
-                OfflineCacheSettings(
-                    maxDbSizeBytes = 70,
+                QueryCacheLimits(
+                    maxPayloadBytes = 70,
                     evictionBatchSize = 1,
-                    minRetainedBytes = 0,
+                    drainHeadroomBytes = 0,
                 )
             )
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = list("A"))

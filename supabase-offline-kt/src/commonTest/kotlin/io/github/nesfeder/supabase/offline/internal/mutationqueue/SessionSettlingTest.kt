@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
  * practice: the queue is non-empty precisely because the device was offline, which is also what
  * leaves the token expired and the refresh unlanded on the reconnect edge.
  */
-class AuthSessionSettlingTest {
+class SessionSettlingTest {
 
     @Test
     fun authenticated_is_replay_safe() {

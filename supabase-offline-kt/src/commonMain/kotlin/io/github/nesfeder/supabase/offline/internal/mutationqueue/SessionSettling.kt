@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * How long [awaitReplaySafeSession] waits for the user JWT to become available before giving up.
+ * How long [awaitSettledSession] waits for the user JWT to become available before giving up.
  * Cold-start restore normally completes well under a second, and a post-reconnect token refresh
  * within a few; the bound only exists so a misbehaving auth layer cannot suspend a sync trigger
  * forever. A caller that awaits its own session-settle bound before triggering a sync composes with
@@ -52,7 +52,7 @@ internal fun isReplaySafeSessionStatus(status: SessionStatus): Boolean =
  *   and keep the queue intact for a later trigger. An SDK without the Auth plugin installed has no
  *   session model at all, so the probe failure is treated as settled (fail-open).
  */
-internal suspend fun SupabaseClient.awaitReplaySafeSession(
+internal suspend fun SupabaseClient.awaitSettledSession(
     timeout: Duration = AUTH_SESSION_SETTLE_TIMEOUT
 ): Boolean =
     try {

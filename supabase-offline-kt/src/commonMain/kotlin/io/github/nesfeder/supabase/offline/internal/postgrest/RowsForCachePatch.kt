@@ -19,7 +19,7 @@ import kotlinx.serialization.json.JsonObject
  * key the server assigns does not. The server's values win: they include what it assigned, such as
  * an `id` or `created_at`.
  */
-internal fun preferResponseForCacheOverlay(
+internal fun rowsForCachePatch(
     requestBody: JsonArray,
     responseData: String,
     json: Json,

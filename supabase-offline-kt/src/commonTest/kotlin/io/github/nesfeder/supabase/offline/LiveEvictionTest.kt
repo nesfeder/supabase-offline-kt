@@ -5,7 +5,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -63,12 +63,12 @@ class LiveEvictionTest {
                         newTestOfflineStore(
                             objectDao = objectDao,
                             // The large list and list A fit together; one more list does not
-                            settings =
-                                OfflineCacheSettings(
-                                    maxDbSizeBytes =
+                            queryCacheLimits =
+                                QueryCacheLimits(
+                                    maxPayloadBytes =
                                         (LARGE_LIST.length + LIST_A.length + 1).toLong(),
                                     evictionBatchSize = 1,
-                                    minRetainedBytes = 0,
+                                    drainHeadroomBytes = 0,
                                 ),
                             nowMillis = { clock },
                         ),

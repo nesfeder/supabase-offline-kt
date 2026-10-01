@@ -212,7 +212,7 @@ class ReplayTokenBindingTest {
             MutationQueueReplayer(
                 store = store,
                 supabase = supabase,
-                sdkLogger = logger.asSdkLogger(),
+                engineLogger = logger.asEngineLogger(),
             )
 
         // When — three passes

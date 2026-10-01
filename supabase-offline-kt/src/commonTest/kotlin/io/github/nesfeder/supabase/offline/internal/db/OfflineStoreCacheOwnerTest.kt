@@ -102,7 +102,7 @@ class OfflineStoreCacheOwnerTest {
                 }
 
             // Then — the response is refused; the write still queues, for A
-            assertEquals(AddPayloadOutcome.DROPPED_OTHER_OWNER, outcome)
+            assertEquals(CacheWriteOutcome.REFUSED_OTHER_OWNER, outcome)
             assertTrue(store.wasClearedSince(startedAtTick))
             assertTrue(enqueued is EnqueueOutcome.Queued, "$enqueued")
             assertEquals(emptyList(), objectDao.rowsOf(TABLE))
@@ -121,7 +121,7 @@ class OfflineStoreCacheOwnerTest {
 
         // Then — neither, and the client was told
         assertNull(read)
-        assertEquals(AddPayloadOutcome.DROPPED_OTHER_OWNER, written)
+        assertEquals(CacheWriteOutcome.REFUSED_OTHER_OWNER, written)
         assertEquals(ROWS, objectDao.getRow(TABLE, SIGNATURE)?.payload)
         assertTrue(notServed >= 2, "$notServed")
     }
@@ -158,7 +158,7 @@ class OfflineStoreCacheOwnerTest {
 
         // Then — it may be a user's; the settled session drops it first
         assertNull(read)
-        assertEquals(AddPayloadOutcome.DROPPED_OTHER_OWNER, written)
+        assertEquals(CacheWriteOutcome.REFUSED_OTHER_OWNER, written)
         assertNull(recordedOwner())
     }
 
@@ -171,7 +171,7 @@ class OfflineStoreCacheOwnerTest {
         val written = store.addPayload(TABLE, SIGNATURE, ROWS)
 
         // Then — claimed, and written: no earlier user's rows are there to protect
-        assertEquals(AddPayloadOutcome.WRITTEN, written)
+        assertEquals(CacheWriteOutcome.WRITTEN, written)
         assertEquals(ownerRecordOf(QueueIdentity.Anonymous.storedValue), recordedOwner())
         assertEquals(0, notServed)
     }
@@ -250,7 +250,7 @@ class OfflineStoreCacheOwnerTest {
 
             // When / Then — served whoever owns it, never dropped
             assertEquals(ROWS, store.getPayload(TABLE, SIGNATURE))
-            assertEquals(AddPayloadOutcome.WRITTEN, store.addPayload(TABLE, SIGNATURE, OTHER_ROWS))
+            assertEquals(CacheWriteOutcome.WRITTEN, store.addPayload(TABLE, SIGNATURE, OTHER_ROWS))
             assertNotNull(objectDao.getRow(TABLE, SIGNATURE))
             assertEquals(0, notServed)
         }

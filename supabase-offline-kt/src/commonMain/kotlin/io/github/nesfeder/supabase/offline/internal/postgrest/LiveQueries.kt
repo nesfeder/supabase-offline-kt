@@ -39,7 +39,7 @@ internal const val CLIENT_CLOSED_MESSAGE: String = "This SupabaseOfflineClient i
  *
  * @param scope hosts the shared upstreams: the client's own scope, which its close ends.
  */
-internal class RefreshCoordinator(private val scope: CoroutineScope) {
+internal class LiveQueries(private val scope: CoroutineScope) {
 
     private data class Key(val table: String, val signature: String)
 

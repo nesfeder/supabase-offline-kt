@@ -64,7 +64,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             )
 
         // Then — the response is refused and the just-saved row is still in the cache
-        assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
         val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
         assertEquals(bothProjects, row.payload)
@@ -96,7 +96,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // Then — staleness is decided before authority: the empty is refused rather than erasing
         // the row the user just saved
-        assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
         val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
         assertEquals("""[{"id":"project-2"}]""", row.payload)
@@ -124,7 +124,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             )
 
         // Then — the watermark does not stand in the way of genuinely fresh server state
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
         assertEquals(bothProjects, row.payload)
@@ -154,7 +154,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // Then — the authoritative-empty accept is untouched: the empty replaces the cached rows
         // so a delete performed on another device still converges here
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         val row = objectDao.getRow("projects", "sig-A")
         assertNotNull(row)
         assertEquals("[]", row.payload)
@@ -180,7 +180,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             )
 
         // Then — no watermark, no drop
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         assertEquals(bothProjects, objectDao.getRow("projects", "sig-A")?.payload)
     }
 
@@ -205,7 +205,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             )
 
         // Then — the empty lands, exactly as it did before the watermark existed
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         assertEquals("[]", objectDao.getRow("projects", "sig-A")?.payload)
     }
 
@@ -228,7 +228,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             )
 
         // Then — the write goes through; the guard only judges responses it can date
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         assertEquals(oneProject, objectDao.getRow("projects", "sig-A")?.payload)
     }
 
@@ -255,7 +255,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             )
 
         // Then — a write to one table never disqualifies another table's refreshes
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         assertEquals("""[{"id":"plan-2"}]""", objectDao.getRow("plans", "sig-P")?.payload)
     }
 
@@ -288,7 +288,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // Then — the replay counts as local truth too. Accepting here would rewrite the
         // pre-replay payload *and* retire the overlay in the same pass, losing the write twice
         // over; the queue-replay path writes no cache row of its own, so this is its only guard.
-        assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
     }
 
     @Test
@@ -317,7 +317,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // Then — the response is refused and the wipe holds. Writing it would undo the teardown
         // and put one account's rows in front of the next user.
-        assertEquals(AddPayloadOutcome.DROPPED_CACHE_CLEARED, outcome)
+        assertEquals(CacheWriteOutcome.REFUSED_AFTER_CLEAR, outcome)
         assertNull(objectDao.getRow("projects", "sig-A"))
     }
 
@@ -342,7 +342,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             )
 
         // Then — teardown disqualifies only what was already in flight; the cache refills
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
         assertEquals(oneProject, objectDao.getRow("projects", "sig-A")?.payload)
     }
 
@@ -367,7 +367,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
                 payload = oneProject,
                 requestStartedAtTick = requestStartedAtTick,
             )
-        assertEquals(AddPayloadOutcome.WRITTEN, outcome)
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
 
         // And — the queue drains in the gap before the resolver retires synced mutations
         tick = 20L

@@ -4,7 +4,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -720,7 +720,7 @@ class SupabaseOfflineClientCloseTest {
             val client =
                 newTestOfflineClient(
                     supabase = server.supabaseClient(),
-                    sdkLogger = SdkLogger(logger, OfflineLogLevel.INFO),
+                    engineLogger = EngineLogger(logger, OfflineLogLevel.INFO),
                     onClose = { releases.addAndFetch(1) },
                     coordinatorScope = callerScope,
                     closeWait = IDLE_CLOSE_WAIT,

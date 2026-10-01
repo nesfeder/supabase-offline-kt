@@ -37,7 +37,7 @@ import kotlinx.io.IOException
  * waits use real time rather than the test scheduler.
  */
 @OptIn(ExperimentalAtomicApi::class)
-class RefreshCoordinatorTest {
+class LiveQueriesTest {
 
     private val scopeJob = SupervisorJob()
     private val uncaught = AtomicInt(0)
@@ -56,9 +56,9 @@ class RefreshCoordinatorTest {
     @Test
     fun a_failure_in_the_shared_upstream_reaches_its_collector_and_not_the_scope() = runTest {
         // Given — the cache read under a shared refresh fails, as a malformed database does
-        val coordinator = RefreshCoordinator(scope)
+        val liveQueries = LiveQueries(scope)
         val shared =
-            coordinator.sharedReadFlow(TABLE, "todos?select=*") {
+            liveQueries.sharedReadFlow(TABLE, "todos?select=*") {
                 flow<OfflineReadResult> { throw IOException("database disk image is malformed") }
             }
 
@@ -82,8 +82,7 @@ class RefreshCoordinatorTest {
             repeat(FAILURE_ORDERINGS) { attempt ->
                 // Given — a shared read whose upstream fails right after its first value
                 val dispatcher = if (attempt % 2 == 0) oneThread else Dispatchers.Default
-                val coordinator =
-                    RefreshCoordinator(CoroutineScope(scope.coroutineContext + dispatcher))
+                val liveQueries = LiveQueries(CoroutineScope(scope.coroutineContext + dispatcher))
                 val values = mutableListOf<OfflineReadResult>()
 
                 // When
@@ -91,7 +90,7 @@ class RefreshCoordinatorTest {
                     withContext(dispatcher) {
                         withTimeout(5.seconds) {
                             runCatching {
-                                coordinator
+                                liveQueries
                                     .sharedReadFlow(TABLE, "todos?attempt=$attempt") {
                                         flow {
                                             emit(RESULT)
@@ -122,8 +121,7 @@ class RefreshCoordinatorTest {
             // Given — a shared read whose upstream sends two values and fails while its collector
             // is still busy with the first
             val dispatcher = if (attempt % 2 == 0) oneThread else Dispatchers.Default
-            val coordinator =
-                RefreshCoordinator(CoroutineScope(scope.coroutineContext + dispatcher))
+            val liveQueries = LiveQueries(CoroutineScope(scope.coroutineContext + dispatcher))
             val seen = mutableListOf<RefreshState>()
 
             // When
@@ -131,7 +129,7 @@ class RefreshCoordinatorTest {
                 withContext(dispatcher) {
                     withTimeout(5.seconds) {
                         runCatching {
-                            coordinator
+                            liveQueries
                                 .sharedReadFlow(TABLE, "todos?slow=$attempt") {
                                     flow {
                                         emit(
@@ -169,9 +167,9 @@ class RefreshCoordinatorTest {
     fun a_shared_upstream_that_gives_up_with_a_cancellation_ends_the_collection_with_it() =
         runTest {
             // Given — a shared read whose upstream gives up with a cancellation of its own
-            val coordinator = RefreshCoordinator(scope)
+            val liveQueries = LiveQueries(scope)
             val shared =
-                coordinator.sharedReadFlow(TABLE, "todos?select=*") {
+                liveQueries.sharedReadFlow(TABLE, "todos?select=*") {
                     flow<OfflineReadResult> { throw CancellationException(UPSTREAM_GAVE_UP) }
                 }
 
@@ -189,7 +187,7 @@ class RefreshCoordinatorTest {
     @Test
     fun a_later_subscriber_to_a_failed_signature_gets_a_fresh_attempt() = runTest {
         // Given — the first attempt fails, the second would succeed
-        val coordinator = RefreshCoordinator(scope)
+        val liveQueries = LiveQueries(scope)
         var attempts = 0
         val upstream = {
             flow {
@@ -202,7 +200,7 @@ class RefreshCoordinatorTest {
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) {
                 assertFailsWith<IOException> {
-                    coordinator.sharedReadFlow(TABLE, "todos?select=*", upstream).first()
+                    liveQueries.sharedReadFlow(TABLE, "todos?select=*", upstream).first()
                 }
             }
         }
@@ -211,7 +209,7 @@ class RefreshCoordinatorTest {
         val second =
             withContext(Dispatchers.Default) {
                 withTimeout(5.seconds) {
-                    coordinator.sharedReadFlow(TABLE, "todos?select=*", upstream).first()
+                    liveQueries.sharedReadFlow(TABLE, "todos?select=*", upstream).first()
                 }
             }
 
@@ -223,12 +221,12 @@ class RefreshCoordinatorTest {
     @Test
     fun a_signature_nobody_observes_leaves_nothing_running_or_retained() = runTest {
         // Given — search-as-you-type: many distinct signatures, each observed briefly
-        val coordinator = RefreshCoordinator(scope)
+        val liveQueries = LiveQueries(scope)
 
         // When
         repeat(SIGNATURES) { index ->
             val shared =
-                coordinator.sharedReadFlow(TABLE, "todos?title=ilike.*$index*") {
+                liveQueries.sharedReadFlow(TABLE, "todos?title=ilike.*$index*") {
                     flow {
                         emit(RESULT)
                         awaitCancellation()
@@ -250,7 +248,7 @@ class RefreshCoordinatorTest {
     @Test
     fun the_shared_registry_empties_under_concurrent_joins_and_leaves() = runTest {
         // Given
-        val coordinator = RefreshCoordinator(scope)
+        val liveQueries = LiveQueries(scope)
         val upstream = {
             flow {
                 emit(RESULT)
@@ -267,12 +265,12 @@ class RefreshCoordinatorTest {
                         delay(Random.nextLong(0, 5))
                         val signature = "$TABLE?sig=${index % 4}"
                         val collector = launch {
-                            coordinator.sharedReadFlow(TABLE, signature, upstream).collect {}
+                            liveQueries.sharedReadFlow(TABLE, signature, upstream).collect {}
                         }
                         delay(Random.nextLong(0, 5))
                         collector.cancelAndJoin()
                         withTimeout(5.seconds) {
-                            coordinator.sharedReadFlow(TABLE, signature, upstream).first()
+                            liveQueries.sharedReadFlow(TABLE, signature, upstream).first()
                         }
                     }
                 }

@@ -236,7 +236,7 @@ class OfflineFilterTest {
     fun buildDescriptorFromRequest_extractsSimpleEqAndIlike() {
         // Given / When
         val descriptor =
-            buildDescriptorFromRequest(SCHEMA, PropertyConversionMethod.CAMEL_CASE_TO_SNAKE_CASE) {
+            captureFilter(SCHEMA, PropertyConversionMethod.CAMEL_CASE_TO_SNAKE_CASE) {
                 filter {
                     eq("id", "1")
                     ilike("name", "%pump%")
@@ -266,7 +266,7 @@ class OfflineFilterTest {
             }
 
         // When
-        val descriptor = buildDescriptorFromBuilder(builder)
+        val descriptor = captureFilter(builder)
 
         // Then: OR expression is encoded into a single param key like "or=(...)" which is ignored
         assertNull(descriptor)
@@ -288,7 +288,7 @@ class OfflineFilterTest {
             }
 
         // When
-        val descriptor = buildDescriptorFromBuilder(builder)
+        val descriptor = captureFilter(builder)
 
         // Then
         assertNotNull(descriptor)

@@ -5,7 +5,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -213,7 +213,8 @@ class ApplyServerRecordTest {
         val logger = OfflineLogger { level, message ->
             if (level == OfflineLogLevel.WARNING) warnings += message
         }
-        val client = buildClient(objectDao, sdkLogger = SdkLogger(logger, OfflineLogLevel.DEBUG))
+        val client =
+            buildClient(objectDao, engineLogger = EngineLogger(logger, OfflineLogLevel.DEBUG))
 
         // When — the record lacks period_id
         client.applyServerRecord(
@@ -316,7 +317,8 @@ class ApplyServerRecordTest {
         val logger = OfflineLogger { level, message ->
             if (level == OfflineLogLevel.WARNING) warnings += message
         }
-        val client = buildClient(objectDao, sdkLogger = SdkLogger(logger, OfflineLogLevel.DEBUG))
+        val client =
+            buildClient(objectDao, engineLogger = EngineLogger(logger, OfflineLogLevel.DEBUG))
 
         // When — the old record lacks period_id
         client.applyServerDelete(
@@ -357,10 +359,10 @@ class ApplyServerRecordTest {
 
     private fun buildClient(
         objectDao: FakeObjectDao,
-        sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+        engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
     ): SupabaseOfflineClientImpl =
         newTestOfflineClient(
             store = newTestOfflineStore(objectDao = objectDao),
-            sdkLogger = sdkLogger,
+            engineLogger = engineLogger,
         )
 }

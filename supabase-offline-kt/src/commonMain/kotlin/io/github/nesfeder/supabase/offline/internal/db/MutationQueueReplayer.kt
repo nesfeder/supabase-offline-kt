@@ -12,14 +12,14 @@ import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.isPermanentMutationFailure
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ReplayOwner
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitReplaySafeSession
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.installReplayOwnerCheck
@@ -28,9 +28,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.applyTo
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
-import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapper
-import io.github.nesfeder.supabase.offline.internal.postgrest.PostgrestQueryBuilderWrapperImpl
+import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.SendOutcome
+import io.github.nesfeder.supabase.offline.internal.postgrest.SupabaseRemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.sendCapturingEngineFailure
 import io.ktor.client.plugins.ResponseException
 import kotlin.time.Duration.Companion.seconds
@@ -59,15 +59,15 @@ import kotlinx.serialization.json.JsonPrimitive
 internal class MutationQueueReplayer(
     private val store: OfflineStore,
     private val supabase: SupabaseClient,
-    private val sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
-    private val postgrestFactory: (schema: String, table: String) -> PostgrestQueryBuilderWrapper =
+    private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    private val postgrestFactory: (schema: String, table: String) -> RemoteTable =
         { schema, table ->
-            PostgrestQueryBuilderWrapperImpl(supabase.postgrest.from(schema, table))
+            SupabaseRemoteTable(supabase.postgrest.from(schema, table))
         },
     /**
      * Waits, bounded, for a settled session; `false` means it did not settle and nothing is sent.
      */
-    private val awaitSessionSettled: suspend () -> Boolean = { supabase.awaitReplaySafeSession() },
+    private val awaitSessionSettled: suspend () -> Boolean = { supabase.awaitSettledSession() },
     /** The identity a request sent now would go out as, or `null` while that cannot be told. */
     private val currentIdentity: suspend () -> QueueIdentity? = {
         supabase.currentReplayIdentity()
@@ -143,7 +143,7 @@ internal class MutationQueueReplayer(
         schema: String = supabase.postgrest.config.defaultSchema,
     ): SyncReport {
         if (!awaitSessionSettled()) {
-            sdkLogger.info {
+            engineLogger.info {
                 if (table == null) "Session not settled; deferring mutation replay"
                 else "Session not settled; deferring mutation replay for $table"
             }
@@ -259,7 +259,7 @@ internal class MutationQueueReplayer(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                sdkLogger.warning {
+                engineLogger.warning {
                     "Patching the cache after an accepted write failed: ${failure::class.simpleName}"
                 }
             } finally {
@@ -286,14 +286,14 @@ internal class MutationQueueReplayer(
         if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
         if (currentIdentity() == owner) {
             if (warnedOfTokenNotNamingUser.compareAndSet(expect = false, update = true)) {
-                sdkLogger.warning {
+                engineLogger.warning {
                     "The session's access token does not name the session's user; its queued " +
                         "mutations are held until the two agree"
                 }
             }
             return
         }
-        sdkLogger.info {
+        engineLogger.info {
             "The session changed before a queued mutation was sent; it stays queued for its owner"
         }
     }
@@ -355,7 +355,7 @@ internal class MutationQueueReplayer(
         if (last != null && now - last < SCHEMA_CACHE_MISS_SPACING.inWholeNanoseconds) return false
         schemaCacheMissesCountedAt[mutationId] = now
         val misses = store.recordSchemaCacheMiss(mutationId)
-        sdkLogger.warning {
+        engineLogger.warning {
             "PostgREST's schema cache does not know a table or column yet; " +
                 "miss $misses of $SCHEMA_CACHE_MISS_BOUND before the write is rejected"
         }
@@ -377,7 +377,7 @@ internal class MutationQueueReplayer(
         try {
             store.completeSentMutation(mutationId)
         } catch (failure: Exception) {
-            sdkLogger.error {
+            engineLogger.error {
                 "Could not remove an accepted mutation from the queue; it may be sent again (${failure::class.simpleName})"
             }
         }
@@ -437,7 +437,7 @@ internal class MutationQueueReplayer(
         val pass = currentCoroutineContext().job
         val identity = currentIdentity()
         if (identity == null) {
-            sdkLogger.warning { "The session's identity cannot be told; not replaying" }
+            engineLogger.warning { "The session's identity cannot be told; not replaying" }
             return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.IdentityUnknown)
         }
         sendLock.withLock {
@@ -448,12 +448,12 @@ internal class MutationQueueReplayer(
         }
         val queue = store.pendingMutationsOf(identity.storedValue, table)
         if (queue.isEmpty()) return SyncReport(0, emptyList(), 0, null)
-        sdkLogger.info {
+        engineLogger.info {
             if (table == null) "Syncing ${queue.size} pending mutations"
             else "Syncing ${queue.size} pending mutations for $table"
         }
 
-        val tableApis = mutableMapOf<String, PostgrestQueryBuilderWrapper>()
+        val tableApis = mutableMapOf<String, RemoteTable>()
         val syncedTables = mutableSetOf<String>()
         val rejected = mutableListOf<StoredRejection>()
         var syncedCount = 0
@@ -491,7 +491,7 @@ internal class MutationQueueReplayer(
                             } catch (localFailure: Exception) {
                                 // Request failures are outcomes already; this is the store failing
                                 // around one.
-                                sdkLogger.error {
+                                engineLogger.error {
                                     "Replay of ${mutation.operation} on ${mutation.table} stopped by a local failure " +
                                         "(${localFailure::class.simpleName}); keeping it for a later sync"
                                 }
@@ -522,7 +522,7 @@ internal class MutationQueueReplayer(
         // until every cached query has refreshed past them.
         syncedTables.forEach { syncedTable -> store.retireCoveredSyncedMutations(syncedTable) }
 
-        sdkLogger.info {
+        engineLogger.info {
             if (table == null) "Sync complete: $syncedCount mutations synced"
             else "Sync complete: $syncedCount mutations synced for $table"
         }
@@ -550,7 +550,7 @@ internal class MutationQueueReplayer(
                 schemaCacheMissesCountedAt -= mutation.id
                 store.markMutationSynced(id = mutation.id, table = mutation.table)
                 syncedTables += mutation.table
-                sdkLogger.debug { "Synced ${mutation.operation} mutation for ${mutation.table}" }
+                engineLogger.debug { "Synced ${mutation.operation} mutation for ${mutation.table}" }
                 null
             }
 
@@ -562,7 +562,7 @@ internal class MutationQueueReplayer(
                     throw cancellation
                 } catch (unrecorded: Exception) {
                     // The mutation stays queued rather than vanish, and the pass stops here.
-                    sdkLogger.error {
+                    engineLogger.error {
                         "Could not record the rejection of ${mutation.operation} on ${mutation.table}; " +
                             "keeping it queued (${unrecorded::class.simpleName})"
                     }
@@ -615,7 +615,7 @@ internal class MutationQueueReplayer(
      */
     private suspend fun replay(
         mutation: MutationRow,
-        tableApi: PostgrestQueryBuilderWrapper,
+        tableApi: RemoteTable,
         identity: QueueIdentity,
         pass: Job,
     ): ReplayOutcome {
@@ -657,7 +657,7 @@ internal class MutationQueueReplayer(
     ): ReplayOutcome =
         when {
             failure.isNetworkOrConnectivityFailure() -> {
-                sdkLogger.warning { "Network unavailable, pausing sync for ${mutation.table}" }
+                engineLogger.warning { "Network unavailable, pausing sync for ${mutation.table}" }
                 ReplayOutcome.Stopped(failure)
             }
 
@@ -671,13 +671,13 @@ internal class MutationQueueReplayer(
                     mayDependOnEarlierWrite &&
                         store.hasEarlierPendingMutation(mutation.id, identity.storedValue)
                 ) {
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Holding ${mutation.operation} on ${mutation.table} ($status) behind an earlier pending mutation"
                     }
                     ReplayOutcome.Held(failure)
                 } else {
                     val serverError = serverErrorOf(failure)
-                    sdkLogger.warning {
+                    engineLogger.warning {
                         "Permanent failure for ${mutation.operation} on ${mutation.table} ($status); moved to the rejected list"
                     }
                     ReplayOutcome.Rejected(
@@ -689,7 +689,7 @@ internal class MutationQueueReplayer(
 
             else -> {
                 val status = failure.httpStatusOrNull()
-                sdkLogger.warning {
+                engineLogger.warning {
                     "Replay of ${mutation.operation} on ${mutation.table} failed " +
                         "(${status ?: failure::class.simpleName}); keeping it for a later sync"
                 }
@@ -699,13 +699,13 @@ internal class MutationQueueReplayer(
 
     /** A mutation ready to send, or refused before any request. */
     private sealed interface Prepared {
-        class Ready(val request: suspend (PostgrestQueryBuilderWrapper) -> Unit) : Prepared
+        class Ready(val request: suspend (RemoteTable) -> Unit) : Prepared
 
         class Refused(val outcome: ReplayOutcome.Rejected) : Prepared
     }
 
     private fun refuse(mutation: MutationRow, reason: String, message: String): Prepared.Refused {
-        sdkLogger.warning {
+        engineLogger.warning {
             "Queued ${mutation.operation} on ${mutation.table} $reason; moving it to the rejected list"
         }
         return Prepared.Refused(ReplayOutcome.Rejected(message = message, serverError = null))
@@ -849,7 +849,7 @@ internal class MutationQueueReplayer(
      * INSERT.
      */
     private suspend fun applyInsert(
-        tableApi: PostgrestQueryBuilderWrapper,
+        tableApi: RemoteTable,
         table: String,
         body: JsonArray,
         defaultToNull: Boolean?,
@@ -872,7 +872,7 @@ internal class MutationQueueReplayer(
                 }
             } catch (failure: PostgrestRestException) {
                 if (failure.code != NO_MATCHING_CONFLICT_TARGET) throw failure
-                sdkLogger.warning {
+                engineLogger.warning {
                     "Replayed INSERT on $table has no unique key to match; sending it as a plain INSERT"
                 }
                 insertAsSent(tableApi, body, defaultToNull, filter)
@@ -880,14 +880,14 @@ internal class MutationQueueReplayer(
             }
         val written = result.countOrNull()
         if (written != null && written < body.size) {
-            sdkLogger.info {
+            engineLogger.info {
                 "Replayed INSERT on $table: ${body.size - written} of ${body.size} rows were already on the server, taken as its earlier send"
             }
         }
     }
 
     private suspend fun insertAsSent(
-        tableApi: PostgrestQueryBuilderWrapper,
+        tableApi: RemoteTable,
         body: JsonArray,
         defaultToNull: Boolean?,
         filter: FilterDescriptor?,
@@ -899,7 +899,7 @@ internal class MutationQueueReplayer(
     }
 
     private suspend fun applyUpsert(
-        tableApi: PostgrestQueryBuilderWrapper,
+        tableApi: RemoteTable,
         body: JsonArray,
         onConflict: String?,
         ignoreDuplicates: Boolean?,
@@ -915,7 +915,7 @@ internal class MutationQueueReplayer(
     }
 
     private suspend fun applyUpdate(
-        tableApi: PostgrestQueryBuilderWrapper,
+        tableApi: RemoteTable,
         body: JsonElement,
         filter: FilterDescriptor,
     ) {
@@ -923,7 +923,7 @@ internal class MutationQueueReplayer(
     }
 
     private suspend fun applyDelete(
-        tableApi: PostgrestQueryBuilderWrapper,
+        tableApi: RemoteTable,
         filter: FilterDescriptor,
     ) {
         tableApi.delete { applyTo(this, filter) }

@@ -18,7 +18,7 @@ import kotlinx.io.IOException
  * Tests for [httpStatusOrNull], [isPermanentMutationFailure] and [isNetworkOrConnectivityFailure].
  * We pay special attention to exercising all logical branches, including cause-chain handling.
  */
-class ThrowableExtensionsTest {
+class FailureClassificationTest {
 
     // ---------- httpStatusOrNull ----------
 

@@ -32,7 +32,7 @@ class AcceptedWritePatchTest {
     private val logger = RecordingOfflineLogger()
     private val store =
         newTestOfflineStore(objectDao = objectDao, nowMillis = { NOW }).apply {
-            sdkLogger = logger.asSdkLogger(OfflineLogLevel.WARNING)
+            engineLogger = logger.asEngineLogger(OfflineLogLevel.WARNING)
         }
 
     /** The queries the store asked to fetch again, by table. */

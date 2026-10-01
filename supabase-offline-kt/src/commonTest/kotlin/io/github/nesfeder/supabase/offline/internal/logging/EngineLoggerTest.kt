@@ -8,13 +8,13 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Level gating and lazy message construction of the SDK's internal [SdkLogger]. */
-class SdkLoggerTest {
+/** Level gating and lazy message construction of the SDK's internal [EngineLogger]. */
+class EngineLoggerTest {
 
     @Test
     fun nullLogger_doesNotCrash() {
         // Given
-        val logger = SdkLogger(null, OfflineLogLevel.DEBUG)
+        val logger = EngineLogger(null, OfflineLogLevel.DEBUG)
 
         // When
         logger.debug { "test" }
@@ -29,7 +29,7 @@ class SdkLoggerTest {
     fun allLevelsForwarded_whenMinLevelIsDebug() {
         // Given
         val recorder = RecordingOfflineLogger()
-        val logger = recorder.asSdkLogger(OfflineLogLevel.DEBUG)
+        val logger = recorder.asEngineLogger(OfflineLogLevel.DEBUG)
 
         // When
         logger.debug { "d" }
@@ -52,7 +52,7 @@ class SdkLoggerTest {
     fun levelFiltering_minWarning_suppressesDebugAndInfo() {
         // Given
         val recorder = RecordingOfflineLogger()
-        val logger = recorder.asSdkLogger(OfflineLogLevel.WARNING)
+        val logger = recorder.asEngineLogger(OfflineLogLevel.WARNING)
 
         // When
         logger.debug { "d" }
@@ -70,7 +70,7 @@ class SdkLoggerTest {
     fun levelFiltering_minError_suppressesAllButError() {
         // Given
         val recorder = RecordingOfflineLogger()
-        val logger = recorder.asSdkLogger(OfflineLogLevel.ERROR)
+        val logger = recorder.asEngineLogger(OfflineLogLevel.ERROR)
 
         // When
         logger.debug { "d" }
@@ -87,7 +87,7 @@ class SdkLoggerTest {
     fun levelFiltering_minInfo_suppressesDebug() {
         // Given
         val recorder = RecordingOfflineLogger()
-        val logger = recorder.asSdkLogger(OfflineLogLevel.INFO)
+        val logger = recorder.asEngineLogger(OfflineLogLevel.INFO)
 
         // When
         logger.debug { "d" }
@@ -104,7 +104,7 @@ class SdkLoggerTest {
     fun lazyEvaluation_messageLambdaNotCalled_whenFiltered() {
         // Given
         val recorder = RecordingOfflineLogger()
-        val logger = recorder.asSdkLogger(OfflineLogLevel.ERROR)
+        val logger = recorder.asEngineLogger(OfflineLogLevel.ERROR)
         var debugEvaluated = false
         var infoEvaluated = false
         var warningEvaluated = false
@@ -134,7 +134,7 @@ class SdkLoggerTest {
     fun lazyEvaluation_messageLambdaCalled_whenNotFiltered() {
         // Given
         val recorder = RecordingOfflineLogger()
-        val logger = recorder.asSdkLogger(OfflineLogLevel.DEBUG)
+        val logger = recorder.asEngineLogger(OfflineLogLevel.DEBUG)
         var called = false
 
         // When
@@ -151,7 +151,7 @@ class SdkLoggerTest {
     @Test
     fun lazyEvaluation_nullLogger_messageLambdaNotCalled() {
         // Given
-        val logger = SdkLogger(null, OfflineLogLevel.DEBUG)
+        val logger = EngineLogger(null, OfflineLogLevel.DEBUG)
         var called = false
 
         // When
@@ -168,7 +168,7 @@ class SdkLoggerTest {
     fun convenienceMethods_mapToCorrectLevel() {
         // Given
         val recorder = RecordingOfflineLogger()
-        val logger = recorder.asSdkLogger()
+        val logger = recorder.asEngineLogger()
 
         // When
         logger.debug { "a" }
@@ -187,7 +187,7 @@ class SdkLoggerTest {
     fun logMethod_usesExplicitLevel() {
         // Given
         val recorder = RecordingOfflineLogger()
-        val logger = recorder.asSdkLogger()
+        val logger = recorder.asEngineLogger()
 
         // When
         logger.log(OfflineLogLevel.WARNING) { "explicit" }

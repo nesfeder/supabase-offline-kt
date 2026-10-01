@@ -53,7 +53,7 @@ class IsDistinctOperatorTest {
         }
 
         // When
-        val descriptor = buildDescriptorStrictFromRequest(SCHEMA, CONVERSION, request)
+        val descriptor = captureFilterExactly(SCHEMA, CONVERSION, request)
 
         // Then
         assertEquals(listOf(ISDISTINCT_DONE), descriptor?.conditions)
@@ -65,7 +65,7 @@ class IsDistinctOperatorTest {
         val builder = builderFilteredOnIsDistinct()
 
         // When
-        val descriptor = buildDescriptorFromBuilder(builder)
+        val descriptor = captureFilter(builder)
 
         // Then
         assertEquals(listOf(ISDISTINCT_DONE), descriptor?.conditions)

@@ -17,7 +17,7 @@ import kotlinx.serialization.json.JsonElement
  * The engine's handle on one table's PostgREST requests, which tests replace with a scripted one.
  * It is also the [DryRunProbe] for its writes and the [ReadShapeProbe] for its reads.
  */
-internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
+internal interface RemoteTable : DryRunProbe, ReadShapeProbe {
 
     /** The name of the table this builder targets. */
     val table: String
@@ -60,22 +60,23 @@ internal interface PostgrestQueryBuilderWrapper : DryRunProbe, ReadShapeProbe {
      * one of this table whose requests carry a placeholder token and are all stopped: a dry run is
      * told from its request's shape alone, so even when the session's token cannot be had.
      */
-    suspend fun classifyTokenFree(
-        write: suspend (PostgrestQueryBuilderWrapper) -> PostgrestResult
-    ): DryRunVerdict = classify { write(this) }
+    suspend fun classifyTokenFree(write: suspend (RemoteTable) -> PostgrestResult): DryRunVerdict =
+        classify {
+            write(this)
+        }
 }
 
 /**
- * The [PostgrestQueryBuilderWrapper] over a real [PostgrestQueryBuilder].
+ * The [RemoteTable] over a real [PostgrestQueryBuilder].
  *
  * @property builder The underlying [PostgrestQueryBuilder] instance.
  * @param readShapePostgrest the instance the read-shape check builds reads through; see
  *   [readShapePostgrestOf]. The client shares one across its handles.
  */
-internal class PostgrestQueryBuilderWrapperImpl(
+internal class SupabaseRemoteTable(
     private val builder: PostgrestQueryBuilder,
     private val readShapePostgrest: Postgrest = readShapePostgrestOf(builder.postgrest),
-) : PostgrestQueryBuilderWrapper {
+) : RemoteTable {
 
     init {
         // The offline client installs these when it is built; a handle made directly installs them
@@ -95,8 +96,8 @@ internal class PostgrestQueryBuilderWrapperImpl(
      * This table on [readShapePostgrest], whose requests carry a placeholder token; made when first
      * asked for.
      */
-    private val tokenFreeHandle: PostgrestQueryBuilderWrapper by lazy {
-        PostgrestQueryBuilderWrapperImpl(
+    private val tokenFreeHandle: RemoteTable by lazy {
+        SupabaseRemoteTable(
             readShapePostgrest.from(builder.schema, builder.table),
             readShapePostgrest,
         )
@@ -105,19 +106,19 @@ internal class PostgrestQueryBuilderWrapperImpl(
     private val readShapeProbe =
         PipelineReadShapeProbe(readShapePostgrest, builder.table, builder.schema)
 
-    /** @see PostgrestQueryBuilderWrapper.table */
+    /** @see RemoteTable.table */
     override val table: String
         get() = builder.table
 
-    /** @see PostgrestQueryBuilderWrapper.schema */
+    /** @see RemoteTable.schema */
     override val schema: String
         get() = builder.schema
 
-    /** @see PostgrestQueryBuilderWrapper.postgrest */
+    /** @see RemoteTable.postgrest */
     override val postgrest: Postgrest
         get() = builder.postgrest
 
-    /** @see PostgrestQueryBuilderWrapper.select */
+    /** @see RemoteTable.select */
     override suspend fun select(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
@@ -125,7 +126,7 @@ internal class PostgrestQueryBuilderWrapperImpl(
         return builder.select(columns, request)
     }
 
-    /** @see PostgrestQueryBuilderWrapper.insert */
+    /** @see RemoteTable.insert */
     override suspend fun insert(
         body: JsonArray,
         request: InsertRequestBuilder.() -> Unit,
@@ -133,7 +134,7 @@ internal class PostgrestQueryBuilderWrapperImpl(
         return builder.insert(body, request)
     }
 
-    /** @see PostgrestQueryBuilderWrapper.upsert */
+    /** @see RemoteTable.upsert */
     override suspend fun upsert(
         body: JsonArray,
         request: UpsertRequestBuilder.() -> Unit,
@@ -141,7 +142,7 @@ internal class PostgrestQueryBuilderWrapperImpl(
         return builder.upsert(body, request)
     }
 
-    /** @see PostgrestQueryBuilderWrapper.update */
+    /** @see RemoteTable.update */
     override suspend fun update(
         body: JsonElement,
         request: PostgrestRequestBuilder.() -> Unit,
@@ -149,7 +150,7 @@ internal class PostgrestQueryBuilderWrapperImpl(
         return builder.update(body, request)
     }
 
-    /** @see PostgrestQueryBuilderWrapper.delete */
+    /** @see RemoteTable.delete */
     override suspend fun delete(request: PostgrestRequestBuilder.() -> Unit): PostgrestResult {
         return builder.delete(request)
     }
@@ -158,9 +159,9 @@ internal class PostgrestQueryBuilderWrapperImpl(
     override suspend fun classify(write: suspend () -> PostgrestResult): DryRunVerdict =
         dryRunProbe.classify(write)
 
-    /** @see PostgrestQueryBuilderWrapper.classifyTokenFree */
+    /** @see RemoteTable.classifyTokenFree */
     override suspend fun classifyTokenFree(
-        write: suspend (PostgrestQueryBuilderWrapper) -> PostgrestResult
+        write: suspend (RemoteTable) -> PostgrestResult
     ): DryRunVerdict = tokenFreeDryRunProbe.classify { write(tokenFreeHandle) }
 
     /** @see PipelineReadShapeProbe */

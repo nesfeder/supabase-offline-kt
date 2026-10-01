@@ -4,7 +4,7 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -18,7 +18,7 @@ import kotlinx.coroutines.test.runTest
 
 /**
  * Tests for [OfflineStore]'s size-based eviction — the loop that keeps the object cache within
- * [OfflineCacheSettings.maxDbSizeBytes].
+ * [QueryCacheLimits.maxPayloadBytes].
  *
  * The core guarantee is termination: eviction is driven by the cache's **logical** size (summed
  * payload length) rather than the on-disk file size, which never shrinks after `DELETE` and
@@ -44,7 +44,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 250L,
+                maxPayloadBytes = 250L,
                 evictionBatchSize = 1,
             )
 
@@ -70,7 +70,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 1_000L,
+                maxPayloadBytes = 1_000L,
                 evictionBatchSize = 10,
             )
 
@@ -92,7 +92,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 1_000L,
+                maxPayloadBytes = 1_000L,
                 evictionBatchSize = 5,
             )
 
@@ -111,7 +111,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 1_000L,
+                maxPayloadBytes = 1_000L,
                 evictionBatchSize = 5,
             )
 
@@ -124,7 +124,7 @@ class OfflineStoreEvictionTest {
 
     @Test
     fun eviction_not_blocked_when_min_retained_exceeds_small_limit() = runTest {
-        // Given a small cache limit and a default-scale minRetainedBytes far larger than it
+        // Given a small cache limit and a default-scale drainHeadroomBytes far larger than it
         val objectDao = FakeObjectDao()
         repeat(4) { index ->
             objectDao.seedPayload(
@@ -138,20 +138,20 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 8_192L,
+                maxPayloadBytes = 8_192L,
                 evictionBatchSize = 1,
-                minRetainedBytes = 50L * 1024L * 1024L,
+                drainHeadroomBytes = 50L * 1024L * 1024L,
             )
 
         // When enforcement runs
         store.enforceDbSizeLimitIfNeeded()
 
-        // Then the oversized minRetainedBytes headroom coerced to a no-op and eviction still ran
+        // Then the oversized drainHeadroomBytes headroom coerced to a no-op and eviction still ran
         assertTrue(
             objectDao.totalPayloadBytes() <= 8_192L,
             "small cache should evict to the ceiling",
         )
-        assertTrue(objectDao.evictedRows >= 1, "eviction must not be blocked by minRetainedBytes")
+        assertTrue(objectDao.evictedRows >= 1, "eviction must not be blocked by drainHeadroomBytes")
     }
 
     @Test
@@ -170,9 +170,9 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 700L,
+                maxPayloadBytes = 700L,
                 evictionBatchSize = 1,
-                minRetainedBytes = 300L,
+                drainHeadroomBytes = 300L,
             )
 
         // When enforcement runs after the cache crosses the ceiling
@@ -209,7 +209,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = null,
+                maxPayloadBytes = null,
                 evictionBatchSize = 10,
             )
 
@@ -229,7 +229,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = null,
+                maxPayloadBytes = null,
                 nowMillis = incrementingClock(),
             )
 
@@ -247,7 +247,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 9_500L,
+                maxPayloadBytes = 9_500L,
                 evictionBatchSize = 1,
                 nowMillis = incrementingClock(),
             )
@@ -276,7 +276,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 1_000L,
+                maxPayloadBytes = 1_000L,
                 evictionBatchSize = 50,
                 nowMillis = incrementingClock(),
             )
@@ -307,7 +307,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 250L,
+                maxPayloadBytes = 250L,
                 evictionBatchSize = 0,
             )
 
@@ -334,7 +334,7 @@ class OfflineStoreEvictionTest {
         val store =
             buildStore(
                 objectDao = objectDao,
-                maxDbSizeBytes = 40_960L,
+                maxPayloadBytes = 40_960L,
                 evictionBatchSize = 5,
                 nowMillis = incrementingClock(),
             )
@@ -359,18 +359,18 @@ class OfflineStoreEvictionTest {
      */
     private fun buildStore(
         objectDao: ObjectDao,
-        maxDbSizeBytes: Long?,
+        maxPayloadBytes: Long?,
         evictionBatchSize: Int = 10,
-        minRetainedBytes: Long = 0L,
+        drainHeadroomBytes: Long = 0L,
         nowMillis: () -> Long = { 0L },
     ): OfflineStore =
         newTestOfflineStore(
             objectDao = objectDao,
-            settings =
-                OfflineCacheSettings(
-                    maxDbSizeBytes = maxDbSizeBytes,
+            queryCacheLimits =
+                QueryCacheLimits(
+                    maxPayloadBytes = maxPayloadBytes,
                     evictionBatchSize = evictionBatchSize,
-                    minRetainedBytes = minRetainedBytes,
+                    drainHeadroomBytes = drainHeadroomBytes,
                 ),
             nowMillis = nowMillis,
         )

@@ -6,7 +6,7 @@ import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -44,8 +44,8 @@ class DryRunClassificationTest {
             // Given — a handle that cannot classify writes, offline
             val logger = RecordingOfflineLogger()
             val client = newTestSupabaseClient()
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = TABLE,
                     postgrest = client.postgrest,
                     onUpdate = { throw ConnectTimeoutException("connect timed out", null) },
@@ -53,9 +53,9 @@ class DryRunClassificationTest {
                 )
             val builder =
                 OfflinePostgrestQueryBuilderImpl(
-                    delegate = wrapper,
+                    delegate = remoteTable,
                     store = store,
-                    sdkLogger = logger.asSdkLogger(),
+                    engineLogger = logger.asEngineLogger(),
                 )
 
             // When — two such writes
@@ -154,7 +154,7 @@ class DryRunClassificationTest {
             OfflinePostgrestQueryBuilderImpl(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
-                sdkLogger = logger.asSdkLogger(),
+                engineLogger = logger.asEngineLogger(),
             )
 
         // When
@@ -181,7 +181,7 @@ class DryRunClassificationTest {
             OfflinePostgrestQueryBuilderImpl(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
-                sdkLogger = logger.asSdkLogger(),
+                engineLogger = logger.asEngineLogger(),
             )
         var runs = 0
 

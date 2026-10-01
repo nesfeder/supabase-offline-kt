@@ -156,7 +156,7 @@ class CacheKeyTest {
             }
 
         // When
-        val descriptor = buildDescriptorFromBuilder(builder)
+        val descriptor = captureFilter(builder)
 
         // Then
         assertNotNull(descriptor)

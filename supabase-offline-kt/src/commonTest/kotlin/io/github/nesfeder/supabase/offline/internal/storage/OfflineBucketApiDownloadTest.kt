@@ -49,7 +49,7 @@ class OfflineBucketApiDownloadTest {
                 delegate = delegate,
                 baseDirectory = baseDir,
                 store = newTestOfflineStore(),
-                sdkLogger = logger.asSdkLogger(),
+                engineLogger = logger.asEngineLogger(),
             )
     }
 

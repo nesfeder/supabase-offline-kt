@@ -42,7 +42,7 @@ class StorageCancelledDownloadTest {
     private lateinit var store: OfflineStore
     private lateinit var delegate: FakeBucketApi
     private val fileSystem = FakeFailingFileSystem()
-    private val engine = newEngineScope(sdkLogger = null)
+    private val engine = newEngineScope(engineLogger = null)
 
     @BeforeTest
     fun setUp() {

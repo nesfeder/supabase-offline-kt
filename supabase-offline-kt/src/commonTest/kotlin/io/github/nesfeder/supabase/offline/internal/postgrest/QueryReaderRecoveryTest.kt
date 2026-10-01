@@ -16,7 +16,7 @@ import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
@@ -50,10 +50,10 @@ import kotlinx.serialization.json.put
 
 /**
  * Integration tests across the real read stack: [QueryReader], [cacheFirstWithParallelRefresh], a
- * real [OfflineStore] over in-memory DAOs and a real [RefreshCoordinator], with only the network
- * SELECT scripted. They pin what unit tests cannot: the wiring of the accelerator and the
- * coordinator into the refresh, the per-query [OfflineReadResult], single-flight sharing, and that
- * nothing seeds an empty cache with `[]`. They run under the non-default
+ * real [OfflineStore] over in-memory DAOs and a real [LiveQueries], with only the network SELECT
+ * scripted. They pin what unit tests cannot: the wiring of the accelerator and the coordinator into
+ * the refresh, the per-query [OfflineReadResult], single-flight sharing, and that nothing seeds an
+ * empty cache with `[]`. They run under the non-default
  * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], whose rules their expectations assume.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -68,8 +68,8 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             val accelerator = MutableSharedFlow<Unit>()
             var failing = true
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "projects",
                     postgrest = postgrest,
                     onSelect = {
@@ -77,7 +77,7 @@ class QueryReaderRecoveryTest {
                         else postgrestResultOf(freshPayload, postgrest)
                     },
                 )
-            val resolver = buildResolver(wrapper, backgroundScope, accelerator)
+            val resolver = buildResolver(remoteTable, backgroundScope, accelerator)
 
             // When: a CacheFirstThenNetwork subscription with state starts and the fast retries run
             // out
@@ -121,13 +121,13 @@ class QueryReaderRecoveryTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given: a network SELECT that succeeds immediately
             val postgrest = testPostgrest()
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "projects",
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(freshPayload, postgrest) },
                 )
-            val resolver = buildResolver(wrapper, backgroundScope)
+            val resolver = buildResolver(remoteTable, backgroundScope)
 
             // When: a CacheFirstThenNetwork subscription collects, mapped the way every consumer
             // maps it (drop the typed no-data state, dedupe consecutive payloads)
@@ -153,8 +153,8 @@ class QueryReaderRecoveryTest {
             // Given: a scripted network counter
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "projects",
                     postgrest = postgrest,
                     onSelect = {
@@ -162,7 +162,7 @@ class QueryReaderRecoveryTest {
                         postgrestResultOf(freshPayload, postgrest)
                     },
                 )
-            val resolver = buildResolver(wrapper, backgroundScope)
+            val resolver = buildResolver(remoteTable, backgroundScope)
 
             // When: two collectors subscribe to the same query (same signature) concurrently
             val firstCollector = launch {
@@ -195,8 +195,8 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             val secondPayload = """[{"id":"project-2"}]"""
             var networkCalls = 0
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "projects",
                     postgrest = postgrest,
                     onSelect = {
@@ -207,7 +207,7 @@ class QueryReaderRecoveryTest {
                         )
                     },
                 )
-            val resolver = buildResolver(wrapper, backgroundScope)
+            val resolver = buildResolver(remoteTable, backgroundScope)
 
             // When: one collector subscribes, receives the first refresh, then fully unsubscribes
             val firstCollector = launch {
@@ -252,8 +252,8 @@ class QueryReaderRecoveryTest {
             // seed removed, it populates nothing
             val postgrest = testPostgrest()
             var failing = true
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "projects",
                     postgrest = postgrest,
                     onSelect = {
@@ -261,7 +261,7 @@ class QueryReaderRecoveryTest {
                         else postgrestResultOf(freshPayload, postgrest)
                     },
                 )
-            val resolver = buildResolver(wrapper, backgroundScope)
+            val resolver = buildResolver(remoteTable, backgroundScope)
 
             val live = launch {
                 resolver
@@ -288,8 +288,8 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var networkCalls = 0
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -298,7 +298,7 @@ class QueryReaderRecoveryTest {
                     },
                 )
             val objectDao = FakeObjectDao()
-            val resolver = buildResolver(wrapper, backgroundScope, objectDao = objectDao)
+            val resolver = buildResolver(remoteTable, backgroundScope, objectDao = objectDao)
             val primingCollector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -344,14 +344,14 @@ class QueryReaderRecoveryTest {
             var serverRows = freshPayload
             var authState: RequestSession = SIGNED_IN
             val accelerator = MutableSharedFlow<Unit>()
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
                 )
             val resolver =
-                buildResolver(wrapper, backgroundScope, accelerator, authState = { authState })
+                buildResolver(remoteTable, backgroundScope, accelerator, authState = { authState })
             val primingCollector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -399,14 +399,14 @@ class QueryReaderRecoveryTest {
             // Given: a cached non-empty payload from a prior authenticated subscription
             val postgrest = testPostgrest()
             var serverRows = freshPayload
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
                 )
             val objectDao = FakeObjectDao()
-            val resolver = buildResolver(wrapper, backgroundScope, objectDao = objectDao)
+            val resolver = buildResolver(remoteTable, backgroundScope, objectDao = objectDao)
             val primingCollector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -434,8 +434,8 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var authState: RequestSession = SIGNED_IN
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
@@ -443,7 +443,7 @@ class QueryReaderRecoveryTest {
             val objectDao = FakeObjectDao()
             val resolver =
                 buildResolver(
-                    wrapper,
+                    remoteTable,
                     backgroundScope,
                     authState = { authState },
                     objectDao = objectDao,
@@ -479,8 +479,8 @@ class QueryReaderRecoveryTest {
             var serverRows = freshPayload
             var authState: RequestSession = SIGNED_IN
             var flipMidRequest = false
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -491,7 +491,7 @@ class QueryReaderRecoveryTest {
             val objectDao = FakeObjectDao()
             val resolver =
                 buildResolver(
-                    wrapper,
+                    remoteTable,
                     backgroundScope,
                     authState = { authState },
                     objectDao = objectDao,
@@ -527,14 +527,14 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var authStateProvider: () -> RequestSession = { SIGNED_IN }
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
                 )
             val resolver =
-                buildResolver(wrapper, backgroundScope, authState = { authStateProvider() })
+                buildResolver(remoteTable, backgroundScope, authState = { authStateProvider() })
             val primingCollector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -597,8 +597,8 @@ class QueryReaderRecoveryTest {
                 var authState: RequestSession = RequestSession.Restoring
                 var networkCalls = 0
                 val accelerator = MutableSharedFlow<Unit>()
-                val wrapper =
-                    FakePostgrestQueryBuilderWrapper(
+                val remoteTable =
+                    FakeRemoteTable(
                         table = "plans",
                         postgrest = postgrest,
                         onSelect = {
@@ -609,7 +609,7 @@ class QueryReaderRecoveryTest {
                 val objectDao = FakeObjectDao()
                 val resolver =
                     buildResolver(
-                        wrapper = wrapper,
+                        remoteTable = remoteTable,
                         scope = backgroundScope,
                         accelerator = accelerator,
                         authState = { authState },
@@ -653,8 +653,8 @@ class QueryReaderRecoveryTest {
             // Given: a session that never finishes restoring, so RLS filters every request
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -665,7 +665,7 @@ class QueryReaderRecoveryTest {
             val objectDao = FakeObjectDao()
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { RequestSession.Restoring },
                     objectDao = objectDao,
@@ -714,8 +714,8 @@ class QueryReaderRecoveryTest {
             var serverRows = "[]"
             var authState: RequestSession = RequestSession.Restoring
             var networkCalls = 0
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -725,7 +725,7 @@ class QueryReaderRecoveryTest {
                 )
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { authState },
                 )
@@ -757,8 +757,8 @@ class QueryReaderRecoveryTest {
             var authState: RequestSession = RequestSession.Restoring
             var networkCalls = 0
             val accelerator = MutableSharedFlow<Unit>()
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -781,7 +781,7 @@ class QueryReaderRecoveryTest {
             )
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     accelerator = accelerator,
                     authState = { authState },
@@ -820,8 +820,8 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             var networkCalls = 0
             val inFlight = CompletableDeferred<Unit>()
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -834,7 +834,7 @@ class QueryReaderRecoveryTest {
             val store = buildStore(objectDao)
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { RequestSession.Restoring },
                     store = store,
@@ -866,8 +866,8 @@ class QueryReaderRecoveryTest {
             // key's answer, narrowed by RLS whatever its size
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -877,7 +877,7 @@ class QueryReaderRecoveryTest {
                 )
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { RequestSession.Restoring },
                 )
@@ -900,8 +900,8 @@ class QueryReaderRecoveryTest {
             // sit waiting on a sign-in that may never come.
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -912,7 +912,7 @@ class QueryReaderRecoveryTest {
             val objectDao = FakeObjectDao()
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { RequestSession.SignedOut },
                     objectDao = objectDao,
@@ -935,8 +935,8 @@ class QueryReaderRecoveryTest {
             // Given: a signed-in session and a table that genuinely has no rows for this user
             val postgrest = testPostgrest()
             var networkCalls = 0
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = {
@@ -947,7 +947,7 @@ class QueryReaderRecoveryTest {
             val objectDao = FakeObjectDao()
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { SIGNED_IN },
                     objectDao = objectDao,
@@ -973,8 +973,8 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var authState: RequestSession = SIGNED_IN
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
@@ -984,7 +984,7 @@ class QueryReaderRecoveryTest {
             val store = buildStore(objectDao, mutationDao)
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     authState = { authState },
                     store = store,
@@ -1038,8 +1038,8 @@ class QueryReaderRecoveryTest {
             var serverRows = "[]"
             var authState: RequestSession = RequestSession.SignedOut
             val accelerator = MutableSharedFlow<Unit>()
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "plans",
                     postgrest = postgrest,
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
@@ -1047,7 +1047,7 @@ class QueryReaderRecoveryTest {
             val objectDao = FakeObjectDao()
             val resolver =
                 buildResolver(
-                    wrapper = wrapper,
+                    remoteTable = remoteTable,
                     scope = backgroundScope,
                     accelerator = accelerator,
                     authState = { authState },
@@ -1105,8 +1105,8 @@ class QueryReaderRecoveryTest {
             var serverRows = freshPayload
             var networkCalls = 0
             val inFlight = CompletableDeferred<Unit>()
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "projects",
                     postgrest = postgrest,
                     onSelect = {
@@ -1120,7 +1120,7 @@ class QueryReaderRecoveryTest {
                 )
             val objectDao = FakeObjectDao()
             val store = buildStore(objectDao)
-            val resolver = buildResolver(wrapper, backgroundScope, store = store)
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
             val primingCollector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -1188,8 +1188,8 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             var networkCalls = 0
             val inFlight = CompletableDeferred<Unit>()
-            val wrapper =
-                FakePostgrestQueryBuilderWrapper(
+            val remoteTable =
+                FakeRemoteTable(
                     table = "projects",
                     postgrest = postgrest,
                     onSelect = {
@@ -1200,7 +1200,7 @@ class QueryReaderRecoveryTest {
                 )
             val objectDao = FakeObjectDao()
             val store = buildStore(objectDao)
-            val resolver = buildResolver(wrapper, backgroundScope, store = store)
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
             val collector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -1231,7 +1231,7 @@ class QueryReaderRecoveryTest {
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private fun buildResolver(
-        wrapper: FakePostgrestQueryBuilderWrapper,
+        remoteTable: FakeRemoteTable,
         scope: CoroutineScope,
         accelerator: MutableSharedFlow<Unit> = MutableSharedFlow(),
         authState: () -> RequestSession = { SIGNED_IN },
@@ -1239,18 +1239,18 @@ class QueryReaderRecoveryTest {
         store: OfflineStore = buildStore(objectDao),
     ): QueryReader =
         QueryReader(
-            delegate = wrapper,
+            delegate = remoteTable,
             store = store,
             requestSession = authState,
             trustPolicy = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
-            refreshCoordinator = RefreshCoordinator(scope),
+            liveQueries = LiveQueries(scope),
             accelerator = accelerator,
         )
 
     /**
-     * Minimal real [Postgrest] for [FakePostgrestQueryBuilderWrapper] / [postgrestResultOf] — the
-     * resolver reads its config for signature building and stamps it on results. The [MockEngine]
-     * is never hit; the fake wrapper intercepts all SELECT traffic.
+     * Minimal real [Postgrest] for [FakeRemoteTable] / [postgrestResultOf] — the resolver reads its
+     * config for signature building and stamps it on results. The [MockEngine] is never hit; the
+     * fake wrapper intercepts all SELECT traffic.
      */
     private fun testPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 

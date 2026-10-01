@@ -10,10 +10,10 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.ReadStrategy
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -40,8 +40,8 @@ import kotlinx.serialization.json.JsonArray
  * strategies fall back to cache on a connectivity failure, which honour a cache duration, which
  * never touch the network, and what each one logs.
  *
- * Only the network SELECT is scripted (a [FakePostgrestQueryBuilderWrapper]); the cache is a real
- * `OfflineStore` over the in-memory DAO fakes.
+ * Only the network SELECT is scripted (a [FakeRemoteTable]); the cache is a real `OfflineStore`
+ * over the in-memory DAO fakes.
  */
 class QueryReaderStrategyTest {
 
@@ -67,8 +67,8 @@ class QueryReaderStrategyTest {
     /** Number of network SELECTs issued. */
     private var networkCalls = 0
 
-    private val wrapper =
-        FakePostgrestQueryBuilderWrapper(
+    private val remoteTable =
+        FakeRemoteTable(
             table = TABLE,
             postgrest = postgrest,
             onSelect = {
@@ -83,11 +83,11 @@ class QueryReaderStrategyTest {
         logger: RecordingOfflineLogger? = null,
     ): QueryReader =
         QueryReader(
-            delegate = wrapper,
+            delegate = remoteTable,
             store = store,
-            sdkLogger = logger?.asSdkLogger() ?: SdkLogger(null, OfflineLogLevel.INFO),
+            engineLogger = logger?.asEngineLogger() ?: EngineLogger(null, OfflineLogLevel.INFO),
             nowMillis = { currentTime },
-            refreshCoordinator = RefreshCoordinator(scope),
+            liveQueries = LiveQueries(scope),
         )
 
     /** The cache key the resolver uses for an unfiltered `SELECT *` on [TABLE]. */
@@ -96,7 +96,7 @@ class QueryReaderStrategyTest {
             table = TABLE,
             columns = Columns.ALL,
             builderFactory = {
-                SelectRequestBuilder(wrapper.schema, postgrest.config.propertyConversionMethod)
+                SelectRequestBuilder(remoteTable.schema, postgrest.config.propertyConversionMethod)
             },
             request = {},
         )

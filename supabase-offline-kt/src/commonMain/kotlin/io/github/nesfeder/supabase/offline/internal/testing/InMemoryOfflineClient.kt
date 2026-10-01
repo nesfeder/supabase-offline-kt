@@ -9,9 +9,9 @@ import io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
 import kotlinx.coroutines.CoroutineScope
@@ -53,16 +53,16 @@ public fun createInMemorySupabaseOfflineClient(
                 storageDao = InMemoryStorageDao(),
                 mutationDao = InMemoryMutationDao(),
                 dbPathProvider = InMemoryDbPathProvider,
-                settings =
-                    OfflineCacheSettings(
-                        maxDbSizeBytes = null,
+                queryCacheLimits =
+                    QueryCacheLimits(
+                        maxPayloadBytes = null,
                         evictionBatchSize = 0,
-                        minRetainedBytes = 0,
+                        drainHeadroomBytes = 0,
                     ),
                 nowMillis = nowMillis,
                 dbSizeProvider = { null },
             ),
         baseDirectoryProvider = { IN_MEMORY_BASE_DIRECTORY.toPath() },
-        sdkLogger = SdkLogger(null, OfflineLogLevel.INFO),
+        engineLogger = EngineLogger(null, OfflineLogLevel.INFO),
         coordinatorScope = coordinatorScope,
     )

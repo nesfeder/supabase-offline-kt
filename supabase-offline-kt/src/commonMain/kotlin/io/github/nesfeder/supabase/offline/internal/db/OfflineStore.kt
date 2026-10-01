@@ -10,9 +10,9 @@ import io.github.nesfeder.supabase.offline.internal.cache.CacheOwnerRecord
 import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.cache.KeyedUpdates
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
 import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
 import io.github.nesfeder.supabase.offline.internal.cache.Projection
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.cache.QueryShapeRecords
 import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
 import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
@@ -23,7 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.patchMayLeaveWrong
 import io.github.nesfeder.supabase.offline.internal.cache.payloadRowsOf
 import io.github.nesfeder.supabase.offline.internal.cache.projectionOf
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -86,7 +86,7 @@ private fun monotonicTickSource(): () -> Long {
  * What [OfflineStore.addPayload] did with the payload it was handed. Lets the select resolver
  * distinguish "the cache took this" from the two reasons it may refuse, and react accordingly.
  */
-internal enum class AddPayloadOutcome {
+internal enum class CacheWriteOutcome {
     /** The payload was written to the object cache. */
     WRITTEN,
 
@@ -96,7 +96,7 @@ internal enum class AddPayloadOutcome {
      * re-fetch (a request issued now starts after the write and converges) rather than treat the
      * response as the current server state.
      */
-    DROPPED_STALE,
+    REFUSED_STALE,
 
     /**
      * The payload was an empty array that was not attributed to an authenticated session, so the
@@ -104,29 +104,29 @@ internal enum class AddPayloadOutcome {
      * rows they erase real data, and into a cold (or already-empty) slot they install a phantom
      * empty that later cache-first reads then serve as truth.
      */
-    DROPPED_EMPTY,
+    REFUSED_EMPTY,
 
     /**
      * The response came back under a session the read's trust policy does not take as speaking for
      * the current identity, such as one still restoring, so nothing of it was written.
      */
-    DROPPED_UNTRUSTED,
+    REFUSED_UNTRUSTED,
 
     /**
      * The producing request started **before** the cache was torn down by [OfflineStore.clearAll] —
      * sign-out, account switch, or account deletion. The response belongs to a cache generation
      * that no longer exists and, on an account switch, to a different user entirely. Unlike
-     * [DROPPED_STALE] the caller must **not** re-fetch: a follow-up issued during teardown can
+     * [REFUSED_STALE] the caller must **not** re-fetch: a follow-up issued during teardown can
      * still carry the outgoing session's JWT and would re-import the very rows teardown removed.
      */
-    DROPPED_CACHE_CLEARED,
+    REFUSED_AFTER_CLEAR,
 
     /**
      * The cache belongs to another identity than the current session's, or was dropped for a new
      * one after the request started; see [OfflineStore.dropCacheFor]. The caller may ask again,
      * once the cache is the current identity's.
      */
-    DROPPED_OTHER_OWNER,
+    REFUSED_OTHER_OWNER,
 }
 
 /** What [OfflineStore.enqueueOwnedBy] did with a write. */
@@ -159,7 +159,7 @@ internal class OfflineStore(
     // on-disk file, so these file-oriented providers are no longer consulted by the eviction
     // loop. The path is still resolved by the factories to build the Room database.
     @Suppress("unused") private val dbPathProvider: DbPathProvider,
-    private val settings: OfflineCacheSettings,
+    private val queryCacheLimits: QueryCacheLimits,
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     @Suppress("unused") private val dbSizeProvider: (Path) -> Long? = ::currentDbSizeBytes,
     /**
@@ -246,7 +246,7 @@ internal class OfflineStore(
      * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
      * cannot apply). Wired by the client, like [liveSignatureProvider]; silent when built directly.
      */
-    internal var sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO)
+    internal var engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO)
 
     /** The mutation queue's record kept beside the rows: the rejected list. */
     internal val mutationQueueState: MutationQueueState =
@@ -254,7 +254,7 @@ internal class OfflineStore(
             objectDao = this.objectDao,
             json = OfflineJson,
             nowMillis = nowMillis,
-            logger = { sdkLogger },
+            logger = { engineLogger },
         )
 
     /**
@@ -540,11 +540,11 @@ internal class OfflineStore(
     /**
      * Signatures of a table that currently have a live `selectAsFlow` collector. Wired by
      * [io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl] to the client-scoped
-     * [io.github.nesfeder.supabase.offline.internal.postgrest.RefreshCoordinator] so
-     * [patchCachedQueries] can materialize a server-successful mutation into a real cache row for a
-     * cache-less-but- observed signature (the "save then stale UI" fix), and self-GC when nothing
-     * observes the table. Defaults to reporting no live signatures so direct construction in tests
-     * keeps the conservative "only patch existing rows" behavior unless a set is passed explicitly.
+     * [io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries] so [patchCachedQueries]
+     * can materialize a server-successful mutation into a real cache row for a cache-less-but-
+     * observed signature (the "save then stale UI" fix), and self-GC when nothing observes the
+     * table. Defaults to reporting no live signatures so direct construction in tests keeps the
+     * conservative "only patch existing rows" behavior unless a set is passed explicitly.
      */
     internal var liveSignatureProvider: (table: String) -> Set<String> = { _ -> emptySet() }
 
@@ -558,11 +558,11 @@ internal class OfflineStore(
 
     /**
      * Writes a network SELECT's [payload] for [table]/[signature], unless it must be refused:
-     * [AddPayloadOutcome.DROPPED_CACHE_CLEARED] when its request started before [clearAll],
-     * [AddPayloadOutcome.DROPPED_OTHER_OWNER] when the cache is not the current identity's or was
-     * dropped for it after the request started, [AddPayloadOutcome.DROPPED_STALE] when it started
+     * [CacheWriteOutcome.REFUSED_AFTER_CLEAR] when its request started before [clearAll],
+     * [CacheWriteOutcome.REFUSED_OTHER_OWNER] when the cache is not the current identity's or was
+     * dropped for it after the request started, [CacheWriteOutcome.REFUSED_STALE] when it started
      * before the table's last local write (it would roll that write back), and
-     * [AddPayloadOutcome.DROPPED_EMPTY] for an empty payload that is not [authoritativeEmpty]. A
+     * [CacheWriteOutcome.REFUSED_EMPTY] for an empty payload that is not [authoritativeEmpty]. A
      * payload written with a start tick is recorded as holding the synced mutations so far
      * ([ObjectRow.syncedThrough]). Runs under the table's write lock.
      *
@@ -571,7 +571,7 @@ internal class OfflineStore(
      * @param requestStartedAtTick [monotonicTickNow] read before the request went out, or `null`
      *   for a writer with no request behind it, which is never refused as stale.
      * @param isTrusted Whether the response speaks for the current identity at all; one that does
-     *   not is refused as [AddPayloadOutcome.DROPPED_UNTRUSTED], empty or not.
+     *   not is refused as [CacheWriteOutcome.REFUSED_UNTRUSTED], empty or not.
      * @param shape the query's shape, recorded with a written payload before the table's lock is
      *   released; `null` when not known.
      * @return What happened, so a caller can re-fetch after a stale drop.
@@ -584,7 +584,7 @@ internal class OfflineStore(
         requestStartedAtTick: Long? = null,
         isTrusted: Boolean = true,
         shape: QueryShape? = null,
-    ): AddPayloadOutcome {
+    ): CacheWriteOutcome {
         requireUserTable(table)
         // Before the locks: telling the identity may read the stored session. A drop that lands
         // between here and the write is caught by its tick below.
@@ -602,28 +602,28 @@ internal class OfflineStore(
                             // in flight. Its rows belong to the outgoing account; writing them
                             // here undoes the teardown.
                             predatesQueueTeardown(requestStartedAtTick) ->
-                                AddPayloadOutcome.DROPPED_CACHE_CLEARED
+                                CacheWriteOutcome.REFUSED_AFTER_CLEAR
 
                             // The cache is another identity's, or became the current one's after
                             // this request left: its rows would mix two identities' data.
                             !ownedByCurrentIdentity ||
                                 predatesCacheTeardown(requestStartedAtTick) ->
-                                AddPayloadOutcome.DROPPED_OTHER_OWNER
+                                CacheWriteOutcome.REFUSED_OTHER_OWNER
 
                             // The response left before the local write landed; keeping the cache
                             // is the only answer that preserves it. The caller re-fetches to
                             // converge on real server state.
                             isStaleRelativeToLocalWrite(table, requestStartedAtTick) ->
-                                AddPayloadOutcome.DROPPED_STALE
+                                CacheWriteOutcome.REFUSED_STALE
 
-                            !isTrusted -> AddPayloadOutcome.DROPPED_UNTRUSTED
+                            !isTrusted -> CacheWriteOutcome.REFUSED_UNTRUSTED
 
                             // Nothing about this emptiness is known to describe the signed-in
                             // user's data, so it is never written — not over cached rows, and not
                             // into a cold or already-empty slot where it would become the answer
                             // every later cache-first read is served.
                             !authoritativeEmpty && isEmptyJsonArrayPayload(payload) ->
-                                AddPayloadOutcome.DROPPED_EMPTY
+                                CacheWriteOutcome.REFUSED_EMPTY
 
                             else -> {
                                 // A response whose request started after the table's last local
@@ -644,7 +644,7 @@ internal class OfflineStore(
                                 // without the shape that says which rows it admits
                                 if (shape != null)
                                     queryShapes.remember(table, signature, shape, persist = true)
-                                AddPayloadOutcome.WRITTEN
+                                CacheWriteOutcome.WRITTEN
                             }
                         }
                     }
@@ -652,7 +652,7 @@ internal class OfflineStore(
             }
 
         // Outside the table lock: eviction takes its own mutex and scans every table.
-        if (outcome == AddPayloadOutcome.WRITTEN && shouldEnforceSizeAfterWrite(payload)) {
+        if (outcome == CacheWriteOutcome.WRITTEN && shouldEnforceSizeAfterWrite(payload)) {
             enforceDbSizeLimitIfNeeded()
         }
         return outcome
@@ -672,14 +672,14 @@ internal class OfflineStore(
      *   bounds accumulation from many small writes.
      *
      * Both checks are O(1); the expensive scan runs only when one fires. Returns `false`
-     * immediately when size-based eviction is disabled ([OfflineCacheSettings.maxDbSizeBytes] is
+     * immediately when size-based eviction is disabled ([QueryCacheLimits.maxPayloadBytes] is
      * `null`).
      *
      * @param payload the JSON payload just written to the cache.
      * @return `true` when [enforceDbSizeLimitIfNeeded] should be invoked.
      */
     private fun shouldEnforceSizeAfterWrite(payload: String): Boolean {
-        if (settings.maxDbSizeBytes == null) return false
+        if (queryCacheLimits.maxPayloadBytes == null) return false
         val isLargePayload = payload.length >= ENFORCEMENT_LARGE_PAYLOAD_CHARS
         // Always advance the counter so the cadence reflects the true write count; combine with
         // the large-payload trigger afterwards so both side effects run regardless of order.
@@ -1503,7 +1503,7 @@ internal class OfflineStore(
             logged + mutation.id
         }
         if (!first) return
-        sdkLogger.warning {
+        engineLogger.warning {
             if (mutation.id < 0) {
                 "Cache patch skipped an accepted ${mutation.operation} on ${mutation.table}: " +
                     "${failure::class.simpleName}"
@@ -2791,7 +2791,7 @@ internal class OfflineStore(
 
     /**
      * Evict the oldest cached SELECT payloads until the cache is back within
-     * [OfflineCacheSettings.maxDbSizeBytes].
+     * [QueryCacheLimits.maxPayloadBytes].
      *
      * Size is measured **logically** via [ObjectDao.totalPayloadBytes] (summed payload length),
      * never the on-disk database file size. SQLite returns pages freed by `DELETE` to its internal
@@ -2799,11 +2799,11 @@ internal class OfflineStore(
      * off file size therefore empties the cache and then spins forever holding [evictionMutex].
      * Summed payload length decreases as rows are deleted, so it terminates.
      *
-     * Eviction is **triggered** once the cache exceeds [OfflineCacheSettings.maxDbSizeBytes] and
-     * then **drains** down to a hysteresis floor of `max - minRetainedBytes` (coerced to the
-     * ceiling when [OfflineCacheSettings.minRetainedBytes] is non-positive or meets/exceeds the
-     * ceiling). Draining a little below the ceiling keeps a burst of writes that crosses the limit
-     * from re-triggering a pass on every subsequent write.
+     * Eviction is **triggered** once the cache exceeds [QueryCacheLimits.maxPayloadBytes] and then
+     * **drains** down to a hysteresis floor of `max - drainHeadroomBytes` (coerced to the ceiling
+     * when [QueryCacheLimits.drainHeadroomBytes] is non-positive or meets/exceeds the ceiling).
+     * Draining a little below the ceiling keeps a burst of writes that crosses the limit from
+     * re-triggering a pass on every subsequent write.
      *
      * Termination is guaranteed three independent ways:
      * 1. the `currentBytes > evictionFloorBytes` loop condition (the floor is never above the
@@ -2814,13 +2814,13 @@ internal class OfflineStore(
      *
      * The loop holds [evictionMutex] via [withLock] so concurrent writers serialize rather than
      * racing, and the lock is always released even on cancellation. Does nothing when size-based
-     * eviction is disabled ([OfflineCacheSettings.maxDbSizeBytes] is `null`).
+     * eviction is disabled ([QueryCacheLimits.maxPayloadBytes] is `null`).
      *
      * Reclaiming the on-disk pages freed by these deletes (`VACUUM`/`auto_vacuum`) is intentionally
      * out of scope: cache correctness doesn't depend on returning bytes to the filesystem.
      */
     internal suspend fun enforceDbSizeLimitIfNeeded() {
-        val max = settings.maxDbSizeBytes ?: return
+        val max = queryCacheLimits.maxPayloadBytes ?: return
 
         // Cheap pre-check outside the lock: eviction triggers only once the cache exceeds the
         // ceiling, so skip acquiring the mutex when already within budget (the common case even
@@ -2829,10 +2829,12 @@ internal class OfflineStore(
 
         // Once triggered, drain a little below the ceiling to this hysteresis floor so a burst of
         // writes crossing the limit doesn't re-trigger a pass on every subsequent write. When
-        // minRetainedBytes is non-positive or meets/exceeds the ceiling the headroom coerces to
+        // drainHeadroomBytes is non-positive or meets/exceeds the ceiling the headroom coerces to
         // zero and the floor is the ceiling, keeping small-cache configs evicting fully.
         val evictionFloorBytes =
-            if (settings.minRetainedBytes in 1L until max) max - settings.minRetainedBytes else max
+            if (queryCacheLimits.drainHeadroomBytes in 1L until max)
+                max - queryCacheLimits.drainHeadroomBytes
+            else max
 
         evictionMutex.withLock {
             var iterations = 0
@@ -2843,7 +2845,7 @@ internal class OfflineStore(
                 // and would otherwise leave the cache permanently over budget.
                 val deleted =
                     objectDao.deleteOldestPayloadRows(
-                        limit = settings.evictionBatchSize.coerceAtLeast(1),
+                        limit = queryCacheLimits.evictionBatchSize.coerceAtLeast(1),
                         // A payload a live reader shows stays, or the reader would drop to no data
                         keptSignatures = allLiveSignaturesProvider().take(MAX_KEPT_LIVE_SIGNATURES),
                     )

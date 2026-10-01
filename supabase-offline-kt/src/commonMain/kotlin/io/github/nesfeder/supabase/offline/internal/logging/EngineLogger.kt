@@ -9,7 +9,7 @@ import io.github.nesfeder.supabase.offline.OfflineLogger
  * Internal logger wrapper that gates on [minLevel] and uses lazy message construction so
  * filtered-out levels incur zero string-building overhead.
  */
-internal class SdkLogger(
+internal class EngineLogger(
     private val logger: OfflineLogger?,
     private val minLevel: OfflineLogLevel,
 ) {

@@ -52,7 +52,7 @@ class StorageCacheWriteTest {
             delegate = delegate,
             baseDirectory = dataDirectory,
             store = store,
-            sdkLogger = logger.asSdkLogger(),
+            engineLogger = logger.asEngineLogger(),
         )
 
     /** Makes every cache write fail: the bucket's cache directory is a plain file. */
@@ -110,7 +110,7 @@ class StorageCacheWriteTest {
                     delegate = delegate,
                     baseDirectory = dataDirectory,
                     store = failingStore,
-                    sdkLogger = logger.asSdkLogger(),
+                    engineLogger = logger.asEngineLogger(),
                 )
                 .downloadAuthenticated(PATH) {}
 

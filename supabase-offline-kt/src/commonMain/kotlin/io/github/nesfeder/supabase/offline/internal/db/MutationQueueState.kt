@@ -4,7 +4,7 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.logging.SdkLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
@@ -141,7 +141,7 @@ internal class MutationQueueState(
     private val objectDao: ObjectDao,
     private val json: Json,
     private val nowMillis: () -> Long,
-    private val logger: () -> SdkLogger,
+    private val logger: () -> EngineLogger,
 ) {
 
     private val rejectedCache = MutableStateFlow<StoredRejectionList?>(null)

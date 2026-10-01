@@ -8,7 +8,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
+import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
@@ -48,15 +48,15 @@ class OfflineJsonParityTest {
         // Given: an offline builder over a recording delegate, and a DTO whose default-valued
         // field only survives encoding under a non-default serializer configuration
         val postgrest = testPostgrest()
-        val wrapper =
-            FakePostgrestQueryBuilderWrapper(
+        val remoteTable =
+            FakeRemoteTable(
                 table = "parity_table",
                 postgrest = postgrest,
                 onInsert = { postgrestResultOf("[]", postgrest) },
             )
         val builder =
             OfflinePostgrestQueryBuilderImpl(
-                delegate = wrapper,
+                delegate = remoteTable,
                 store = buildStore(),
             )
         val dto = ParityDto(id = "row-1")
@@ -71,7 +71,7 @@ class OfflineJsonParityTest {
 
         // Then: the builder handed the delegate a compact one-element array with the
         // default-valued `note` omitted.
-        val recordedBody = wrapper.recordedInsertBodies.single()
+        val recordedBody = remoteTable.recordedInsertBodies.single()
         // Pinned to a hardcoded literal so a config drift in OfflineJson itself is caught here,
         // rather than moving both sides of the comparison together and hiding the regression.
         assertEquals("""[{"id":"row-1"}]""", recordedBody.toString())
@@ -84,10 +84,9 @@ class OfflineJsonParityTest {
     }
 
     /**
-     * Minimal real [Postgrest] instance for [FakePostgrestQueryBuilderWrapper] and
-     * [postgrestResultOf]; the builder reads its config for property conversion and stamps it on
-     * results. Backed by a [MockEngine] that is never actually hit, since the fake wrapper
-     * intercepts every verb.
+     * Minimal real [Postgrest] instance for [FakeRemoteTable] and [postgrestResultOf]; the builder
+     * reads its config for property conversion and stamps it on results. Backed by a [MockEngine]
+     * that is never actually hit, since the fake wrapper intercepts every verb.
      */
     private fun testPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 

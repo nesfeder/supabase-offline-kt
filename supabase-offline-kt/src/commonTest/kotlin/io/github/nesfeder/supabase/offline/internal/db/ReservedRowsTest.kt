@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineCacheSettings
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -41,11 +41,11 @@ class ReservedRowsTest {
         val store =
             newTestOfflineStore(
                 objectDao = objectDao,
-                settings =
-                    OfflineCacheSettings(
-                        maxDbSizeBytes = 100,
+                queryCacheLimits =
+                    QueryCacheLimits(
+                        maxPayloadBytes = 100,
                         evictionBatchSize = 1,
-                        minRetainedBytes = 0,
+                        drainHeadroomBytes = 0,
                     ),
             )
         store.queueOwnedWrite("user:user-a")
