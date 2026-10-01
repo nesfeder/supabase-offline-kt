@@ -231,7 +231,7 @@ class StaleQueriesTest {
             items.cacheBoth()
 
             // When — an update the server applies by a comparison the cache does not evaluate
-            items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+            items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
                 filter {
                     eq("list_id", "A")
                     gt("priority", 3)
@@ -271,7 +271,7 @@ class StaleQueriesTest {
         val readsBefore = readsOf("A") to readsOf("Z")
 
         // When — an update the cache cannot evaluate, within list A
-        items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+        items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
             filter {
                 eq("list_id", "A")
                 gt("priority", 3)

@@ -156,7 +156,7 @@ class ReactiveReadFailuresTest {
                             if (failing.compareAndSet(expectedValue = false, newValue = true)) {
                                 client
                                     .from(TABLE)
-                                    .insertJson(
+                                    .insert(
                                         buildJsonArray { add(buildJsonObject { put("id", 2) }) }
                                     )
                             }

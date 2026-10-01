@@ -51,7 +51,7 @@ class DryRunWriteTest {
 
         // When
         val outcome =
-            builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+            builder.update(patch(), MutationStrategy.QueueIfOffline) {
                 filter { eq("id", 1) }
                 dryRun()
             }
@@ -69,7 +69,7 @@ class DryRunWriteTest {
         queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
 
         // When
-        builder.insertJson(
+        builder.insert(
             Json.parseToJsonElement("""[{"id":2,"title":"never committed"}]""") as JsonArray
         ) {
             dryRun()
@@ -86,7 +86,7 @@ class DryRunWriteTest {
 
         // When / Then — the connectivity failure surfaces, as it would under OnlineOnly
         assertFailsWith<HttpRequestException> {
-            builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+            builder.update(patch(), MutationStrategy.QueueIfOffline) {
                 filter { eq("id", 1) }
                 dryRun()
             }
@@ -99,12 +99,12 @@ class DryRunWriteTest {
         runTest {
             // Given — an earlier write to the table is still queued
             server.answer = { connectivityFailure() }
-            builder.updateJson(patch(), MutationStrategy.QueueIfOffline) { filter { eq("id", 2) } }
+            builder.update(patch(), MutationStrategy.QueueIfOffline) { filter { eq("id", 2) } }
             server.answer = { okJson("[]", mapOf(PREFERENCE_APPLIED to "tx=rollback")) }
 
             // When
             val outcome =
-                builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+                builder.update(patch(), MutationStrategy.QueueIfOffline) {
                     filter { eq("id", 1) }
                     dryRun()
                 }

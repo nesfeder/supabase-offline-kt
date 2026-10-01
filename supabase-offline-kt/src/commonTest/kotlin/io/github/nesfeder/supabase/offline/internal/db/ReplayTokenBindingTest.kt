@@ -158,7 +158,7 @@ class ReplayTokenBindingTest {
         changeTheSessionWhenASendStarts { supabase.signInForTest("user-b") }
 
         // When — A writes; B signs in after the head was claimed, before the request is built
-        val outcome = builder.insertJson(rows("""[{"id":"a1"}]"""))
+        val outcome = builder.insert(rows("""[{"id":"a1"}]"""))
 
         // Then — the write stays queued as A's, nothing went out under B's token, and the send
         // this attempt recorded is cleared

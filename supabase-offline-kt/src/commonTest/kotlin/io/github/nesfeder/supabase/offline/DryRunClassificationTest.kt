@@ -64,7 +64,7 @@ class DryRunClassificationTest {
             // When — two such writes
             repeat(2) {
                 assertFailsWith<ConnectTimeoutException> {
-                    builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+                    builder.update(patch(), MutationStrategy.QueueIfOffline) {
                         filter { eq("id", 1) }
                     }
                 }
@@ -91,7 +91,7 @@ class DryRunClassificationTest {
             )
 
         // When
-        builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+        builder.update(patch(), MutationStrategy.QueueIfOffline) {
             filter { eq("id", 1) }
             dryRun()
         }
@@ -118,7 +118,7 @@ class DryRunClassificationTest {
             )
 
         // When
-        builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+        builder.update(patch(), MutationStrategy.QueueIfOffline) {
             filter { eq("id", 1) }
             dryRun()
         }
@@ -140,7 +140,7 @@ class DryRunClassificationTest {
 
         // When / Then
         assertFailsWith<HttpRequestException> {
-            builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+            builder.update(patch(), MutationStrategy.QueueIfOffline) {
                 filter { eq("id", 1) }
                 dryRun()
             }
@@ -165,7 +165,7 @@ class DryRunClassificationTest {
 
         // When
         val outcome =
-            builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+            builder.update(patch(), MutationStrategy.QueueIfOffline) {
                 filter { eq("id", 1) }
             }
 
@@ -194,7 +194,7 @@ class DryRunClassificationTest {
         // When
         val failure =
             assertFailsWith<IllegalStateException> {
-                builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+                builder.update(patch(), MutationStrategy.QueueIfOffline) {
                     runs++
                     check(runs < 2) { "cannot build" }
                     filter { eq("id", 1) }

@@ -18,7 +18,6 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.ReadStrategy
@@ -51,8 +50,9 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.jsonArray
 
 /**
- * Internal implementation that delegates to the online [PostgrestQueryBuilder] and augments it with
- * offline caching, mutation queuing, and overlay via [OfflineStore].
+ * One table as the engine reads and writes it, behind the public builder: reads through the cache
+ * ([QueryReader]), writes through the mutation queue or sent directly, and the cache patched with
+ * what the server applied. It sends its requests through [RemoteTable], which tests script.
  */
 internal class OfflineTable(
     private val delegate: RemoteTable,
@@ -112,7 +112,7 @@ internal class OfflineTable(
         ),
     /** The client's gate: every read and write passes it, so the client's close waits for them. */
     private val operationGate: ClientOperationGate = ClientOperationGate(),
-) : OfflinePostgrestQueryBuilder {
+) {
 
     constructor(
         delegate: PostgrestQueryBuilder,
@@ -149,6 +149,18 @@ internal class OfflineTable(
         operationGate = operationGate,
     )
 
+    /** The table the requests target. */
+    val table: String
+        get() = delegate.table
+
+    /** The schema the requests target. */
+    val schema: String
+        get() = delegate.schema
+
+    /** The PostgREST plugin the requests go through. */
+    val postgrest: Postgrest
+        get() = delegate.postgrest
+
     private val json: Json = EngineJson
     private val queryReader =
         QueryReader(
@@ -161,16 +173,18 @@ internal class OfflineTable(
             wakeUps = wakeUps,
         )
 
-    override suspend fun select(
-        columns: Columns,
-        readStrategy: ReadStrategy,
-        request: SelectRequestBuilder.() -> Unit,
+    /** A one-shot read, through the gate; see `OfflinePostgrestQueryBuilder.select`. */
+    suspend fun select(
+        columns: Columns = Columns.ALL,
+        readStrategy: ReadStrategy = ReadStrategy.NetworkFirst(),
+        request: SelectRequestBuilder.() -> Unit = {},
     ): PostgrestResult = operationGate.call { queryReader.select(columns, readStrategy, request) }
 
-    override fun selectAsFlow(
-        columns: Columns,
-        readStrategy: FlowReadStrategy,
-        request: SelectRequestBuilder.() -> Unit,
+    /** A reactive read, counted by the gate while collected; see `OfflinePostgrestQueryBuilder`. */
+    fun selectAsFlow(
+        columns: Columns = Columns.ALL,
+        readStrategy: FlowReadStrategy = FlowReadStrategy.CacheFirstThenNetwork,
+        request: SelectRequestBuilder.() -> Unit = {},
     ): Flow<OfflineReadResult> {
         // Every strategy one way: counted while collected, refused in band once closed, and ended
         // by close() however its collector is stuck
@@ -181,10 +195,11 @@ internal class OfflineTable(
 
     // INSERT -------------------------------------------------------------------
 
-    override suspend fun insertJson(
+    /** Inserts the rows of [body], sent or queued as [mutationStrategy] says. */
+    suspend fun insert(
         body: JsonArray,
-        mutationStrategy: MutationStrategy,
-        request: InsertRequestBuilder.() -> Unit,
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: InsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
@@ -228,34 +243,37 @@ internal class OfflineTable(
         )
     }
 
-    override suspend fun <T : Any> insertWith(
+    /** Inserts [values], encoded with [serializer] and the engine's [EngineJson]. */
+    suspend fun <T : Any> insertWith(
         serializer: KSerializer<T>,
         values: List<T>,
-        mutationStrategy: MutationStrategy,
-        request: InsertRequestBuilder.() -> Unit,
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: InsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val listSerializer = ListSerializer(serializer)
         val body = json.encodeToJsonElement(listSerializer, values).jsonArray
-        return insertJson(body, mutationStrategy, request)
+        return insert(body, mutationStrategy, request)
     }
 
-    override suspend fun <T : Any> insertWith(
+    /** Inserts [value], encoded with [serializer] and the engine's [EngineJson]. */
+    suspend fun <T : Any> insertWith(
         serializer: KSerializer<T>,
         value: T,
-        mutationStrategy: MutationStrategy,
-        request: InsertRequestBuilder.() -> Unit,
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: InsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val element = json.encodeToJsonElement(serializer, value)
         val body = buildJsonArray { add(element) }
-        return insertJson(body, mutationStrategy, request)
+        return insert(body, mutationStrategy, request)
     }
 
     // UPSERT -------------------------------------------------------------------
 
-    override suspend fun upsertJson(
+    /** Upserts the rows of [body], sent or queued as [mutationStrategy] says. */
+    suspend fun upsert(
         body: JsonArray,
-        mutationStrategy: MutationStrategy,
-        request: UpsertRequestBuilder.() -> Unit,
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: UpsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
@@ -305,34 +323,37 @@ internal class OfflineTable(
         )
     }
 
-    override suspend fun <T : Any> upsertWith(
+    /** Upserts [values], encoded with [serializer] and the engine's [EngineJson]. */
+    suspend fun <T : Any> upsertWith(
         serializer: KSerializer<T>,
         values: List<T>,
-        mutationStrategy: MutationStrategy,
-        request: UpsertRequestBuilder.() -> Unit,
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: UpsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val listSerializer = ListSerializer(serializer)
         val body = json.encodeToJsonElement(listSerializer, values).jsonArray
-        return upsertJson(body, mutationStrategy, request)
+        return upsert(body, mutationStrategy, request)
     }
 
-    override suspend fun <T : Any> upsertWith(
+    /** Upserts [value], encoded with [serializer] and the engine's [EngineJson]. */
+    suspend fun <T : Any> upsertWith(
         serializer: KSerializer<T>,
         value: T,
-        mutationStrategy: MutationStrategy,
-        request: UpsertRequestBuilder.() -> Unit,
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: UpsertRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val element = json.encodeToJsonElement(serializer, value)
         val body = buildJsonArray { add(element) }
-        return upsertJson(body, mutationStrategy, request)
+        return upsert(body, mutationStrategy, request)
     }
 
     // UPDATE -------------------------------------------------------------------
 
-    override suspend fun updateJson(
+    /** Sets [body] on the rows [request] filters, sent or queued as [mutationStrategy] says. */
+    suspend fun update(
         body: JsonElement,
-        mutationStrategy: MutationStrategy,
-        request: PostgrestRequestBuilder.() -> Unit,
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
@@ -372,21 +393,23 @@ internal class OfflineTable(
         )
     }
 
-    override suspend fun <T : Any> updateWith(
+    /** Sets [value], encoded with [serializer] and the engine's [EngineJson], on filtered rows. */
+    suspend fun <T : Any> updateWith(
         serializer: KSerializer<T>,
         value: T,
-        mutationStrategy: MutationStrategy,
-        request: PostgrestRequestBuilder.() -> Unit,
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val element = json.encodeToJsonElement(serializer, value)
-        return updateJson(element, mutationStrategy, request)
+        return update(element, mutationStrategy, request)
     }
 
     // DELETE -------------------------------------------------------------------
 
-    override suspend fun delete(
-        mutationStrategy: MutationStrategy,
-        request: PostgrestRequestBuilder.() -> Unit,
+    /** Deletes the rows [request] filters, sent or queued as [mutationStrategy] says. */
+    suspend fun delete(
+        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
+        request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome {
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod

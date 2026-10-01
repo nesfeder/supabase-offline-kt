@@ -82,7 +82,7 @@ class WritesWhileRestoringTest {
         val items = restoringItems()
 
         // When — written while the session restores
-        val outcome = items.insertJson(ROW)
+        val outcome = items.insert(ROW)
         runCurrent()
 
         // Then — queued, and nothing sent on the anon key
@@ -106,7 +106,7 @@ class WritesWhileRestoringTest {
         online = false
 
         // When
-        val outcome = items.insertJson(ROW)
+        val outcome = items.insert(ROW)
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -118,7 +118,7 @@ class WritesWhileRestoringTest {
         val items = restoringItems()
 
         // When
-        val outcome = items.insertJson(ROW, mutationStrategy = MutationStrategy.OnlineOnly)
+        val outcome = items.insert(ROW, mutationStrategy = MutationStrategy.OnlineOnly)
 
         // Then — sent now, as supabase-kt sends any request while the session loads: on the anon
         // key

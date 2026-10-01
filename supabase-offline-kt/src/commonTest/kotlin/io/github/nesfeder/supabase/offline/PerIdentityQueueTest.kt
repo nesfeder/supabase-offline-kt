@@ -46,7 +46,7 @@ class PerIdentityQueueTest {
 
     private suspend fun writeOffline(title: String): MutationOutcome {
         server.answer = { connectivityFailure() }
-        return builder.insertJson(rows("""[{"title":"$title"}]"""))
+        return builder.insert(rows("""[{"title":"$title"}]"""))
     }
 
     private fun sentBodies(): List<String> =
@@ -115,7 +115,7 @@ class PerIdentityQueueTest {
             release.await()
             connectivityFailure()
         }
-        val write = async { runCatching { builder.insertJson(rows("""[{"title":"A's note"}]""")) } }
+        val write = async { runCatching { builder.insert(rows("""[{"title":"A's note"}]""")) } }
         parked.await()
 
         // When — the app switches to user B (no clear), then A's request fails offline

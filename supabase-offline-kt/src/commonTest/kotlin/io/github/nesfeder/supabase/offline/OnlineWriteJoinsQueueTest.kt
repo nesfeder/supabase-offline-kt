@@ -38,7 +38,7 @@ class OnlineWriteJoinsQueueTest {
         )
 
     private suspend fun rename(title: String): MutationOutcome =
-        builder.updateJson(patch(title), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
+        builder.update(patch(title), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
     @Test
     fun an_online_edit_behind_a_pending_offline_edit_reaches_the_server_last() = runTest {
@@ -87,7 +87,7 @@ class OnlineWriteJoinsQueueTest {
     fun an_online_delete_behind_a_pending_insert_of_the_same_row_does_not_resurrect_it() = runTest {
         // Given — offline, the user created row 7
         server.answer = { connectivityFailure() }
-        builder.insertJson(Json.parseToJsonElement("""[{"id":7,"title":"temp"}]""") as JsonArray)
+        builder.insert(Json.parseToJsonElement("""[{"id":7,"title":"temp"}]""") as JsonArray)
 
         // When — online, the user deletes it again, then the queue replays
         server.answer = { okJson("[]") }
@@ -107,7 +107,7 @@ class OnlineWriteJoinsQueueTest {
                 delegate = server.supabaseClient().postgrest.from("other"),
                 store = store,
             )
-            .updateJson(patch("x"), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
+            .update(patch("x"), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
         // When
         server.answer = { okJson("[]") }
@@ -147,11 +147,11 @@ class OnlineWriteJoinsQueueTest {
                 coordinatorScope = backgroundScope,
             )
         server.answer = { connectivityFailure() }
-        client.from(TABLE).updateJson(patch("A")) { filter { eq("id", 1) } }
+        client.from(TABLE).update(patch("A")) { filter { eq("id", 1) } }
 
         // When — online again, a new edit joins the queue; nobody calls sync
         server.answer = { okJson("[]") }
-        val outcome = client.from(TABLE).updateJson(patch("B")) { filter { eq("id", 1) } }
+        val outcome = client.from(TABLE).update(patch("B")) { filter { eq("id", 1) } }
         store.pendingMutationCountFlow().first { pending -> pending == 0 }
 
         // Then — the engine replayed both, in order

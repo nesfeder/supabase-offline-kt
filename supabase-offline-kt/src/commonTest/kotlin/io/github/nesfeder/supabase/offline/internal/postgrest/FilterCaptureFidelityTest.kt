@@ -74,7 +74,7 @@ class FilterCaptureFidelityTest {
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
             )
-        builder.updateJson(
+        builder.update(
             Json.parseToJsonElement("""{"done":true}"""),
             MutationStrategy.QueueIfOffline,
         ) {

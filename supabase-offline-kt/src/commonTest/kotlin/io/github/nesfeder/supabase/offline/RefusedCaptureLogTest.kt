@@ -35,7 +35,7 @@ class RefusedCaptureLogTest {
     fun a_refused_offline_update_logs_no_filter_value_at_info_or_above() = runTest {
         // When
         assertFailsWith<Exception> {
-            builder.updateJson(Json.parseToJsonElement("""{"title":"x"}""")) {
+            builder.update(Json.parseToJsonElement("""{"title":"x"}""")) {
                 filter { filterNot("email", FilterOperator.EQ, EMAIL) }
             }
         }

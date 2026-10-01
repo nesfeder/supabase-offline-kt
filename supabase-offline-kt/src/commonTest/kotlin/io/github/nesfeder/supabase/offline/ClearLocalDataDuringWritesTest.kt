@@ -105,7 +105,7 @@ class ClearLocalDataDuringWritesTest {
                 okJson("[]")
             }
             val write = async {
-                client.from(TABLE).insertJson(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
+                client.from(TABLE).insert(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
             }
             parked.await()
 
@@ -135,7 +135,7 @@ class ClearLocalDataDuringWritesTest {
         }
         val write = async {
             runCatching {
-                client.from(TABLE).insertJson(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
+                client.from(TABLE).insert(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
             }
         }
         parked.await()
@@ -157,7 +157,7 @@ class ClearLocalDataDuringWritesTest {
         server.answer = { connectivityFailure() }
 
         // When
-        val outcome = client.from(TABLE).insertJson(rows("""[{"id":1,"title":"new user's row"}]"""))
+        val outcome = client.from(TABLE).insert(rows("""[{"id":1,"title":"new user's row"}]"""))
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)

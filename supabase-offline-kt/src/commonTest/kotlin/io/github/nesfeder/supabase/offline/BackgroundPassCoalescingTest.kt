@@ -54,7 +54,7 @@ class BackgroundPassCoalescingTest {
                 store = store,
                 coordinatorScope = clientScope,
             )
-        client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"poison"}""")) {
+        client.from(TABLE).update(Json.parseToJsonElement("""{"title":"poison"}""")) {
             filter { eq("id", 0) }
         }
         server.answer = { request ->
@@ -66,7 +66,7 @@ class BackgroundPassCoalescingTest {
 
         // When — twenty writes join the queue behind it, and every pass they start has run
         repeat(20) { index ->
-            client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"w$index"}""")) {
+            client.from(TABLE).update(Json.parseToJsonElement("""{"title":"w$index"}""")) {
                 filter { eq("id", index + 1) }
             }
         }

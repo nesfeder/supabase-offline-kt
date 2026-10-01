@@ -84,7 +84,7 @@ class InFlightReleaseTest {
                 queueIdentity = { QueueIdentity.Anonymous },
                 headSender = replayer,
             )
-        val later = builder.insertJson(rows("""[{"id":"k2","title":"Eggs"}]"""))
+        val later = builder.insert(rows("""[{"id":"k2","title":"Eggs"}]"""))
 
         // Then — it is sent at once, not queued behind a send that is no longer happening
         assertIs<MutationOutcome.Applied>(later)

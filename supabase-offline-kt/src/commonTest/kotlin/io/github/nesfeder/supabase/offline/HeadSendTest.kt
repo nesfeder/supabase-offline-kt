@@ -58,7 +58,7 @@ class HeadSendTest {
         )
 
     private suspend fun rename(title: String): MutationOutcome =
-        builder.updateJson(patch(title)) { filter { eq("id", 1) } }
+        builder.update(patch(title)) { filter { eq("id", 1) } }
 
     @Test
     fun a_refusal_at_the_head_is_thrown_and_the_write_leaves_the_queue() = runTest {
@@ -158,7 +158,7 @@ class HeadSendTest {
         session = USER_B
 
         // When
-        val outcome = asUserA.updateJson(patch("A")) { filter { eq("id", 1) } }
+        val outcome = asUserA.update(patch("A")) { filter { eq("id", 1) } }
 
         // Then — it waits for A, unsent
         assertIs<MutationOutcome.Queued>(outcome)
@@ -176,7 +176,7 @@ class HeadSendTest {
 
         // When
         val outcome =
-            builder.updateJson(patch("B"), MutationStrategy.OnlineOnly) { filter { eq("id", 1) } }
+            builder.update(patch("B"), MutationStrategy.OnlineOnly) { filter { eq("id", 1) } }
 
         // Then — it went straight out, ahead of the queued write
         assertEquals(MutationOutcome.Applied::class, outcome::class)
@@ -194,7 +194,7 @@ class HeadSendTest {
 
             // When — an update whose filter the queue cannot record exactly
             val outcome =
-                builder.updateJson(patch("B")) {
+                builder.update(patch("B")) {
                     filter {
                         or {
                             eq("id", 1)

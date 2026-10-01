@@ -64,7 +64,7 @@ class UpsertOverlayTest {
         cache(TABLE)
 
         // When
-        client.from(TABLE).upsertJson(
+        client.from(TABLE).upsert(
             rows("""[{"id":"1","v":2},{"id":"2","v":2},{"id":"3","v":2}]""").let(::JsonArray)
         ) {
             onConflict = "id"
@@ -84,7 +84,7 @@ class UpsertOverlayTest {
         cache(TABLE)
 
         // When
-        client.from(TABLE).upsertJson(rows("""[{"id":"1","v":2}]""").let(::JsonArray))
+        client.from(TABLE).upsert(rows("""[{"id":"1","v":2}]""").let(::JsonArray))
 
         // Then
         assertEquals(rows("""[{"id":"1","v":2,"title":"kept"}]"""), cached(TABLE))
@@ -98,7 +98,7 @@ class UpsertOverlayTest {
         goOffline()
 
         // When
-        client.from(TABLE).upsertJson(
+        client.from(TABLE).upsert(
             rows("""[{"id":"1","v":2},{"id":"3","v":2}]""").let(::JsonArray)
         ) {
             onConflict = "id"
@@ -119,9 +119,7 @@ class UpsertOverlayTest {
         goOffline()
 
         // When
-        client.from(TABLE).upsertJson(
-            rows("""[{"email":"a@example.com","v":2}]""").let(::JsonArray)
-        ) {
+        client.from(TABLE).upsert(rows("""[{"email":"a@example.com","v":2}]""").let(::JsonArray)) {
             onConflict = "email"
         }
 
@@ -143,9 +141,7 @@ class UpsertOverlayTest {
         // When
         client
             .from(MEMBERSHIPS)
-            .upsertJson(
-                rows("""[{"team_id":"t","member_id":"m","role":"editor"}]""").let(::JsonArray)
-            )
+            .upsert(rows("""[{"team_id":"t","member_id":"m","role":"editor"}]""").let(::JsonArray))
 
         // Then
         val expected = rows("""[{"team_id":"t","member_id":"m","role":"editor"}]""")
@@ -164,7 +160,7 @@ class UpsertOverlayTest {
         goOffline()
         client
             .from(MEMBERSHIPS)
-            .insertJson(rows("""[{"id":"t","team_id":"t","member_id":"m2"}]""").let(::JsonArray))
+            .insert(rows("""[{"id":"t","team_id":"t","member_id":"m2"}]""").let(::JsonArray))
 
         // When — it replays, and the cached query has not refreshed since
         server.recorder.answer = online

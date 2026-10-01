@@ -101,13 +101,13 @@ internal suspend fun runClearLocalDataForensics(
         val profiles = client.from("profiles")
         repeat(CACHED_PAYLOADS) { index -> profiles.select { filter { eq("id", index) } } }
         phase = Phase.OFFLINE
-        profiles.insertJson(
+        profiles.insert(
             buildJsonArray { add(buildJsonObject { put("email", "$marker-rejected@example.com") }) }
         )
         phase = Phase.REJECTING
         client.syncAllPendingMutations()
         phase = Phase.OFFLINE
-        profiles.insertJson(
+        profiles.insert(
             buildJsonArray {
                 add(
                     buildJsonObject {

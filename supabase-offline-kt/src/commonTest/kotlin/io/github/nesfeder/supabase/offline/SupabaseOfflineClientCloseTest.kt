@@ -296,7 +296,7 @@ class SupabaseOfflineClientCloseTest {
                 repeat(3) { index ->
                     client
                         .from("todos")
-                        .insertJson(buildJsonArray { add(buildJsonObject { put("id", index) }) })
+                        .insert(buildJsonArray { add(buildJsonObject { put("id", index) }) })
                 }
 
                 // When
@@ -397,7 +397,7 @@ class SupabaseOfflineClientCloseTest {
             repeat(5) { index ->
                 client
                     .from("todos")
-                    .insertJson(buildJsonArray { add(buildJsonObject { put("id", index) }) })
+                    .insert(buildJsonArray { add(buildJsonObject { put("id", index) }) })
             }
 
             // When
@@ -453,7 +453,7 @@ class SupabaseOfflineClientCloseTest {
             runCatching {
                 client
                     .from("todos")
-                    .insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+                    .insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
             }
         }
         withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
@@ -578,8 +578,8 @@ class SupabaseOfflineClientCloseTest {
                 onStillClosing = { gaveUp.addAndFetch(1) },
             )
         val builder = client.from("todos")
-        builder.insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
-        builder.insertJson(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
+        builder.insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+        builder.insert(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
         assertEquals(2, client.pendingMutationCount())
 
         // When — back online, a replay and an online write are in flight, held at the server, when
@@ -588,7 +588,7 @@ class SupabaseOfflineClientCloseTest {
         val replay = callerScope.launch { runCatching { client.syncAllPendingMutations() } }
         val write = callerScope.launch {
             runCatching {
-                builder.insertJson(buildJsonArray { add(buildJsonObject { put("id", 3) }) })
+                builder.insert(buildJsonArray { add(buildJsonObject { put("id", 3) }) })
             }
         }
         withContext(Dispatchers.Default) {
@@ -636,8 +636,8 @@ class SupabaseOfflineClientCloseTest {
                 coordinatorScope = idleCoroutineScope(),
                 closeWait = IDLE_CLOSE_WAIT,
             )
-        client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
-        client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
+        client.from("todos").insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+        client.from("todos").insert(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
 
         // When — its first request is held at the server when the client closes
         online.store(1)
@@ -679,7 +679,7 @@ class SupabaseOfflineClientCloseTest {
                 runCatching {
                     client
                         .from("todos")
-                        .insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+                        .insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
                 }
             }
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
@@ -731,7 +731,7 @@ class SupabaseOfflineClientCloseTest {
                 runCatching {
                     client
                         .from("todos")
-                        .insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+                        .insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
                 }
             }
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
@@ -804,7 +804,7 @@ class SupabaseOfflineClientCloseTest {
                     runCatching {
                         client
                             .from("todos")
-                            .insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+                            .insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
                     }
                 }
                 withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }

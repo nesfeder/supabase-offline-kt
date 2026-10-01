@@ -41,7 +41,7 @@ class OfflineMutationLoggingTest {
         // Given — the default server accepts the write
 
         // When
-        builder.insertJson(ROWS)
+        builder.insert(ROWS)
 
         // Then
         assertEquals(
@@ -56,7 +56,7 @@ class OfflineMutationLoggingTest {
         // Given — the default server accepts the write
 
         // When
-        builder.upsertJson(ROWS) { onConflict = "id" }
+        builder.upsert(ROWS) { onConflict = "id" }
 
         // Then
         assertEquals(
@@ -71,7 +71,7 @@ class OfflineMutationLoggingTest {
         // Given — the default server accepts the write
 
         // When
-        builder.updateJson(PATCH) { filter { eq("id", 1) } }
+        builder.update(PATCH) { filter { eq("id", 1) } }
 
         // Then
         assertEquals(
@@ -104,7 +104,7 @@ class OfflineMutationLoggingTest {
         server.answer = { connectivityFailure() }
 
         // When
-        builder.insertJson(ROWS, MutationStrategy.QueueIfOffline)
+        builder.insert(ROWS, MutationStrategy.QueueIfOffline)
 
         // Then
         assertEquals(
@@ -119,7 +119,7 @@ class OfflineMutationLoggingTest {
         server.answer = { connectivityFailure() }
 
         // When
-        builder.upsertJson(ROWS, MutationStrategy.QueueIfOffline) { onConflict = "id" }
+        builder.upsert(ROWS, MutationStrategy.QueueIfOffline) { onConflict = "id" }
 
         // Then
         assertEquals(
@@ -134,7 +134,7 @@ class OfflineMutationLoggingTest {
         server.answer = { connectivityFailure() }
 
         // When
-        builder.updateJson(PATCH, MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
+        builder.update(PATCH, MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
         // Then
         assertEquals(

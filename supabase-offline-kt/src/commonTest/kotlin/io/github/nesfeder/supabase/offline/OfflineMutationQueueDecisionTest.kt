@@ -49,13 +49,13 @@ class OfflineMutationQueueDecisionTest {
         )
 
     private suspend fun insert(strategy: MutationStrategy): MutationOutcome =
-        builder.insertJson(ROWS, strategy)
+        builder.insert(ROWS, strategy)
 
     private suspend fun upsert(strategy: MutationStrategy): MutationOutcome =
-        builder.upsertJson(ROWS, strategy) { onConflict = "id" }
+        builder.upsert(ROWS, strategy) { onConflict = "id" }
 
     private suspend fun update(strategy: MutationStrategy): MutationOutcome =
-        builder.updateJson(PATCH, strategy) { filter { eq("id", 1) } }
+        builder.update(PATCH, strategy) { filter { eq("id", 1) } }
 
     private suspend fun delete(strategy: MutationStrategy): MutationOutcome =
         builder.delete(strategy) { filter { eq("id", 1) } }
@@ -317,7 +317,7 @@ class OfflineMutationQueueDecisionTest {
 
         // When / Then
         assertFailsWith<HttpRequestException> {
-            builder.updateJson(PATCH, MutationStrategy.QueueIfOffline)
+            builder.update(PATCH, MutationStrategy.QueueIfOffline)
         }
         assertTrue(mutationDao.inserted.isEmpty())
     }
@@ -343,7 +343,7 @@ class OfflineMutationQueueDecisionTest {
 
         // When / Then
         assertFailsWith<HttpRequestException> {
-            builder.updateJson(PATCH, MutationStrategy.QueueIfOffline) {
+            builder.update(PATCH, MutationStrategy.QueueIfOffline) {
                 filter {
                     or {
                         eq("id", 1)

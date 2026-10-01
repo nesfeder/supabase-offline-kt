@@ -188,12 +188,12 @@ class ReadPathCostAndroidTest {
             PendingKind.INSERT ->
                 queueInsert(items, list = if (reaches) "L0" else "L1", position = 1_000 + index)
             PendingKind.UPDATE ->
-                items.updateJson(buildJsonObject { put("title", "edit $index") }) {
+                items.update(buildJsonObject { put("title", "edit $index") }) {
                     if (reaches) filter { eq("id", "L0-$position") }
                     else filter { eq("owner", "someone-else") }
                 }
             PendingKind.UPSERT ->
-                items.upsertJson(
+                items.upsert(
                     buildJsonArray {
                         add(
                             buildJsonObject {
@@ -342,25 +342,23 @@ class ReadPathCostAndroidTest {
                 var round = 0
                 val upsert = timeMillis {
                     round++
-                    items.upsertJson(
-                        buildJsonArray { add(rowOf("L0", round % 50, "Online $round")) }
-                    )
+                    items.upsert(buildJsonArray { add(rowOf("L0", round % 50, "Online $round")) })
                 }
                 val update = timeMillis {
                     round++
-                    items.updateJson(buildJsonObject { put("title", "Online $round") }) {
+                    items.update(buildJsonObject { put("title", "Online $round") }) {
                         filter { eq("id", "L0-${round % 50}") }
                     }
                 }
                 // and, offline, one upsert waits in the queue: first of a row the list holds, then
                 // of a row another list holds that the upsert moves into it
                 online.value = false
-                items.upsertJson(buildJsonArray { add(rowOf("L0", 0, "Queued")) })
+                items.upsert(buildJsonArray { add(rowOf("L0", 0, "Queued")) })
                 val oneShotHeld = timeMillis {
                     items.select(readStrategy = ReadStrategy.CacheOnly(), request = listQuery("L0"))
                 }
                 val reactiveHeld = timeMillis { firstEmission(items, "L0") }
-                items.upsertJson(buildJsonArray { add(rowOf("L0", 1, "Moved").withId("L1-1")) })
+                items.upsert(buildJsonArray { add(rowOf("L0", 1, "Moved").withId("L1-1")) })
                 val oneShotMoved = timeMillis {
                     items.select(readStrategy = ReadStrategy.CacheOnly(), request = listQuery("L0"))
                 }
@@ -407,18 +405,18 @@ class ReadPathCostAndroidTest {
                 var round = 0
                 val retitle = timeMillis {
                     round++
-                    items.updateJson(buildJsonObject { put("title", "Online $round") }) {
+                    items.update(buildJsonObject { put("title", "Online $round") }) {
                         filter { gt("position", 45) }
                     }
                 }
                 val move = timeMillis {
-                    items.updateJson(buildJsonObject { put("list_id", "L0") }) {
+                    items.update(buildJsonObject { put("list_id", "L0") }) {
                         filter { gt("position", 48) }
                     }
                 }
                 // and, offline, one such update of the list column waits in the queue
                 online.value = false
-                items.updateJson(buildJsonObject { put("list_id", "L0") }) {
+                items.update(buildJsonObject { put("list_id", "L0") }) {
                     filter { gt("position", 48) }
                 }
                 val oneShot = timeMillis {
@@ -472,7 +470,7 @@ class ReadPathCostAndroidTest {
         list: String,
         position: Int,
     ) {
-        items.insertJson(
+        items.insert(
             buildJsonArray {
                 add(
                     buildJsonObject {

@@ -340,20 +340,22 @@ internal class OfflineClient(
                     if (readShapePostgrest.compareAndSet(null, created)) created
                     else readShapePostgrest.value ?: created
                 }
-        return OfflineTable(
-            delegate = delegate,
-            store = store,
-            engineLogger = engineLogger,
-            requestSession = ::requestSession,
-            trustPolicy = responseTrust,
-            liveQueries = liveQueries,
-            wakeUps = wakeUps,
-            queueIdentity = { supabase.currentQueueIdentity() },
-            requestSync = automaticReplay::requestPass,
-            headSender = mutationQueueReplayer,
-            operationGate = operationGate,
-            readShapePostgrest = readShape,
-        )
+        val engine =
+            OfflineTable(
+                delegate = delegate,
+                store = store,
+                engineLogger = engineLogger,
+                requestSession = ::requestSession,
+                trustPolicy = responseTrust,
+                liveQueries = liveQueries,
+                wakeUps = wakeUps,
+                queueIdentity = { supabase.currentQueueIdentity() },
+                requestSync = automaticReplay::requestPass,
+                headSender = mutationQueueReplayer,
+                operationGate = operationGate,
+                readShapePostgrest = readShape,
+            )
+        return OfflinePostgrestQueryBuilder(engine)
     }
 
     /** The session a read sent now goes out under; the identity is the mutation queue's own. */

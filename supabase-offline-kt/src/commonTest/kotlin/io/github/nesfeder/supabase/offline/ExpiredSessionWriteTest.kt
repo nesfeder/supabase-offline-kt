@@ -53,8 +53,8 @@ class ExpiredSessionWriteTest {
             )
 
         // When
-        val inserted = builder.insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
-        val updated = builder.updateJson(patch()) { filter { eq("id", "k1") } }
+        val inserted = builder.insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val updated = builder.update(patch()) { filter { eq("id", "k1") } }
 
         // Then — both queued, as A's, and no request went out with a token it could not refresh
         assertIs<MutationOutcome.Queued>(inserted)
@@ -77,7 +77,7 @@ class ExpiredSessionWriteTest {
 
         // When
         val outcome = runCatching {
-            builder.updateJson(patch()) {
+            builder.update(patch()) {
                 filter { eq("id", "k1") }
                 dryRun()
             }
@@ -102,7 +102,7 @@ class ExpiredSessionWriteTest {
             )
 
         // When
-        val inserted = builder.insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val inserted = builder.insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // Then — queued, unsent, and not recorded as possibly on the server
         assertIs<MutationOutcome.Queued>(inserted)

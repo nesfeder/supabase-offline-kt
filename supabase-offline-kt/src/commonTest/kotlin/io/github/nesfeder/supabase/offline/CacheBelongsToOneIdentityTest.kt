@@ -389,7 +389,7 @@ class CacheBelongsToOneIdentityTest {
         val items = client.from(TABLE)
         items.select(readStrategy = ReadStrategy.NetworkOnly)
         online = false
-        items.insertJson(Json.parseToJsonElement("""[{"id":"a2","owner":"A"}]""") as JsonArray)
+        items.insert(Json.parseToJsonElement("""[{"id":"a2","owner":"A"}]""") as JsonArray)
         runCurrent()
         online = true
         assertEquals(1, client.pendingMutationCount())

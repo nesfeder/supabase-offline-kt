@@ -43,7 +43,7 @@ class OverlayTeardownRaceTest {
                 store = store,
             )
         val write = async {
-            builder.insertJson(
+            builder.insert(
                 Json.parseToJsonElement("""[{"id":"a2","title":"A's new row"}]""") as JsonArray
             )
         }

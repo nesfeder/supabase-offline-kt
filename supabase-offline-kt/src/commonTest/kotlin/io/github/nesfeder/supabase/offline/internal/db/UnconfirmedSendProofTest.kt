@@ -71,7 +71,7 @@ class UnconfirmedSendProofTest {
         }
         val outcome =
             builderOn(clientRetryingOn(server.recorder))
-                .insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+                .insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
         server.recorder.answer = answer
 
         // When
@@ -108,8 +108,7 @@ class UnconfirmedSendProofTest {
 
         // When
         val outcome =
-            builderOn(clientRetryingOn(server))
-                .insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+            builderOn(clientRetryingOn(server)).insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // Then — something answered, so the send stays possibly delivered
         assertIs<MutationOutcome.Queued>(outcome)
@@ -138,7 +137,7 @@ class UnconfirmedSendProofTest {
             }
             val outcome =
                 builderOn(server.supabaseClient())
-                    .insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+                    .insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
             // When
             val report =
@@ -171,8 +170,7 @@ class UnconfirmedSendProofTest {
             }
         }
         val outcome =
-            builderOn(server.supabaseClient())
-                .insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+            builderOn(server.supabaseClient()).insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // When
         val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
@@ -191,7 +189,7 @@ class UnconfirmedSendProofTest {
             RecordingPostgrestServer(
                 answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST002") }
             )
-        builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        builderOn(server.supabaseClient()).insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
         server.answer = { okJson("[]") }
 
         // When
@@ -208,7 +206,7 @@ class UnconfirmedSendProofTest {
             RecordingPostgrestServer(
                 answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST001") }
             )
-        builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        builderOn(server.supabaseClient()).insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
         server.answer = { okJson("[]") }
 
         // When
@@ -267,7 +265,7 @@ class UnconfirmedSendProofTest {
         // Given — an insert whose response was lost: its send is recorded in its row
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
-        builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        builderOn(server.supabaseClient()).insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // When — the next launch replays it
         val report =

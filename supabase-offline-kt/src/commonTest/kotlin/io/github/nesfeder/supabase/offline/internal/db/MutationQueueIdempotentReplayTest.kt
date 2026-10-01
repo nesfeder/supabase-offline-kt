@@ -53,7 +53,7 @@ class MutationQueueIdempotentReplayTest {
                 store = store,
             )
         val outcome =
-            builder.insertJson(
+            builder.insert(
                 rows("""[{"id":"t1","title":"Buy milk"}]"""),
                 MutationStrategy.QueueIfOffline,
             )
@@ -105,7 +105,7 @@ class MutationQueueIdempotentReplayTest {
         runTest {
             // Given — the send failed without saying whether the server got it
             val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-            builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+            builderOn(server).insert(rows("""[{"id":"t1","title":"Buy milk"}]"""))
             server.answer = { okJson("[]") }
 
             // When
@@ -126,7 +126,7 @@ class MutationQueueIdempotentReplayTest {
             RecordingPostgrestServer(
                 answer = { throw ConnectTimeoutException("connect timed out", null) }
             )
-        builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        builderOn(server).insert(rows("""[{"id":"t1","title":"Buy milk"}]"""))
         server.answer = { okJson("[]") }
 
         // When
@@ -142,7 +142,7 @@ class MutationQueueIdempotentReplayTest {
         val server = FakeRelationalPostgrestServer()
         server.tablesWithoutUniqueKey = setOf(TABLE)
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
-        builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        builderOn(server).insert(rows("""[{"id":"t1","title":"Buy milk"}]"""))
 
         // When — the replay's upsert has no constraint to match (42P10)
         val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
@@ -214,7 +214,7 @@ class MutationQueueIdempotentReplayTest {
         val logger = RecordingOfflineLogger()
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
-        builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        builderOn(server).insert(rows("""[{"id":"t1","title":"Buy milk"}]"""))
         val replayer =
             MutationQueueReplayer(
                 store = store,
@@ -237,7 +237,7 @@ class MutationQueueIdempotentReplayTest {
     fun an_idempotent_replay_keeps_default_to_null_false() = runTest {
         // Given — an insert that may have reached the server, made with defaultToNull = false
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        builderOn(server).insertJson(rows("""[{"id":"t1"}]""")) { defaultToNull = false }
+        builderOn(server).insert(rows("""[{"id":"t1"}]""")) { defaultToNull = false }
         server.answer = { okJson("[]") }
 
         // When
@@ -255,7 +255,7 @@ class MutationQueueIdempotentReplayTest {
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
 
         // When — the upsert commits, its response is lost, and the queue replays it
-        val outcome = builderOn(server).upsertJson(rows("""[{"id":"t1","title":"new"}]"""))
+        val outcome = builderOn(server).upsert(rows("""[{"id":"t1","title":"new"}]"""))
         val synced =
             MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
@@ -274,7 +274,7 @@ class MutationQueueIdempotentReplayTest {
 
         // When
         val outcome =
-            builderOn(server).updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+            builderOn(server).update(Json.parseToJsonElement("""{"title":"new"}""")) {
                 filter { eq("id", "t1") }
             }
         val synced =
@@ -316,7 +316,7 @@ class MutationQueueIdempotentReplayTest {
             server.loseResponseAfterCommit = { request -> request.method == "POST" }
 
             // When
-            builderOn(server).insertJson(rows("""[{"title":"Buy milk"}]"""))
+            builderOn(server).insert(rows("""[{"title":"Buy milk"}]"""))
             MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
             // Then — pinned as it is: two rows

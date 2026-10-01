@@ -130,7 +130,7 @@ class SupabaseOfflineClientTest {
         // Given — a write queued while the network is down
         val client = newTestOfflineClient(supabase = server.supabaseClient())
         server.answer = { connectivityFailure() }
-        client.from("todos").insertJson(ROWS)
+        client.from("todos").insert(ROWS)
 
         // When
         val total = client.pendingMutationCount()
@@ -147,7 +147,7 @@ class SupabaseOfflineClientTest {
         // Given — a write queued while the network is down, then the network returns
         val client = newTestOfflineClient(supabase = server.supabaseClient())
         server.answer = { connectivityFailure() }
-        client.from("todos").insertJson(ROWS)
+        client.from("todos").insert(ROWS)
         server.answer = { okJson("[]") }
         server.requests.clear()
 
@@ -170,8 +170,8 @@ class SupabaseOfflineClientTest {
                 coordinatorScope = idleCoroutineScope(),
             )
         server.answer = { connectivityFailure() }
-        client.from("todos").insertJson(ROWS)
-        client.from("projects").insertJson(ROWS)
+        client.from("todos").insert(ROWS)
+        client.from("projects").insert(ROWS)
         server.answer = { okJson("[]") }
         server.requests.clear()
 

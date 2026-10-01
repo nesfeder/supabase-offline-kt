@@ -51,7 +51,7 @@ class QueueOwnershipTest {
 
     private suspend fun writeOffline(title: String): MutationOutcome {
         server.answer = { connectivityFailure() }
-        return builder.insertJson(rows("""[{"title":"$title"}]"""), MutationStrategy.QueueIfOffline)
+        return builder.insert(rows("""[{"title":"$title"}]"""), MutationStrategy.QueueIfOffline)
     }
 
     @Test

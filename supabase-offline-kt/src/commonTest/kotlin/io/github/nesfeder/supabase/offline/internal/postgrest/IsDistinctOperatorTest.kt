@@ -122,7 +122,7 @@ class IsDistinctOperatorTest {
 
         // When — the write is made offline, then the queue replays online
         val outcome =
-            builder.updateJson(
+            builder.update(
                 Json.parseToJsonElement("""{"done":true}"""),
                 MutationStrategy.QueueIfOffline,
             ) {

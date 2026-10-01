@@ -75,7 +75,7 @@ class SchemaCacheMissTest {
             )
 
         // When
-        val outcome = builder.insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val outcome = builder.insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // Then — the caller is told it is queued, and it waits for the cache
         assertIs<MutationOutcome.Queued>(outcome)

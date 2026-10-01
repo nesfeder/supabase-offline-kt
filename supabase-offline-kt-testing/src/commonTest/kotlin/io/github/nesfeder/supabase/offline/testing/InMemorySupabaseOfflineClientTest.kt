@@ -55,7 +55,7 @@ class InMemorySupabaseOfflineClientTest {
         val outcome =
             client
                 .from(TABLE)
-                .insertJson(JsonArray(listOf(buildJsonObject { put("title", "Buy milk") })))
+                .insert(JsonArray(listOf(buildJsonObject { put("title", "Buy milk") })))
 
         // Then — the write is queued rather than lost
         assertIs<MutationOutcome.Queued>(outcome)

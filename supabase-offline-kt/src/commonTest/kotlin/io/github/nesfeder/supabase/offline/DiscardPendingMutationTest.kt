@@ -53,7 +53,7 @@ class DiscardPendingMutationTest {
 
     private suspend fun renameOffline(id: Int, title: String) {
         server.answer = { connectivityFailure() }
-        builder.updateJson(patch(title)) { filter { eq("id", id) } }
+        builder.update(patch(title)) { filter { eq("id", id) } }
     }
 
     @Test
@@ -125,7 +125,7 @@ class DiscardPendingMutationTest {
             release.await()
             okJson("[]")
         }
-        val write = async { builder.updateJson(patch("A")) { filter { eq("id", 1) } } }
+        val write = async { builder.update(patch("A")) { filter { eq("id", 1) } } }
         parked.await()
 
         // When

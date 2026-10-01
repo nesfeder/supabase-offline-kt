@@ -72,7 +72,7 @@ class OfflineClientPlacementAndroidTest {
         try {
             client
                 .from("todos")
-                .insertJson(buildJsonArray { add(buildJsonObject { put("title", "unsent") }) })
+                .insert(buildJsonArray { add(buildJsonObject { put("title", "unsent") }) })
             assertEquals(1, client.pendingMutationCount())
         } finally {
             client.close()

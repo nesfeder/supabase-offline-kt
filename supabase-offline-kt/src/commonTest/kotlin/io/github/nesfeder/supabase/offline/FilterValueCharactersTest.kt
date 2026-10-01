@@ -97,10 +97,10 @@ class FilterValueCharactersTest {
             online = writeOnline
 
             // When — a row for that company and a row for another are written
-            client.from(table).insertJson(JsonArray(listOf(row(2, company = value, team = "Ops"))))
+            client.from(table).insert(JsonArray(listOf(row(2, company = value, team = "Ops"))))
             client
                 .from(table)
-                .insertJson(JsonArray(listOf(row(3, company = value + "x", team = "Ops"))))
+                .insert(JsonArray(listOf(row(3, company = value + "x", team = "Ops"))))
 
             // Then
             val shown = shownIds(table, companyList(value))
@@ -130,8 +130,8 @@ class FilterValueCharactersTest {
         online = false
 
         // When
-        items.insertJson(JsonArray(listOf(row(2, company = "c", team = "R&D"))))
-        items.insertJson(JsonArray(listOf(row(3, company = "c", team = "QA"))))
+        items.insert(JsonArray(listOf(row(2, company = "c", team = "R&D"))))
+        items.insert(JsonArray(listOf(row(3, company = "c", team = "QA"))))
 
         // Then
         assertEquals(listOf(1, 2), shownIds(TABLE, teams))

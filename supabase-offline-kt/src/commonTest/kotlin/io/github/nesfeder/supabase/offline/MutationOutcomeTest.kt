@@ -59,7 +59,7 @@ class MutationOutcomeTest {
             )
 
         // When
-        val outcome = builder.insertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
+        val outcome = builder.insert(singleRowBody(), MutationStrategy.QueueIfOffline)
 
         // Then — Applied carries the live response, and nothing was queued
         val applied = assertIs<MutationOutcome.Applied>(outcome)
@@ -84,7 +84,7 @@ class MutationOutcomeTest {
             )
 
         // When
-        val outcome = builder.insertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
+        val outcome = builder.insert(singleRowBody(), MutationStrategy.QueueIfOffline)
 
         // Then — the outcome is honest about being queued, and the mutation was enqueued
         assertIs<MutationOutcome.Queued>(outcome)
@@ -110,7 +110,7 @@ class MutationOutcomeTest {
 
         // When / Then — the failure surfaces, nothing is queued
         assertFailsWith<IOException> {
-            builder.insertJson(singleRowBody(), MutationStrategy.OnlineOnly)
+            builder.insert(singleRowBody(), MutationStrategy.OnlineOnly)
         }
         assertTrue(mutationDao.inserted.isEmpty())
     }
@@ -137,10 +137,8 @@ class MutationOutcomeTest {
         // (A caller that must read its row back even when queued should instead stamp a
         // client-owned id and project the row from its own payload.)
         assertFailsWith<IllegalStateException> {
-            builder
-                .upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
-                .resultOrNull()
-                ?.data ?: error("write was queued offline; no server row to read back")
+            builder.upsert(singleRowBody(), MutationStrategy.QueueIfOffline).resultOrNull()?.data
+                ?: error("write was queued offline; no server row to read back")
         }
         // And the write really was queued (enqueued exactly once).
         assertEquals(1, mutationDao.inserted.size)
@@ -166,10 +164,7 @@ class MutationOutcomeTest {
         // than `error(...)`, so a Queued outcome falls through to null instead of throwing (the
         // caller then does an explicit id fetch, or reports that no row came back).
         val fellThrough =
-            builder
-                .upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
-                .resultOrNull()
-                ?.data
+            builder.upsert(singleRowBody(), MutationStrategy.QueueIfOffline).resultOrNull()?.data
 
         // Then — the chain short-circuits to null, and the write was still queued.
         assertEquals(null, fellThrough)
@@ -195,7 +190,7 @@ class MutationOutcomeTest {
             )
 
         // When
-        val outcome = builder.upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
+        val outcome = builder.upsert(singleRowBody(), MutationStrategy.QueueIfOffline)
 
         // Then
         val applied = assertIs<MutationOutcome.Applied>(outcome)
@@ -222,7 +217,7 @@ class MutationOutcomeTest {
 
         // When — a simple equality filter (strict capture succeeds)
         val outcome =
-            builder.updateJson(
+            builder.update(
                 body = buildJsonObject { put("retired_at", "2026-07-12T00:00:00Z") },
                 mutationStrategy = MutationStrategy.QueueIfOffline,
             ) {
@@ -257,7 +252,7 @@ class MutationOutcomeTest {
 
         // When / Then — the original failure is rethrown and nothing is queued
         assertFailsWith<IOException> {
-            builder.updateJson(
+            builder.update(
                 body = buildJsonObject { put("retired_at", "2026-07-12T00:00:00Z") },
                 mutationStrategy = MutationStrategy.QueueIfOffline,
             ) {

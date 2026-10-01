@@ -82,7 +82,7 @@ class LogPrivacyTest {
     ): List<String> = visibleLogsOf { client, server ->
         client
             .from("profiles")
-            .insertJson(buildJsonArray { add(buildJsonObject { put("email", EMAIL) }) })
+            .insert(buildJsonArray { add(buildJsonObject { put("email", EMAIL) }) })
         server.answer = { serverAnswer() }
         client.syncAllPendingMutations()
     }
@@ -91,7 +91,7 @@ class LogPrivacyTest {
     fun a_refused_write_without_a_filter_never_logs_its_body() = runTest {
         // Given / When — offline, an UPDATE with no filter, which would reach every row
         val visible = visibleLogsOfARefusal { builder ->
-            builder.updateJson(buildJsonObject { put("email", EMAIL) }) {}
+            builder.update(buildJsonObject { put("email", EMAIL) }) {}
         }
 
         // Then
@@ -103,7 +103,7 @@ class LogPrivacyTest {
     fun an_offline_dry_run_never_logs_its_body() = runTest {
         // Given / When — a dry run is never queued; offline it fails
         val visible = visibleLogsOfARefusal { builder ->
-            builder.insertJson(buildJsonArray { add(buildJsonObject { put("email", EMAIL) }) }) {
+            builder.insert(buildJsonArray { add(buildJsonObject { put("email", EMAIL) }) }) {
                 dryRun()
             }
         }
@@ -153,7 +153,7 @@ class LogPrivacyTest {
         refusedFilters.forEach { (shape, refusedFilter) ->
             // Given / When — offline, with a filter the queue cannot capture exactly
             val visible = visibleLogsOfARefusal { builder ->
-                builder.updateJson(buildJsonObject { put("display_name", "Jane") }) {
+                builder.update(buildJsonObject { put("display_name", "Jane") }) {
                     filter(refusedFilter)
                 }
             }

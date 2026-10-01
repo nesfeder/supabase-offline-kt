@@ -156,7 +156,7 @@ internal object ClientCloseRaces {
             val held = CompletableDeferred<Unit>()
             server.restHold.value = held
             val write = async {
-                runCatching { client.from(TABLE).insertJson(keylessRow(server.marker)) }
+                runCatching { client.from(TABLE).insert(keylessRow(server.marker)) }
             }
             server.restArrived.first { requests -> requests > 0 }
 
@@ -270,7 +270,7 @@ internal object ClientCloseRaces {
                 val outcome = runCatching {
                     var index = 0
                     while (true) {
-                        client.from(TABLE).insertJson(keylessRow("${server.marker}-${index++}"))
+                        client.from(TABLE).insert(keylessRow("${server.marker}-${index++}"))
                         yield()
                     }
                 }
@@ -369,7 +369,7 @@ internal object ClientCloseRaces {
         repeat(10) { index -> client.from(TABLE).select { filter { eq("id", index) } } }
         client.storage(BUCKET).downloadAuthenticated("u-1/me.png") {}
         server.online.store(false)
-        client.from(TABLE).insertJson(keylessRow(server.marker))
+        client.from(TABLE).insert(keylessRow(server.marker))
     }
 
     /** Waits, bounded, until [client] refuses new calls: `close()` has begun. */

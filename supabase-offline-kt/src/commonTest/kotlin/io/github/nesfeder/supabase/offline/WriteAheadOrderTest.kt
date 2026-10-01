@@ -57,12 +57,12 @@ class WriteAheadOrderTest {
                     store = store,
                 )
             val first = async {
-                builder.updateJson(element("""{"title":"A"}""")) { filter { eq("id", 1) } }
+                builder.update(element("""{"title":"A"}""")) { filter { eq("id", 1) } }
             }
             parked.await()
 
             // When — the user edits again (B); then A times out; then the queue replays
-            val second = builder.updateJson(element("""{"title":"B"}""")) { filter { eq("id", 1) } }
+            val second = builder.update(element("""{"title":"B"}""")) { filter { eq("id", 1) } }
             release.complete(Unit)
             val firstOutcome = first.await()
             MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
@@ -92,7 +92,7 @@ class WriteAheadOrderTest {
             )
 
         // When — back online, the user attaches a photo to it before any pass has run
-        val outcome = runCatching { photos.insertJson(rows("""[{"id":"P","task_id":"T"}]""")) }
+        val outcome = runCatching { photos.insert(rows("""[{"id":"P","task_id":"T"}]""")) }
         MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — no error reached the caller, and both rows arrived, parent first

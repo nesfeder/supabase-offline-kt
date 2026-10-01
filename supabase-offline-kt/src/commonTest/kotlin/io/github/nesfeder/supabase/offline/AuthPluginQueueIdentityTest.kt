@@ -58,7 +58,7 @@ class AuthPluginQueueIdentityTest {
         runTest {
             // Given — Auth installed, nobody signed in, and an offline write
             supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing }
-            val anonymousOutcome = builder.insertJson(rows("""[{"id":"n0","title":"anonymous"}]"""))
+            val anonymousOutcome = builder.insert(rows("""[{"id":"n0","title":"anonymous"}]"""))
             val attemptsWhileOffline = sentBodies().size
 
             // When — a pass while still signed out
@@ -84,7 +84,7 @@ class AuthPluginQueueIdentityTest {
                 autoRefresh = false,
             )
             server.answer = { connectivityFailure() }
-            val userAOutcome = builder.insertJson(rows("""[{"id":"n1","title":"A's note"}]"""))
+            val userAOutcome = builder.insert(rows("""[{"id":"n1","title":"A's note"}]"""))
             server.answer = { okJson("[]") }
             val signedIn = replayer.sync()
 

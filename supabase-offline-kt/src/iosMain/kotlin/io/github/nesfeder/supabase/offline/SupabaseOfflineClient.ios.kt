@@ -389,7 +389,7 @@ public suspend fun OfflinePostgrestQueryBuilder.insertJsonKt(
     defaultToNull: Boolean? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
 ): MutationOutcome =
-    insertJson(body, mutationStrategy) {
+    insert(body, mutationStrategy) {
         applySwiftOptions(returningColumns, count, defaultToNull)
     }
 
@@ -405,7 +405,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insertO
 ): MutationOutcome {
     val elem = SwiftJson.encodeToJsonElement(value)
     val arr = buildJsonArray { add(elem) }
-    return insertJson(arr, mutationStrategy) {
+    return insert(arr, mutationStrategy) {
         applySwiftOptions(returningColumns, count, defaultToNull)
         request()
     }
@@ -422,7 +422,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.insertM
     crossinline request: InsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome {
     val body = SwiftJson.encodeToJsonElement(ListSerializer(serializer()), values).jsonArray
-    return insertJson(body, mutationStrategy) {
+    return insert(body, mutationStrategy) {
         applySwiftOptions(returningColumns, count, defaultToNull)
         request()
     }
@@ -468,7 +468,7 @@ public suspend fun OfflinePostgrestQueryBuilder.upsertJsonKt(
     defaultToNull: Boolean? = null,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
 ): MutationOutcome =
-    upsertJson(body, mutationStrategy) {
+    upsert(body, mutationStrategy) {
         applySwiftOptions(onConflict, ignoreDuplicates, returningColumns, count, defaultToNull)
     }
 
@@ -486,7 +486,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsertO
 ): MutationOutcome {
     val elem = SwiftJson.encodeToJsonElement(value)
     val arr = buildJsonArray { add(elem) }
-    return upsertJson(arr, mutationStrategy) {
+    return upsert(arr, mutationStrategy) {
         applySwiftOptions(onConflict, ignoreDuplicates, returningColumns, count, defaultToNull)
         request()
     }
@@ -505,7 +505,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsertM
     crossinline request: UpsertRequestBuilder.() -> Unit = {},
 ): MutationOutcome {
     val body = SwiftJson.encodeToJsonElement(ListSerializer(serializer()), values).jsonArray
-    return upsertJson(body, mutationStrategy) {
+    return upsert(body, mutationStrategy) {
         applySwiftOptions(onConflict, ignoreDuplicates, returningColumns, count, defaultToNull)
         request()
     }
@@ -539,7 +539,7 @@ public suspend fun OfflinePostgrestQueryBuilder.updateJsonKt(
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
     filter: (PostgrestFilterBuilder.() -> Unit)? = null,
 ): MutationOutcome =
-    updateJson(body, mutationStrategy) {
+    update(body, mutationStrategy) {
         applySwiftOptions(returningColumns, count, filter)
     }
 
@@ -553,7 +553,7 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.updateO
     crossinline request: PostgrestRequestBuilder.() -> Unit = {},
 ): MutationOutcome {
     val elem = SwiftJson.encodeToJsonElement(value)
-    return updateJson(elem, mutationStrategy) {
+    return update(elem, mutationStrategy) {
         applySwiftOptions(returningColumns, count, null)
         request()
     }

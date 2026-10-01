@@ -106,7 +106,7 @@ class BorrowedRowsShapeTest {
     }
 
     private suspend fun update(body: String, id: String) {
-        items.updateJson(Json.parseToJsonElement(body) as JsonObject) { filter { eq("id", id) } }
+        items.update(Json.parseToJsonElement(body) as JsonObject) { filter { eq("id", id) } }
     }
 
     /** The answer to a read of [EMBEDDING]: one comment per row when it limits them to one. */
