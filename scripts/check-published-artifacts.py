@@ -10,14 +10,17 @@ script runs that task in every module, then reads each artifact under ``GROUP`` 
   1. the artifacts, the files each carries, their Gradle module variants and dependencies, their
      POM dependencies, the klibs' unique names or the Android classes' Kotlin module file differ
      from the record, ``compat/published-artifacts.txt``;
-  2. a POM lacks a field Maven Central requires (name, description, URL, licence, developer, SCM),
+  2. a POM lacks a field Maven Central requires (name, description, URL, license, developer, SCM),
      has other coordinates than the build's, a name or description other than the module's
      ``POM_NAME`` / ``POM_DESCRIPTION``, or any email address;
   3. a sources jar holds no Kotlin source;
   4. a documentation jar lacks the HTML reference: its index, and a page for each public package
      of the module's sources; or has a page for an internal package;
-  5. a file lacks its ``.md5``, ``.sha1``, ``.sha256`` or ``.sha512``, or one does not match it;
-  6. some files are signed and others are not;
+  5. a file lacks its ``.md5``, ``.sha1``, ``.sha256`` or ``.sha512``, or one does not match it (a
+     signature, ``.asc``, needs none: Gradle writes none for it and Maven Central needs none);
+  6. a signature is not an ASCII-armored PGP signature, or some files are signed and others are
+     not, or, when the signing key is in the environment (``ORG_GRADLE_PROJECT_signingInMemoryKey``,
+     as in the release job), any file is unsigned;
   7. a file, or a file inside an archive, holds the absolute path of the repository or of the home
      directory, which would publish the builder's machine.
 
@@ -97,7 +100,7 @@ def file_version_pattern(version: str) -> str:
     return re.escape(version)
 
 
-def normalise(text: str, version: str) -> str:
+def normalize(text: str, version: str) -> str:
     """Replaces the version where it stands as a whole token, in either form, with $VERSION."""
     return re.sub(r"(?<![\w.-])" + file_version_pattern(version) + r"(?![\w.-])", "$VERSION", text)
 
@@ -274,7 +277,7 @@ def record_lines(artifacts: list[Artifact], version: str) -> list[str]:
     for artifact in artifacts:
         lines += [f"{artifact.name} file {suffix}" for suffix in artifact.files]
         lines += module_facts(artifact) + pom_facts(artifact) + archive_facts(artifact)
-    return sorted({normalise(line, version) for line in lines})
+    return sorted({normalize(line, version) for line in lines})
 
 
 def read_record(path: Path) -> list[str]:
@@ -324,8 +327,8 @@ def pom_problems(artifact: Artifact, group: str, version: str, expected: dict[st
             problems.append(f"{where} has the {field} {value!r}, not {key} {expected.get(key)!r}")
     required = {
         "url": "pom:url",
-        "licence name": "pom:licenses/pom:license/pom:name",
-        "licence URL": "pom:licenses/pom:license/pom:url",
+        "license name": "pom:licenses/pom:license/pom:name",
+        "license URL": "pom:licenses/pom:license/pom:url",
         "developer id": "pom:developers/pom:developer/pom:id",
         "developer name": "pom:developers/pom:developer/pom:name",
         "SCM URL": "pom:scm/pom:url",
@@ -395,10 +398,10 @@ def documentation_problems(module: str, artifacts: list[Artifact]) -> Problems:
 
 
 def checksum_problems(repository: Path) -> Problems:
-    """Every file in the repository beside its four checksums, each matching it."""
+    """Every file in the repository but a signature beside its four checksums, each matching it."""
     problems = Problems()
     for path in sorted(repository.rglob("*")):
-        if not path.is_file() or is_checksum(path.name):
+        if not path.is_file() or is_checksum(path.name) or path.name.endswith(".asc"):
             continue
         data = path.read_bytes()
         for algorithm in CHECKSUMS:
@@ -413,16 +416,27 @@ def checksum_problems(repository: Path) -> Problems:
     return problems
 
 
-def signature_problems(artifacts: list[Artifact]) -> Problems:
-    """Either every published file is signed or none is (a build without the key signs nothing)."""
+PGP_SIGNATURE = b"-----BEGIN PGP SIGNATURE-----"
+
+
+def signature_problems(artifacts: list[Artifact], key_given: bool) -> Problems:
+    """Every published file signed when the key was given, otherwise all of them or none (a build
+    without the key signs nothing); and every signature an ASCII-armored PGP signature."""
+    problems = Problems()
     signed, unsigned = [], []
     for artifact in artifacts:
         for path in artifact.files.values():
-            (signed if path.with_name(path.name + ".asc").is_file() else unsigned).append(path.name)
-    if signed and unsigned:
-        return Problems([f"{name}: not signed, while {len(signed)} other file(s) are"
-                         for name in sorted(unsigned)])
-    return Problems()
+            signature = path.with_name(path.name + ".asc")
+            if not signature.is_file():
+                unsigned.append(path.name)
+                continue
+            signed.append(path.name)
+            if not signature.read_bytes().lstrip().startswith(PGP_SIGNATURE):
+                problems.append(f"{signature.name}: not an ASCII-armored PGP signature")
+    if unsigned and (signed or key_given):
+        reason = "the signing key was given" if key_given else f"{len(signed)} other file(s) are"
+        problems += [f"{name}: not signed, while {reason}" for name in sorted(unsigned)]
+    return problems
 
 
 def absolute_path_problems(repository: Path, forbidden: list[str]) -> Problems:
@@ -444,8 +458,10 @@ def absolute_path_problems(repository: Path, forbidden: list[str]) -> Problems:
     return problems
 
 
-def check(root: Path, repository: Path, record: Path, update: bool, forbidden: list[str]) -> int:
-    """Checks the repository against the record and the requirements; returns the exit code."""
+def check(root: Path, repository: Path, record: Path, update: bool, forbidden: list[str],
+          key_given: bool = False) -> int:
+    """Checks the repository against the record and the requirements; returns the exit code.
+    `key_given`: the build had the signing key, so every file must be signed."""
     properties = read_properties(root / "gradle.properties")
     group, version = properties.get("GROUP", ""), properties.get("VERSION_NAME", "")
     if not group or not version:
@@ -473,7 +489,7 @@ def check(root: Path, repository: Path, record: Path, update: bool, forbidden: l
             problems += pom_problems(artifact, group, version, expected)
         problems += documentation_problems(module, members)
     problems += checksum_problems(repository)
-    problems += signature_problems(artifacts)
+    problems += signature_problems(artifacts, key_given)
     problems += absolute_path_problems(repository, forbidden)
     for problem in problems:
         print(f"  PROBLEM {problem}")
@@ -580,6 +596,16 @@ def write_fixture(root: Path, version: str, snapshot_stamp: str = "") -> Path:
     return repository
 
 
+def sign_all(repository: Path, content: bytes = PGP_SIGNATURE + b"\nfixture\n") -> None:
+    """Writes a signature beside every published file of the fixture, as a build with the key does
+    (and no checksum beside it, as Gradle writes none)."""
+    for path in sorted(repository.rglob("*")):
+        name = path.name
+        if (path.is_file() and not is_checksum(name) and not name.endswith(".asc")
+                and name != "maven-metadata.xml"):
+            path.with_name(name + ".asc").write_bytes(content)
+
+
 def artifact_path(repository: Path, artifact: str, version: str, suffix: str) -> Path:
     """The fixture file of the artifact with this suffix."""
     directory = repository.joinpath(*FIXTURE_GROUP.split("."), artifact, version)
@@ -601,7 +627,7 @@ def remove(repository: Path, artifact: str, suffix: str) -> None:
 
 
 CASES = [
-    ("a POM without a licence", "has no licence name",
+    ("a POM without a license", "has no license name",
      lambda repo: rewrite(repo, "lib", ".pom", lambda data: re.sub(rb"<licenses>.*?</licenses>", b"", data))),
     ("a POM with an email", "carries an email address",
      lambda repo: rewrite(repo, "lib-android", ".pom",
@@ -648,8 +674,20 @@ CASES = [
      lambda repo: rewrite(repo, "lib-iosarm64", ".klib", lambda data: zip_bytes({
          "default/manifest": b"unique_name=io.example.group\\:lib\n",
          "default/ir/files.knf": str(repo.parent.parent).encode() + b"/src/Api.kt"}))),
-    ("one file signed and the others not", "not signed",
-     lambda repo: artifact_path(repo, "lib", "1.0.0", ".pom").with_suffix(".pom.asc").write_bytes(b"sig")),
+    ("one file signed and the others not", "not signed, while 1 other file(s) are",
+     lambda repo: artifact_path(repo, "lib", "1.0.0", ".pom").with_suffix(".pom.asc").write_bytes(
+         PGP_SIGNATURE + b"\n")),
+    ("every file signed, one signature not a PGP signature", "not an ASCII-armored PGP signature",
+     lambda repo: (sign_all(repo), artifact_path(repo, "lib-android", "1.0.0", ".aar").with_suffix(
+         ".aar.asc").write_bytes(b"garbage"))),
+    ("every file signed but one", "lib-iosarm64-1.0.0.klib: not signed, while",
+     lambda repo: (sign_all(repo), artifact_path(repo, "lib-iosarm64", "1.0.0", ".klib").with_suffix(
+         ".klib.asc").unlink())),
+]
+# Cases that run as a build with the signing key in its environment does.
+KEY_GIVEN_CASES = [
+    ("the key given and nothing signed", "not signed, while the signing key was given",
+     lambda repo: None),
 ]
 
 
@@ -657,11 +695,11 @@ def self_test() -> int:
     """Plants each problem in a compliant fixture and proves the check reports it."""
     failures = 0
     with tempfile.TemporaryDirectory() as work:
-        def run(root: Path, update: bool = False) -> tuple[int, str]:
+        def run(root: Path, update: bool = False, key_given: bool = False) -> tuple[int, str]:
             output = io.StringIO()
             stdout, sys.stdout = sys.stdout, output
             try:
-                code = check(root, root / REPOSITORY, root / RECORD, update, [str(root)])
+                code = check(root, root / REPOSITORY, root / RECORD, update, [str(root)], key_given)
             finally:
                 sys.stdout = stdout
             return code, output.getvalue()
@@ -685,20 +723,32 @@ def self_test() -> int:
               f" {'passes' if code == 0 else output}")
         failures += code != 0
 
-        for index, (name, expected, plant) in enumerate(CASES):
+        signed = Path(work) / "signed"
+        write_fixture(signed, "1.0.0")
+        (signed / "compat").mkdir()
+        (signed / RECORD).write_text(record)
+        sign_all(signed / REPOSITORY)
+        code, output = run(signed, key_given=True)
+        print(f"{'ok  ' if code == 0 else 'FAIL'} every file signed, as the release job signs them:"
+              f" {'passes' if code == 0 else output}")
+        failures += code != 0
+
+        cases = [(case, False) for case in CASES] + [(case, True) for case in KEY_GIVEN_CASES]
+        for index, ((name, expected, plant), key_given) in enumerate(cases):
             root = Path(work) / f"case-{index}"
             write_fixture(root, "1.0.0")
             (root / "compat").mkdir()
             (root / RECORD).write_text(record)
             plant(root / REPOSITORY)
-            code, output = run(root)
+            code, output = run(root, key_given=key_given)
             caught = code != 0 and expected in output
             print(f"{'ok  ' if caught else 'FAIL'} {name}: {'caught' if caught else output}")
             failures += not caught
     if failures:
         print(f"SELF-TEST FAILED: {failures} case(s).")
         return 1
-    print(f"SELF-TEST PASSED: {len(CASES)} problems caught, and the compliant fixtures passed.")
+    print(f"SELF-TEST PASSED: {len(CASES) + len(KEY_GIVEN_CASES)} problems caught, and the"
+          " compliant fixtures passed.")
     return 0
 
 
@@ -711,7 +761,10 @@ def main(arguments: list[str]) -> int:
     if "--no-publish" not in arguments:
         publish(ROOT, REPOSITORY)
     forbidden = [str(ROOT), os.path.expanduser("~")]
-    return check(ROOT, ROOT / REPOSITORY, ROOT / RECORD, "--update" in arguments, forbidden)
+    # The same condition under which the build signs (supabase-offline.published).
+    key_given = bool(os.environ.get("ORG_GRADLE_PROJECT_signingInMemoryKey", "").strip())
+    return check(ROOT, ROOT / REPOSITORY, ROOT / RECORD, "--update" in arguments, forbidden,
+                 key_given)
 
 
 if __name__ == "__main__":
