@@ -19,8 +19,8 @@ release.
 - The library is a supabase-kt plugin. Install it with `install(Offline) { … }` in
   `createSupabaseClient` and reach it as `supabase.offline`, where `createSupabaseOfflineClient(…)`
   returned a client; the settings of `SupabaseOfflineConfig` are the plugin's `Offline.Config`
-  (`offlineStoragePath` is `dataDirectory`, a `String`). The old names compile, deprecated; see
-  Deprecated. supabase-kt closes the plugin with the client, after it has closed its HTTP client:
+  (`offlineStoragePath` is `dataDirectory`, a `String`). The old names are gone; see Removed.
+  supabase-kt closes the plugin with the client, after it has closed its HTTP client:
   call `supabase.offline.close()` first to let requests already on the wire answer.
 - `MutationOutcome.Queued` is a class that carries the queued write as a `PendingMutation`: match it
   with `is MutationOutcome.Queued`, not `MutationOutcome.Queued ->`. `MutationOutcome.Applied` and
@@ -57,7 +57,13 @@ release.
 - `OfflinePostgrestQueryBuilder` has supabase-kt's verbs and overloads under its names (`insert`,
   `upsert` and `update` of JSON, of a value and of a list, the `update { set(…) }` DSL, `delete`)
   and its `table`, `schema` and `postgrest`; the offline choice is a named parameter before the
-  trailing lambda, so a call written against supabase-kt compiles with only the receiver changed.
+  trailing lambda. Most calls written against supabase-kt compile with only the receiver changed
+  and `io.github.nesfeder.supabase.offline.offline` imported. These need an edit: a write whose
+  result is read (`resultOrNull()`); a suspending call or an early `return` inside a request
+  lambda, since the verbs are not `inline` (make the call before the verb); a request lambda passed
+  inside the parentheses (name it `request = { … }` or put it after them); the typed `rpc` (import
+  `io.github.nesfeder.supabase.offline.rpc` in place of supabase-kt's); and realtime's
+  `selectAsFlow` and bucket management, which stay on `supabase.from` and `supabase.storage`.
   Typed writes encode through `postgrest.serializer`, as supabase-kt's do.
 - `MutationOutcome.Queued.pendingMutation` (`PendingMutation`: id, table, `MutationOperation`,
   createdAt, row keys, body) and `MutationOutcome.isQueued`.
@@ -142,23 +148,19 @@ release.
 
 ### Deprecated
 
-- `createSupabaseOfflineClient` (Android and iOS): install the plugin and use `supabase.offline`.
-  It opens the same database in the same place, so the cache and unsent writes carry over.
-- `SupabaseOfflineConfig`: the same settings in `install(Offline) { … }`.
-- `SupabaseOfflineClient`: a type alias of `Offline`.
-- `insertJson`, `upsertJson` and `updateJson`: `insert`, `upsert` and `update`. `insertWith`,
-  `upsertWith` and `updateWith`: the typed `insert`, `upsert` and `update`, which encode through
-  `postgrest.serializer`. The reified `insert`, `upsert` and `update` extensions: they are members
-  now; remove the import.
-- `storage(bucket)`: `storage.from(bucket)`. `clearAllCache()`: `clearLocalData()`, which says
-  what it deletes. `supabase`: `supabaseClient`.
-
 ### Removed
 
-- `NumericDeltaColumn`, and the `deltaColumns` parameter of `updateJson`, `updateWith` and
-  `update`. A queued write replays exactly what was sent; a value that several devices change
-  concurrently, such as a counter or a running total, is computed on the server from the facts
-  clients write.
+- The ways in before the plugin, and the names the plugin's API replaced, with nothing deprecated
+  left behind: `createSupabaseOfflineClient` (Android and iOS) and `SupabaseOfflineConfig` (install
+  the plugin and use `supabase.offline`; it opens the same database in the same place, so the cache
+  and unsent writes carry over); the `SupabaseOfflineClient` type (`Offline`); `insertJson`,
+  `upsertJson` and `updateJson` (`insert`, `upsert` and `update`); `insertWith`, `upsertWith` and
+  `updateWith`, and the reified `insert`, `upsert` and `update` extensions (the typed members,
+  which encode through `postgrest.serializer`); `storage(bucket)` (`storage.from(bucket)`);
+  `clearAllCache()` (`clearLocalData()`); and `supabase` (`supabaseClient`).
+- `NumericDeltaColumn`, and the `deltaColumns` parameter of the update verbs. A queued write
+  replays exactly what was sent; a value that several devices change concurrently, such as a
+  counter or a running total, is computed on the server from the facts clients write.
 
 ### Fixed
 

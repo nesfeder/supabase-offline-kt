@@ -1,13 +1,11 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:Suppress("DEPRECATION", "TYPEALIAS_EXPANSION_DEPRECATION")
-
 package io.github.nesfeder.supabase.offline.internal.db
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import io.github.nesfeder.supabase.offline.createSupabaseOfflineClient
+import io.github.nesfeder.supabase.offline.internal.openAndroidClient
 import java.io.File
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -25,7 +23,7 @@ class ClientCloseRaceAndroidTest {
     private val directory =
         File(context.cacheDir, "offline-close-race-${Random.nextLong().toULong()}")
     private val openClient: OpenOfflineClient = { supabase, config ->
-        createSupabaseOfflineClient(context, supabase, config)
+        openAndroidClient(context, supabase, config)
     }
 
     @AfterTest

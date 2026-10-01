@@ -1,13 +1,10 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:Suppress("DEPRECATION")
-
 package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.sqlite.execSQL
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.Offline
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -57,19 +54,19 @@ internal data class ClearLocalDataForensics(
 }
 
 /**
- * Opens a client in [directory] with [openClient] — the platform factory — and fills it the way an
- * app does, every piece carrying one marker: 40 cached SELECT payloads, a write the server rejected
- * (on the mutation queue's persisted rejected list), and a keyed INSERT queued offline (pending,
- * with its owner and unconfirmed-send records). Then clears local data with a reactive read live,
- * and searches the database, `-wal` and `-shm` for the marker, open and after close.
+ * Opens a client in [directory] with [openClient] — the platform's open path — and fills it the way
+ * an app does, every piece carrying one marker: 40 cached SELECT payloads, a write the server
+ * rejected (on the mutation queue's persisted rejected list), and a keyed INSERT queued offline
+ * (pending, with its owner and unconfirmed-send records). Then clears local data with a reactive
+ * read live, and searches the database, `-wal` and `-shm` for the marker, open and after close.
  *
  * @param directory the client's data directory; the database is created in it.
- * @param openClient the platform factory.
+ * @param openClient the platform's open path.
  * @return what was found where.
  */
 internal suspend fun runClearLocalDataForensics(
     directory: Path,
-    openClient: (SupabaseClient, SupabaseOfflineConfig) -> Offline,
+    openClient: (SupabaseClient, Offline.Config) -> Offline,
 ): ClearLocalDataForensics {
     val marker = "MARKER${Random.nextLong().toULong().toString(16)}"
     val padding = "lorem ".repeat(60)
@@ -95,7 +92,10 @@ internal suspend fun runClearLocalDataForensics(
             }
         )
     val client =
-        openClient(server.supabaseClient(), SupabaseOfflineConfig(offlineStoragePath = directory))
+        openClient(
+            server.supabaseClient(),
+            Offline.createConfig { dataDirectory = directory.toString() },
+        )
     val databasePath = directory / OFFLINE_DATABASE_FILE_NAME
     val wal = "$databasePath-wal".toPath()
     val shm = "$databasePath-shm".toPath()

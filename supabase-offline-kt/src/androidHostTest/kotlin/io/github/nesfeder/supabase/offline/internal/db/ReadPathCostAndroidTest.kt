@@ -1,7 +1,5 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:Suppress("DEPRECATION")
-
 package io.github.nesfeder.supabase.offline.internal.db
 
 import android.content.Context
@@ -14,8 +12,7 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.ReadStrategy
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
-import io.github.nesfeder.supabase.offline.createSupabaseOfflineClient
+import io.github.nesfeder.supabase.offline.internal.openAndroidClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -450,10 +447,10 @@ class ReadPathCostAndroidTest {
         block: suspend (Offline) -> Unit,
     ) {
         val client =
-            createSupabaseOfflineClient(
+            openAndroidClient(
                 context = context,
                 supabase = server.supabaseClient(),
-                config = SupabaseOfflineConfig(offlineStoragePath = storage.toOkioPath()),
+                config = Offline.createConfig { dataDirectory = storage.toOkioPath().toString() },
             )
         try {
             block(client)

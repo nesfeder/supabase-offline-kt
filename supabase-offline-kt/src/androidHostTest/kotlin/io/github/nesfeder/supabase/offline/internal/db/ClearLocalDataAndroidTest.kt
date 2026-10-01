@@ -1,13 +1,11 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:Suppress("DEPRECATION")
-
 package io.github.nesfeder.supabase.offline.internal.db
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import io.github.nesfeder.supabase.offline.createSupabaseOfflineClient
+import io.github.nesfeder.supabase.offline.internal.openAndroidClient
 import java.io.File
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -39,7 +37,7 @@ class ClearLocalDataAndroidTest {
         // Given / When — cached reads and a queued write carrying a marker, then a clear
         val report =
             runClearLocalDataForensics(directory.toOkioPath()) { supabase, config ->
-                createSupabaseOfflineClient(context, supabase, config)
+                openAndroidClient(context, supabase, config)
             }
 
         // Then — the mutation queue's reserved rows were there, and nothing is left of any of it

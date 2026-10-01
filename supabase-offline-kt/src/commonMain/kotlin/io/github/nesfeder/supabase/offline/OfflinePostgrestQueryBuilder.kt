@@ -16,7 +16,6 @@ import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import kotlinx.coroutines.flow.Flow
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonArray
@@ -25,14 +24,33 @@ import kotlinx.serialization.json.jsonArray
  * One table, read through the device's cache and written through the mutation queue: the offline
  * counterpart of supabase-kt's [PostgrestQueryBuilder], with its verbs, overloads and request DSL.
  *
- * Get one with [Offline.from] or `offline["table"]`. A call written against supabase-kt compiles
- * here with only the receiver changed. Each verb takes the offline choice as a named parameter with
- * a default, placed before the trailing request lambda: `readStrategy` for reads,
+ * Get one with [Offline.from] or `offline["table"]`. Each verb takes the offline choice as a named
+ * parameter with a default, placed before the trailing request lambda: `readStrategy` for reads,
  * `mutationStrategy` for writes.
  *
  * Writes return [MutationOutcome] instead of [PostgrestResult]: [MutationOutcome.Applied] carries
  * the server's response, [MutationOutcome.Queued] says the write waits in the mutation queue. See
  * [MutationStrategy.QueueIfOffline] for how a write moves through the queue.
+ *
+ * ### Moving a call from supabase-kt
+ *
+ * Most calls written against supabase-kt's `supabase.from(table)` compile against
+ * `supabase.offline.from(table)` with only the receiver changed and the [offline] accessor imported
+ * (`io.github.nesfeder.supabase.offline.offline`). These need an edit:
+ * - **A write whose result is read**, as in `insert(row) { select() }.decodeSingle<Row>()`: read
+ *   the server's response with [MutationOutcome.resultOrNull], which is `null` when the write was
+ *   queued.
+ * - **A suspending call or an early `return` inside a request lambda.** supabase-kt's verbs are
+ *   `inline`; these are not, because the library keeps the lambda and runs it again (to learn the
+ *   request's shape, and to queue and replay a write). Make the call, or return, before the verb,
+ *   and use its result inside the lambda.
+ * - **A request lambda passed inside the parentheses**, as in `insert(row, { select() })`: the
+ *   second positional parameter here is `mutationStrategy`. Name the lambda, `request = { … }`, or
+ *   put it after the parentheses.
+ * - **Realtime's `selectAsFlow(…)`** on a table: this builder's own [selectAsFlow] is the offline
+ *   one. Keep realtime calls on `supabase.from(table)`.
+ * - **The typed `rpc`** is this library's extension on [Offline]: import
+ *   `io.github.nesfeder.supabase.offline.rpc` in place of `io.github.jan.supabase.postgrest.rpc`.
  *
  * A verb may run its `request` lambda more than once: a read once to learn its shape and once per
  * request sent, a queueable write up to three times. The lambda must configure the same request
@@ -275,165 +293,6 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
         request: PostgrestRequestBuilder.() -> Unit = {},
     ): MutationOutcome = engine.delete(mutationStrategy, request)
-
-    /**
-     * Inserts the rows of [body].
-     *
-     * @param body the rows, a JSON array of objects.
-     * @param mutationStrategy whether the write may wait in the mutation queue.
-     * @param request the rest of the request.
-     * @return the outcome.
-     */
-    @Deprecated(
-        "Renamed insert, as supabase-kt names it",
-        ReplaceWith("insert(body, mutationStrategy, request)"),
-    )
-    public suspend fun insertJson(
-        body: JsonArray,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: InsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome = insert(body, mutationStrategy, request)
-
-    /**
-     * Upserts the rows of [body].
-     *
-     * @param body the rows, a JSON array of objects.
-     * @param mutationStrategy whether the write may wait in the mutation queue.
-     * @param request the rest of the request.
-     * @return the outcome.
-     */
-    @Deprecated(
-        "Renamed upsert, as supabase-kt names it",
-        ReplaceWith("upsert(body, mutationStrategy, request)"),
-    )
-    public suspend fun upsertJson(
-        body: JsonArray,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: UpsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome = upsert(body, mutationStrategy, request)
-
-    /**
-     * Sets the columns of [body] on the rows [request] filters.
-     *
-     * @param body the columns to set, a JSON object.
-     * @param mutationStrategy whether the write may wait in the mutation queue.
-     * @param request the filter, and the rest of the request.
-     * @return the outcome.
-     */
-    @Deprecated(
-        "Renamed update, as supabase-kt names it",
-        ReplaceWith("update(body, mutationStrategy, request)"),
-    )
-    public suspend fun updateJson(
-        body: JsonElement,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: PostgrestRequestBuilder.() -> Unit = {},
-    ): MutationOutcome = update(body, mutationStrategy, request)
-
-    /**
-     * Inserts [values], encoded with [serializer] and the library's own JSON settings rather than
-     * [postgrest]'s serializer.
-     *
-     * @param serializer the element serializer.
-     * @param values the rows.
-     * @param mutationStrategy whether the write may wait in the mutation queue.
-     * @param request the rest of the request.
-     * @return the outcome.
-     */
-    @Deprecated(
-        "Use insert(values), which encodes through postgrest.serializer as supabase-kt does",
-        ReplaceWith("insert(values, mutationStrategy, request)"),
-    )
-    public suspend fun <T : Any> insertWith(
-        serializer: KSerializer<T>,
-        values: List<T>,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: InsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome = engine.insertWith(serializer, values, mutationStrategy, request)
-
-    /**
-     * Inserts [value], encoded with [serializer] and the library's own JSON settings rather than
-     * [postgrest]'s serializer.
-     *
-     * @param serializer the value serializer.
-     * @param value the row.
-     * @param mutationStrategy whether the write may wait in the mutation queue.
-     * @param request the rest of the request.
-     * @return the outcome.
-     */
-    @Deprecated(
-        "Use insert(value), which encodes through postgrest.serializer as supabase-kt does",
-        ReplaceWith("insert(value, mutationStrategy, request)"),
-    )
-    public suspend fun <T : Any> insertWith(
-        serializer: KSerializer<T>,
-        value: T,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: InsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome = engine.insertWith(serializer, value, mutationStrategy, request)
-
-    /**
-     * Upserts [values], encoded with [serializer] and the library's own JSON settings rather than
-     * [postgrest]'s serializer.
-     *
-     * @param serializer the element serializer.
-     * @param values the rows.
-     * @param mutationStrategy whether the write may wait in the mutation queue.
-     * @param request the rest of the request.
-     * @return the outcome.
-     */
-    @Deprecated(
-        "Use upsert(values), which encodes through postgrest.serializer as supabase-kt does",
-        ReplaceWith("upsert(values, mutationStrategy, request)"),
-    )
-    public suspend fun <T : Any> upsertWith(
-        serializer: KSerializer<T>,
-        values: List<T>,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: UpsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome = engine.upsertWith(serializer, values, mutationStrategy, request)
-
-    /**
-     * Upserts [value], encoded with [serializer] and the library's own JSON settings rather than
-     * [postgrest]'s serializer.
-     *
-     * @param serializer the value serializer.
-     * @param value the row.
-     * @param mutationStrategy whether the write may wait in the mutation queue.
-     * @param request the rest of the request.
-     * @return the outcome.
-     */
-    @Deprecated(
-        "Use upsert(value), which encodes through postgrest.serializer as supabase-kt does",
-        ReplaceWith("upsert(value, mutationStrategy, request)"),
-    )
-    public suspend fun <T : Any> upsertWith(
-        serializer: KSerializer<T>,
-        value: T,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: UpsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome = engine.upsertWith(serializer, value, mutationStrategy, request)
-
-    /**
-     * Sets the columns of [value], encoded with [serializer] and the library's own JSON settings
-     * rather than [postgrest]'s serializer, on the rows [request] filters.
-     *
-     * @param serializer the value serializer.
-     * @param value the columns to set.
-     * @param mutationStrategy whether the write may wait in the mutation queue.
-     * @param request the filter, and the rest of the request.
-     * @return the outcome.
-     */
-    @Deprecated(
-        "Use update(value), which encodes through postgrest.serializer as supabase-kt does",
-        ReplaceWith("update(value, mutationStrategy, request)"),
-    )
-    public suspend fun <T : Any> updateWith(
-        serializer: KSerializer<T>,
-        value: T,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: PostgrestRequestBuilder.() -> Unit = {},
-    ): MutationOutcome = engine.updateWith(serializer, value, mutationStrategy, request)
 
     /**
      * The JSON object [update] describes, built as supabase-kt builds it for its own update: the

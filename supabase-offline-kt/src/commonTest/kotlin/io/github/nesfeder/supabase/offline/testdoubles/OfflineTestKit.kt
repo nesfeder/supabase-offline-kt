@@ -166,14 +166,15 @@ internal suspend fun OfflineStore.recordQueryShape(
  * @param store the offline store.
  * @param baseDirectoryProvider base directory for downloaded storage files.
  * @param engineLogger the SDK logger.
- * @param onClose what the client's `close()` releases, as the factories wire the database.
+ * @param onClose what the client's `close()` releases, as the platforms' open paths wire the
+ *   database.
  * @param coordinatorScope the parent of the client's own scope, whose dispatcher runs its
  *   background work (refresh loops, replay passes it starts itself); pass `runTest`'s
  *   `backgroundScope` to drive it from the test scheduler. The default's handler logs a background
  *   failure to [engineLogger] instead of failing the test; build that logger from a
  *   [RecordingOfflineLogger] to see one.
- * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
- *   database's scrub.
+ * @param scrubDatabase what `clearLocalData` runs after the store's wipe, as the platforms' open
+ *   paths wire the database's scrub.
  * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose
  *   background work can never run (see [idleCoroutineScope]): its `close()` always waits it out.
  * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the

@@ -5,7 +5,6 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.AccessTokenProvider
-import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Columns
@@ -19,7 +18,6 @@ import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.supabase.offline.internal.openPlatformClient
-import io.github.nesfeder.supabase.offline.internal.toOfflineConfig
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -88,35 +86,6 @@ public object SupabaseFactory {
     }
 }
 
-/**
- * Creates the offline client over an existing [SupabaseClient], outside its plugins.
- *
- * Install the plugin instead: `install(Offline) { … }` in `createSupabaseClient`, then
- * `supabase.offline`. It takes the same settings in [Offline.Config] and closes with the client.
- * This factory opens the same database in the same place, so an app moving to the plugin keeps its
- * cache and its unsent writes.
- *
- * The database is `Documents/supabase_offline.db` and downloaded files live under
- * `Documents/supabase_offline`, or both in [SupabaseOfflineConfig.offlineStoragePath] when that is
- * set; a database at the default location moves there. The database and the file cache are excluded
- * from iCloud and device backups: they are re-creatable, and one user's. One client per database:
- * while it is open, creating another on the same database throws. [Offline.close] releases it.
- *
- * @throws IllegalStateException when another open client already uses the same database or data
- *   directory; other failures to open it (a full disk, an unreadable file) are thrown too.
- */
-@Deprecated(
-    "Install the plugin instead: createSupabaseClient { install(Offline) { … } }, then use " +
-        "supabase.offline. The settings move into install(Offline) { … }.",
-    ReplaceWith("supabase.offline", "io.github.nesfeder.supabase.offline.offline"),
-)
-@Throws(Exception::class)
-@Suppress("DEPRECATION")
-public fun createSupabaseOfflineClient(
-    supabase: SupabaseClient,
-    config: SupabaseOfflineConfig,
-): Offline = openPlatformClient(supabase, config.toOfflineConfig())
-
 /* ────────────────────────────────────────────────────────────────────────────── */
 /*  Swift-friendly JSON helpers (Swift struct → JSON string / JsonArray / JsonEl) */
 /* ────────────────────────────────────────────────────────────────────────────── */
@@ -141,13 +110,13 @@ public val SwiftJson: Json = Json {
 public inline fun <reified T> encodeToJsonString(value: T): String = SwiftJson.encodeToString(value)
 
 /**
- * Encode any bridged Swift value to a JsonElement (for updateJson, etc).
+ * Encode any bridged Swift value to a JsonElement (for updateJsonKt, etc).
  *
  * ### Swift
  *
  * ```swift
  * let elem = SupabaseOffline.encodeToJsonElement(value: mySwiftStruct)
- * _ = try await qb.updateJson(body: elem)
+ * _ = try await qb.updateJsonKt(body: elem)
  * ```
  */
 public inline fun <reified T> encodeToJsonElement(value: T): JsonElement =
@@ -168,13 +137,13 @@ public inline fun <reified T> encodeListToJsonString(list: List<T>): String =
     SwiftJson.encodeToString(list)
 
 /**
- * Encode a Swift List/Array to a JsonArray (for insertJson/upsertJson).
+ * Encode a Swift List/Array to a JsonArray (for insertJsonKt/upsertJsonKt).
  *
  * ### Swift
  *
  * ```swift
  * let arr = SupabaseOffline.encodeListToJsonArray(list: [asset])
- * _ = try await qb.upsertJson(body: arr, onConflict: "serial_number")
+ * _ = try await qb.upsertJsonKt(body: arr, onConflict: "serial_number")
  * ```
  */
 public inline fun <reified T> encodeListToJsonArray(list: List<T>): JsonArray {
@@ -189,7 +158,7 @@ public inline fun <reified T> encodeListToJsonArray(list: List<T>): JsonArray {
  *
  * ```swift
  * let one = SupabaseOffline.singleElementArray(element: elem)
- * _ = try await qb.insertJson(body: one)
+ * _ = try await qb.insertJsonKt(body: one)
  * ```
  */
 public fun singleElementArray(element: JsonElement): JsonArray = buildJsonArray { add(element) }

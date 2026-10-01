@@ -26,7 +26,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertSame
-import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -292,31 +291,9 @@ class OfflinePluginTest {
         // When
         val byFrom = supabase.offline.storage.from("avatars")
         val byIndex = supabase.offline.storage["avatars"]
-        @Suppress("DEPRECATION") val byOldName = supabase.offline.storage("avatars")
 
         // Then
-        assertEquals(
-            listOf("avatars", "avatars", "avatars"),
-            listOf(byFrom, byIndex, byOldName).map { it.bucketId },
-        )
+        assertEquals(listOf("avatars", "avatars"), listOf(byFrom, byIndex).map { it.bucketId })
         supabase.close()
-    }
-
-    @Test
-    fun the_old_names_reach_the_new_members() = runTest {
-        // Given — a write queued offline
-        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val store = newTestOfflineStore()
-        val supabase = pluginClient(server, store) { openInMemory(store, idleCoroutineScope()) }
-        supabase.offline.from("todos").insert(buildJsonArray { add(buildJsonObject {}) })
-
-        // When
-        @Suppress("DEPRECATION") val wrapped = supabase.offline.supabase
-        @Suppress("DEPRECATION") supabase.offline.clearAllCache()
-
-        // Then — the old property is the client, and the old clear deleted the queued write
-        assertSame(supabase, wrapped)
-        assertEquals(0, store.pendingMutationCount())
-        assertTrue(supabase.offline.config.primaryKeys.isEmpty())
     }
 }

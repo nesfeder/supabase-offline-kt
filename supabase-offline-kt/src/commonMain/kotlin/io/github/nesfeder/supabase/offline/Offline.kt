@@ -35,9 +35,13 @@ import kotlinx.serialization.json.jsonObject
  * val todos = supabase.offline.from("todos").select { filter { eq("done", false) } }
  * ```
  *
- * Calls written against supabase-kt's `supabase.from(...)` and `supabase.storage.from(...)` compile
- * against `supabase.offline.from(...)` and `supabase.offline.storage.from(...)` with only the
- * receiver changed. The one difference a caller sees is that a write returns [MutationOutcome].
+ * Most calls written against supabase-kt's `supabase.from(...)` and `supabase.storage.from(...)`
+ * compile against `supabase.offline.from(...)` and `supabase.offline.storage.from(...)` with only
+ * the receiver changed and [offline] imported. A write returns [MutationOutcome] instead of the
+ * server's result. A suspending call or an early `return` inside a request lambda, a request lambda
+ * passed inside the parentheses, realtime's `selectAsFlow` and the typed [rpc]'s import need an
+ * edit as well; [OfflinePostgrestQueryBuilder] lists each. Bucket management (`createBucket`,
+ * `listBuckets` and the rest) stays on `supabase.storage`, and realtime on `supabase.from(...)`.
  *
  * The plugin opens its database when the client is created, and one database serves one client at a
  * time: creating a second client with the plugin over the same data directory throws until the
@@ -74,14 +78,6 @@ import kotlinx.serialization.json.jsonObject
  */
 @SubclassOptInRequired(OfflineInternal::class)
 public interface Offline : SupabasePlugin<Offline.Config> {
-
-    /** The client this plugin was installed in. */
-    @Deprecated(
-        "Renamed supabaseClient, as supabase-kt's plugins name it",
-        ReplaceWith("supabaseClient"),
-    )
-    public val supabase: SupabaseClient
-        get() = supabaseClient
 
     /**
      * The [table] in the client's default schema, read through the cache and written through the
@@ -157,18 +153,6 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * `supabase.storage.from("avatars")`. Needs [Storage] installed.
      */
     public val storage: OfflineStorage
-
-    /**
-     * The bucket [bucket], with downloads kept on the device.
-     *
-     * @param bucket the bucket's id.
-     * @return the bucket.
-     */
-    @Deprecated(
-        "Use storage.from(bucket), as supabase-kt's storage is reached",
-        ReplaceWith("storage.from(bucket)"),
-    )
-    public fun storage(bucket: String): OfflineBucketApi = storage.from(bucket)
 
     /**
      * Sends the current user's queued writes, in every table, in the order they were made.
@@ -292,16 +276,6 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * The client stays usable afterwards.
      */
     public suspend fun clearLocalData()
-
-    /**
-     * Deletes everything the library keeps on this device, unsent writes included; see
-     * [clearLocalData].
-     */
-    @Deprecated(
-        "Renamed clearLocalData: it deletes unsent writes as well as the cache",
-        ReplaceWith("clearLocalData()"),
-    )
-    public suspend fun clearAllCache(): Unit = clearLocalData()
 
     /**
      * Closes the plugin and frees its database for another client. Nothing is deleted.

@@ -41,13 +41,9 @@ import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.jsonArray
 
 /**
  * One table as the engine reads and writes it, behind the public builder: reads through the cache
@@ -243,30 +239,6 @@ internal class OfflineTable(
         )
     }
 
-    /** Inserts [values], encoded with [serializer] and the engine's [EngineJson]. */
-    suspend fun <T : Any> insertWith(
-        serializer: KSerializer<T>,
-        values: List<T>,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: InsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome {
-        val listSerializer = ListSerializer(serializer)
-        val body = json.encodeToJsonElement(listSerializer, values).jsonArray
-        return insert(body, mutationStrategy, request)
-    }
-
-    /** Inserts [value], encoded with [serializer] and the engine's [EngineJson]. */
-    suspend fun <T : Any> insertWith(
-        serializer: KSerializer<T>,
-        value: T,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: InsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome {
-        val element = json.encodeToJsonElement(serializer, value)
-        val body = buildJsonArray { add(element) }
-        return insert(body, mutationStrategy, request)
-    }
-
     // UPSERT -------------------------------------------------------------------
 
     /** Upserts the rows of [body], sent or queued as [mutationStrategy] says. */
@@ -323,30 +295,6 @@ internal class OfflineTable(
         )
     }
 
-    /** Upserts [values], encoded with [serializer] and the engine's [EngineJson]. */
-    suspend fun <T : Any> upsertWith(
-        serializer: KSerializer<T>,
-        values: List<T>,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: UpsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome {
-        val listSerializer = ListSerializer(serializer)
-        val body = json.encodeToJsonElement(listSerializer, values).jsonArray
-        return upsert(body, mutationStrategy, request)
-    }
-
-    /** Upserts [value], encoded with [serializer] and the engine's [EngineJson]. */
-    suspend fun <T : Any> upsertWith(
-        serializer: KSerializer<T>,
-        value: T,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: UpsertRequestBuilder.() -> Unit = {},
-    ): MutationOutcome {
-        val element = json.encodeToJsonElement(serializer, value)
-        val body = buildJsonArray { add(element) }
-        return upsert(body, mutationStrategy, request)
-    }
-
     // UPDATE -------------------------------------------------------------------
 
     /** Sets [body] on the rows [request] filters, sent or queued as [mutationStrategy] says. */
@@ -391,17 +339,6 @@ internal class OfflineTable(
                 }
             },
         )
-    }
-
-    /** Sets [value], encoded with [serializer] and the engine's [EngineJson], on filtered rows. */
-    suspend fun <T : Any> updateWith(
-        serializer: KSerializer<T>,
-        value: T,
-        mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-        request: PostgrestRequestBuilder.() -> Unit = {},
-    ): MutationOutcome {
-        val element = json.encodeToJsonElement(serializer, value)
-        return update(element, mutationStrategy, request)
     }
 
     // DELETE -------------------------------------------------------------------

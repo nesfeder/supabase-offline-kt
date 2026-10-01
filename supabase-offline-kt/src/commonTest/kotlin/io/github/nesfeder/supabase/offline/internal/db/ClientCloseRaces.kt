@@ -1,6 +1,5 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:Suppress("DEPRECATION", "TYPEALIAS_EXPANSION_DEPRECATION")
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
@@ -10,7 +9,6 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
@@ -48,12 +46,12 @@ import okio.Path
 import okio.Path.Companion.toPath
 import okio.SYSTEM
 
-/** The platform factory, as the scenarios call it. */
-internal typealias OpenOfflineClient = (SupabaseClient, SupabaseOfflineConfig) -> Offline
+/** The platform's open path, as the scenarios call it. */
+internal typealias OpenOfflineClient = (SupabaseClient, Offline.Config) -> Offline
 
 /**
- * `close()` racing the calls it must not close the database under, over a real database opened by a
- * platform factory. Both platform test classes run these; only opening the client differs.
+ * `close()` racing the calls it must not close the database under, over a real database opened by
+ * the platform's open path. Both platform test classes run these; only opening the client differs.
  */
 internal object ClientCloseRaces {
 
@@ -385,8 +383,11 @@ internal object ClientCloseRaces {
         add(buildJsonObject { put("email", "$marker@example.com") })
     }
 
-    private fun configIn(directory: Path, logger: RecordingOfflineLogger? = null) =
-        SupabaseOfflineConfig(offlineStoragePath = directory, logger = logger)
+    private fun configIn(directory: Path, logger: RecordingOfflineLogger? = null): Offline.Config =
+        Offline.createConfig {
+            dataDirectory = directory.toString()
+            this.logger = logger
+        }
 
     /**
      * What [logger] recorded at ERROR: a background failure the engine contained would show here.

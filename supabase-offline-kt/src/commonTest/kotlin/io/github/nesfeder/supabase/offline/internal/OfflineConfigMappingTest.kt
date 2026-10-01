@@ -1,29 +1,19 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:Suppress("DEPRECATION")
-
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.Offline.Companion.CACHE_SIZE_UNLIMITED
 import io.github.nesfeder.supabase.offline.OfflineExperimental
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.OfflineLogger
 import io.github.nesfeder.supabase.offline.ResponseTrust
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
-import kotlinx.coroutines.flow.flowOf
-import okio.Path.Companion.toPath
 
-/**
- * What the engine is given for each setting of [Offline.Config]: the settings `install(Offline)`
- * writes, and the deprecated factories' [SupabaseOfflineConfig] carried over to them.
- */
+/** What the engine is given for each setting `install(Offline)` writes in [Offline.Config]. */
 @OptIn(OfflineExperimental::class)
 class OfflineConfigMappingTest {
 
@@ -99,32 +89,5 @@ class OfflineConfigMappingTest {
             1_024L,
             Offline.createConfig { fileCacheSizeBytes = 1_024L }.fileCacheBoundOrNull(),
         )
-    }
-
-    @Test
-    fun the_deprecated_factory_configuration_carries_every_setting_over() {
-        // Given
-        val logger = OfflineLogger { _, _ -> }
-        val availability = flowOf(true)
-        val old =
-            SupabaseOfflineConfig(
-                cacheSizeBytes = 8_192L,
-                offlineStoragePath = "/data/offline".toPath(),
-                logger = logger,
-                minLogLevel = OfflineLogLevel.DEBUG,
-                networkAvailability = availability,
-                fileCacheSizeBytes = 1_024L,
-            )
-
-        // When
-        val config = old.toOfflineConfig()
-
-        // Then
-        assertEquals(8_192L, config.cacheSizeBytes)
-        assertEquals("/data/offline", config.dataDirectory)
-        assertSame(logger, config.logger)
-        assertEquals(OfflineLogLevel.DEBUG, config.minLogLevel)
-        assertSame(availability, config.networkAvailabilityHint())
-        assertEquals(1_024L, config.fileCacheSizeBytes)
     }
 }

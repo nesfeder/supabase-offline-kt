@@ -37,7 +37,7 @@ class OfflineMutationLoggingTest {
     // ─────────────────────────── Success ───────────────────────────
 
     @Test
-    fun insertJson_success_logsDebugWithRequestAndResponseJson() = runTest {
+    fun insert_success_logsDebugWithRequestAndResponseJson() = runTest {
         // Given — the default server accepts the write
 
         // When
@@ -52,7 +52,7 @@ class OfflineMutationLoggingTest {
     }
 
     @Test
-    fun upsertJson_success_logsDebugWithJson() = runTest {
+    fun upsert_success_logsDebugWithJson() = runTest {
         // Given — the default server accepts the write
 
         // When
@@ -67,7 +67,7 @@ class OfflineMutationLoggingTest {
     }
 
     @Test
-    fun updateJson_success_logsDebugWithJson() = runTest {
+    fun update_success_logsDebugWithJson() = runTest {
         // Given — the default server accepts the write
 
         // When
@@ -99,7 +99,7 @@ class OfflineMutationLoggingTest {
     // ─────────────────────────── Queued offline ───────────────────────────
 
     @Test
-    fun insertJson_queuedOffline_logsInfoQueued() = runTest {
+    fun insert_queuedOffline_logsInfoQueued() = runTest {
         // Given
         server.answer = { connectivityFailure() }
 
@@ -114,7 +114,7 @@ class OfflineMutationLoggingTest {
     }
 
     @Test
-    fun upsertJson_queuedOffline_logsInfoQueued() = runTest {
+    fun upsert_queuedOffline_logsInfoQueued() = runTest {
         // Given
         server.answer = { connectivityFailure() }
 
@@ -129,7 +129,7 @@ class OfflineMutationLoggingTest {
     }
 
     @Test
-    fun updateJson_queuedOffline_logsInfoQueued() = runTest {
+    fun update_queuedOffline_logsInfoQueued() = runTest {
         // Given
         server.answer = { connectivityFailure() }
 
