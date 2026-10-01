@@ -40,3 +40,7 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 include(":supabase-offline-kt")
 
 include(":supabase-offline-kt-testing")
+
+// The Android sample app, Offline Tasks. Built on every run that touches a build input, so a change
+// to the library that breaks it fails CI; it is never published.
+include(":samples:android")

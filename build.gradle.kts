@@ -16,8 +16,10 @@ buildscript {
 plugins {
     // Every plugin a module applies, itself or through a convention plugin in build-logic, is
     // loaded here once, so all projects share one copy of it.
+    alias(libs.plugins.androidApplication) apply false
     alias(libs.plugins.androidKmpLibrary) apply false
     alias(libs.plugins.androidx.room) apply false
+    alias(libs.plugins.composeCompiler) apply false
     alias(libs.plugins.dokka) apply false
     alias(libs.plugins.kotlinMultiplatform) apply false
     alias(libs.plugins.kotlinSerialization) apply false
