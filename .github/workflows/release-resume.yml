@@ -1,7 +1,7 @@
 name: Release resume
 
 # Finishes a release that Maven Central has published but whose last steps did not run: the tag,
-# the GitHub Release, the Swift package (not set up yet) and the post-release pull request. It
+# the GitHub Release, the Swift package (not set up yet) and the post-release branch. It
 # never builds and never publishes to Maven Central, so it cannot change what Central serves; a
 # published version cannot be rebuilt identically, and must not be. Each step does only what is
 # missing, so it can run again. RELEASING.md says when to use it.
@@ -43,7 +43,6 @@ jobs:
     environment: release
     permissions:
       contents: write # the tag, the GitHub Release and the post-release branch
-      pull-requests: write # the post-release pull request
     steps:
       # main as it is now, never the input commit: nothing from that commit runs until the check
       # below has found it on main, and even then only its files are read. The pushes are this
@@ -77,8 +76,8 @@ jobs:
       - name: Publish the Swift package (not set up yet)
         run: echo "The Swift package is not published by this workflow yet; nothing to do."
 
-      - name: Open the post-release pull request
+      # As in release.yml: the branch, and its pull request's link in the summary.
+      - name: Push the post-release branch
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: python3 scripts/release.py open-post-release-pr --version "$VERSION"
+        run: python3 scripts/release.py push-post-release-branch --version "$VERSION"

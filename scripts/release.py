@@ -12,6 +12,9 @@ Commands (from the repository root):
           and no entry is left under `## Unreleased`;
         * the supabase-kt table of docs/project/compatibility.md has a row for X.Y.Z naming the
           catalog's supabase-kt version.
+  release-version [--github-output FILE]
+      Reports VERSION_NAME, and fails unless it is a release version X.Y.Z. The job that tags takes
+      the version from its own checkout, never from the job that ran the build and the tests.
   check-resume --sha SHA [--repository URL] [--github-output FILE]
       The guards for finishing a release whose publish succeeded but whose later steps did not:
       SHA is on origin/main and its VERSION_NAME is X.Y.Z; CHANGELOG.md has X.Y.Z's section; a
@@ -26,9 +29,12 @@ Commands (from the repository root):
   publish-github-release --version X.Y.Z
       Creates the GitHub Release for the existing tag from the changelog's section, not as a draft,
       or does nothing when the release exists.
-  open-post-release-pr --version X.Y.Z
-      Opens the pull request that starts the next development version (see next-snapshot) from
-      origin/main, as github-actions[bot], or does nothing when one is already open or merged.
+  push-post-release-branch --version X.Y.Z
+      Pushes the branch that starts the next development version (see next-snapshot), committed
+      on origin/main's latest commit as github-actions[bot], and prints, and writes to the job
+      summary, the link that opens its pull request. GitHub Actions may not open pull requests in
+      this repository, so the owner opens it with that link, and CI then starts by itself. It does
+      nothing but print the link when the branch exists, and nothing when main has moved on.
   next-snapshot VERSION
       Rewrites the working tree for the version after VERSION: VERSION_NAME becomes the next
       minor's -SNAPSHOT, CHANGELOG.md gets an empty `## Unreleased` section again, the
@@ -53,6 +59,7 @@ import sys
 import tempfile
 import textwrap
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -181,6 +188,14 @@ def check_version(root: Path, ref: str) -> str:
     if rows[version] != supabase:
         raise ReleaseError(f"the row for {version} in {COMPATIBILITY} names supabase-kt"
                            f" {rows[version]}, but the catalog pins {supabase}")
+    return version
+
+
+def release_version(root: Path) -> str:
+    """VERSION_NAME of the working tree, which must be a release version."""
+    version = version_name((root / GRADLE_PROPERTIES).read_text(encoding="utf-8"))
+    if not RELEASE_VERSION.match(version):
+        raise ReleaseError(f"VERSION_NAME is {version!r}, not a release version X.Y.Z")
     return version
 
 
@@ -376,37 +391,64 @@ def post_release_body(version: str, following: str, group: str) -> str:
               (the Central Portal's search can take a few hours longer).
         - [ ] The GitHub Release {version} shows the changelog's section, and is not a draft.
         - [ ] The diff touches only the four files above.
-
-        A pull request the release workflow opens starts no workflow by itself (GitHub does not run
-        workflows for its own token's events): close and reopen this pull request to run CI.
         """)
 
 
-def open_post_release_pr(root: Path, version: str) -> str:
-    """Opens the pull request for the next development version, unless one exists."""
+def repository_url(root: Path) -> str:
+    """The repository's web address: from the Actions environment, or from origin's URL."""
+    server, repository = os.environ.get("GITHUB_SERVER_URL"), os.environ.get("GITHUB_REPOSITORY")
+    if server and repository:
+        return f"{server}/{repository}"
+    return web_address(git(root, "remote", "get-url", "origin").strip())
+
+
+def web_address(remote: str) -> str:
+    """A GitHub remote's web address (SSH or HTTPS, with or without `.git`); others unchanged."""
+    match = re.match(r"^(?:git@([^:]+):|https?://(?:[^@/]+@)?([^/]+)/)(.+?)(?:\.git)?/?$", remote)
+    if not match:
+        return remote
+    return f"https://{match.group(1) or match.group(2)}/{match.group(3)}"
+
+
+def post_release_link(root: Path, branch: str, version: str, following: str, group: str) -> str:
+    """The link that opens the post-release pull request with its title and description filled in."""
+    query = urllib.parse.urlencode({
+        "expand": "1",
+        "title": f"chore(release): start {following} after {version}",
+        "body": post_release_body(version, following, group),
+    }, quote_via=urllib.parse.quote)
+    return f"{repository_url(root)}/compare/main...{branch}?{query}"
+
+
+def push_post_release_branch(root: Path, version: str) -> str:
+    """Pushes the branch for the next development version, unless it exists or main has moved on,
+    and reports the link that opens its pull request."""
     branch = f"release/{version}-next-snapshot"
-    existing = json.loads(gh(root, "pr", "list", "--head", branch, "--state", "all",
-                             "--json", "url,state").stdout or "[]")
-    if existing:
-        return f"The post-release pull request exists: {existing[0].get('url', '')}"
-    if not git(root, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
-        git(root, "fetch", "--no-tags", "origin", "refs/heads/main")
+    following = next_version(version)
+    git(root, "fetch", "--no-tags", "origin", "refs/heads/main")
+    group = re.search(r"^GROUP=(\S+)", committed_file(root, "FETCH_HEAD", GRADLE_PROPERTIES), re.MULTILINE)
+    if git(root, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
+        pushed = f"The branch {branch} exists already."
+    else:
+        on_main = version_name(committed_file(root, "FETCH_HEAD", GRADLE_PROPERTIES))
+        if on_main != version:
+            return (f"main's VERSION_NAME is {on_main}, not {version}: the next development version"
+                    " has been started already, so there is no branch to push.")
         git(root, "switch", "--quiet", "--create", branch, "FETCH_HEAD")
-        following = next_snapshot(root, version)
+        next_snapshot(root, version)
         git(root, "add", GRADLE_PROPERTIES, CHANGELOG, COMPATIBILITY, OVERRIDES)
         git(root, "-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}", "commit", "--quiet",
             "-m", f"chore(release): start {following} after {version}")
         git(root, "push", "origin", f"HEAD:refs/heads/{branch}")
-    else:
-        following = next_version(version)
-    group = re.search(r"^GROUP=(\S+)", (root / GRADLE_PROPERTIES).read_text(encoding="utf-8"), re.MULTILINE)
-    with tempfile.TemporaryDirectory() as directory:
-        body = Path(directory) / "body.md"
-        body.write_text(post_release_body(version, following, group.group(1) if group else ""),
-                        encoding="utf-8")
-        created = gh(root, "pr", "create", "--base", "main", "--head", branch, "--title",
-                     f"chore(release): start {following} after {version}", "--body-file", str(body))
-    return f"Opened the post-release pull request: {created.stdout.strip()}"
+        pushed = f"Pushed the branch {branch}, which starts {following}."
+    link = post_release_link(root, branch, version, following, group.group(1) if group else "")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(f"### Open the post-release pull request\n\n{pushed} "
+                         f"[Open its pull request]({link}), check it as its description says, and merge"
+                         " it. CI starts by itself once you have opened it.\n")
+    return f"{pushed} Open its pull request: {link}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -466,7 +508,7 @@ FAKE_GH = """\
 #!/usr/bin/env python3
 import json, os, sys
 state_path = os.environ["FAKE_GH_STATE"]
-state = json.load(open(state_path)) if os.path.exists(state_path) else {"releases": {}, "prs": []}
+state = json.load(open(state_path)) if os.path.exists(state_path) else {"releases": {}}
 state.setdefault("calls", []).append(sys.argv[1:])
 args = sys.argv[1:]
 code = 0
@@ -480,14 +522,8 @@ elif args[:2] == ["release", "create"]:
     notes = open(args[args.index("--notes-file") + 1]).read()
     state["releases"][args[2]] = {"url": "https://example.invalid/releases/" + args[2], "isDraft": False, "notes": notes}
     print("https://example.invalid/releases/" + args[2])
-elif args[:2] == ["pr", "list"]:
-    head = args[args.index("--head") + 1]
-    print(json.dumps([pr for pr in state["prs"] if pr["head"] == head]))
-elif args[:2] == ["pr", "create"]:
-    head = args[args.index("--head") + 1]
-    body = open(args[args.index("--body-file") + 1]).read()
-    state["prs"].append({"head": head, "url": "https://example.invalid/pull/1", "state": "OPEN", "body": body})
-    print("https://example.invalid/pull/1")
+else:
+    sys.stderr.write("the stand-in answers only `release view` and `release create`\\n"); code = 2
 json.dump(state, open(state_path, "w"))
 sys.exit(code)
 """
@@ -624,16 +660,47 @@ def self_test() -> int:
         expect("Offline reads" in state["releases"]["0.1.0"]["notes"] and "--verify-tag" in state["calls"][-1],
                "the release carries the changelog's section, for the existing tag")
         expect("already exists" in publish_github_release(finish, "0.1.0"), "publish-github-release again does nothing")
-        expect(open_post_release_pr(finish, "0.1.0").startswith("Opened"), "open-post-release-pr opens the pull request")
+        summary = work / "summary.md"
+        os.environ["GITHUB_STEP_SUMMARY"] = str(summary)
+        os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"] = "https://github.com", "owner/repo"
+        message = push_post_release_branch(finish, "0.1.0")
+        expect(message.startswith("Pushed the branch release/0.1.0-next-snapshot"),
+               "push-post-release-branch pushes the branch")
         branch_head = git(finish, "rev-parse", "origin/main").strip()
         pushed = git(finish, "ls-remote", "--heads", "origin", "refs/heads/release/0.1.0-next-snapshot").split()
         log = git(finish, "log", "-1", "--format=%an <%ae>|%s|%P", pushed[0] if pushed else "HEAD")
         expect(bool(pushed) and log.startswith(f"{BOT_NAME} <{BOT_EMAIL}>") and log.strip().endswith(branch_head),
-               "the pull request's commit is the bot's, on top of main's latest commit")
+               "the branch's commit is the bot's, on top of main's latest commit")
+        link = message.split("Open its pull request: ", 1)[-1]
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(link).query)
+        expect(link.startswith("https://github.com/owner/repo/compare/main...release/0.1.0-next-snapshot?")
+               and query.get("expand") == ["1"]
+               and query.get("title") == ["chore(release): start 0.2.0-SNAPSHOT after 0.1.0"]
+               and "Before merging, check" in query.get("body", [""])[0]
+               and "0.2.0-SNAPSHOT" in query.get("body", [""])[0],
+               "the link opens the pull request with its title and a description that says what to check")
+        expect(link in summary.read_text(), "the link is in the job summary")
+        again = push_post_release_branch(finish, "0.1.0")
+        expect(again.startswith("The branch release/0.1.0-next-snapshot exists already") and link in again,
+               "push-post-release-branch again pushes nothing and gives the link again")
+        git(finish, "push", "-q", "origin", "--delete", "release/0.1.0-next-snapshot")
+        git(finish, "push", "-q", "origin", "refs/heads/release/0.1.0-next-snapshot:refs/heads/main")
+        expect("has been started already" in push_post_release_branch(finish, "0.1.0"),
+               "push-post-release-branch pushes nothing once main has moved on to the next version")
         state = json.loads((work / "gh-state.json").read_text())
-        expect("close and reopen" in state["prs"][0]["body"] and "0.2.0-SNAPSHOT" in state["prs"][0]["body"],
-               "the pull request's body says what to check and how to start CI")
-        expect("exists" in open_post_release_pr(finish, "0.1.0"), "open-post-release-pr again does nothing")
+        expect(all(call[0] == "release" for call in state["calls"]),
+               "nothing asks GitHub to open a pull request")
+        del os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_STEP_SUMMARY"]
+        expect(web_address("git@github.com:owner/repo.git") == "https://github.com/owner/repo"
+               and web_address("https://github.com/owner/repo.git") == "https://github.com/owner/repo"
+               and web_address("https://x-access-token@github.com/owner/repo") == "https://github.com/owner/repo",
+               "without the Actions environment the link comes from origin's address")
+        released = make_repository(work, "released", dict(base, **{GRADLE_PROPERTIES: "GROUP=io.example.group\nVERSION_NAME=0.1.0\n"}))
+        expect(release_version(released) == "0.1.0", "release-version reads a release version")
+        snapshotted = make_repository(work, "snapshotted", FIXTURE_FILES)
+        (snapshotted / GRADLE_PROPERTIES).write_text("VERSION_NAME=0.2.0-SNAPSHOT\n")
+        expect(refused(lambda: release_version(snapshotted), "not a release version"),
+               "release-version refuses a snapshot")
     if failures:
         print(f"SELF-TEST FAILED: {len(failures)} check(s).")
         return 1
@@ -659,7 +726,9 @@ def main(argv: list[str]) -> int:
     tag.add_argument("--version", required=True)
     tag.add_argument("--sha", required=True)
     commands.add_parser("publish-github-release").add_argument("--version", required=True)
-    commands.add_parser("open-post-release-pr").add_argument("--version", required=True)
+    commands.add_parser("push-post-release-branch").add_argument("--version", required=True)
+    released = commands.add_parser("release-version")
+    released.add_argument("--github-output")
     commands.add_parser("next-snapshot").add_argument("version")
     commands.add_parser("self-test")
     arguments = parser.parse_args(argv)
@@ -687,8 +756,12 @@ def main(argv: list[str]) -> int:
             print(push_tag(root, arguments.version, arguments.sha))
         elif arguments.command == "publish-github-release":
             print(publish_github_release(root, arguments.version))
-        elif arguments.command == "open-post-release-pr":
-            print(open_post_release_pr(root, arguments.version))
+        elif arguments.command == "push-post-release-branch":
+            print(push_post_release_branch(root, arguments.version))
+        elif arguments.command == "release-version":
+            version = release_version(root)
+            write_outputs(arguments.github_output, {"version": version})
+            print(f"VERSION_NAME is {version}.")
         elif arguments.command == "next-snapshot":
             print(f"VERSION_NAME is now {next_snapshot(root, arguments.version)}.")
     except ReleaseError as error:

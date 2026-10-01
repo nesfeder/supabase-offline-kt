@@ -10,8 +10,12 @@ name: Release
 #   publish   the `release` environment (its approval and its secrets): a dry run uploads a
 #             deployment to the Central Portal without releasing it and stops; a real run
 #             releases it and waits until Central says PUBLISHED
-#   finish    real runs only: the tag at the commit verify checked, the GitHub Release from the
-#             changelog, the Swift package (not set up yet) and the post-release pull request
+#   finish    real runs only: the tag, the GitHub Release from the changelog, the Swift package
+#             (not set up yet), and the branch that starts the next version, with the link that
+#             opens its pull request in the summary (Actions may not open pull requests here)
+#
+# Every job works on the run's own commit, github.sha. Nothing verify produces, which ran the build
+# and the tests (third-party code), reaches publish or finish: no output, no artifact, no cache.
 #
 # Maven Central goes first because it is the step most likely to fail and the one that cannot be
 # undone: until it says PUBLISHED nothing is public, and after it, only finish is left. If finish
@@ -52,9 +56,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      sha: ${{ steps.version.outputs.sha }}
     steps:
       # All history and every tag: the guards look for an existing tag, and the release check rates
       # everything since the last one.
@@ -121,9 +122,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The run's own commit (github.sha), which verify checked; nothing verify produced is read.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.verify.outputs.sha }}
           persist-credentials: false
 
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -171,7 +172,7 @@ jobs:
       - name: Say what to do after a failed publish
         if: failure() && !inputs.dry_run
         env:
-          SHA: ${{ needs.verify.outputs.sha }}
+          SHA: ${{ github.sha }}
         run: |
           {
             echo "### The publish did not finish"
@@ -190,25 +191,29 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write # the tag, the GitHub Release and the post-release branch
-      pull-requests: write # the post-release pull request
     steps:
-      # The pushes are this job's purpose, so the checkout keeps its credentials.
+      # The run's own commit (github.sha), as in publish. The pushes are this job's purpose, so the
+      # checkout keeps its credentials.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.verify.outputs.sha }}
           fetch-depth: 0
           persist-credentials: true
 
+      # The version from this job's own checkout, never from verify.
+      - name: Read the version
+        id: version
+        run: python3 scripts/release.py release-version --github-output "$GITHUB_OUTPUT"
+
       - name: Push the tag
         env:
-          VERSION: ${{ needs.verify.outputs.version }}
-          SHA: ${{ needs.verify.outputs.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ github.sha }}
         run: python3 scripts/release.py push-tag --version "$VERSION" --sha "$SHA"
 
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.verify.outputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/release.py publish-github-release --version "$VERSION"
 
       # A placeholder that does nothing. The Swift package's framework (a release asset) and its
@@ -217,8 +222,9 @@ jobs:
       - name: Publish the Swift package (not set up yet)
         run: echo "The Swift package is not published by this workflow yet; nothing to do."
 
-      - name: Open the post-release pull request
+      # The branch is pushed and its pull request's link goes to the summary: GitHub Actions may
+      # not open pull requests in this repository, so the owner opens it, and CI starts by itself.
+      - name: Push the post-release branch
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.verify.outputs.version }}
-        run: python3 scripts/release.py open-post-release-pr --version "$VERSION"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/release.py push-post-release-branch --version "$VERSION"
