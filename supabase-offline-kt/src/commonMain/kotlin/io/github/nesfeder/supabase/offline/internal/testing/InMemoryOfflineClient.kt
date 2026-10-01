@@ -52,7 +52,6 @@ public fun createInMemorySupabaseOfflineClient(
                 objectDao = InMemoryObjectDao(),
                 storageDao = InMemoryStorageDao(),
                 mutationDao = InMemoryMutationDao(),
-                dbPathProvider = InMemoryDbPathProvider,
                 queryCacheLimits =
                     QueryCacheLimits(
                         maxPayloadBytes = null,
@@ -60,7 +59,6 @@ public fun createInMemorySupabaseOfflineClient(
                         drainHeadroomBytes = 0,
                     ),
                 nowMillis = nowMillis,
-                dbSizeProvider = { null },
             ),
         baseDirectoryProvider = { IN_MEMORY_BASE_DIRECTORY.toPath() },
         engineLogger = EngineLogger(null, OfflineLogLevel.INFO),

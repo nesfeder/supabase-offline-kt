@@ -99,7 +99,7 @@ class OfflineStoreConcurrentWriteTest {
         val refresh = launch {
             store.addPayload(
                 table = "ratings",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = ratingsPayload(1, 2, 9),
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -131,8 +131,8 @@ class OfflineStoreConcurrentWriteTest {
             """{"item_id":$id,"user_id":"u"}"""
         }
 
-    private fun FakeObjectDao.itemIds(table: String, signature: String): List<Int> {
-        val row = getRow(table, signature)
+    private fun FakeObjectDao.itemIds(table: String, cacheKey: String): List<Int> {
+        val row = getRow(table, cacheKey)
         assertNotNull(row)
         return json.parseToJsonElement(row.payload).jsonArray.map { element ->
             element.jsonObject.getValue("item_id").jsonPrimitive.int

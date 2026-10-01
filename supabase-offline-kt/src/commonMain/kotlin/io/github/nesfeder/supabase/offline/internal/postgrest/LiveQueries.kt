@@ -32,16 +32,15 @@ import kotlinx.coroutines.withContext
 internal const val CLIENT_CLOSED_MESSAGE: String = "This SupabaseOfflineClient is closed"
 
 /**
- * The client's single-flight refresh per `(table, signature)`: overlapping `selectAsFlow`
- * collectors share one upstream and one refresh loop, torn down when the last leaves. It also
- * tracks the live signatures, so the store can materialize a write into a query that is observed
- * but not cached.
+ * The client's single-flight refresh per `(table, cacheKey)`: overlapping `selectAsFlow` collectors
+ * share one upstream and one refresh loop, torn down when the last leaves. It also tracks the live
+ * signatures, so the store can materialize a write into a query that is observed but not cached.
  *
  * @param scope hosts the shared upstreams: the client's own scope, which its close ends.
  */
 internal class LiveQueries(private val scope: CoroutineScope) {
 
-    private data class Key(val table: String, val signature: String)
+    private data class Key(val table: String, val cacheKey: String)
 
     /** What the shared upstream hands its collectors: a value, or the failure that ended it. */
     private sealed interface Emission {
@@ -62,7 +61,7 @@ internal class LiveQueries(private val scope: CoroutineScope) {
     private val sharedFlows = mutableMapOf<Key, SharedEntry>()
 
     /** Table → (signature → live-collector count). A signature is "live" while its count is > 0. */
-    private val liveSignatures = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
+    private val liveCacheKeys = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
 
     /**
      * Queries that should fetch again, by table, `null` for all of it; only readers already waiting
@@ -75,29 +74,29 @@ internal class LiveQueries(private val scope: CoroutineScope) {
         )
 
     /**
-     * A request that the live queries of [table] fetch again: those cached under [signatures], or
+     * A request that the live queries of [table] fetch again: those cached under [cacheKeys], or
      * every one when it is `null`.
      */
-    private data class RefreshRequest(val table: String, val signatures: Set<String>?)
+    private data class RefreshRequest(val table: String, val cacheKeys: Set<String>?)
 
     /**
      * Asks every live `CacheFirstThenNetwork` query of [table] whose refresh has finished to run it
-     * again, or only those cached under [signatures] when given.
+     * again, or only those cached under [cacheKeys] when given.
      */
-    fun requestRefresh(table: String, signatures: Set<String>? = null) {
-        refreshRequests.tryEmit(RefreshRequest(table, signatures))
+    fun requestRefresh(table: String, cacheKeys: Set<String>? = null) {
+        refreshRequests.tryEmit(RefreshRequest(table, cacheKeys))
     }
 
-    /** The refresh requests for the query of [table] cached under [signature], one [Unit] each. */
-    fun refreshRequestsFor(table: String, signature: String): Flow<Unit> =
+    /** The refresh requests for the query of [table] cached under [cacheKey], one [Unit] each. */
+    fun refreshRequestsFor(table: String, cacheKey: String): Flow<Unit> =
         refreshRequests
             .filter { request ->
-                request.table == table && (request.signatures?.contains(signature) ?: true)
+                request.table == table && (request.cacheKeys?.contains(cacheKey) ?: true)
             }
             .map {}
 
     /**
-     * The shared read flow for [table]/[signature], built by [upstream] once per live entry. A
+     * The shared read flow for [table]/[cacheKey], built by [upstream] once per live entry. A
      * joining collector gets the latest value. A slow one is handed only the latest, the first
      * included when it is slow to take that, so it never holds back the others. The upstream's
      * failure reaches every collector in band, after the latest value; the last to leave ends the
@@ -105,10 +104,10 @@ internal class LiveQueries(private val scope: CoroutineScope) {
      */
     fun sharedReadFlow(
         table: String,
-        signature: String,
+        cacheKey: String,
         upstream: () -> Flow<OfflineReadResult>,
     ): Flow<OfflineReadResult> = channelFlow {
-        val key = Key(table, signature)
+        val key = Key(table, cacheKey)
         val entry = acquire(key, upstream)
         // When the client closes, its scope — and with it this entry's sharing coroutine — is
         // cancelled. Fail the collection then, instead of leaving it waiting on a flow that will
@@ -178,25 +177,25 @@ internal class LiveQueries(private val scope: CoroutineScope) {
     }
 
     /**
-     * Records that a `selectAsFlow` collector for [table]/[signature] has started. Balanced by
-     * [unregisterLiveSignature]; the pair is refcounted so overlapping collectors on one signature
-     * keep it live until the last one leaves.
+     * Records that a `selectAsFlow` collector for [table]/[cacheKey] has started. Balanced by
+     * [unregisterLiveQuery]; the pair is refcounted so overlapping collectors on one signature keep
+     * it live until the last one leaves.
      *
      * @param table Table of the query.
-     * @param signature Canonical signature of the query.
+     * @param cacheKey Canonical signature of the query.
      */
-    fun registerLiveSignature(table: String, signature: String) {
-        liveSignatures.update { current -> current.adjustCount(table, signature, delta = 1) }
+    fun registerLiveQuery(table: String, cacheKey: String) {
+        liveCacheKeys.update { current -> current.adjustCount(table, cacheKey, delta = 1) }
     }
 
     /**
-     * Records that a `selectAsFlow` collector for [table]/[signature] has ended.
+     * Records that a `selectAsFlow` collector for [table]/[cacheKey] has ended.
      *
      * @param table Table of the query.
-     * @param signature Canonical signature of the query.
+     * @param cacheKey Canonical signature of the query.
      */
-    fun unregisterLiveSignature(table: String, signature: String) {
-        liveSignatures.update { current -> current.adjustCount(table, signature, delta = -1) }
+    fun unregisterLiveQuery(table: String, cacheKey: String) {
+        liveCacheKeys.update { current -> current.adjustCount(table, cacheKey, delta = -1) }
     }
 
     /**
@@ -207,15 +206,14 @@ internal class LiveQueries(private val scope: CoroutineScope) {
      * @param table Table to look up.
      * @return The set of live signatures for [table] (empty when none).
      */
-    fun liveSignaturesFor(table: String): Set<String> =
-        liveSignatures.value[table]?.keys ?: emptySet()
+    fun liveCacheKeysOf(table: String): Set<String> = liveCacheKeys.value[table]?.keys ?: emptySet()
 
     /** The signatures of every table that have a live collector: what eviction keeps. */
-    fun allLiveSignatures(): Set<String> =
-        liveSignatures.value.values.flatMapTo(mutableSetOf()) { perTable -> perTable.keys }
+    fun allLiveCacheKeys(): Set<String> =
+        liveCacheKeys.value.values.flatMapTo(mutableSetOf()) { perTable -> perTable.keys }
 
     /** The tables with a live collector. */
-    fun liveTables(): Set<String> = liveSignatures.value.keys
+    fun liveTables(): Set<String> = liveCacheKeys.value.keys
 
     private companion object {
         /**
@@ -227,13 +225,13 @@ internal class LiveQueries(private val scope: CoroutineScope) {
 
     private fun Map<String, Map<String, Int>>.adjustCount(
         table: String,
-        signature: String,
+        cacheKey: String,
         delta: Int,
     ): Map<String, Map<String, Int>> {
         val perTable = this[table].orEmpty()
-        val nextCount = (perTable[signature] ?: 0) + delta
+        val nextCount = (perTable[cacheKey] ?: 0) + delta
         val nextPerTable =
-            if (nextCount <= 0) perTable - signature else perTable + (signature to nextCount)
+            if (nextCount <= 0) perTable - cacheKey else perTable + (cacheKey to nextCount)
         return if (nextPerTable.isEmpty()) this - table else this + (table to nextPerTable)
     }
 }

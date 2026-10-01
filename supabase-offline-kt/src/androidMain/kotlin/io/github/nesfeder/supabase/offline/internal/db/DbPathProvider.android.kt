@@ -10,11 +10,12 @@ import okio.Path.Companion.toPath
  * The default database location on Android: [OFFLINE_DATABASE_FILE_NAME] in the app's database
  * directory.
  */
-internal class AndroidDbPathProvider(private val context: Context) : DbPathProvider {
+internal class AndroidDbPathProvider(private val context: Context) {
 
-    override fun dbPath(): Path {
+    /** The database file, as an absolute path. */
+    fun dbPath(): Path {
         val appContext = context.applicationContext
-        val dbFile = appContext.getDatabasePath(OFFLINE_DATABASE_FILE_NAME)
-        return dbFile.absolutePath.toPath()
+        val databaseFile = appContext.getDatabasePath(OFFLINE_DATABASE_FILE_NAME)
+        return databaseFile.absolutePath.toPath()
     }
 }

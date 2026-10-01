@@ -77,7 +77,7 @@ internal class PreferHeaderDryRunProbe(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                if (!capture.observed) return DryRunVerdict.NotBuilt(failure)
+                if (!capture.hasObservedWrite) return DryRunVerdict.NotBuilt(failure)
                 null
             }
         return when {
@@ -110,7 +110,7 @@ internal class PreferHeaderCapture(val stopsEveryRequest: Boolean = false) :
         private set
 
     /** Whether the capture saw a PostgREST write request. */
-    val observed: Boolean
+    val hasObservedWrite: Boolean
         get() = observations > 0
 
     /** Whether the request the capture saw asked PostgREST to roll its transaction back. */

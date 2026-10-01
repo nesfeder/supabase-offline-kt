@@ -113,11 +113,12 @@ internal enum class CacheWriteOutcome {
     REFUSED_UNTRUSTED,
 
     /**
-     * The producing request started **before** the cache was torn down by [OfflineStore.clearAll] —
-     * sign-out, account switch, or account deletion. The response belongs to a cache generation
-     * that no longer exists and, on an account switch, to a different user entirely. Unlike
-     * [REFUSED_STALE] the caller must **not** re-fetch: a follow-up issued during teardown can
-     * still carry the outgoing session's JWT and would re-import the very rows teardown removed.
+     * The producing request started **before** the cache was torn down by
+     * [OfflineStore.clearLocalData] — sign-out, account switch, or account deletion. The response
+     * belongs to a cache generation that no longer exists and, on an account switch, to a different
+     * user entirely. Unlike [REFUSED_STALE] the caller must **not** re-fetch: a follow-up issued
+     * during teardown can still carry the outgoing session's JWT and would re-import the very rows
+     * teardown removed.
      */
     REFUSED_AFTER_CLEAR,
 
@@ -154,14 +155,8 @@ internal class OfflineStore(
     objectDao: ObjectDao,
     private val storageDao: StorageDao,
     private val mutationDao: MutationDao,
-    // Retained for constructor/source compatibility with the platform factories and existing
-    // tests. Size-based eviction now measures logical payload bytes via [ObjectDao], not the
-    // on-disk file, so these file-oriented providers are no longer consulted by the eviction
-    // loop. The path is still resolved by the factories to build the Room database.
-    @Suppress("unused") private val dbPathProvider: DbPathProvider,
     private val queryCacheLimits: QueryCacheLimits,
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
-    @Suppress("unused") private val dbSizeProvider: (Path) -> Long? = ::currentDbSizeBytes,
     /**
      * The single tick source behind the stale-refresh watermark — read both when a local write
      * advances a table's watermark and when a network SELECT records the moment its request went
@@ -199,7 +194,7 @@ internal class OfflineStore(
      * with the Auth plugin. Without it there is one identity, which owns the cache for good. Wired
      * by the client.
      */
-    internal var cacheOwnedPerIdentity: Boolean = false
+    internal var isCacheOwnedPerIdentity: Boolean = false
 
     /**
      * Told when the cache was not served to, or written for, the current identity. Wired by the
@@ -211,8 +206,7 @@ internal class OfflineStore(
      * Told of the cached queries of a table a write marked stale, and of live ones it may have
      * changed without a payload, so their live readers fetch again. Wired by the client.
      */
-    internal var onQueriesMarkedStale: (table: String, signatures: Set<String>) -> Unit = { _, _ ->
-    }
+    internal var onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit = { _, _ -> }
 
     /** Ids for the writes a patch overlays, one per write, below any queued mutation's. */
     private val patchIds = AtomicLong(0L)
@@ -244,7 +238,7 @@ internal class OfflineStore(
 
     /**
      * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
-     * cannot apply). Wired by the client, like [liveSignatureProvider]; silent when built directly.
+     * cannot apply). Wired by the client, like [liveCacheKeysOf]; silent when built directly.
      */
     internal var engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO)
 
@@ -272,7 +266,7 @@ internal class OfflineStore(
      * inside it, not around it).
      *
      * Lock order, outermost first: the syncer's send lock, a table's write lock, this lock, then
-     * [teardownMutex].
+     * [clearMutex].
      */
     private val mutationQueueMutex = Mutex()
 
@@ -291,12 +285,12 @@ internal class OfflineStore(
             }
 
     /**
-     * Makes a teardown and every cache write it must not be followed by one step: [clearAll] stamps
-     * the teardown tick and deletes under it, and every overlay and payload write checks the tick
-     * and writes under it. So a write whose operation started before a teardown can never land
+     * Makes a teardown and every cache write it must not be followed by one step: [clearLocalData]
+     * stamps the teardown tick and deletes under it, and every overlay and payload write checks the
+     * tick and writes under it. So a write whose operation started before a teardown can never land
      * after it.
      */
-    private val teardownMutex = Mutex()
+    private val clearMutex = Mutex()
 
     /**
      * The identity whose queued writes the overlay shows and the counts count — its stored value —
@@ -393,20 +387,21 @@ internal class OfflineStore(
     private val lastLocalMutationTick = MutableStateFlow<Map<String, Long>>(emptyMap())
 
     /**
-     * Tick of the most recent identity teardown ([clearAll]), or `0` while the cache has never been
-     * wiped in this process.
+     * Tick of the most recent identity teardown ([clearLocalData]), or `0` while the cache has
+     * never been wiped in this process.
      *
      * Teardown is the same ordering hazard as a local write, one generation wider: a SELECT that
      * left before sign-out returns the *outgoing* user's rows, and writing them afterwards
      * repopulates a cache that was just emptied precisely so one account's data never shows up
-     * under the next. Global rather than per-table because [clearAll] wipes every table at once.
+     * under the next. Global rather than per-table because [clearLocalData] wipes every table at
+     * once.
      */
     private val cacheClearedTick = MutableStateFlow(0L)
 
     /**
-     * Tick of the most recent time the cache was emptied: by [clearAll], or by [dropCacheFor] when
-     * it passed to another identity. No cache write whose operation started before it lands. Unlike
-     * [cacheClearedTick] it leaves queueing alone, since a drop keeps the mutation queue.
+     * Tick of the most recent time the cache was emptied: by [clearLocalData], or by [dropCacheFor]
+     * when it passed to another identity. No cache write whose operation started before it lands.
+     * Unlike [cacheClearedTick] it leaves queueing alone, since a drop keeps the mutation queue.
      */
     private val cacheDroppedTick = MutableStateFlow(0L)
 
@@ -454,21 +449,22 @@ internal class OfflineStore(
 
     /**
      * Whether a response produced by a request that started at [requestStartedAtTick] belongs to a
-     * cache generation that [clearAll] or [dropCacheFor] has since discarded.
+     * cache generation that [clearLocalData] or [dropCacheFor] has since discarded.
      *
      * @param requestStartedAtTick Tick captured before the request went out, or `null` for writers
      *   that carry no request-time information (they are never dropped).
      * @return `true` when the cache was emptied after the request left.
      */
-    private fun predatesCacheTeardown(requestStartedAtTick: Long?): Boolean {
+    private fun predatesCacheClear(requestStartedAtTick: Long?): Boolean {
         if (requestStartedAtTick == null) return false
         return requestStartedAtTick < cacheDroppedTick.value
     }
 
     /**
-     * Whether [clearAll] — which empties the mutation queue too — ran after [requestStartedAtTick].
+     * Whether [clearLocalData] — which empties the mutation queue too — ran after
+     * [requestStartedAtTick].
      */
-    private fun predatesQueueTeardown(requestStartedAtTick: Long?): Boolean {
+    private fun predatesQueueClear(requestStartedAtTick: Long?): Boolean {
         if (requestStartedAtTick == null) return false
         return requestStartedAtTick < cacheClearedTick.value
     }
@@ -480,7 +476,7 @@ internal class OfflineStore(
      * @param tick A tick read before the operation started.
      * @return `true` when the cache was emptied after [tick].
      */
-    internal fun wasClearedSince(tick: Long): Boolean = predatesCacheTeardown(tick)
+    internal fun wasClearedSince(tick: Long): Boolean = predatesCacheClear(tick)
 
     /**
      * Whether the cache may be read for the current identity: it is that identity's, or no
@@ -501,7 +497,7 @@ internal class OfflineStore(
 
     /** [cacheServesCurrentIdentity], or with [forWrite] [cacheTakesWritesOfCurrentIdentity]. */
     private suspend fun cacheIsCurrentIdentitys(forWrite: Boolean): Boolean {
-        if (!cacheOwnedPerIdentity) {
+        if (!isCacheOwnedPerIdentity) {
             if (forWrite)
                 identityProvider()?.let { identity -> cacheOwner.owner(claimant = identity) }
             return true
@@ -546,19 +542,19 @@ internal class OfflineStore(
      * table. Defaults to reporting no live signatures so direct construction in tests keeps the
      * conservative "only patch existing rows" behavior unless a set is passed explicitly.
      */
-    internal var liveSignatureProvider: (table: String) -> Set<String> = { _ -> emptySet() }
+    internal var liveCacheKeysOf: (table: String) -> Set<String> = { _ -> emptySet() }
 
     /**
      * Signatures of every table with a live reader, which eviction keeps; wired like
-     * [liveSignatureProvider].
+     * [liveCacheKeysOf].
      */
-    internal var allLiveSignaturesProvider: () -> Set<String> = { emptySet() }
+    internal var allLiveCacheKeys: () -> Set<String> = { emptySet() }
 
     /* ────────────────────────── Object cache (SELECT payloads) ────────────────────────── */
 
     /**
-     * Writes a network SELECT's [payload] for [table]/[signature], unless it must be refused:
-     * [CacheWriteOutcome.REFUSED_AFTER_CLEAR] when its request started before [clearAll],
+     * Writes a network SELECT's [payload] for [table]/[cacheKey], unless it must be refused:
+     * [CacheWriteOutcome.REFUSED_AFTER_CLEAR] when its request started before [clearLocalData],
      * [CacheWriteOutcome.REFUSED_OTHER_OWNER] when the cache is not the current identity's or was
      * dropped for it after the request started, [CacheWriteOutcome.REFUSED_STALE] when it started
      * before the table's last local write (it would roll that write back), and
@@ -578,7 +574,7 @@ internal class OfflineStore(
      */
     suspend fun addPayload(
         table: String,
-        signature: String,
+        cacheKey: String,
         payload: String,
         authoritativeEmpty: Boolean = false,
         requestStartedAtTick: Long? = null,
@@ -596,18 +592,17 @@ internal class OfflineStore(
         val outcome =
             tableWriteLock(table).withLock {
                 mutationQueueMutex.withLock {
-                    teardownMutex.withLock {
+                    clearMutex.withLock {
                         when {
                             // The cache was wiped for an identity change while this request was
                             // in flight. Its rows belong to the outgoing account; writing them
                             // here undoes the teardown.
-                            predatesQueueTeardown(requestStartedAtTick) ->
+                            predatesQueueClear(requestStartedAtTick) ->
                                 CacheWriteOutcome.REFUSED_AFTER_CLEAR
 
                             // The cache is another identity's, or became the current one's after
                             // this request left: its rows would mix two identities' data.
-                            !ownedByCurrentIdentity ||
-                                predatesCacheTeardown(requestStartedAtTick) ->
+                            !ownedByCurrentIdentity || predatesCacheClear(requestStartedAtTick) ->
                                 CacheWriteOutcome.REFUSED_OTHER_OWNER
 
                             // The response left before the local write landed; keeping the cache
@@ -632,7 +627,7 @@ internal class OfflineStore(
                                 objectDao.upsert(
                                     ObjectRow(
                                         table = table,
-                                        signature = signature,
+                                        signature = cacheKey,
                                         payload = payload,
                                         updatedAt = nowMillis(),
                                         syncedThrough =
@@ -643,7 +638,7 @@ internal class OfflineStore(
                                 // Before the lock is released, so no patch finds the payload
                                 // without the shape that says which rows it admits
                                 if (shape != null)
-                                    queryShapes.remember(table, signature, shape, persist = true)
+                                    queryShapes.remember(table, cacheKey, shape, persist = true)
                                 CacheWriteOutcome.WRITTEN
                             }
                         }
@@ -653,7 +648,7 @@ internal class OfflineStore(
 
         // Outside the table lock: eviction takes its own mutex and scans every table.
         if (outcome == CacheWriteOutcome.WRITTEN && shouldEnforceSizeAfterWrite(payload)) {
-            enforceDbSizeLimitIfNeeded()
+            evictOverBudget()
         }
         return outcome
     }
@@ -676,7 +671,7 @@ internal class OfflineStore(
      * `null`).
      *
      * @param payload the JSON payload just written to the cache.
-     * @return `true` when [enforceDbSizeLimitIfNeeded] should be invoked.
+     * @return `true` when [evictOverBudget] should be invoked.
      */
     private fun shouldEnforceSizeAfterWrite(payload: String): Boolean {
         if (queryCacheLimits.maxPayloadBytes == null) return false
@@ -690,32 +685,32 @@ internal class OfflineStore(
     }
 
     /**
-     * The payload cached for [table]/[signature], or `null` when none is, or the cache is not the
+     * The payload cached for [table]/[cacheKey], or `null` when none is, or the cache is not the
      * current identity's.
      */
-    suspend fun getPayload(table: String, signature: String): String? =
-        getPayloadWithTimestamp(table, signature)?.first
+    suspend fun getPayload(table: String, cacheKey: String): String? =
+        getPayloadWithTimestamp(table, cacheKey)?.first
 
     /**
-     * The payload cached for [table]/[signature] with the time it was written, or `null` when none
+     * The payload cached for [table]/[cacheKey] with the time it was written, or `null` when none
      * is, or the cache is not the current identity's.
      */
-    suspend fun getPayloadWithTimestamp(table: String, signature: String): Pair<String, Long>? {
+    suspend fun getPayloadWithTimestamp(table: String, cacheKey: String): Pair<String, Long>? {
         if (isReservedTable(table) || !cacheServesCurrentIdentity()) return null
-        val row = objectDao.get(table, signature) ?: return null
+        val row = objectDao.get(table, cacheKey) ?: return null
         return row.payload to row.updatedAt
     }
 
-    fun observePayload(table: String, signature: String): Flow<String?> {
+    fun observePayload(table: String, cacheKey: String): Flow<String?> {
         if (isReservedTable(table)) return flowOf(null)
-        return objectDao.observe(table, signature).map { row -> row?.payload }
+        return objectDao.observe(table, cacheKey).map { row -> row?.payload }
     }
 
-    suspend fun deleteTablePayload(table: String, signature: String) {
+    suspend fun deleteTablePayload(table: String, cacheKey: String) {
         requireUserTable(table)
         tableWriteLock(table).withLock {
-            objectDao.delete(table, signature)
-            queryShapes.forget(table, signature)
+            objectDao.delete(table, cacheKey)
+            queryShapes.forget(table, cacheKey)
         }
     }
 
@@ -723,8 +718,9 @@ internal class OfflineStore(
      * Drop every cached SELECT payload for [table].
      *
      * Advances the table's stale-refresh watermark: an emptied table is local truth just as much as
-     * a patched row, so a refresh already in flight must not land on top of it. Unlike [clearAll]
-     * this is not identity teardown, so a follow-up re-fetch is the right recovery.
+     * a patched row, so a refresh already in flight must not land on top of it. Unlike
+     * [clearLocalData] this is not identity teardown, so a follow-up re-fetch is the right
+     * recovery.
      *
      * @param table Table whose cached payloads are removed.
      */
@@ -745,14 +741,14 @@ internal class OfflineStore(
      * @param owner the identity the emptied cache belongs to, recorded in the same transaction;
      *   `null` records none, and the next identity to use the cache claims it.
      */
-    suspend fun clearAll(owner: String? = null) {
+    suspend fun clearLocalData(owner: String? = null) {
         // Under the mutation-queue lock, so a write whose operation predates this teardown cannot
         // slip its mutation row in between the tick and the deletes (see [enqueueOwnedBy]); and
         // under the teardown lock, so no overlay or payload write that checked the tick before it
         // can land after the deletes. Neither lock is held across a request, so a teardown never
         // waits on one.
         mutationQueueMutex.withLock {
-            teardownMutex.withLock {
+            clearMutex.withLock {
                 val tick = monotonicTick()
                 // Never move the teardown tick backwards: two teardowns racing here must leave the
                 // later one, or the earlier assignment would re-admit responses it disqualified.
@@ -790,9 +786,9 @@ internal class OfflineStore(
      * the files of the Storage cache are its caller's to delete.
      */
     suspend fun dropCacheFor(owner: String) {
-        // The locks and order of [clearAll], which this is but for the mutation queue
+        // The locks and order of [clearLocalData], which this is but for the mutation queue
         mutationQueueMutex.withLock {
-            teardownMutex.withLock {
+            clearMutex.withLock {
                 val tick = monotonicTick()
                 cacheDroppedTick.update { existing -> if (existing >= tick) existing else tick }
                 cacheOwner.emptying(owner) {
@@ -808,7 +804,7 @@ internal class OfflineStore(
                 }
                 queryShapes.forgetAll()
                 parsedPayloads.value = emptyMap()
-                // Counted again once committed, as in clearAll
+                // Counted again once committed, as in clearLocalData
                 notePayloadsWritten(table = null)
             }
         }
@@ -1041,9 +1037,9 @@ internal class OfflineStore(
      * The queue is kept per identity: each write records who made it, a replay pass sends only the
      * current identity's writes, and another identity's writes neither block it nor are sent by it.
      *
-     * The write is refused when [clearAll] has run since [startedAtTick]: it belongs to the
-     * identity that was torn down. The teardown check and the insert share [clearAll]'s lock, so no
-     * teardown can fall between them.
+     * The write is refused when [clearLocalData] has run since [startedAtTick]: it belongs to the
+     * identity that was torn down. The teardown check and the insert share [clearLocalData]'s lock,
+     * so no teardown can fall between them.
      *
      * @param identity The stored value of the identity making the write, or `null` to record none
      *   (a store driven directly, with no session model).
@@ -1057,7 +1053,7 @@ internal class OfflineStore(
         startedAtTick: Long? = null,
         enqueue: suspend MutationWriter.() -> Long,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
-        if (predatesQueueTeardown(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
+        if (predatesQueueClear(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
         EnqueueOutcome.Queued(MutationWriter(owner = identity).enqueue())
     }
 
@@ -1518,14 +1514,14 @@ internal class OfflineStore(
 
     /**
      * Overlays the current identity's pending mutations of [table] onto a fresh network
-     * [serverJson] for the query [signature]. Synced ones are left out: the server already reflects
+     * [serverJson] for the query [cacheKey]. Synced ones are left out: the server already reflects
      * them.
      *
-     * @param shape the query's shape; `null` looks up the one recorded for [signature].
+     * @param shape the query's shape; `null` looks up the one recorded for [cacheKey].
      */
     suspend fun overlayPendingOnResponse(
         table: String,
-        signature: String,
+        cacheKey: String,
         serverJson: String,
         shape: QueryShape? = null,
     ): String {
@@ -1536,9 +1532,9 @@ internal class OfflineStore(
         return overlayMutations(
             serverJson,
             pending,
-            admissionOf(table, signature, shape),
+            admissionOf(table, cacheKey, shape),
             unconfirmedSends(),
-            sameSelectRowsFor(table, signature, shape, pending, ownJson = serverJson),
+            sameSelectRowsFor(table, cacheKey, shape, pending, ownJson = serverJson),
         )
     }
 
@@ -1546,42 +1542,41 @@ internal class OfflineStore(
      * Overlays the current identity's pending mutations, and the synced ones [cachedJson] does not
      * already contain, onto a cached payload served while offline.
      *
-     * @param signature The payload's query, or `null` when not known: every synced mutation
-     *   applies.
+     * @param cacheKey The payload's query, or `null` when not known: every synced mutation applies.
      * @param shape the query's shape, recorded with the payload; `null` looks up the one recorded.
      */
     suspend fun overlayCachedPayload(
         table: String,
-        signature: String?,
+        cacheKey: String?,
         cachedJson: String,
         shape: QueryShape? = null,
     ): String {
         if (isReservedTable(table)) return cachedJson
-        if (signature != null && shape != null)
-            queryShapes.remember(table, signature, shape, persist = true)
+        if (cacheKey != null && shape != null)
+            queryShapes.remember(table, cacheKey, shape, persist = true)
         val visible = visibleTo(identityProvider(), mutationDao.allForTable(table))
         // The stored payload's coverage, read only when a synced mutation may be held by it
         val syncedThrough =
-            if (signature == null || visible.all { mutation -> mutation.syncedAtMs == null }) 0L
-            else objectDao.get(table, signature)?.syncedThrough ?: 0L
+            if (cacheKey == null || visible.all { mutation -> mutation.syncedAtMs == null }) 0L
+            else objectDao.get(table, cacheKey)?.syncedThrough ?: 0L
         val all = visible.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
         if (all.isEmpty()) return cachedJson
 
-        val admission = signature?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
+        val admission = cacheKey?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
         return overlayFor(admission, unconfirmedSends())
             .overlay(
                 cachedJson,
                 all,
-                sameSelectRowsFor(table, signature, shape, all, ownJson = cachedJson),
+                sameSelectRowsFor(table, cacheKey, shape, all, ownJson = cachedJson),
             )
     }
 
     /** [overlayCachedPayload] for a payload whose signature is not known. */
     suspend fun overlayCachedPayload(table: String, cachedJson: String): String =
-        overlayCachedPayload(table, signature = null, cachedJson = cachedJson)
+        overlayCachedPayload(table, cacheKey = null, cachedJson = cachedJson)
 
     /**
-     * The cached payload of [table]/[signature] with the current identity's mutations overlaid, as
+     * The cached payload of [table]/[cacheKey] with the current identity's mutations overlaid, as
      * it changes; `null` while nothing is known. With no payload but mutations that produce rows,
      * the overlay onto an empty list is emitted without being stored. A cache that is not the
      * current identity's counts as no payload. The overlay is recomputed only when the payload
@@ -1590,7 +1585,7 @@ internal class OfflineStore(
      */
     fun overlaidPayloadFlow(
         table: String,
-        signature: String,
+        cacheKey: String,
         shape: QueryShape? = null,
     ): Flow<String?> {
         if (isReservedTable(table)) return flowOf(null)
@@ -1602,7 +1597,7 @@ internal class OfflineStore(
             var lastOverlaid: String? = null
             combine(
                     objectDao
-                        .observe(table, signature)
+                        .observe(table, cacheKey)
                         .map { row -> row?.let(::StoredPayload) }
                         .distinctUntilChanged(),
                     mutationsOfTableFlow(table),
@@ -1615,7 +1610,7 @@ internal class OfflineStore(
                         if (emptiedCount == trustedEmptiedCount) {
                             stored
                         } else {
-                            objectDao.get(table, signature)?.let(::StoredPayload).also { read ->
+                            objectDao.get(table, cacheKey)?.let(::StoredPayload).also { read ->
                                 if (read == stored) trustedEmptiedCount = emptiedCount
                             }
                         }
@@ -1628,7 +1623,7 @@ internal class OfflineStore(
                         lastOverlaid =
                             overlaidOrNull(
                                 table,
-                                signature,
+                                cacheKey,
                                 shape,
                                 inputs.stored,
                                 inputs.mutations,
@@ -1663,7 +1658,7 @@ internal class OfflineStore(
      */
     private suspend fun overlaidOrNull(
         table: String,
-        signature: String,
+        cacheKey: String,
         shape: QueryShape?,
         stored: StoredPayload?,
         mutations: List<MutationRow>,
@@ -1671,7 +1666,7 @@ internal class OfflineStore(
     ): String? {
         // A live query's shape is known for as long as it is read; it is written once a payload
         // exists
-        if (shape != null) queryShapes.remember(table, signature, shape, persist = stored != null)
+        if (shape != null) queryShapes.remember(table, cacheKey, shape, persist = stored != null)
         val cachedJson = stored?.payload
         val syncedThrough = stored?.syncedThrough ?: 0L
         val applicable = mutations.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
@@ -1680,9 +1675,9 @@ internal class OfflineStore(
             overlayMutations(
                 cachedJson ?: EMPTY_JSON_ARRAY,
                 applicable,
-                admissionOf(table, signature, shape),
+                admissionOf(table, cacheKey, shape),
                 unconfirmedSends(),
-                sameSelectRowsFor(table, signature, shape, applicable, ownJson = cachedJson),
+                sameSelectRowsFor(table, cacheKey, shape, applicable, ownJson = cachedJson),
                 bodyOf,
             )
         return if (cachedJson == null && isEmptyJsonArrayPayload(overlaid)) null else overlaid
@@ -1712,7 +1707,7 @@ internal class OfflineStore(
 
     /**
      * The rows the table's other cached queries hold, read with the same [Projection] as the query
-     * cached under [signature], when one of [mutations] may bring such a row into it; see
+     * cached under [cacheKey], when one of [mutations] may bring such a row into it; see
      * [mayBringRowsIn]. Empty otherwise, and when the query's shape is unknown: then the other
      * payloads are not read at all.
      *
@@ -1720,19 +1715,19 @@ internal class OfflineStore(
      */
     private suspend fun sameSelectRowsFor(
         table: String,
-        signature: String?,
+        cacheKey: String?,
         shape: QueryShape?,
         mutations: List<MutationRow>,
         ownJson: String?,
     ): List<JsonObject> {
-        if (signature == null) return emptyList()
-        val known = shape ?: queryShapes.shapeOf(table, signature) ?: return emptyList()
+        if (cacheKey == null) return emptyList()
+        val known = shape ?: queryShapes.shapeOf(table, cacheKey) ?: return emptyList()
         // The filter's column names as a JSON body writes them, once for every mutation
         val filterColumns = known.conditions.map { condition -> jsonNameOf(condition.column) }
         val keyColumns = primaryKeys.of(table)
         val ownKeys by lazy {
             ownJson?.let { text ->
-                parsedTextOf(table, signature, text).keysFor(keyColumns).filterNotNullTo(HashSet())
+                parsedTextOf(table, cacheKey, text).keysFor(keyColumns).filterNotNullTo(HashSet())
             } ?: emptySet()
         }
         val bringing = mutations.filter { mutation ->
@@ -1746,19 +1741,19 @@ internal class OfflineStore(
         val shapes = queryShapes.shapesOf(table)
         // Upserts on the key need only the rows with their keys: found by key when the index holds
         upsertedKeysOf(reaching, keyColumns)?.let { keys ->
-            borrowedByKey(table, signature, projection, shapes, keys, keyColumns)?.let { rows ->
+            borrowedByKey(table, cacheKey, projection, shapes, keys, keyColumns)?.let { rows ->
                 return rows
             }
         }
         val sameSelect =
             objectDao.allForTable(table).filter { row ->
-                row.signature != signature &&
+                row.signature != cacheKey &&
                     shapes[row.signature]?.let(::projectionOf) == projection
             }
         if (sameSelect.isEmpty()) return emptyList()
         val parsed = sameSelect.map { row -> row to parsedPayloadOf(row) }
         return KnownRows(parsed, shapes, keyColumns, mayMatter)
-            .targetFor(signature, known, rows = emptyList())
+            .targetFor(cacheKey, known, rows = emptyList())
             .sameSelectRows
     }
 
@@ -1784,12 +1779,12 @@ internal class OfflineStore(
      * read with [projection], as [KnownRows] gives it; `null` when [tableKeyIndexOf] cannot say.
      * Reads only the payloads that hold one of [keys].
      *
-     * @param signature the reading query's cache key; its own payload is never drawn on.
+     * @param cacheKey the reading query's cache key; its own payload is never drawn on.
      * @param shapes the table's query shapes, by cache key.
      */
     private suspend fun borrowedByKey(
         table: String,
-        signature: String,
+        cacheKey: String,
         projection: Projection,
         shapes: Map<String, QueryShape?>,
         keys: Set<List<String>>,
@@ -1800,11 +1795,11 @@ internal class OfflineStore(
         for (key in keys) {
             val holder =
                 index.holders[key]?.firstOrNull { held ->
-                    held.signature != signature &&
-                        shapes[held.signature]?.let(::projectionOf) == projection
+                    held.cacheKey != cacheKey &&
+                        shapes[held.cacheKey]?.let(::projectionOf) == projection
                 } ?: continue
             // The index is read with the payload writes it counted; this checks the row is there
-            val row = objectDao.get(table, holder.signature) ?: return null
+            val row = objectDao.get(table, holder.cacheKey) ?: return null
             val payload = parsedPayloadOf(row)
             if (payload.keysFor(keyColumns).getOrNull(holder.position) != key) return null
             borrowed += payload.rows?.getOrNull(holder.position) as? JsonObject ?: return null
@@ -1860,10 +1855,10 @@ internal class OfflineStore(
     /**
      * A payload holding a row with some key.
      *
-     * @property signature the payload's cache key.
+     * @property cacheKey the payload's cache key.
      * @property position the row's position in the payload.
      */
-    private class KeyHolder(val signature: String, val position: Int)
+    private class KeyHolder(val cacheKey: String, val position: Int)
 
     /** Each table's [TableKeyIndex], as last read. */
     private val tableKeyIndexes = MutableStateFlow<Map<String, TableKeyIndex>>(emptyMap())
@@ -1913,16 +1908,16 @@ internal class OfflineStore(
         }
 
     /**
-     * The admission of the query cached under [signature]: [shape]'s, or the recorded one's, or
+     * The admission of the query cached under [cacheKey]: [shape]'s, or the recorded one's, or
      * every row when neither is known, since unknown conditions admit: so for a payload an earlier
      * build cached, until it is read.
      */
     private suspend fun admissionOf(
         table: String,
-        signature: String,
+        cacheKey: String,
         shape: QueryShape?,
     ): QueryAdmission =
-        (shape ?: queryShapes.shapeOf(table, signature))?.admission ?: QueryAdmission.EVERY_ROW
+        (shape ?: queryShapes.shapeOf(table, cacheKey))?.admission ?: QueryAdmission.EVERY_ROW
 
     /**
      * The overlay for a query with [admission], de-duplicating by key the rows the server may
@@ -2078,8 +2073,7 @@ internal class OfflineStore(
      *   touches nothing.
      * @param onConflict an UPSERT's conflict columns; `null` matches rows by the table's primary
      *   key.
-     * @param liveSignatures the table's queries with a live reader; by default
-     *   [liveSignatureProvider]'s.
+     * @param liveCacheKeys the table's queries with a live reader; by default [liveCacheKeysOf]'s.
      * @param startedAtTick [monotonicTickNow] as read when the write started; nothing is written if
      *   the cache was cleared or dropped since. `null` takes the tick now.
      */
@@ -2091,7 +2085,7 @@ internal class OfflineStore(
         defaultToNull: Boolean? = null,
         onConflict: String? = null,
         ignoreDuplicates: Boolean? = null,
-        liveSignatures: Set<String>? = null,
+        liveCacheKeys: Set<String>? = null,
         startedAtTick: Long? = null,
     ) {
         requireUserTable(table)
@@ -2111,7 +2105,7 @@ internal class OfflineStore(
                 onConflict = onConflict,
                 ignoreDuplicates = ignoreDuplicates,
             )
-        applyPatch(table, listOf(write), liveSignatures, guardTick)
+        patchQueries(table, listOf(write), liveCacheKeys, guardTick)
     }
 
     /**
@@ -2158,7 +2152,7 @@ internal class OfflineStore(
                 )
             }
         if (writes.isNotEmpty())
-            applyPatch(table, writes, liveSignatures = null, guardTick = startedAtTick)
+            patchQueries(table, writes, liveCacheKeys = null, guardTick = startedAtTick)
     }
 
     /**
@@ -2167,10 +2161,10 @@ internal class OfflineStore(
      * ([patchMayLeaveWrong]) is marked stale and fetched again. A cache that is not the current
      * identity's is left alone.
      */
-    private suspend fun applyPatch(
+    private suspend fun patchQueries(
         table: String,
         writes: List<MutationRow>,
-        liveSignatures: Set<String>?,
+        liveCacheKeys: Set<String>?,
         guardTick: Long,
     ) {
         if (!cacheServesCurrentIdentity()) return
@@ -2179,7 +2173,7 @@ internal class OfflineStore(
             recordLocalMutation(table)
             val cached = objectDao.allForTable(table)
             val uncachedLive =
-                (liveSignatures ?: liveSignatureProvider(table)) -
+                (liveCacheKeys ?: liveCacheKeysOf(table)) -
                     cached.mapTo(mutableSetOf()) { row -> row.signature }
             // Only a patch that may write claims an unowned cache for the current identity
             if (cached.isEmpty() && uncachedLive.isEmpty()) return@withLock
@@ -2218,7 +2212,7 @@ internal class OfflineStore(
                 // data, and one it may leave wrong is stale
                 val stamp = if (wrong) staleStampOf(row.updatedAt) else row.updatedAt
                 val next = row.copy(payload = overlay.encode(patched.visible), updatedAt = stamp)
-                if (!writeUnlessTornDown(guardTick, next)) return@withLock
+                if (!writeUnlessCleared(guardTick, next)) return@withLock
                 if (wrong) toFetchAgain += row.signature
             }
             toFetchAgain +=
@@ -2278,7 +2272,7 @@ internal class OfflineStore(
          * whether it [matters] to the writes at hand.
          */
         private class Held(
-            val signature: String,
+            val cacheKey: String,
             val projection: Projection?,
             val row: JsonObject,
             val matters: Boolean,
@@ -2329,12 +2323,12 @@ internal class OfflineStore(
         }
 
         /**
-         * What the patch of the query cached under [signature], holding [rows], may draw on.
+         * What the patch of the query cached under [cacheKey], holding [rows], may draw on.
          *
          * @param rowKeys [rows]' keys when already read; see [ParsedPayload.keysFor].
          */
         fun targetFor(
-            signature: String,
+            cacheKey: String,
             shape: QueryShape?,
             rows: List<JsonElement>,
             rowKeys: List<List<String>?>? = null,
@@ -2354,7 +2348,7 @@ internal class OfflineStore(
                     if (key in own) return@forEach
                     val holder =
                         byKey.getValue(key).firstOrNull { held ->
-                            held.signature != signature && held.projection == projection
+                            held.cacheKey != cacheKey && held.projection == projection
                         } ?: return@forEach
                     sameKeys += key
                     if (holder.matters) same += holder.row
@@ -2365,7 +2359,7 @@ internal class OfflineStore(
                 if (key in own || key in sameKeys) return@forEach
                 val holder =
                     holders.firstOrNull { held ->
-                        held.signature != signature &&
+                        held.cacheKey != cacheKey &&
                             (projection == null || held.projection != projection)
                     } ?: return@forEach
                 if (holder.matters) other += holder.row
@@ -2475,9 +2469,9 @@ internal class OfflineStore(
     private fun parsedPayloadOf(row: ObjectRow): ParsedPayload =
         parsedTextOf(row.table, row.signature, row.payload)
 
-    /** [parsedPayloadOf] for [text], the rows the query cached under [signature] shows. */
-    private fun parsedTextOf(table: String, signature: String, text: String): ParsedPayload {
-        val key = table to signature
+    /** [parsedPayloadOf] for [text], the rows the query cached under [cacheKey] shows. */
+    private fun parsedTextOf(table: String, cacheKey: String, text: String): ParsedPayload {
+        val key = table to cacheKey
         parsedPayloads.value[key]?.let { kept -> if (kept.text == text) return kept }
         val parsed = ParsedPayload(text, payloadRowsOf(json, text))
         if (text.length <= PARSED_PAYLOAD_TEXT_KEPT) {
@@ -2502,7 +2496,7 @@ internal class OfflineStore(
         }
 
     /**
-     * Writes a payload for each of [signatures], queries a live reader observes that have none, of
+     * Writes a payload for each of [cacheKeys], queries a live reader observes that have none, of
      * the rows [writes] wrote that the query admits. Nothing is written for a query that would stay
      * empty, and nothing once the cache was cleared or dropped since [guardTick]. A query the rows
      * known here may not show right gets no payload; it is returned, to be fetched again.
@@ -2515,7 +2509,7 @@ internal class OfflineStore(
      */
     private suspend fun createLivePayloads(
         table: String,
-        signatures: Set<String>,
+        cacheKeys: Set<String>,
         shapes: Map<String, QueryShape?>,
         writes: List<MutationRow>,
         known: Lazy<KnownRows>,
@@ -2524,12 +2518,12 @@ internal class OfflineStore(
         keyed: KeyedUpdates?,
     ): Set<String> {
         val toFetchAgain = mutableSetOf<String>()
-        for (signature in signatures) {
+        for (cacheKey in cacheKeys) {
             // A live query's shape is known while it is read; unknown conditions admit
-            val shape = shapes[signature]
-            val target = known.value.targetFor(signature, shape, rows = emptyList())
+            val shape = shapes[cacheKey]
+            val target = known.value.targetFor(cacheKey, shape, rows = emptyList())
             if (patchMayLeaveWrong(writes, target, json, keyed, ::conflictColumnsOf)) {
-                toFetchAgain += signature
+                toFetchAgain += cacheKey
                 continue
             }
             val admission = target.admission
@@ -2545,13 +2539,13 @@ internal class OfflineStore(
             val row =
                 ObjectRow(
                     table = table,
-                    signature = signature,
+                    signature = cacheKey,
                     payload = overlay.encode(created),
                     updatedAt = staleStampOf(nowMillis()),
                 )
             // A created payload is not a network response: it holds no synced mutation
-            if (!writeUnlessTornDown(guardTick, row)) return toFetchAgain
-            if (shape != null) queryShapes.remember(table, signature, shape, persist = true)
+            if (!writeUnlessCleared(guardTick, row)) return toFetchAgain
+            if (shape != null) queryShapes.remember(table, cacheKey, shape, persist = true)
         }
         return toFetchAgain
     }
@@ -2612,13 +2606,12 @@ internal class OfflineStore(
                 toFetchAgain += row.signature
                 if (isStaleStamp(row.updatedAt)) continue
                 val next = row.copy(updatedAt = staleStampOf(row.updatedAt))
-                if (!writeUnlessTornDown(startedAtTick, next)) return@withLock
+                if (!writeUnlessCleared(startedAtTick, next)) return@withLock
             }
             // A live query with nothing cached may gain the rows an UPDATE changes
             if (patch != null) {
                 toFetchAgain +=
-                    liveSignatureProvider(table) -
-                        cached.mapTo(mutableSetOf()) { row -> row.signature }
+                    liveCacheKeysOf(table) - cached.mapTo(mutableSetOf()) { row -> row.signature }
             }
         }
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
@@ -2630,9 +2623,9 @@ internal class OfflineStore(
      *
      * @return `false` when a teardown voided the write.
      */
-    private suspend fun writeUnlessTornDown(guardTick: Long, row: ObjectRow): Boolean =
-        teardownMutex.withLock {
-            if (predatesCacheTeardown(guardTick)) {
+    private suspend fun writeUnlessCleared(guardTick: Long, row: ObjectRow): Boolean =
+        clearMutex.withLock {
+            if (predatesCacheClear(guardTick)) {
                 false
             } else {
                 objectDao.upsert(row)
@@ -2767,8 +2760,7 @@ internal class OfflineStore(
         val synced = mutationDao.syncedForTable(table)
         if (synced.isEmpty()) return
         val waiting =
-            (liveSignatureProvider(table) - objectDao.signaturesForTable(table).toSet())
-                .isNotEmpty()
+            (liveCacheKeysOf(table) - objectDao.signaturesForTable(table).toSet()).isNotEmpty()
         val heldByEvery = objectDao.minSyncedThroughForTable(table)
         val held =
             if (waiting) {
@@ -2819,7 +2811,7 @@ internal class OfflineStore(
      * Reclaiming the on-disk pages freed by these deletes (`VACUUM`/`auto_vacuum`) is intentionally
      * out of scope: cache correctness doesn't depend on returning bytes to the filesystem.
      */
-    internal suspend fun enforceDbSizeLimitIfNeeded() {
+    internal suspend fun evictOverBudget() {
         val max = queryCacheLimits.maxPayloadBytes ?: return
 
         // Cheap pre-check outside the lock: eviction triggers only once the cache exceeds the
@@ -2847,7 +2839,7 @@ internal class OfflineStore(
                     objectDao.deleteOldestPayloadRows(
                         limit = queryCacheLimits.evictionBatchSize.coerceAtLeast(1),
                         // A payload a live reader shows stays, or the reader would drop to no data
-                        keptSignatures = allLiveSignaturesProvider().take(MAX_KEPT_LIVE_SIGNATURES),
+                        keptSignatures = allLiveCacheKeys().take(MAX_KEPT_LIVE_CACHE_KEYS),
                     )
                 // Progress guard: no rows removed means the cache can't shrink further, so stop
                 // instead of re-measuring the same over-limit size forever.
@@ -2887,7 +2879,7 @@ internal class OfflineStore(
         const val MAX_EVICTION_ITERATIONS = 1_000
 
         /** Live signatures eviction passes over at most, within SQLite's 999 bound variables. */
-        const val MAX_KEPT_LIVE_SIGNATURES = 500
+        const val MAX_KEPT_LIVE_CACHE_KEYS = 500
 
         /** The characters of payload text whose parsed rows are kept, about a megabyte of text. */
         const val PARSED_PAYLOAD_TEXT_KEPT = 1_000_000

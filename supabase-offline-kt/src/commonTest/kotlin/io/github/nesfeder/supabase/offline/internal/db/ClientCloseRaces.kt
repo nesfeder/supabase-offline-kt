@@ -253,7 +253,7 @@ internal object ClientCloseRaces {
                     .flatMap { strategy ->
                         (0 until READERS_PER_STRATEGY).map { index ->
                             app.async {
-                                runCatching {
+                                val outcome = runCatching {
                                     client
                                         .from(TABLE)
                                         .selectAsFlow(readStrategy = strategy) {
@@ -261,19 +261,19 @@ internal object ClientCloseRaces {
                                         }
                                         .collect { emitted.addAndFetch(1) }
                                 }
-                                    .exceptionOrNull()
+                                outcome.exceptionOrNull()
                             }
                         }
                     }
             val writer = app.async {
-                runCatching {
+                val outcome = runCatching {
                     var index = 0
                     while (true) {
                         client.from(TABLE).insertJson(keylessRow("${server.marker}-${index++}"))
                         yield()
                     }
                 }
-                    .exceptionOrNull()
+                outcome.exceptionOrNull()
             }
             withTimeout(5.seconds) { while (emitted.load() < readers.size) delay(1) }
 
@@ -329,12 +329,12 @@ internal object ClientCloseRaces {
             val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val emitted = CompletableDeferred<Unit>()
             val reader = screen.async {
-                runCatching {
+                val outcome = runCatching {
                     client.from(TABLE).selectAsFlow(readStrategy = strategy).collect {
                         emitted.complete(Unit)
                     }
                 }
-                    .exceptionOrNull()
+                outcome.exceptionOrNull()
             }
             withTimeout(5.seconds) { emitted.await() }
             server.online.store(false)

@@ -32,7 +32,7 @@ class IsFilterReplayTest {
                 )
             )
         val replayBuilder = newBuilder()
-        FilterEngine.applyTo(replayBuilder, captured)
+        FilterEngine.replayOnto(replayBuilder, captured)
         return replayBuilder.params["deleted_at"]
     }
 

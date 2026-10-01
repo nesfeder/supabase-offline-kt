@@ -14,6 +14,9 @@ import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -46,13 +49,13 @@ private const val TEMPORARY_FILE_SUFFIX: String = ".tmp"
  * belong to a download still running — in a client that was closed and re-created on the same
  * directory, whose downloads outlive `close()` because they run in their callers' coroutines.
  */
-private const val STALE_TEMPORARY_FILE_MILLIS: Long = 24L * 60L * 60L * 1000L
+private val STALE_TEMPORARY_FILE_AGE: Duration = 24.hours
 
 /**
  * A file used this recently is never evicted. The download that just committed it has yet to
  * deliver it, or a caller was just handed its path and has yet to open it.
  */
-internal const val RECENT_USE_GRACE_MILLIS: Long = 30_000L
+internal val RECENT_USE_GRACE: Duration = 30.seconds
 
 /**
  * Once over its bound, the cache evicts a further 1/this of the bound below it, so the next
@@ -239,7 +242,7 @@ internal class StorageFileCache(
      * @param entry the entry.
      * @return the cached file, reporting the size of the file on disk.
      */
-    suspend fun lookup(entry: StorageCacheEntry): CachedFile? =
+    suspend fun useCachedCopy(entry: StorageCacheEntry): CachedFile? =
         withContext(Dispatchers.IO) {
             if (!store.cacheServesCurrentIdentity()) return@withContext null
             val row =
@@ -289,7 +292,7 @@ internal class StorageFileCache(
      */
     suspend fun readBytes(entry: StorageCacheEntry): ByteArray? =
         withPinned(entry) {
-            val cached = lookup(entry) ?: return@withPinned null
+            val cached = useCachedCopy(entry) ?: return@withPinned null
             withContext(Dispatchers.IO) {
                 try {
                     fileSystem.read(cached.path.toPath()) { readByteArray() }
@@ -311,7 +314,7 @@ internal class StorageFileCache(
      */
     suspend fun copyTo(entry: StorageCacheEntry, channel: ByteWriteChannel): Boolean =
         withPinned(entry) {
-            val cached = lookup(entry) ?: return@withPinned false
+            val cached = useCachedCopy(entry) ?: return@withPinned false
             copyFile(cached.path.toPath(), channel)
             true
         }
@@ -696,9 +699,8 @@ internal class StorageFileCache(
 
     /**
      * Once the cache is over its bound, evicts the least recently used files until it is a tenth
-     * below it. It spares [protectedKey], pinned entries and files used within
-     * [RECENT_USE_GRACE_MILLIS], and skips the scan until the oldest file it had to spare ages out.
-     * Runs under [lock].
+     * below it. It spares [protectedKey], pinned entries and files used within [RECENT_USE_GRACE],
+     * and skips the scan until the oldest file it had to spare ages out. Runs under [lock].
      */
     private suspend fun evictOverLimit(protectedKey: String) {
         val limit = maxSizeBytes ?: return
@@ -707,7 +709,7 @@ internal class StorageFileCache(
         val now = nowMillis()
         if (now < evictionIdleUntilMillis) return
         val lowWater = limit - limit / LOW_WATER_FRACTION
-        val usedBefore = now - RECENT_USE_GRACE_MILLIS
+        val usedBefore = now - RECENT_USE_GRACE.inWholeMilliseconds
         val (evictable, recent) =
             store
                 .allStorageRows()
@@ -728,7 +730,7 @@ internal class StorageFileCache(
         val oldestRecentUse = recent.minOfOrNull { (_, lastUsed) -> lastUsed }
         evictionIdleUntilMillis =
             if (remaining > lowWater && oldestRecentUse != null)
-                oldestRecentUse + RECENT_USE_GRACE_MILLIS
+                oldestRecentUse + RECENT_USE_GRACE.inWholeMilliseconds
             else Long.MIN_VALUE
         engineLogger.debug { "Storage cache evicted $evicted file(s) to stay within $limit bytes" }
     }
@@ -749,13 +751,13 @@ internal class StorageFileCache(
 
     /**
      * Deletes the temporary files a crash left behind, once per cache, under [lock]. It takes those
-     * last modified more than [STALE_TEMPORARY_FILE_MILLIS] ago that no cache row names, since an
+     * last modified more than [STALE_TEMPORARY_FILE_AGE] ago that no cache row names, since an
      * object can be named like one.
      */
     private suspend fun sweepTemporaryFilesOnce() {
         if (temporaryFilesSwept) return
         temporaryFilesSwept = true
-        val staleBefore = nowMillis() - STALE_TEMPORARY_FILE_MILLIS
+        val staleBefore = nowMillis() - STALE_TEMPORARY_FILE_AGE.inWholeMilliseconds
         cacheDirectories()
             .filter { fileSystem.exists(it) }
             .forEach { directory ->

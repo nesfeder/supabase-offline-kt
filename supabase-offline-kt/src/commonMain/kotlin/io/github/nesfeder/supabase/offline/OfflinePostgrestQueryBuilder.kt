@@ -308,7 +308,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * forwarded to [QueryReader] to short-circuit a stalled refresh's backoff. Defaults to an empty
      * flow (recovery still happens on the capped schedule) for direct construction.
      */
-    private val accelerator: Flow<Unit> = emptyFlow(),
+    private val wakeUps: Flow<Unit> = emptyFlow(),
     /**
      * The identity a write is made for, read as the write is issued and recorded as its owner when
      * it is queued; see [OfflineStore.enqueueOwnedBy]. `null` from the provider means it cannot be
@@ -346,7 +346,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
         trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
         liveQueries: LiveQueries = defaultLiveQueries(),
-        accelerator: Flow<Unit> = emptyFlow(),
+        wakeUps: Flow<Unit> = emptyFlow(),
         queueIdentity: suspend () -> QueueIdentity? = {
             delegate.postgrest.supabaseClient.currentQueueIdentity()
         },
@@ -367,7 +367,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         requestSession = requestSession,
         trustPolicy = trustPolicy,
         liveQueries = liveQueries,
-        accelerator = accelerator,
+        wakeUps = wakeUps,
         queueIdentity = queueIdentity,
         requestSync = requestSync,
         headSender = headSender,
@@ -383,7 +383,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             requestSession = requestSession,
             trustPolicy = trustPolicy,
             liveQueries = liveQueries,
-            accelerator = accelerator,
+            wakeUps = wakeUps,
         )
 
     override suspend fun select(
@@ -422,7 +422,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
             perform = { handle -> handle.insert(body, request) },
-            applyOnlineSuccessOverlay = { result, startedAtTick ->
+            patchCache = { result, startedAtTick ->
                 // Honor QueueIfOffline's "UI reflects immediately" promise on the online-success
                 // path so reactive `selectAsFlow` observers re-emit without waiting for a re-fetch.
                 // OnlineOnly callers opted out of this — leave their cache untouched.
@@ -493,7 +493,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
             perform = { handle -> handle.upsert(body, request) },
-            applyOnlineSuccessOverlay = { result, startedAtTick ->
+            patchCache = { result, startedAtTick ->
                 val upsertBuilder = built.value
                 val descriptor = captureFilter(upsertBuilder)
                 val conflictColumns =
@@ -570,7 +570,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
             perform = { handle -> handle.update(body, request) },
-            applyOnlineSuccessOverlay = { result, startedAtTick ->
+            patchCache = { result, startedAtTick ->
                 // Asked for rows back, the response names every row the update changed, none when
                 // it is empty; each carrying its key is patched by it alone, in one pass
                 val returnsRows = built.value.returning is Returning.Representation
@@ -624,7 +624,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
             perform = { handle -> handle.delete(request) },
-            applyOnlineSuccessOverlay = { _, startedAtTick ->
+            patchCache = { _, startedAtTick ->
                 patchFilteredWrite(
                     MutationOperation.DELETE,
                     table,
@@ -740,8 +740,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      *
      * @param perform Sends the write on the handle it is given: this builder's, or one the dry-run
      *   check reads it on.
-     * @param applyOnlineSuccessOverlay Patches the cache with the result, given the write's start
-     *   tick.
+     * @param patchCache Patches the cache with the result, given the write's start tick.
      * @param captureForQueue How the write would be queued; see [QueueCapture].
      */
     private suspend fun executeMutation(
@@ -750,7 +749,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         mutationStrategy: MutationStrategy,
         writeSchema: () -> String,
         perform: suspend (RemoteTable) -> PostgrestResult,
-        applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
+        patchCache: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
     ): MutationOutcome = operationGate.call {
         executeMutationNow(
@@ -759,7 +758,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
             mutationStrategy,
             writeSchema,
             perform,
-            applyOnlineSuccessOverlay,
+            patchCache,
             captureForQueue,
         )
     }
@@ -777,7 +776,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         mutationStrategy: MutationStrategy,
         writeSchema: () -> String,
         perform: suspend (RemoteTable) -> PostgrestResult,
-        applyOnlineSuccessOverlay: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
+        patchCache: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         captureForQueue: () -> QueueCapture,
     ): MutationOutcome {
         val performOnline: suspend () -> PostgrestResult = { perform(delegate) }
@@ -794,8 +793,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         val startedAtTick = store.monotonicTickNow()
         // Taken as the write is issued: a session switch while it is in flight must not re-own it.
         val identity = queueIdentity()
-        val direct =
-            DirectSend(verbLabel, table, performOnline, applyOnlineSuccessOverlay, startedAtTick)
+        val direct = DirectSend(verbLabel, table, performOnline, patchCache, startedAtTick)
 
         val queueable =
             when (val capture = captureForQueue()) {
@@ -972,8 +970,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         private val verbLabel: String,
         private val table: String,
         private val performOnline: suspend () -> PostgrestResult,
-        private val applyOnlineSuccessOverlay:
-            suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
+        private val patchCache: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
         private val startedAtTick: Long,
     ) {
 
@@ -1020,7 +1017,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                         "$verbLabel $table returned after local data was cleared; the cache is left as it was"
                     }
 
-                else -> applyOnlineSuccessOverlay(result, startedAtTick)
+                else -> patchCache(result, startedAtTick)
             }
         }
     }

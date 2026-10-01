@@ -4,13 +4,15 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.room.execSQL
 import androidx.room.useWriterConnection
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 
 /** How many times a checkpoint that readers held off is tried. */
 private const val CHECKPOINT_ATTEMPTS: Int = 20
 
 /** How long to wait between those tries. */
-private const val CHECKPOINT_RETRY_MILLIS: Long = 50L
+private val CHECKPOINT_RETRY_WAIT: Duration = 50.milliseconds
 
 /**
  * Rewrites the database so deleted rows cannot be read back from its files or its write-ahead log.
@@ -30,7 +32,7 @@ internal suspend fun OfflineDatabase.scrubDeletedRows(): Boolean =
                     statement.getLong(0)
                 }
             if (blocked == 0L) return@useWriterConnection true
-            delay(CHECKPOINT_RETRY_MILLIS)
+            delay(CHECKPOINT_RETRY_WAIT)
         }
         false
     }

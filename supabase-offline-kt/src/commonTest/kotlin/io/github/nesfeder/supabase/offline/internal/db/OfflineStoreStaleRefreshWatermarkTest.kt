@@ -58,7 +58,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = oneProject,
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -81,14 +81,14 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — a local insert materializes into the observed signature mid-flight
         tick = 20L
-        store.insertProjectTwo(liveSignatures = setOf("sig-A"))
+        store.insertProjectTwo(liveCacheKeys = setOf("sig-A"))
 
         // And — the pre-insert `[]` lands afterwards
         tick = 30L
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = "[]",
                 authoritativeEmpty = true,
                 requestStartedAtTick = requestStartedAtTick,
@@ -118,7 +118,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = bothProjects,
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -146,7 +146,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = "[]",
                 authoritativeEmpty = true,
                 requestStartedAtTick = requestStartedAtTick,
@@ -174,7 +174,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = bothProjects,
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -198,7 +198,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = "[]",
                 authoritativeEmpty = true,
                 requestStartedAtTick = requestStartedAtTick,
@@ -223,7 +223,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = oneProject,
             )
 
@@ -249,7 +249,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "plans",
-                signature = "sig-P",
+                cacheKey = "sig-P",
                 payload = """[{"id":"plan-2"}]""",
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -280,7 +280,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = oneProject,
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -302,14 +302,14 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — the user signs out (or switches accounts) and the cache is torn down
         tick = 20L
-        store.clearAll()
+        store.clearLocalData()
 
         // And — the refresh that was still in flight delivers the outgoing user's rows
         tick = 30L
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = bothProjects,
                 authoritativeEmpty = true,
                 requestStartedAtTick = requestStartedAtTick,
@@ -327,7 +327,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val objectDao = FakeObjectDao()
         var tick = 10L
         val store = buildStore(objectDao, tick = { tick })
-        store.clearAll()
+        store.clearLocalData()
 
         // When — a refresh issued after the teardown returns rows
         tick = 20L
@@ -336,7 +336,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = oneProject,
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -363,7 +363,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val outcome =
             store.addPayload(
                 table = "projects",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = oneProject,
                 requestStartedAtTick = requestStartedAtTick,
             )
@@ -399,7 +399,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         tick = 30L
         store.addPayload(
             table = "projects",
-            signature = "sig-A",
+            cacheKey = "sig-A",
             payload = bothProjects,
             requestStartedAtTick = requestStartedAtTick,
         )
@@ -414,14 +414,14 @@ class OfflineStoreStaleRefreshWatermarkTest {
     /**
      * Applies the online-success insert of `project-2` — the write the stale response would erase.
      */
-    private suspend fun OfflineStore.insertProjectTwo(liveSignatures: Set<String>? = null) {
+    private suspend fun OfflineStore.insertProjectTwo(liveCacheKeys: Set<String>? = null) {
         patchCachedQueries(
             table = "projects",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"project-2"}]""",
             filterJson = null,
             defaultToNull = true,
-            liveSignatures = liveSignatures,
+            liveCacheKeys = liveCacheKeys,
         )
     }
 

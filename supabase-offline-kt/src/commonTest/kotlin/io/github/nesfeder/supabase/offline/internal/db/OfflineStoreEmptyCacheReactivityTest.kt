@@ -89,8 +89,8 @@ class OfflineStoreEmptyCacheReactivityTest {
             val objectDao = FakeObjectDao()
             val store = buildStore(objectDao, FakeMutationDao())
             val table = "note_projects"
-            val signature = "sig-A"
-            val cacheFlow = store.overlaidPayloadFlow(table, signature)
+            val cacheKey = "sig-A"
+            val cacheFlow = store.overlaidPayloadFlow(table, cacheKey)
             val firstRealRow = async {
                 withTimeoutOrNull(timeMillis = 500) {
                     cacheFlow.first { it != null && it.contains("project-1") }
@@ -106,7 +106,7 @@ class OfflineStoreEmptyCacheReactivityTest {
                 filterJson = null,
                 defaultToNull = false,
                 onConflict = "note_id",
-                liveSignatures = setOf(signature),
+                liveCacheKeys = setOf(cacheKey),
             )
 
             // Then — the collector observes the materialized row (honoring the "UI reflects
@@ -118,7 +118,7 @@ class OfflineStoreEmptyCacheReactivityTest {
             )
             assertTrue(emitted.contains("project-1"))
             assertNotNull(
-                objectDao.getRow(table, signature),
+                objectDao.getRow(table, cacheKey),
                 "materialize-on-write must persist the real row",
             )
         }

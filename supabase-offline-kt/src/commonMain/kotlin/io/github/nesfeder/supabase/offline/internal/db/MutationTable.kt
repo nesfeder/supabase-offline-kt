@@ -160,12 +160,6 @@ internal interface MutationDao {
         beforeId: Long,
     ): Boolean
 
-    /** Whether any mutation is pending with an id below [beforeId], whoever owns it. */
-    @Query(
-        "SELECT EXISTS(SELECT 1 FROM mutation_cache WHERE synced_at_ms IS NULL AND id < :beforeId)"
-    )
-    suspend fun hasPendingBefore(beforeId: Long): Boolean
-
     /** Records [owner] as the owner of mutation [id]. */
     @Query("UPDATE mutation_cache SET owner = :owner WHERE id = :id")
     suspend fun setOwner(id: Long, owner: String)
@@ -205,21 +199,6 @@ internal interface MutationDao {
     suspend fun recordSchemaCacheMiss(id: Long)
 
     @Query("SELECT COUNT(*) FROM mutation_cache") suspend fun countAll(): Int
-
-    @Query("SELECT COUNT(*) FROM mutation_cache WHERE synced_at_ms IS NULL")
-    suspend fun countPending(): Int
-
-    @Query("SELECT COUNT(*) FROM mutation_cache WHERE synced_at_ms IS NULL")
-    fun countPendingFlow(): Flow<Int>
-
-    @Query("SELECT COUNT(*) FROM mutation_cache WHERE table_name = :table")
-    suspend fun countForTable(table: String): Int
-
-    @Query("SELECT COUNT(*) FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NULL")
-    suspend fun countPendingForTable(table: String): Int
-
-    @Query("SELECT COUNT(*) FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NULL")
-    fun countPendingForTableFlow(table: String): Flow<Int>
 
     @Query("DELETE FROM mutation_cache WHERE id = :id") suspend fun deleteById(id: Long)
 

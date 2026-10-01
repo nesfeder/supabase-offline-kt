@@ -12,9 +12,9 @@ import io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder
 import io.github.jan.supabase.postgrest.query.filter.TextSearchType
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.internal.OfflineJson
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.applyTo
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.encode
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.replayOnto
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -23,7 +23,7 @@ import kotlinx.serialization.json.Json
  * Encodes / decodes filter descriptors and replays them on demand.
  *
  * - [encode] / [decodeOrNull] : store & restore conditions for UPDATE/DELETE mutations
- * - [applyTo] : replay a FilterDescriptor onto PostgrestRequestBuilder
+ * - [replayOnto] : replay a FilterDescriptor onto PostgrestRequestBuilder
  * - [inListMembersOf] : read an `in` list the way replay does, for [rowMatch]
  */
 internal object FilterEngine {
@@ -32,7 +32,7 @@ internal object FilterEngine {
 
     /**
      * Schema for the throwaway builder [replaysFully] replays onto. Never sent anywhere — the
-     * builder exists only so the real [applyCondition] branches can report what they applied.
+     * builder exists only so the real [replayCondition] branches can report what they applied.
      */
     private const val SCRATCH_SCHEMA = "public"
 
@@ -77,7 +77,7 @@ internal object FilterEngine {
      *   `descriptor.conditions.size` means the replayed request targets a broader row set than the
      *   caller captured — see [replaysFully], which is how callers check that.
      */
-    fun applyTo(
+    fun replayOnto(
         builder: PostgrestRequestBuilder,
         descriptor: FilterDescriptor,
     ): Int {
@@ -85,15 +85,15 @@ internal object FilterEngine {
         builder.filter {
             when (descriptor.mode) {
                 FilterDescriptor.Mode.AND -> {
-                    descriptor.conditions.forEach { cond ->
-                        if (applyCondition(cond)) applied++
+                    descriptor.conditions.forEach { condition ->
+                        if (replayCondition(condition)) applied++
                     }
                 }
 
                 FilterDescriptor.Mode.OR -> {
                     or {
-                        descriptor.conditions.forEach { cond ->
-                            if (applyCondition(cond)) applied++
+                        descriptor.conditions.forEach { condition ->
+                            if (replayCondition(condition)) applied++
                         }
                     }
                 }
@@ -106,15 +106,15 @@ internal object FilterEngine {
      * Reports whether every condition in [descriptor] survives a replay.
      *
      * A condition whose stored value cannot be parsed back into the shape its operator needs is
-     * skipped by [applyCondition]. On the queued UPDATE / DELETE path that silence is dangerous:
+     * skipped by [replayCondition]. On the queued UPDATE / DELETE path that silence is dangerous:
      * the mutation still executes, now scoped only by whatever conditions did land (and, in the
      * worst case, by RLS alone). The syncer calls this **before** issuing the request so a short
      * replay can be dropped instead of broadened.
      *
      * The check replays onto a throwaway builder rather than re-deriving the parse rules, so it
-     * cannot drift from [applyTo] when a new operator branch is added. The scratch builder's schema
-     * and property-conversion method are arbitrary: replay addresses columns by the `String` names
-     * captured in the descriptor, so neither value can change whether a condition lands.
+     * cannot drift from [replayOnto] when a new operator branch is added. The scratch builder's
+     * schema and property-conversion method are arbitrary: replay addresses columns by the `String`
+     * names captured in the descriptor, so neither value can change whether a condition lands.
      *
      * A descriptor carrying **no** conditions is reported as not replayable, even though it
      * vacuously loses nothing. [captureFilterExactly] returns `null` rather than an empty
@@ -129,7 +129,7 @@ internal object FilterEngine {
     fun replaysFully(descriptor: FilterDescriptor): Boolean {
         if (descriptor.conditions.isEmpty()) return false
         val scratch = SelectRequestBuilder(SCRATCH_SCHEMA, SCRATCH_CONVERSION)
-        return applyTo(scratch, descriptor) == descriptor.conditions.size
+        return replayOnto(scratch, descriptor) == descriptor.conditions.size
     }
 
     /**
@@ -139,27 +139,29 @@ internal object FilterEngine {
      * @return true when the condition landed on the builder; false when its stored value could not
      *   be parsed back into the shape the operator needs and the condition was skipped.
      */
-    private fun PostgrestFilterBuilder.applyCondition(cond: FilterDescriptor.Condition): Boolean {
-        val operator = cond.operator ?: return false
-        val rawValue = cond.value
+    private fun PostgrestFilterBuilder.replayCondition(
+        condition: FilterDescriptor.Condition
+    ): Boolean {
+        val operator = condition.operator ?: return false
+        val rawValue = condition.value
 
         when (operator) {
             // Basic comparison
-            FilterOperator.EQ -> eq(cond.column, rawValue)
-            FilterOperator.NEQ -> neq(cond.column, rawValue)
-            FilterOperator.GT -> gt(cond.column, rawValue)
-            FilterOperator.GTE -> gte(cond.column, rawValue)
-            FilterOperator.LT -> lt(cond.column, rawValue)
-            FilterOperator.LTE -> lte(cond.column, rawValue)
+            FilterOperator.EQ -> eq(condition.column, rawValue)
+            FilterOperator.NEQ -> neq(condition.column, rawValue)
+            FilterOperator.GT -> gt(condition.column, rawValue)
+            FilterOperator.GTE -> gte(condition.column, rawValue)
+            FilterOperator.LT -> lt(condition.column, rawValue)
+            FilterOperator.LTE -> lte(condition.column, rawValue)
 
             // Patterns
-            FilterOperator.LIKE -> like(cond.column, rawValue)
-            FilterOperator.ILIKE -> ilike(cond.column, rawValue)
-            FilterOperator.MATCH -> regexMatch(cond.column, rawValue)
-            FilterOperator.IMATCH -> regexIMatch(cond.column, rawValue)
+            FilterOperator.LIKE -> like(condition.column, rawValue)
+            FilterOperator.ILIKE -> ilike(condition.column, rawValue)
+            FilterOperator.MATCH -> regexMatch(condition.column, rawValue)
+            FilterOperator.IMATCH -> regexIMatch(condition.column, rawValue)
 
             // As captured, so `not_null` and `unknown` reach the same rows as the caller's filter
-            FilterOperator.IS -> filter(cond.column, FilterOperator.IS, rawValue)
+            FilterOperator.IS -> filter(condition.column, FilterOperator.IS, rawValue)
 
             // IN
             FilterOperator.IN -> {
@@ -167,61 +169,62 @@ internal object FilterEngine {
                 // match-nothing filter (`in.()`). Dropping the condition instead would replay the
                 // mutation against every row.
                 val list = parseArray(rawValue) ?: return false
-                isIn(cond.column, list)
+                isIn(condition.column, list)
             }
 
             // Array / JSON operators. Each accepts two encodings — a `{a,b}` element list and an
-            // `[a,b]` range — so both must be recognised; see [applyArrayOrRangeCondition].
+            // `[a,b]` range — so both must be recognised; see [replayArrayOrRangeCondition].
             FilterOperator.CS ->
-                return applyArrayOrRangeCondition(cond, FilterOperator.CS) { list ->
-                    cs(cond.column, list)
+                return replayArrayOrRangeCondition(condition, FilterOperator.CS) { list ->
+                    cs(condition.column, list)
                 }
 
             FilterOperator.CD ->
-                return applyArrayOrRangeCondition(cond, FilterOperator.CD) { list ->
-                    cd(cond.column, list)
+                return replayArrayOrRangeCondition(condition, FilterOperator.CD) { list ->
+                    cd(condition.column, list)
                 }
 
             // Ranges
             FilterOperator.SL -> {
                 val range = parseRange(rawValue) ?: return false
-                sl(cond.column, range)
+                sl(condition.column, range)
             }
 
             FilterOperator.SR -> {
                 val range = parseRange(rawValue) ?: return false
-                sr(cond.column, range)
+                sr(condition.column, range)
             }
 
             FilterOperator.NXL -> {
                 val range = parseRange(rawValue) ?: return false
-                nxl(cond.column, range)
+                nxl(condition.column, range)
             }
 
             FilterOperator.NXR -> {
                 val range = parseRange(rawValue) ?: return false
-                nxr(cond.column, range)
+                nxr(condition.column, range)
             }
 
             FilterOperator.ADJ -> {
                 val range = parseRange(rawValue) ?: return false
-                adjacent(cond.column, range)
+                adjacent(condition.column, range)
             }
 
             FilterOperator.OV ->
-                return applyArrayOrRangeCondition(cond, FilterOperator.OV) { list ->
-                    ov(cond.column, list)
+                return replayArrayOrRangeCondition(condition, FilterOperator.OV) { list ->
+                    ov(condition.column, list)
                 }
 
             // Full text search: map onto textSearch + TextSearchType
-            FilterOperator.FTS -> textSearch(cond.column, rawValue, TextSearchType.NONE)
-            FilterOperator.PLFTS -> textSearch(cond.column, rawValue, TextSearchType.PLAINTO)
-            FilterOperator.PHFTS -> textSearch(cond.column, rawValue, TextSearchType.PHRASETO)
-            FilterOperator.WFTS -> textSearch(cond.column, rawValue, TextSearchType.WEBSEARCH)
+            FilterOperator.FTS -> textSearch(condition.column, rawValue, TextSearchType.NONE)
+            FilterOperator.PLFTS -> textSearch(condition.column, rawValue, TextSearchType.PLAINTO)
+            FilterOperator.PHFTS -> textSearch(condition.column, rawValue, TextSearchType.PHRASETO)
+            FilterOperator.WFTS -> textSearch(condition.column, rawValue, TextSearchType.WEBSEARCH)
 
             // No typed DSL entry point; the generic call encodes it exactly as the caller's
             // `filter(column, ISDISTINCT, value)` did.
-            FilterOperator.ISDISTINCT -> filter(cond.column, FilterOperator.ISDISTINCT, rawValue)
+            FilterOperator.ISDISTINCT ->
+                filter(condition.column, FilterOperator.ISDISTINCT, rawValue)
         }
         return true
     }
@@ -239,24 +242,24 @@ internal object FilterEngine {
      * unquoted, so it is not a valid JSON string array), yielded `null`, and the condition was
      * silently dropped — broadening the replayed mutation's target set.
      *
-     * @param cond The captured condition.
+     * @param condition The captured condition.
      * @param operator The operator to re-encode a range form under.
-     * @param applyList Applies the element-list form via the operator's typed DSL entry point.
+     * @param replayList Applies the element-list form via the operator's typed DSL entry point.
      * @return true when either encoding was recognised and applied; false when the stored value
      *   matched neither, leaving the condition off the request.
      */
-    private fun PostgrestFilterBuilder.applyArrayOrRangeCondition(
-        cond: FilterDescriptor.Condition,
+    private fun PostgrestFilterBuilder.replayArrayOrRangeCondition(
+        condition: FilterDescriptor.Condition,
         operator: FilterOperator,
-        applyList: (List<Any>) -> Unit,
+        replayList: (List<Any>) -> Unit,
     ): Boolean {
-        val range = parsePostgrestRangeLiteral(cond.value)
+        val range = parsePostgrestRangeLiteral(condition.value)
         if (range != null) {
-            filter(cond.column, operator, range)
+            filter(condition.column, operator, range)
             return true
         }
-        val list = parseArray(cond.value) ?: return false
-        applyList(list)
+        val list = parseArray(condition.value) ?: return false
+        replayList(list)
         return true
     }
 
@@ -496,7 +499,7 @@ internal object FilterEngine {
             // reaches it — but only because every other path returns before getting here, not
             // because a `[`-shaped value is impossible. [parseArray] returns at its JSON branch for
             // any `[`-prefixed value (`null` when it is not decodable JSON), the array operators
-            // route the range form through [applyArrayOrRangeCondition] first, and [rowMatch]'s
+            // route the range form through [replayArrayOrRangeCondition] first, and [rowMatch]'s
             // `in` evaluation parses via [parseArray] rather than stripping wrappers itself — which
             // is what keeps the overlay from matching the bounds of a value the replay path drops.
             length >= 2 && startsWith('[') && endsWith(']') -> substring(1, length - 1)

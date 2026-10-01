@@ -111,7 +111,7 @@ class ClearLocalDataDuringWritesTest {
             client.clearAllCache()
             store.addPayload(
                 table = TABLE,
-                signature = SIGNATURE,
+                cacheKey = CACHE_KEY,
                 payload = "[]",
                 authoritativeEmpty = true,
                 requestStartedAtTick = store.monotonicTickNow(),
@@ -120,7 +120,7 @@ class ClearLocalDataDuringWritesTest {
             write.await()
 
             // Then — the next user's cache holds only what their own read returned
-            assertEquals("[]", objectDao.getRow(TABLE, SIGNATURE)?.payload)
+            assertEquals("[]", objectDao.getRow(TABLE, CACHE_KEY)?.payload)
         }
 
     @Test
@@ -166,6 +166,6 @@ class ClearLocalDataDuringWritesTest {
 
     private companion object {
         const val TABLE = "todos"
-        const val SIGNATURE = "todos?select=*"
+        const val CACHE_KEY = "todos?select=*"
     }
 }

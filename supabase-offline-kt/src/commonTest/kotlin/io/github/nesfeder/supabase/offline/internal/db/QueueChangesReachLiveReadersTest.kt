@@ -34,8 +34,8 @@ class QueueChangesReachLiveReadersTest {
     fun a_rejected_write_leaves_a_live_reader() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a reader showing a queued write
-            store.addPayload(TABLE, SIGNATURE, SERVER_ROWS, authoritativeEmpty = true)
-            val shown = startReader(SIGNATURE)
+            store.addPayload(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            val shown = startReader(CACHE_KEY)
             val id = store.enqueueInsert(TABLE, rows("""[{"id":2,"title":"queued"}]"""))
             assertEquals("""[{"id":1,"title":"server"},{"id":2,"title":"queued"}]""", shown.value)
 
@@ -54,14 +54,14 @@ class QueueChangesReachLiveReadersTest {
     fun a_retried_rejection_returns_to_a_live_reader() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a rejected write, and a reader showing the table without it
-            store.addPayload(TABLE, SIGNATURE, SERVER_ROWS, authoritativeEmpty = true)
+            store.addPayload(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
             val id = store.enqueueInsert(TABLE, rows("""[{"id":2,"title":"queued"}]"""))
             store.rejectMutation(
                 store.allPendingMutations().single { it.id == id },
                 "refused",
                 null,
             )
-            val shown = startReader(SIGNATURE)
+            val shown = startReader(CACHE_KEY)
             assertEquals(SERVER_ROWS, shown.value)
 
             // When
@@ -75,9 +75,9 @@ class QueueChangesReachLiveReadersTest {
     fun a_replayed_keyless_insert_shows_once_after_its_query_refreshes() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a reader showing a keyless INSERT; a second cached query keeps it after sync
-            store.addPayload(TABLE, SIGNATURE, SERVER_ROWS, authoritativeEmpty = true)
-            store.addPayload(TABLE, OTHER_SIGNATURE, SERVER_ROWS, authoritativeEmpty = true)
-            val shown = startReader(SIGNATURE)
+            store.addPayload(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            store.addPayload(TABLE, OTHER_CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            val shown = startReader(CACHE_KEY)
             val id = store.enqueueInsert(TABLE, rows("""[{"title":"keyless"}]"""))
             assertEquals("""[{"id":1,"title":"server"},{"title":"keyless"}]""", shown.value)
 
@@ -85,7 +85,7 @@ class QueueChangesReachLiveReadersTest {
             store.markMutationSynced(id, TABLE)
             store.addPayload(
                 TABLE,
-                SIGNATURE,
+                CACHE_KEY,
                 """[{"id":1,"title":"server"},{"id":9,"title":"keyless"}]""",
                 requestStartedAtTick = store.monotonicTickNow(),
                 authoritativeEmpty = true,
@@ -99,23 +99,23 @@ class QueueChangesReachLiveReadersTest {
     fun a_clear_takes_the_queued_write_from_a_live_reader() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a reader showing a queued write
-            store.addPayload(TABLE, SIGNATURE, SERVER_ROWS, authoritativeEmpty = true)
-            val shown = startReader(SIGNATURE)
+            store.addPayload(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            val shown = startReader(CACHE_KEY)
             store.enqueueInsert(TABLE, rows("""[{"id":2,"title":"queued"}]"""))
             assertEquals("""[{"id":1,"title":"server"},{"id":2,"title":"queued"}]""", shown.value)
 
             // When
-            store.clearAll()
+            store.clearLocalData()
 
             // Then — nothing is known any more: no payload, and no queued write
             assertNull(shown.value)
         }
 
-    /** Starts a live reader of [TABLE]'s [signature], holding what it shows last. */
-    private fun TestScope.startReader(signature: String): StateFlow<String?> {
+    /** Starts a live reader of [TABLE]'s [cacheKey], holding what it shows last. */
+    private fun TestScope.startReader(cacheKey: String): StateFlow<String?> {
         val shown = MutableStateFlow<String?>(null)
         backgroundScope.launch {
-            store.overlaidPayloadFlow(TABLE, signature).collect { payload -> shown.value = payload }
+            store.overlaidPayloadFlow(TABLE, cacheKey).collect { payload -> shown.value = payload }
         }
         return shown
     }
@@ -124,8 +124,8 @@ class QueueChangesReachLiveReadersTest {
 
     private companion object {
         const val TABLE = "notes"
-        const val SIGNATURE = "notes?select=*"
-        const val OTHER_SIGNATURE = "notes?select=*&order=id"
+        const val CACHE_KEY = "notes?select=*"
+        const val OTHER_CACHE_KEY = "notes?select=*&order=id"
         const val SERVER_ROWS = """[{"id":1,"title":"server"}]"""
     }
 }

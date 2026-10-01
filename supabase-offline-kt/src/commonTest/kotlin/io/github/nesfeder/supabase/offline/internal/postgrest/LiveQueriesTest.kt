@@ -224,7 +224,7 @@ class LiveQueriesTest {
         val liveQueries = LiveQueries(scope)
 
         // When
-        repeat(SIGNATURES) { index ->
+        repeat(CACHE_KEYS) { index ->
             val shared =
                 liveQueries.sharedReadFlow(TABLE, "todos?title=ilike.*$index*") {
                     flow {
@@ -263,14 +263,14 @@ class LiveQueriesTest {
                 List(400) { index ->
                     launch {
                         delay(Random.nextLong(0, 5))
-                        val signature = "$TABLE?sig=${index % 4}"
+                        val cacheKey = "$TABLE?sig=${index % 4}"
                         val collector = launch {
-                            liveQueries.sharedReadFlow(TABLE, signature, upstream).collect {}
+                            liveQueries.sharedReadFlow(TABLE, cacheKey, upstream).collect {}
                         }
                         delay(Random.nextLong(0, 5))
                         collector.cancelAndJoin()
                         withTimeout(5.seconds) {
-                            liveQueries.sharedReadFlow(TABLE, signature, upstream).first()
+                            liveQueries.sharedReadFlow(TABLE, cacheKey, upstream).first()
                         }
                     }
                 }
@@ -285,7 +285,7 @@ class LiveQueriesTest {
 
     private companion object {
         const val TABLE = "todos"
-        const val SIGNATURES = 20
+        const val CACHE_KEYS = 20
         val RESULT = OfflineReadResult(result = null, refresh = RefreshState.Idle)
         const val FAILURE_ORDERINGS = 500
         const val MALFORMED = "database disk image is malformed"

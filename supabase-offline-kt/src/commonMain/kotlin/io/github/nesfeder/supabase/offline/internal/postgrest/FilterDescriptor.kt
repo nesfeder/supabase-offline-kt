@@ -49,7 +49,7 @@ internal data class FilterDescriptor(
  *
  * Every capture path and the stored-condition lookup resolve through here. Resolving an operator
  * does not mean the engine can evaluate it locally: [rowMatch] evaluates only a few, while
- * [FilterEngine.applyTo] replays every one of them faithfully.
+ * [FilterEngine.replayOnto] replays every one of them faithfully.
  *
  * @param identifier The operator prefix of a PostgREST filter value, e.g. `"eq"`.
  * @return The operator, or `null` when the identifier is unknown (including a `not.` negation).

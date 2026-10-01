@@ -161,7 +161,7 @@ internal class ReservedRowsDatabaseScenarios(
     /**
      * Room's eviction query passes over the signatures it is told to keep, however old they are.
      */
-    suspend fun roomEvictionKeepsTheListedSignatures(path: String) {
+    suspend fun roomEvictionKeepsTheListedCacheKeys(path: String) {
         // Given — the shipped database's cache rows
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
@@ -297,7 +297,7 @@ internal class ReservedRowsDatabaseScenarios(
         val cleared =
             try {
                 database.writeReservedRows()
-                runCatching { storeFailingIn(database).clearAll() }
+                runCatching { storeFailingIn(database).clearLocalData() }
             } finally {
                 database.close()
             }

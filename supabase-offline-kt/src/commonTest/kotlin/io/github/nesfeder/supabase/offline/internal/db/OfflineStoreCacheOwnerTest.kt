@@ -46,7 +46,7 @@ class OfflineStoreCacheOwnerTest {
     private var notServed = 0
 
     init {
-        store.cacheOwnedPerIdentity = true
+        store.isCacheOwnedPerIdentity = true
         store.identityProvider = { identity }
         store.onCacheNotServed = { notServed++ }
     }
@@ -59,8 +59,8 @@ class OfflineStoreCacheOwnerTest {
     @Test
     fun a_drop_empties_the_cache_and_keeps_the_mutation_queue() = runTest {
         // Given — a cached query with its shape, a Storage row, and a write of A's queued
-        objectDao.seedPayload(TABLE, SIGNATURE, ROWS)
-        store.recordQueryShape(TABLE, SIGNATURE, persist = true) {}
+        objectDao.seedPayload(TABLE, CACHE_KEY, ROWS)
+        store.recordQueryShape(TABLE, CACHE_KEY, persist = true) {}
         store.addStorage("avatars", "me.png", "/data/storage/avatars/me.png".toPath(), 3, null)
         store.enqueueOwnedBy(USER_A) {
             enqueueInsert(table = TABLE, body = Json.parseToJsonElement(ROWS) as JsonArray)
@@ -76,7 +76,7 @@ class OfflineStoreCacheOwnerTest {
         // Then — the cache is B's and empty; the queue and its records are as they were
         assertEquals(emptyList(), objectDao.rowsOf(TABLE))
         assertEquals(emptyList(), storageDao.all())
-        assertNull(store.queryShapes.shapeOf(TABLE, SIGNATURE))
+        assertNull(store.queryShapes.shapeOf(TABLE, CACHE_KEY))
         assertEquals(1, mutationDao.inserted.size)
         assertEquals(
             queueRowsBefore.map { row -> row.signature } + CACHE_OWNER_SIGNATURE,
@@ -95,7 +95,7 @@ class OfflineStoreCacheOwnerTest {
 
             // When
             val outcome =
-                store.addPayload(TABLE, SIGNATURE, ROWS, requestStartedAtTick = startedAtTick)
+                store.addPayload(TABLE, CACHE_KEY, ROWS, requestStartedAtTick = startedAtTick)
             val enqueued =
                 store.enqueueOwnedBy(USER_A, startedAtTick) {
                     enqueueInsert(table = TABLE, body = Json.parseToJsonElement(ROWS) as JsonArray)
@@ -112,49 +112,49 @@ class OfflineStoreCacheOwnerTest {
     fun a_cache_another_identity_owns_is_neither_read_nor_written() = runTest {
         // Given — A's cache, and B's session
         store.dropCacheFor(USER_A)
-        objectDao.seedPayload(TABLE, SIGNATURE, ROWS)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ROWS)
         identity = USER_B
 
         // When
-        val read = store.getPayload(TABLE, SIGNATURE)
-        val written = store.addPayload(TABLE, SIGNATURE, OTHER_ROWS)
+        val read = store.getPayload(TABLE, CACHE_KEY)
+        val written = store.addPayload(TABLE, CACHE_KEY, OTHER_ROWS)
 
         // Then — neither, and the client was told
         assertNull(read)
         assertEquals(CacheWriteOutcome.REFUSED_OTHER_OWNER, written)
-        assertEquals(ROWS, objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        assertEquals(ROWS, objectDao.getRow(TABLE, CACHE_KEY)?.payload)
         assertTrue(notServed >= 2, "$notServed")
     }
 
     @Test
     fun a_user_reads_a_cache_nobody_owns_and_claims_it_with_the_first_write() = runTest {
         // Given — a cache an earlier build left without an owner
-        objectDao.seedPayload(TABLE, SIGNATURE, ROWS)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ROWS)
 
         // When — A reads it
-        val read = store.getPayload(TABLE, SIGNATURE)
+        val read = store.getPayload(TABLE, CACHE_KEY)
 
         // Then — served, but not claimed by a read
         assertEquals(ROWS, read)
         assertNull(recordedOwner())
 
         // When — A writes into it
-        store.addPayload(TABLE, SIGNATURE, OTHER_ROWS)
+        store.addPayload(TABLE, CACHE_KEY, OTHER_ROWS)
 
         // Then — claimed before the write
         assertEquals(ownerRecordOf(USER_A), recordedOwner())
-        assertEquals(OTHER_ROWS, store.getPayload(TABLE, SIGNATURE))
+        assertEquals(OTHER_ROWS, store.getPayload(TABLE, CACHE_KEY))
     }
 
     @Test
     fun nobody_signed_in_neither_reads_nor_claims_a_cache_nobody_owns() = runTest {
         // Given — a cache an earlier build left without an owner, and nobody signed in
-        objectDao.seedPayload(TABLE, SIGNATURE, ROWS)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ROWS)
         identity = QueueIdentity.Anonymous.storedValue
 
         // When
-        val read = store.getPayload(TABLE, SIGNATURE)
-        val written = store.addPayload(TABLE, SIGNATURE, OTHER_ROWS)
+        val read = store.getPayload(TABLE, CACHE_KEY)
+        val written = store.addPayload(TABLE, CACHE_KEY, OTHER_ROWS)
 
         // Then — it may be a user's; the settled session drops it first
         assertNull(read)
@@ -168,7 +168,7 @@ class OfflineStoreCacheOwnerTest {
         identity = QueueIdentity.Anonymous.storedValue
 
         // When
-        val written = store.addPayload(TABLE, SIGNATURE, ROWS)
+        val written = store.addPayload(TABLE, CACHE_KEY, ROWS)
 
         // Then — claimed, and written: no earlier user's rows are there to protect
         assertEquals(CacheWriteOutcome.WRITTEN, written)
@@ -180,12 +180,12 @@ class OfflineStoreCacheOwnerTest {
     fun an_owner_record_this_build_cannot_read_belongs_to_nobody() = runTest {
         // Given
         objectDao.seedPayload(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE, """{"version":9}""")
-        objectDao.seedPayload(TABLE, SIGNATURE, ROWS)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ROWS)
 
         // When / Then — not A's, not nobody's
-        assertNull(store.getPayload(TABLE, SIGNATURE))
+        assertNull(store.getPayload(TABLE, CACHE_KEY))
         identity = QueueIdentity.Anonymous.storedValue
-        assertNull(store.getPayload(TABLE, SIGNATURE))
+        assertNull(store.getPayload(TABLE, CACHE_KEY))
     }
 
     /**
@@ -196,7 +196,7 @@ class OfflineStoreCacheOwnerTest {
      */
     private suspend fun TestScope.assertTheOwnerComesWithTheEmptying(empty: suspend () -> Unit) {
         // Given
-        objectDao.seedPayload(TABLE, SIGNATURE, ROWS)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ROWS)
         identity = ANONYMOUS
         val committed = CompletableDeferred<Unit>()
         val resume = CompletableDeferred<Unit>()
@@ -227,15 +227,15 @@ class OfflineStoreCacheOwnerTest {
 
     @Test
     fun a_read_during_a_clear_is_told_the_new_owner_only_with_the_clear_counted() = runTest {
-        assertTheOwnerComesWithTheEmptying { store.clearAll(owner = ANONYMOUS) }
+        assertTheOwnerComesWithTheEmptying { store.clearLocalData(owner = ANONYMOUS) }
     }
 
     @Test
     fun a_clear_records_the_owner_it_is_given_and_none_otherwise() = runTest {
         // When / Then
-        store.clearAll(owner = QueueIdentity.Anonymous.storedValue)
+        store.clearLocalData(owner = QueueIdentity.Anonymous.storedValue)
         assertEquals(ownerRecordOf(QueueIdentity.Anonymous.storedValue), recordedOwner())
-        store.clearAll()
+        store.clearLocalData()
         assertNull(recordedOwner())
     }
 
@@ -243,22 +243,22 @@ class OfflineStoreCacheOwnerTest {
     fun without_per_identity_ownership_every_read_is_served_and_a_write_records_the_one_identity() =
         runTest {
             // Given — a client without the Auth plugin, and a cache from an earlier build
-            store.cacheOwnedPerIdentity = false
+            store.isCacheOwnedPerIdentity = false
             identity = QueueIdentity.Anonymous.storedValue
             objectDao.seedPayload(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE, ownerRecordOf(USER_A))
-            objectDao.seedPayload(TABLE, SIGNATURE, ROWS)
+            objectDao.seedPayload(TABLE, CACHE_KEY, ROWS)
 
             // When / Then — served whoever owns it, never dropped
-            assertEquals(ROWS, store.getPayload(TABLE, SIGNATURE))
-            assertEquals(CacheWriteOutcome.WRITTEN, store.addPayload(TABLE, SIGNATURE, OTHER_ROWS))
-            assertNotNull(objectDao.getRow(TABLE, SIGNATURE))
+            assertEquals(ROWS, store.getPayload(TABLE, CACHE_KEY))
+            assertEquals(CacheWriteOutcome.WRITTEN, store.addPayload(TABLE, CACHE_KEY, OTHER_ROWS))
+            assertNotNull(objectDao.getRow(TABLE, CACHE_KEY))
             assertEquals(0, notServed)
         }
 
     private companion object {
         val ANONYMOUS = QueueIdentity.Anonymous.storedValue
         const val TABLE = "notes"
-        const val SIGNATURE = "notes"
+        const val CACHE_KEY = "notes"
         const val ROWS = """[{"id":"n1"}]"""
         const val OTHER_ROWS = """[{"id":"n2"}]"""
         val USER_A = QueueIdentity.User("a").storedValue

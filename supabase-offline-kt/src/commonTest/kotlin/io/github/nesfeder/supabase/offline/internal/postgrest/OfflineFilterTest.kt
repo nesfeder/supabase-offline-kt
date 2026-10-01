@@ -19,7 +19,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * The filter engine's encode/decode round trip and its replay onto a request builder
- * ([FilterEngine.applyTo]), plus the lenient descriptor capture used for queued inserts and
+ * ([FilterEngine.replayOnto]), plus the lenient descriptor capture used for queued inserts and
  * upserts.
  */
 class OfflineFilterTest {
@@ -64,7 +64,7 @@ class OfflineFilterTest {
     }
 
     // ────────────────────────────────────────────────────────────────
-    // New tests: applyTo / applyCondition coverage
+    // New tests: replayOnto / replayCondition coverage
     // ────────────────────────────────────────────────────────────────
 
     @Test
@@ -82,7 +82,7 @@ class OfflineFilterTest {
             )
 
         // When
-        FilterEngine.applyTo(builder, descriptor)
+        FilterEngine.replayOnto(builder, descriptor)
 
         // Then
         val params = builder.params
@@ -115,7 +115,7 @@ class OfflineFilterTest {
             )
 
         // When
-        FilterEngine.applyTo(builder, descriptor)
+        FilterEngine.replayOnto(builder, descriptor)
 
         // Then
         val params = builder.params
@@ -184,15 +184,15 @@ class OfflineFilterTest {
             )
 
         // When
-        FilterEngine.applyTo(builder, descriptor)
+        FilterEngine.replayOnto(builder, descriptor)
 
         // Then
         val params = builder.params
-        assertTrue(params.isNotEmpty(), "Expected some query params to be set by applyTo")
+        assertTrue(params.isNotEmpty(), "Expected some query params to be set by replayOnto")
 
         // We don't need to assert exact operator encodings; just that each
         // column we configured produced *some* param entry, which implies
-        // the appropriate branch in applyCondition ran.
+        // the appropriate branch in replayCondition ran.
         val expectedColumns =
             listOf(
                 "col_eq",
@@ -224,10 +224,10 @@ class OfflineFilterTest {
                 "col_wfts",
             )
 
-        expectedColumns.forEach { col ->
+        expectedColumns.forEach { column ->
             assertTrue(
-                col in params.keys,
-                "Expected params to contain key for column '$col', but keys=${params.keys}",
+                column in params.keys,
+                "Expected params to contain key for column '$column', but keys=${params.keys}",
             )
         }
     }
@@ -315,8 +315,8 @@ class OfflineFilterTest {
         val notAListBuilder = requestBuilder()
 
         // When
-        val appliedEmptyList = FilterEngine.applyTo(emptyListBuilder, emptyList)
-        val appliedNotAList = FilterEngine.applyTo(notAListBuilder, notAList)
+        val appliedEmptyList = FilterEngine.replayOnto(emptyListBuilder, emptyList)
+        val appliedNotAList = FilterEngine.replayOnto(notAListBuilder, notAList)
 
         // Then — the empty list replays as match-nothing; the non-list is refused, never dropped
         assertEquals(1, appliedEmptyList)

@@ -13,9 +13,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 /**
- * The cache-key format. [cacheKeyOf]'s output is the `signature` column of every cached SELECT, so
- * a change here strands every row already cached on a device (it is never matched again). These
- * cases pin the format.
+ * The cache-key format. [cacheKeyOf]'s output is the `cacheKey` column of every cached SELECT, so a
+ * change here strands every row already cached on a device (it is never matched again). These cases
+ * pin the format.
  */
 class CacheKeyTest {
 
@@ -30,7 +30,7 @@ class CacheKeyTest {
         val table = "assets"
 
         // When
-        val signature =
+        val cacheKey =
             cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
@@ -38,7 +38,7 @@ class CacheKeyTest {
             )
 
         // Then
-        assertEquals("assets", signature)
+        assertEquals("assets", cacheKey)
     }
 
     @Test
@@ -47,7 +47,7 @@ class CacheKeyTest {
         val table = "assets"
 
         // When
-        val signature =
+        val cacheKey =
             cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
@@ -59,7 +59,7 @@ class CacheKeyTest {
 
         // Then
         // Keys should be sorted alphabetically (a,b) and for key `b` value order preserved (2,1)
-        assertEquals("assets?a=x&b=2&b=1", signature)
+        assertEquals("assets?a=x&b=2&b=1", cacheKey)
     }
 
     @Test
@@ -68,7 +68,7 @@ class CacheKeyTest {
         val table = "assets"
 
         // When
-        val signature =
+        val cacheKey =
             cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
@@ -78,7 +78,7 @@ class CacheKeyTest {
             )
 
         // Then
-        assertEquals("assets?flag", signature)
+        assertEquals("assets?flag", cacheKey)
     }
 
     @Test
@@ -88,7 +88,7 @@ class CacheKeyTest {
         val columns = Columns.list("id", "name")
 
         // When
-        val signature =
+        val cacheKey =
             cacheKeyOf(
                 table = table,
                 columns = columns,
@@ -99,7 +99,7 @@ class CacheKeyTest {
             )
 
         // Then
-        assertEquals("assets?select=id,name", signature)
+        assertEquals("assets?select=id,name", cacheKey)
     }
 
     @Test
@@ -108,7 +108,7 @@ class CacheKeyTest {
         val table = "assets"
 
         // When
-        val signature =
+        val cacheKey =
             cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
@@ -118,7 +118,7 @@ class CacheKeyTest {
             )
 
         // Then
-        assertEquals("assets|range=0-49", signature)
+        assertEquals("assets|range=0-49", cacheKey)
     }
 
     @Test
@@ -127,7 +127,7 @@ class CacheKeyTest {
         val table = "assets"
 
         // When
-        val signature =
+        val cacheKey =
             cacheKeyOf(
                 table = table,
                 builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
@@ -138,7 +138,7 @@ class CacheKeyTest {
             )
 
         // Then
-        assertEquals("assets?deleted=eq.false|range=10-19", signature)
+        assertEquals("assets?deleted=eq.false|range=10-19", cacheKey)
     }
 
     @Test
@@ -187,7 +187,7 @@ class CacheKeyTest {
         val builderFactory = { builder }
 
         // When
-        val signature =
+        val cacheKey =
             cacheKeyOf(
                 table = table,
                 builderFactory = builderFactory,
@@ -203,7 +203,7 @@ class CacheKeyTest {
         // "assets?deleted=eq.false&name=ilike.%pump%|range=0-49"
         assertEquals(
             "assets?deleted=eq.false&limit=50&name=ilike.%pump%&offset=0",
-            signature,
+            cacheKey,
         )
     }
 

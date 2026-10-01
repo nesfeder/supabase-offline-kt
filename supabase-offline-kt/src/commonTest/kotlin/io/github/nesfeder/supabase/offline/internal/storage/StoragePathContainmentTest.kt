@@ -293,7 +293,7 @@ class StoragePathContainmentTest {
         val cache = newTestFileCache(baseDirectory = dataDirectory, store = store)
 
         // When
-        cache.clear { store.clearAll() }
+        cache.clear { store.clearLocalData() }
 
         // Then
         assertTrue(

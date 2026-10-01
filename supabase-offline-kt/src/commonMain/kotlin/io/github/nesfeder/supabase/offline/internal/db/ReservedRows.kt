@@ -12,8 +12,8 @@ package io.github.nesfeder.supabase.offline.internal.db
  * `SupabaseOfflineClientImpl.from` refuses this one.
  *
  * Rows under this name are never evicted, never counted towards the cache size, never returned by a
- * read and never touched by an overlay; `clearAll` removes them with everything else, and a drop of
- * the cache for a new owner removes the query shapes and keeps the rest.
+ * read and never touched by an overlay; `clearLocalData` removes them with everything else, and a
+ * drop of the cache for a new owner removes the query shapes and keeps the rest.
  *
  * Changing this value orphans every installed device's records, so it never changes.
  */

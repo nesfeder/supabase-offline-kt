@@ -92,14 +92,12 @@ class SupabaseOfflineClientCloseTest {
             val emitted = CompletableDeferred<Unit>()
             val ended = CompletableDeferred<Throwable?>()
             val observer = callerScope.launch {
-                ended.complete(
-                    runCatching {
-                        client.from("todos").selectAsFlow(readStrategy = strategy).collect {
-                            emitted.complete(Unit)
-                        }
+                val outcome = runCatching {
+                    client.from("todos").selectAsFlow(readStrategy = strategy).collect {
+                        emitted.complete(Unit)
                     }
-                        .exceptionOrNull()
-                )
+                }
+                ended.complete(outcome.exceptionOrNull())
             }
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { emitted.await() } }
 

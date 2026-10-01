@@ -62,7 +62,7 @@ class ReservedRowsTest {
                 .length
 
         // When
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then — the cache row went; the reserved rows stayed and never counted towards the size
         assertNull(objectDao.getRow("todos", "todos"))
@@ -135,7 +135,7 @@ class ReservedRowsTest {
         store.mutationQueueState.addRejection(rejection(id = 1))
 
         // When
-        store.clearAll()
+        store.clearLocalData()
 
         // Then
         assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))

@@ -26,8 +26,8 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.installReplayO
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.applyTo
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.decodeOrNull
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine.replayOnto
 import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.SendOutcome
 import io.github.nesfeder.supabase.offline.internal.postgrest.SupabaseRemoteTable
@@ -60,10 +60,9 @@ internal class MutationQueueReplayer(
     private val store: OfflineStore,
     private val supabase: SupabaseClient,
     private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
-    private val postgrestFactory: (schema: String, table: String) -> RemoteTable =
-        { schema, table ->
-            SupabaseRemoteTable(supabase.postgrest.from(schema, table))
-        },
+    private val remoteTableFor: (schema: String, table: String) -> RemoteTable = { schema, table ->
+        SupabaseRemoteTable(supabase.postgrest.from(schema, table))
+    },
     /**
      * Waits, bounded, for a settled session; `false` means it did not settle and nothing is sent.
      */
@@ -275,8 +274,9 @@ internal class MutationQueueReplayer(
 
     /**
      * Keeps a mutation whose request the owner check stopped queued for its owner's next session.
-     * It never left the device, so a send record this attempt made is cleared. When the session is
-     * still [owner]'s, its token names another user or none, which holds the queue: said once.
+     * It never left the device, so a send recordOutcome this attempt made is cleared. When the
+     * session is still [owner]'s, its token names another user or none, which holds the queue: said
+     * once.
      */
     private suspend fun stoppedForAnotherSession(
         mutationId: Long,
@@ -483,7 +483,7 @@ internal class MutationQueueReplayer(
                             try {
                                 val tableApi =
                                     tableApis.getOrPut(mutation.table) {
-                                        postgrestFactory(schema, mutation.table)
+                                        remoteTableFor(schema, mutation.table)
                                     }
                                 replay(mutation, tableApi, identity, pass)
                             } catch (cancellation: CancellationException) {
@@ -502,7 +502,7 @@ internal class MutationQueueReplayer(
                             released = true
                             outcome to
                                 if (clearGeneration.value != generation) SyncStop.LocalDataCleared
-                                else record(mutation, outcome, rejected, syncedTables)
+                                else recordOutcome(mutation, outcome, rejected, syncedTables)
                         }
                     }
                 } finally {
@@ -539,7 +539,7 @@ internal class MutationQueueReplayer(
      *
      * @return Why the pass stops here, or `null` to go on.
      */
-    private suspend fun record(
+    private suspend fun recordOutcome(
         mutation: MutationRow,
         outcome: ReplayOutcome,
         rejected: MutableList<StoredRejection>,
@@ -573,7 +573,7 @@ internal class MutationQueueReplayer(
                 if (schemaCacheMissReachesBound(mutation.id)) {
                     schemaCacheMissesCountedAt -= mutation.id
                     val serverError = serverErrorOf(outcome.cause)
-                    record(
+                    recordOutcome(
                         mutation,
                         ReplayOutcome.Rejected(
                             message = serverError?.message ?: SCHEMA_CACHE_MISS_REASON,
@@ -622,7 +622,7 @@ internal class MutationQueueReplayer(
         // Decided before this attempt is recorded: only an earlier attempt can have reached the
         // server.
         val earlierSendUnconfirmed = store.hasUnconfirmedSend(mutation.id)
-        return when (val prepared = prepare(mutation, earlierSendUnconfirmed)) {
+        return when (val prepared = requestFor(mutation, earlierSendUnconfirmed)) {
             is Prepared.Refused -> prepared.outcome
             is Prepared.Ready -> {
                 val newlyUnconfirmed = store.markSendUnconfirmed(mutation.id)
@@ -716,7 +716,7 @@ internal class MutationQueueReplayer(
      *
      * @param earlierSendUnconfirmed Whether an earlier send of it may have reached the server.
      */
-    private fun prepare(mutation: MutationRow, earlierSendUnconfirmed: Boolean): Prepared {
+    private fun requestFor(mutation: MutationRow, earlierSendUnconfirmed: Boolean): Prepared {
         val json = store.json
         val filter = decodeOrNull(mutation.filterJson, json)
         // A stored filter that no longer decodes is not a missing one: sending without it would
@@ -737,7 +737,7 @@ internal class MutationQueueReplayer(
                             "The queued body no longer parses",
                         )
                 Prepared.Ready { tableApi ->
-                    applyInsert(
+                    sendInsert(
                         tableApi,
                         mutation.table,
                         body,
@@ -757,7 +757,7 @@ internal class MutationQueueReplayer(
                             "The queued body no longer parses",
                         )
                 Prepared.Ready { tableApi ->
-                    applyUpsert(
+                    sendUpsert(
                         tableApi = tableApi,
                         body = body,
                         onConflict = mutation.onConflict,
@@ -779,14 +779,14 @@ internal class MutationQueueReplayer(
                 val replayableFilter =
                     replayableFilterOrNull(filter)
                         ?: return refuseUnreplayableFilter(mutation, filter)
-                Prepared.Ready { tableApi -> applyUpdate(tableApi, body, replayableFilter) }
+                Prepared.Ready { tableApi -> sendUpdate(tableApi, body, replayableFilter) }
             }
 
             MutationOperation.DELETE -> {
                 val replayableFilter =
                     replayableFilterOrNull(filter)
                         ?: return refuseUnreplayableFilter(mutation, filter)
-                Prepared.Ready { tableApi -> applyDelete(tableApi, replayableFilter) }
+                Prepared.Ready { tableApi -> sendDelete(tableApi, replayableFilter) }
             }
 
             else ->
@@ -848,7 +848,7 @@ internal class MutationQueueReplayer(
      * server. An upsert with no matching unique constraint (`42P10`) is sent again as the plain
      * INSERT.
      */
-    private suspend fun applyInsert(
+    private suspend fun sendInsert(
         tableApi: RemoteTable,
         table: String,
         body: JsonArray,
@@ -868,7 +868,7 @@ internal class MutationQueueReplayer(
                     this.ignoreDuplicates = true
                     this.defaultToNull = defaultToNull ?: true
                     count(Count.EXACT)
-                    if (filter != null) applyTo(this, filter)
+                    if (filter != null) replayOnto(this, filter)
                 }
             } catch (failure: PostgrestRestException) {
                 if (failure.code != NO_MATCHING_CONFLICT_TARGET) throw failure
@@ -894,11 +894,11 @@ internal class MutationQueueReplayer(
     ) {
         tableApi.insert(body) {
             this.defaultToNull = defaultToNull ?: true
-            if (filter != null) applyTo(this, filter)
+            if (filter != null) replayOnto(this, filter)
         }
     }
 
-    private suspend fun applyUpsert(
+    private suspend fun sendUpsert(
         tableApi: RemoteTable,
         body: JsonArray,
         onConflict: String?,
@@ -910,23 +910,23 @@ internal class MutationQueueReplayer(
             this.onConflict = onConflict
             this.ignoreDuplicates = ignoreDuplicates ?: false
             this.defaultToNull = defaultToNull ?: true
-            if (filter != null) applyTo(this, filter)
+            if (filter != null) replayOnto(this, filter)
         }
     }
 
-    private suspend fun applyUpdate(
+    private suspend fun sendUpdate(
         tableApi: RemoteTable,
         body: JsonElement,
         filter: FilterDescriptor,
     ) {
-        tableApi.update(body) { applyTo(this, filter) }
+        tableApi.update(body) { replayOnto(this, filter) }
     }
 
-    private suspend fun applyDelete(
+    private suspend fun sendDelete(
         tableApi: RemoteTable,
         filter: FilterDescriptor,
     ) {
-        tableApi.delete { applyTo(this, filter) }
+        tableApi.delete { replayOnto(this, filter) }
     }
 
     /**

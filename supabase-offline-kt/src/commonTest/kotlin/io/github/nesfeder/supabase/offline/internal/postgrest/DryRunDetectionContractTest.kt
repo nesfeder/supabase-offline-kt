@@ -75,7 +75,7 @@ class DryRunDetectionContractTest {
 
         // Then — it reached the server, and the probe did not record it as a write
         assertEquals(listOf("token"), server.requests.map { it.table })
-        assertFalse(capture.observed)
+        assertFalse(capture.hasObservedWrite)
     }
 
     @Test
@@ -111,7 +111,7 @@ class DryRunDetectionContractTest {
 
         // Then — reads are not the probe's business
         assertEquals(1, server.requests.size)
-        assertFalse(capture.observed)
+        assertFalse(capture.hasObservedWrite)
     }
 
     @Test

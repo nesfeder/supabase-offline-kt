@@ -264,8 +264,8 @@ internal class MutationQueueState(
     }
 
     /**
-     * Records that every row is gone and the queue empty; called once [OfflineStore.clearAll] has
-     * deleted them. The records then read empty without a row, so no reader writes one back.
+     * Records that every row is gone and the queue empty; called once [OfflineStore.clearLocalData]
+     * has deleted them. The records then read empty without a row, so no reader writes one back.
      */
     fun resetCaches() {
         rejectedCache.value = StoredRejectionList()
@@ -296,21 +296,20 @@ internal class MutationQueueState(
     }
 
     /**
-     * Keeps an unreadable reserved payload under `<signature>.unreadable.<ms>` and logs it at
-     * ERROR.
+     * Keeps an unreadable reserved payload under `<cacheKey>.unreadable.<ms>` and logs it at ERROR.
      */
-    private suspend fun keepAsideUnreadable(signature: String, payload: String) {
-        val asideSignature = "$signature.unreadable.${nowMillis()}"
-        objectDao.upsert(reservedRow(asideSignature, payload))
+    private suspend fun keepAsideUnreadable(cacheKey: String, payload: String) {
+        val asideCacheKey = "$cacheKey.unreadable.${nowMillis()}"
+        objectDao.upsert(reservedRow(asideCacheKey, payload))
         logger().error {
-            "The mutation queue's $signature record could not be read; kept it aside as $asideSignature and started a new one"
+            "The mutation queue's $cacheKey record could not be read; kept it aside as $asideCacheKey and started a new one"
         }
     }
 
-    private fun reservedRow(signature: String, payload: String): ObjectRow =
+    private fun reservedRow(cacheKey: String, payload: String): ObjectRow =
         ObjectRow(
             table = RESERVED_TABLE_NAME,
-            signature = signature,
+            signature = cacheKey,
             payload = payload,
             updatedAt = nowMillis(),
         )

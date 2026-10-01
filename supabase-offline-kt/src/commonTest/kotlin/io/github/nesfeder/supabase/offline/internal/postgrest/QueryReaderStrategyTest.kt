@@ -91,7 +91,7 @@ class QueryReaderStrategyTest {
         )
 
     /** The cache key the resolver uses for an unfiltered `SELECT *` on [TABLE]. */
-    private fun signature(): String =
+    private fun cacheKey(): String =
         cacheKeyOf(
             table = TABLE,
             columns = Columns.ALL,
@@ -121,13 +121,13 @@ class QueryReaderStrategyTest {
 
         // Then
         assertEquals(NETWORK_DATA, result.data)
-        assertEquals(NETWORK_DATA, store.getPayload(TABLE, signature()))
+        assertEquals(NETWORK_DATA, store.getPayload(TABLE, cacheKey()))
     }
 
     @Test
     fun networkFirst_networkFailure_fallsBackToCache() = runTest {
         // Given
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         failNetwork()
 
         // When
@@ -159,7 +159,7 @@ class QueryReaderStrategyTest {
     @Test
     fun networkFirst_networkFailure_cacheFallback_overlaysSyncedWritesToo() = runTest {
         // Given — a cache older than a write that has since synced
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":3,"name":"synced"}]"""))
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
         failNetwork()
@@ -175,7 +175,7 @@ class QueryReaderStrategyTest {
     fun networkFirst_networkFailure_expiredCache_throws() = runTest {
         // Given — a cached row two hours old, read with a one-hour cache duration
         currentTime = 1_000L
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         currentTime = 1_000L + 2.hours.inWholeMilliseconds
         failNetwork()
         val resolver = resolver(backgroundScope)
@@ -189,7 +189,7 @@ class QueryReaderStrategyTest {
     @Test
     fun networkFirst_nonNetworkFailure_rethrowsWithoutUsingCache() = runTest {
         // Given — cached data, and a failure that is not a connectivity failure
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         networkAnswer = { throw IllegalStateException("server rejected the request") }
         val resolver = resolver(backgroundScope)
 
@@ -226,7 +226,7 @@ class QueryReaderStrategyTest {
     @Test
     fun networkOnly_networkFailure_evenWithCachedData_throws() = runTest {
         // Given
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         failNetwork()
         val resolver = resolver(backgroundScope)
 
@@ -239,7 +239,7 @@ class QueryReaderStrategyTest {
     @Test
     fun cacheFirst_foundInCache_returnsCacheImmediately() = runTest {
         // Given
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
 
         // When
         val result = resolver(backgroundScope).select(Columns.ALL, ReadStrategy.CacheFirst()) {}
@@ -253,7 +253,7 @@ class QueryReaderStrategyTest {
     fun cacheFirst_expiredInCache_fetchesFromNetwork() = runTest {
         // Given
         currentTime = 1_000L
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         currentTime = 1_000L + 2.hours.inWholeMilliseconds
         answerWith(NETWORK_DATA)
 
@@ -273,7 +273,7 @@ class QueryReaderStrategyTest {
     fun cacheFirst_expiredInCache_networkFailure_throws() = runTest {
         // Given — an expired cache and no network
         currentTime = 1_000L
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         currentTime = 1_000L + 2.hours.inWholeMilliseconds
         failNetwork()
         val resolver = resolver(backgroundScope)
@@ -300,7 +300,7 @@ class QueryReaderStrategyTest {
     @Test
     fun cacheOnly_foundInCache_returnsCache() = runTest {
         // Given
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
 
         // When
         val result = resolver(backgroundScope).select(Columns.ALL, ReadStrategy.CacheOnly()) {}
@@ -313,7 +313,7 @@ class QueryReaderStrategyTest {
     fun cacheOnly_expiredInCache_throws() = runTest {
         // Given
         currentTime = 1_000L
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         currentTime = 1_000L + 2.hours.inWholeMilliseconds
         val resolver = resolver(backgroundScope)
 
@@ -343,7 +343,7 @@ class QueryReaderStrategyTest {
     @Test
     fun selectAsFlow_networkFirstThenCache_networkFailure_fallsBackToCache() = runTest {
         // Given — cached data exists, and the network bootstrap fails
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         failNetwork()
         val flow =
             resolver(backgroundScope).selectAsFlow(
@@ -363,7 +363,7 @@ class QueryReaderStrategyTest {
         // Given — the network SELECT is held until after the cache has been observed
         val gate = CompletableDeferred<Unit>()
         networkGate = gate
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         answerWith(NETWORK_DATA)
         val emissions = mutableListOf<String>()
         val firstEmission = CompletableDeferred<String>()
@@ -394,7 +394,7 @@ class QueryReaderStrategyTest {
     @Test
     fun selectAsFlow_cacheOnly_emitsCachedData() = runTest {
         // Given
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
 
         // When
         val first =
@@ -409,7 +409,7 @@ class QueryReaderStrategyTest {
     @Test
     fun selectAsFlow_cacheOnly_neverTriggersNetwork() = runTest {
         // Given — a network SELECT that would fail the test if issued
-        store.addPayload(TABLE, signature(), CACHED_DATA)
+        store.addPayload(TABLE, cacheKey(), CACHED_DATA)
         networkAnswer = { throw AssertionError("Network should not be called") }
 
         // When
@@ -469,7 +469,7 @@ class QueryReaderStrategyTest {
     fun networkFirst_networkFailure_cacheHit_logsWarning() = runTest {
         // Given
         val recorder = RecordingOfflineLogger()
-        store.addPayload(TABLE, signature(), """[{"id":1}]""")
+        store.addPayload(TABLE, cacheKey(), """[{"id":1}]""")
         failNetwork()
 
         // When
@@ -505,7 +505,7 @@ class QueryReaderStrategyTest {
     fun cacheFirst_cacheHit_logsInfo() = runTest {
         // Given
         val recorder = RecordingOfflineLogger()
-        store.addPayload(TABLE, signature(), """[{"id":1}]""")
+        store.addPayload(TABLE, cacheKey(), """[{"id":1}]""")
 
         // When
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.CacheFirst()) {}
@@ -520,7 +520,7 @@ class QueryReaderStrategyTest {
     fun cacheOnly_cacheHit_logsInfo() = runTest {
         // Given
         val recorder = RecordingOfflineLogger()
-        store.addPayload(TABLE, signature(), """[{"id":1}]""")
+        store.addPayload(TABLE, cacheKey(), """[{"id":1}]""")
 
         // When
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.CacheOnly()) {}

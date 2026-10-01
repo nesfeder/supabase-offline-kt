@@ -48,7 +48,7 @@ class OfflineDatabaseReservedRowsIosTest {
 
     @Test
     fun room_eviction_keeps_the_listed_signatures() = runTest {
-        scenarios.roomEvictionKeepsTheListedSignatures(dbPath)
+        scenarios.roomEvictionKeepsTheListedCacheKeys(dbPath)
     }
 
     @Test

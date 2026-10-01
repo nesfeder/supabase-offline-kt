@@ -13,10 +13,11 @@ import platform.Foundation.NSUserDomainMask
  * The default database location on iOS: [OFFLINE_DATABASE_FILE_NAME] in the app's Documents
  * directory.
  */
-internal class IosDbPathProvider : DbPathProvider {
+internal class IosDbPathProvider {
 
+    /** The database file, as an absolute path. */
     @OptIn(ExperimentalForeignApi::class)
-    override fun dbPath(): Path {
+    fun dbPath(): Path {
         val url =
             NSFileManager.defaultManager.URLForDirectory(
                 directory = NSDocumentDirectory,

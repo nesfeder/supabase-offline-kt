@@ -16,8 +16,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 
 /**
- * Verifies [OfflineStore.clearAll] wipes both the cached SELECT payloads and the queued mutation
- * store, so an identity-clearing flow (logout, account switch, account deletion) leaves no
+ * Verifies [OfflineStore.clearLocalData] wipes both the cached SELECT payloads and the queued
+ * mutation store, so an identity-clearing flow (logout, account switch, account deletion) leaves no
  * prior-user data or un-synced writes behind on disk.
  */
 class OfflineStoreClearAllTest {
@@ -34,7 +34,7 @@ class OfflineStoreClearAllTest {
         assertTrue(mutationDao.inserted.isNotEmpty(), "precondition: mutation queued")
 
         // When the entire offline cache is cleared
-        store.clearAll()
+        store.clearLocalData()
 
         // Then no cached payload and no queued mutation remain
         assertNull(objectDao.getRow("reports", "sig-A"), "cached payload should be gone")

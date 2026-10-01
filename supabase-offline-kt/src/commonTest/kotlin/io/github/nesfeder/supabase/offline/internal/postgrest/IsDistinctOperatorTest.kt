@@ -80,7 +80,7 @@ class IsDistinctOperatorTest {
 
         // When
         val match = rowMatch(row, descriptor)
-        val applied = FilterEngine.applyTo(replayed, descriptor)
+        val applied = FilterEngine.replayOnto(replayed, descriptor)
 
         // Then — replayed through the generic filter call, exactly as the caller wrote it
         assertEquals(FilterOperator.ISDISTINCT, ISDISTINCT_DONE.operator)

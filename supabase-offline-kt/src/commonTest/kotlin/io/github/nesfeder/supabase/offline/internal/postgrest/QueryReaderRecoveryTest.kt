@@ -66,7 +66,7 @@ class QueryReaderRecoveryTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given: nothing cached, and a network SELECT that fails until told otherwise
             val postgrest = testPostgrest()
-            val accelerator = MutableSharedFlow<Unit>()
+            val wakeUps = MutableSharedFlow<Unit>()
             var failing = true
             val remoteTable =
                 FakeRemoteTable(
@@ -77,7 +77,7 @@ class QueryReaderRecoveryTest {
                         else postgrestResultOf(freshPayload, postgrest)
                     },
                 )
-            val resolver = buildResolver(remoteTable, backgroundScope, accelerator)
+            val resolver = buildResolver(remoteTable, backgroundScope, wakeUps)
 
             // When: a CacheFirstThenNetwork subscription with state starts and the fast retries run
             // out
@@ -105,7 +105,7 @@ class QueryReaderRecoveryTest {
 
             // When: the network heals and an accelerator edge fires
             failing = false
-            accelerator.emit(Unit)
+            wakeUps.emit(Unit)
             runCurrent()
 
             // Then: the fresh payload arrives with the refresh settled to Idle
@@ -343,7 +343,7 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = freshPayload
             var authState: RequestSession = SIGNED_IN
-            val accelerator = MutableSharedFlow<Unit>()
+            val wakeUps = MutableSharedFlow<Unit>()
             val remoteTable =
                 FakeRemoteTable(
                     table = "plans",
@@ -351,7 +351,7 @@ class QueryReaderRecoveryTest {
                     onSelect = { postgrestResultOf(serverRows, postgrest) },
                 )
             val resolver =
-                buildResolver(remoteTable, backgroundScope, accelerator, authState = { authState })
+                buildResolver(remoteTable, backgroundScope, wakeUps, authState = { authState })
             val primingCollector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -384,7 +384,7 @@ class QueryReaderRecoveryTest {
             // When: session restore completes and fires the recovery accelerator (the
             // auth-restored edge), short-circuiting the current backoff sleep
             authState = SIGNED_IN
-            accelerator.emit(Unit)
+            wakeUps.emit(Unit)
             runCurrent()
 
             // Then: the same [] is now authoritative and replaces the cached rows
@@ -596,7 +596,7 @@ class QueryReaderRecoveryTest {
                 var serverRows = "[]"
                 var authState: RequestSession = RequestSession.Restoring
                 var networkCalls = 0
-                val accelerator = MutableSharedFlow<Unit>()
+                val wakeUps = MutableSharedFlow<Unit>()
                 val remoteTable =
                     FakeRemoteTable(
                         table = "plans",
@@ -611,7 +611,7 @@ class QueryReaderRecoveryTest {
                     buildResolver(
                         remoteTable = remoteTable,
                         scope = backgroundScope,
-                        accelerator = accelerator,
+                        wakeUps = wakeUps,
                         authState = { authState },
                         objectDao = objectDao,
                     )
@@ -632,7 +632,7 @@ class QueryReaderRecoveryTest {
                 // auth-restored edge), short-circuiting the current backoff sleep
                 authState = SIGNED_IN
                 serverRows = freshPayload
-                accelerator.emit(Unit)
+                wakeUps.emit(Unit)
                 runCurrent()
 
                 // Then: the retry goes out with a usable JWT, the caller gets the real rows
@@ -756,7 +756,7 @@ class QueryReaderRecoveryTest {
             var serverRows = "[]"
             var authState: RequestSession = RequestSession.Restoring
             var networkCalls = 0
-            val accelerator = MutableSharedFlow<Unit>()
+            val wakeUps = MutableSharedFlow<Unit>()
             val remoteTable =
                 FakeRemoteTable(
                     table = "plans",
@@ -783,7 +783,7 @@ class QueryReaderRecoveryTest {
                 buildResolver(
                     remoteTable = remoteTable,
                     scope = backgroundScope,
-                    accelerator = accelerator,
+                    wakeUps = wakeUps,
                     authState = { authState },
                     store = store,
                 )
@@ -802,7 +802,7 @@ class QueryReaderRecoveryTest {
             // When: the session returns
             authState = SIGNED_IN
             serverRows = freshPayload
-            accelerator.emit(Unit)
+            wakeUps.emit(Unit)
             runCurrent()
 
             // Then: the caller is served the real server row (with its own pending write still
@@ -845,7 +845,7 @@ class QueryReaderRecoveryTest {
 
             // When: the user signs out and the cache is wiped while the request is out, and the
             // parked response is then delivered
-            store.clearAll()
+            store.clearLocalData()
             inFlight.complete(Unit)
             advanceUntilIdle()
 
@@ -1037,7 +1037,7 @@ class QueryReaderRecoveryTest {
             val postgrest = testPostgrest()
             var serverRows = "[]"
             var authState: RequestSession = RequestSession.SignedOut
-            val accelerator = MutableSharedFlow<Unit>()
+            val wakeUps = MutableSharedFlow<Unit>()
             val remoteTable =
                 FakeRemoteTable(
                     table = "plans",
@@ -1049,7 +1049,7 @@ class QueryReaderRecoveryTest {
                 buildResolver(
                     remoteTable = remoteTable,
                     scope = backgroundScope,
-                    accelerator = accelerator,
+                    wakeUps = wakeUps,
                     authState = { authState },
                     objectDao = objectDao,
                 )
@@ -1085,7 +1085,7 @@ class QueryReaderRecoveryTest {
             // When: the session comes back and the auth-restored edge fires
             authState = SIGNED_IN
             serverRows = freshPayload
-            accelerator.emit(Unit)
+            wakeUps.emit(Unit)
             runCurrent()
 
             // Then: the still-alive loop converges on the real rows
@@ -1210,7 +1210,7 @@ class QueryReaderRecoveryTest {
             assertEquals(1, networkCalls, "the refresh must be in flight before teardown")
 
             // When: the user signs out (or switches accounts) and the cache is wiped mid-flight
-            store.clearAll()
+            store.clearLocalData()
 
             // And: the parked response — the outgoing account's rows — is finally delivered
             inFlight.complete(Unit)
@@ -1233,7 +1233,7 @@ class QueryReaderRecoveryTest {
     private fun buildResolver(
         remoteTable: FakeRemoteTable,
         scope: CoroutineScope,
-        accelerator: MutableSharedFlow<Unit> = MutableSharedFlow(),
+        wakeUps: MutableSharedFlow<Unit> = MutableSharedFlow(),
         authState: () -> RequestSession = { SIGNED_IN },
         objectDao: FakeObjectDao = FakeObjectDao(),
         store: OfflineStore = buildStore(objectDao),
@@ -1244,7 +1244,7 @@ class QueryReaderRecoveryTest {
             requestSession = authState,
             trustPolicy = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
             liveQueries = LiveQueries(scope),
-            accelerator = accelerator,
+            wakeUps = wakeUps,
         )
 
     /**

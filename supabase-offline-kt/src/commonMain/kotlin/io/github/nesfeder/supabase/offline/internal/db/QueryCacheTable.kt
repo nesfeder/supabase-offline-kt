@@ -143,13 +143,12 @@ internal interface ObjectDao {
      * leaving out the engine's reserved rows (see [RESERVED_TABLE_NAME]): they are engine state,
      * not cache, and must never push a real payload out.
      *
-     * This is the **logical** size of the object cache, used by
-     * [OfflineStore.enforceDbSizeLimitIfNeeded] as the eviction signal. The on-disk database file
-     * size can't be used: SQLite returns pages freed by `DELETE` to its internal freelist rather
-     * than to the operating system, so the file never shrinks after eviction and would make the
-     * eviction loop spin forever. Summed payload length, by contrast, decreases as rows are
-     * deleted. For the ASCII JSON payloads PostgREST returns, character length is a close proxy for
-     * byte size.
+     * This is the **logical** size of the object cache, used by [OfflineStore.evictOverBudget] as
+     * the eviction signal. The on-disk database file size can't be used: SQLite returns pages freed
+     * by `DELETE` to its internal freelist rather than to the operating system, so the file never
+     * shrinks after eviction and would make the eviction loop spin forever. Summed payload length,
+     * by contrast, decreases as rows are deleted. For the ASCII JSON payloads PostgREST returns,
+     * character length is a close proxy for byte size.
      *
      * @return total payload length in characters, or `0` when the cache is empty.
      */
@@ -161,10 +160,10 @@ internal interface ObjectDao {
 
     /**
      * Delete up to [limit] oldest payload rows across all tables, ordered by when each was fetched
-     * ([fetchedAtOf]), stale or not. Used by [OfflineStore.enforceDbSizeLimitIfNeeded] to evict old
-     * cache entries when the summed payload size grows beyond the configured limit. The engine's
-     * reserved rows (see [RESERVED_TABLE_NAME]) are never candidates: they hold the
-     * rejected-mutation list, the cache's owner and the query shapes, which no refetch restores.
+     * ([fetchedAtOf]), stale or not. Used by [OfflineStore.evictOverBudget] to evict old cache
+     * entries when the summed payload size grows beyond the configured limit. The engine's reserved
+     * rows (see [RESERVED_TABLE_NAME]) are never candidates: they hold the rejected-mutation list,
+     * the cache's owner and the query shapes, which no refetch restores.
      *
      * @param limit maximum number of rows to delete in this batch.
      * @param keptSignatures signatures that are never candidates: queries a live reader shows. A

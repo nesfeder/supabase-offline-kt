@@ -43,7 +43,7 @@ class InMemoryDaosAcrossThreadsTest {
                         dao.maxSyncedThrough()
                         dao.minSyncedThroughForTable(TABLE)
                         dao.signaturesForTable(TABLE)
-                        dao.observe(TABLE, "observed-${read % SIGNATURES}")
+                        dao.observe(TABLE, "observed-${read % CACHE_KEYS}")
                     }
                 }
             }
@@ -57,7 +57,7 @@ class InMemoryDaosAcrossThreadsTest {
     fun writers_on_two_threads_leave_each_observer_on_what_the_dao_holds() = runTest {
         // Given — observers of every signature the writers touch
         val dao = InMemoryObjectDao()
-        val observed = List(SIGNATURES) { index -> dao.observe(TABLE, "q$index") }
+        val observed = List(CACHE_KEYS) { index -> dao.observe(TABLE, "q$index") }
 
         // When — two threads write the same signatures
         withContext(Dispatchers.Default) {
@@ -67,7 +67,7 @@ class InMemoryDaosAcrossThreadsTest {
                             dao.upsert(
                                 ObjectRow(
                                     table = TABLE,
-                                    signature = "q${round % SIGNATURES}",
+                                    signature = "q${round % CACHE_KEYS}",
                                     payload = "[$writer,$round]",
                                     updatedAt = 1L,
                                 )
@@ -99,10 +99,10 @@ class InMemoryDaosAcrossThreadsTest {
                         dao.totalSizeBytes()
                         dao.forObject(
                             BUCKET,
-                            "file-${read % SIGNATURES}",
-                            "file-${read % SIGNATURES}@",
+                            "file-${read % CACHE_KEYS}",
+                            "file-${read % CACHE_KEYS}@",
                         )
-                        dao.delete(BUCKET, "file-${read % SIGNATURES}")
+                        dao.delete(BUCKET, "file-${read % CACHE_KEYS}")
                     }
                 }
             }
@@ -141,7 +141,7 @@ class InMemoryDaosAcrossThreadsTest {
     private fun payloadRow(index: Int): ObjectRow =
         ObjectRow(
             table = TABLE,
-            signature = "q${index % SIGNATURES}",
+            signature = "q${index % CACHE_KEYS}",
             payload = "[]",
             updatedAt = 1L,
             syncedThrough = index.toLong(),
@@ -149,9 +149,9 @@ class InMemoryDaosAcrossThreadsTest {
 
     private fun storageRow(index: Int): StorageRow =
         StorageRow(
-            key = "$BUCKET::file-${index % SIGNATURES}",
+            key = "$BUCKET::file-${index % CACHE_KEYS}",
             bucketId = BUCKET,
-            path = "file-${index % SIGNATURES}",
+            path = "file-${index % CACHE_KEYS}",
             localPath = "/in-memory/file-$index",
             sizeBytes = index.toLong(),
             eTag = null,
@@ -161,7 +161,7 @@ class InMemoryDaosAcrossThreadsTest {
     private companion object {
         const val TABLE = "todos"
         const val BUCKET = "avatars"
-        const val SIGNATURES = 500
+        const val CACHE_KEYS = 500
         const val READS = 20_000
         const val WRITES = 5_000
     }

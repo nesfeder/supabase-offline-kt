@@ -44,10 +44,10 @@ internal fun captureFilter(builder: PostgrestRequestBuilder): FilterDescriptor? 
         val parts = first.split('.', limit = 2)
         if (parts.size < 2) return@forEach
 
-        val opIdentifier = parts[0]
+        val operatorIdentifier = parts[0]
         val rawValue = parts[1]
 
-        val operator = filterOperatorOrNull(opIdentifier) ?: return@forEach
+        val operator = filterOperatorOrNull(operatorIdentifier) ?: return@forEach
 
         // Stored exactly as encoded: trimming whitespace or quotes would replay (and overlay) a
         // different value than the caller wrote.

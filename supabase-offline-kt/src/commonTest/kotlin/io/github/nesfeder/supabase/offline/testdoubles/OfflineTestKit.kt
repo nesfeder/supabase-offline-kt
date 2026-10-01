@@ -29,7 +29,6 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
-import io.github.nesfeder.supabase.offline.internal.testing.InMemoryDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
@@ -99,20 +98,16 @@ internal fun newTestOfflineStore(
             objectDao = objectDao,
             storageDao = storageDao,
             mutationDao = mutationDao,
-            dbPathProvider = InMemoryDbPathProvider,
             queryCacheLimits = queryCacheLimits,
             nowMillis = nowMillis,
-            dbSizeProvider = { null },
         )
     } else {
         OfflineStore(
             objectDao = objectDao,
             storageDao = storageDao,
             mutationDao = mutationDao,
-            dbPathProvider = InMemoryDbPathProvider,
             queryCacheLimits = queryCacheLimits,
             nowMillis = nowMillis,
-            dbSizeProvider = { null },
             monotonicTick = monotonicTick,
         )
     }
@@ -140,7 +135,7 @@ internal fun newTestSupabaseClient(
 internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 
 /**
- * Records that the query cached under [signature] has the shape of a SELECT of [columns] that
+ * Records that the query cached under [cacheKey] has the shape of a SELECT of [columns] that
  * [request] configures, as a read through the client would.
  *
  * @param persist whether to write the record to the object cache as well; by default it is kept in
@@ -148,7 +143,7 @@ internal fun newTestPostgrest(): Postgrest = newTestSupabaseClient().postgrest
  */
 internal suspend fun OfflineStore.recordQueryShape(
     table: String,
-    signature: String,
+    cacheKey: String,
     columns: Columns = Columns.ALL,
     persist: Boolean = false,
     request: SelectRequestBuilder.() -> Unit,
@@ -158,7 +153,7 @@ internal suspend fun OfflineStore.recordQueryShape(
             columns,
             SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply(request),
         )
-    queryShapes.remember(table, signature, shape, persist)
+    queryShapes.remember(table, cacheKey, shape, persist)
 }
 
 /**

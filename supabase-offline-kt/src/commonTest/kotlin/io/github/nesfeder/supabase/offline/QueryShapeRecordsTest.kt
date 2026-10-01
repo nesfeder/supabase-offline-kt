@@ -173,7 +173,7 @@ class QueryShapeRecordsTest {
         client
             .from(TABLE)
             .select(readStrategy = ReadStrategy.NetworkOnly, request = list("BBBBBBBBBBBBBB"))
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then — one payload, and one shape record, for it
         val payloads = objectDao.rowsOf(TABLE).map { row -> row.signature }
@@ -181,7 +181,7 @@ class QueryShapeRecordsTest {
             objectDao
                 .rowsOf(RESERVED_TABLE_NAME)
                 .map { row -> row.signature }
-                .filter { signature -> signature.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) }
+                .filter { cacheKey -> cacheKey.startsWith(QUERY_SHAPE_SIGNATURE_PREFIX) }
         assertEquals(1, payloads.size)
         assertEquals(
             listOf("$QUERY_SHAPE_SIGNATURE_PREFIX$TABLE\u001F${payloads.single()}"),

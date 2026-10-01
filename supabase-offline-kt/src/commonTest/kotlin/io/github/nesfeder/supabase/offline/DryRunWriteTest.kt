@@ -45,7 +45,7 @@ class DryRunWriteTest {
     @Test
     fun an_online_dry_run_update_leaves_the_cache_untouched() = runTest {
         // Given
-        objectDao.seedPayload(TABLE, SIGNATURE, ORIGINAL)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
 
         // When
         val outcome =
@@ -58,13 +58,13 @@ class DryRunWriteTest {
         // row
         assertIs<MutationOutcome.Applied>(outcome)
         assertTrue(server.requests.single().prefer.orEmpty().contains("tx=rollback"))
-        assertEquals(ORIGINAL, objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        assertEquals(ORIGINAL, objectDao.getRow(TABLE, CACHE_KEY)?.payload)
     }
 
     @Test
     fun an_online_dry_run_insert_is_not_materialized_into_the_cache() = runTest {
         // Given
-        objectDao.seedPayload(TABLE, SIGNATURE, ORIGINAL)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
 
         // When
         builder.insertJson(
@@ -74,7 +74,7 @@ class DryRunWriteTest {
         }
 
         // Then
-        assertEquals(ORIGINAL, objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        assertEquals(ORIGINAL, objectDao.getRow(TABLE, CACHE_KEY)?.payload)
     }
 
     @Test
@@ -117,7 +117,7 @@ class DryRunWriteTest {
 
     private companion object {
         const val TABLE = "todos"
-        const val SIGNATURE = "todos?id=eq.1"
+        const val CACHE_KEY = "todos?id=eq.1"
         const val ORIGINAL = """[{"id":1,"title":"committed"}]"""
         const val PREFERENCE_APPLIED = "Preference-Applied"
     }

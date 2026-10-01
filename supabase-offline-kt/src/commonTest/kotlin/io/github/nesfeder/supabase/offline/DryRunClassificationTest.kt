@@ -80,7 +80,7 @@ class DryRunClassificationTest {
         // Given — a server on PostgREST's default db-tx-end: tx=rollback is ignored and the write
         // commits
         val server = RecordingPostgrestServer(answer = { okJson("[]") })
-        objectDao.seedPayload(TABLE, SIGNATURE, ORIGINAL)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
         val builder =
             OfflinePostgrestQueryBuilderImpl(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -94,7 +94,7 @@ class DryRunClassificationTest {
         }
 
         // Then — the cache shows the committed write
-        assertEquals("""[{"id":1,"title":"new"}]""", objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        assertEquals("""[{"id":1,"title":"new"}]""", objectDao.getRow(TABLE, CACHE_KEY)?.payload)
     }
 
     @Test
@@ -104,7 +104,7 @@ class DryRunClassificationTest {
             RecordingPostgrestServer(
                 answer = { okJson("[]", mapOf(PREFERENCE_APPLIED to "tx=rollback")) }
             )
-        objectDao.seedPayload(TABLE, SIGNATURE, ORIGINAL)
+        objectDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
         val builder =
             OfflinePostgrestQueryBuilderImpl(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -118,7 +118,7 @@ class DryRunClassificationTest {
         }
 
         // Then
-        assertEquals(ORIGINAL, objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        assertEquals(ORIGINAL, objectDao.getRow(TABLE, CACHE_KEY)?.payload)
         assertTrue(mutationDao.inserted.isEmpty())
     }
 
@@ -209,7 +209,7 @@ class DryRunClassificationTest {
 
     private companion object {
         const val TABLE = "todos"
-        const val SIGNATURE = "todos?id=eq.1"
+        const val CACHE_KEY = "todos?id=eq.1"
         const val ORIGINAL = """[{"id":1,"title":"committed"}]"""
         const val PREFERENCE_APPLIED = "Preference-Applied"
     }

@@ -50,7 +50,7 @@ class OfflineStoreAddPayloadGuardTest {
         // array (every row matching the query was deleted from another device)
         store.addPayload(
             table = "plans",
-            signature = "sig-A",
+            cacheKey = "sig-A",
             payload = "[]",
             authoritativeEmpty = true,
         )
@@ -71,7 +71,7 @@ class OfflineStoreAddPayloadGuardTest {
         // When — an auth-ready refresh returns different non-empty data
         store.addPayload(
             table = "plans",
-            signature = "sig-A",
+            cacheKey = "sig-A",
             payload = """[{"id":"plan-2"}]""",
             authoritativeEmpty = true,
         )
@@ -95,7 +95,7 @@ class OfflineStoreAddPayloadGuardTest {
 
         // When — a refresh fires before the auth session is restored and the server
         // responds 200 OK with an empty array (RLS-filtered)
-        store.addPayload(table = "ratings", signature = "sig-A", payload = "[]")
+        store.addPayload(table = "ratings", cacheKey = "sig-A", payload = "[]")
 
         // Then — the previously-cached non-empty payload is preserved
         val row = objectDao.getRow("ratings", "sig-A")
@@ -111,7 +111,7 @@ class OfflineStoreAddPayloadGuardTest {
         val store = buildStore(objectDao)
 
         // When — a refresh returns a whitespace-only body (some PostgREST proxy edge cases)
-        store.addPayload(table = "projects", signature = "sig-A", payload = "   ")
+        store.addPayload(table = "projects", cacheKey = "sig-A", payload = "   ")
 
         // Then — the cache row is unchanged
         val row = objectDao.getRow("projects", "sig-A")
@@ -128,7 +128,7 @@ class OfflineStoreAddPayloadGuardTest {
         // When — a refresh that could not attribute its emptiness to an authenticated session
         // returns `[]` (the restore-window / signed-out shape, indistinguishable on the wire
         // from a genuinely-empty table)
-        val outcome = store.addPayload(table = "attachments", signature = "sig-A", payload = "[]")
+        val outcome = store.addPayload(table = "attachments", cacheKey = "sig-A", payload = "[]")
 
         // Then — nothing is written. A cold slot is exactly where an RLS-shaped empty does its
         // damage: with no prior row to protect, it used to be upserted with a fresh updatedAt and
@@ -147,7 +147,7 @@ class OfflineStoreAddPayloadGuardTest {
         val store = buildStore(objectDao)
 
         // When — an unattributed refresh returns an empty array
-        val outcome = store.addPayload(table = "ratings", signature = "sig-A", payload = "[]")
+        val outcome = store.addPayload(table = "ratings", cacheKey = "sig-A", payload = "[]")
 
         // Then — refused as well. Nothing is lost by dropping it (the payload is identical), and
         // rewriting would only stamp a fresh updatedAt, keeping a possibly-phantom empty alive
@@ -169,7 +169,7 @@ class OfflineStoreAddPayloadGuardTest {
         val outcome =
             store.addPayload(
                 table = "attachments",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = "[]",
                 authoritativeEmpty = true,
             )
@@ -194,7 +194,7 @@ class OfflineStoreAddPayloadGuardTest {
         val outcome =
             store.addPayload(
                 table = "ratings",
-                signature = "sig-A",
+                cacheKey = "sig-A",
                 payload = "[]",
                 authoritativeEmpty = true,
             )
@@ -220,7 +220,7 @@ class OfflineStoreAddPayloadGuardTest {
         // When — a refresh succeeds with new server data
         store.addPayload(
             table = "ratings",
-            signature = "sig-A",
+            cacheKey = "sig-A",
             payload = """[{"id":1,"rating":92}]""",
         )
 
@@ -240,7 +240,7 @@ class OfflineStoreAddPayloadGuardTest {
         // When — an authoritative empty arrives for a *different* signature (no prior row)
         store.addPayload(
             table = "ratings",
-            signature = "sig-B",
+            cacheKey = "sig-B",
             payload = "[]",
             authoritativeEmpty = true,
         )

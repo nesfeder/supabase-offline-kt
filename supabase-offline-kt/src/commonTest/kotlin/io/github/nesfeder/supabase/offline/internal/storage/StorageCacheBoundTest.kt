@@ -259,9 +259,9 @@ class StorageCacheBoundTest {
     fun eviction_leaves_the_mutation_queues_reserved_rows_alone() = runTest {
         // Given — the mutation queue's reserved rows, and a file cache at its bound
         val objectDao = FakeObjectDao()
-        val reservedSignatures = listOf(REJECTED_MUTATIONS_SIGNATURE)
-        reservedSignatures.forEach { signature ->
-            objectDao.seedPayload(RESERVED_TABLE_NAME, signature, "{}")
+        val reservedCacheKeys = listOf(REJECTED_MUTATIONS_SIGNATURE)
+        reservedCacheKeys.forEach { cacheKey ->
+            objectDao.seedPayload(RESERVED_TABLE_NAME, cacheKey, "{}")
         }
         store = newTestOfflineStore(objectDao = objectDao)
         val bucket = bucket(maxSizeBytes = 10)
@@ -271,8 +271,8 @@ class StorageCacheBoundTest {
 
         // Then — the size accounting and eviction worked on files only
         assertTrue(store.totalStorageSizeBytes() <= 10)
-        reservedSignatures.forEach { signature ->
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, signature), signature)
+        reservedCacheKeys.forEach { cacheKey ->
+            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, cacheKey), cacheKey)
         }
         assertEquals(0, objectDao.evictedRows)
     }

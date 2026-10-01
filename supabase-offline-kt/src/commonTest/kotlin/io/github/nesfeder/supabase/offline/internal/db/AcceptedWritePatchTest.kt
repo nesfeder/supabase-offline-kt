@@ -39,7 +39,7 @@ class AcceptedWritePatchTest {
     private val markedStale = mutableListOf<Pair<String, Set<String>>>()
 
     init {
-        store.onQueriesMarkedStale = { table, signatures -> markedStale += table to signatures }
+        store.onQueriesMarkedStale = { table, cacheKeys -> markedStale += table to cacheKeys }
     }
 
     @Test
@@ -72,7 +72,7 @@ class AcceptedWritePatchTest {
                     operation = MutationOperation.INSERT,
                     bodyJson = """[{"id":2,"list":"B"}]""",
                     filterJson = null,
-                    liveSignatures = emptySet(),
+                    liveCacheKeys = emptySet(),
                 )
             }
         release.complete(Unit)
@@ -86,8 +86,8 @@ class AcceptedWritePatchTest {
     @Test
     fun an_accepted_insert_a_refresh_already_holds_is_not_added_twice() = runTest {
         // Given — a refresh that landed after the insert reached the server holds its row
-        objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":7,"title":"new"}]""", updatedAt = NOW)
-        store.recordQueryShape(TABLE, SIGNATURE) {}
+        objectDao.seedPayload(TABLE, CACHE_KEY, """[{"id":7,"title":"new"}]""", updatedAt = NOW)
+        store.recordQueryShape(TABLE, CACHE_KEY) {}
 
         // When — the insert's patch arrives
         store.patchCachedQueries(
@@ -98,7 +98,7 @@ class AcceptedWritePatchTest {
         )
 
         // Then — one row
-        assertEquals("""[{"id":7,"title":"new"}]""", objectDao.getRow(TABLE, SIGNATURE)?.payload)
+        assertEquals("""[{"id":7,"title":"new"}]""", objectDao.getRow(TABLE, CACHE_KEY)?.payload)
     }
 
     @Test
@@ -107,11 +107,11 @@ class AcceptedWritePatchTest {
             // Given — a list of settings, a table keyed by `key` the engine has not been told of
             objectDao.seedPayload(
                 TABLE,
-                SIGNATURE,
+                CACHE_KEY,
                 """[{"key":"theme","value":"dark"}]""",
                 updatedAt = NOW,
             )
-            store.recordQueryShape(TABLE, SIGNATURE) {}
+            store.recordQueryShape(TABLE, CACHE_KEY) {}
 
             // When — an upsert of the same setting, with no conflict columns
             store.patchCachedQueries(
@@ -122,16 +122,16 @@ class AcceptedWritePatchTest {
             )
 
             // Then — no second row by guess; the list is stale and fetched again
-            val row = objectDao.getRow(TABLE, SIGNATURE)
+            val row = objectDao.getRow(TABLE, CACHE_KEY)
             assertEquals("""[{"key":"theme","value":"dark"}]""", row?.payload)
             assertTrue(row != null && row.updatedAt < 0, "${row?.updatedAt}")
-            assertEquals(listOf(TABLE to setOf(SIGNATURE)), markedStale)
+            assertEquals(listOf(TABLE to setOf(CACHE_KEY)), markedStale)
         }
 
     @Test
     fun each_accepted_write_the_patch_cannot_apply_is_logged() = runTest {
         // Given — a cached list
-        objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1}]""", updatedAt = NOW)
+        objectDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1}]""", updatedAt = NOW)
 
         // When — two writes whose bodies the patch cannot read
         repeat(2) {
@@ -151,7 +151,7 @@ class AcceptedWritePatchTest {
 
     private companion object {
         const val TABLE = "settings"
-        const val SIGNATURE = "settings"
+        const val CACHE_KEY = "settings"
         const val NOW = 1_000_000L
         const val TASKS = "tasks"
         const val LIST_A = "tasks?list=eq.A"

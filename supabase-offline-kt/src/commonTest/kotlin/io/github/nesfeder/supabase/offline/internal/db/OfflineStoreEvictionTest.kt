@@ -49,7 +49,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then the cache is back within the limit
         assertTrue(objectDao.totalPayloadBytes() <= 250L, "cache should be within the limit")
@@ -75,7 +75,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs it must return rather than spin
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then the progress guard stopped it after the first zero-row delete batch
         assertEquals(1, objectDao.deleteCallCount, "should stop after one empty delete batch")
@@ -97,7 +97,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs it must still terminate
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then the loop was bounded by the hard iteration cap (belt-and-braces backstop)
         assertEquals(1_000, objectDao.deleteCallCount, "loop must be bounded by the iteration cap")
@@ -116,7 +116,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then nothing is deleted: eviction starts only above the limit
         assertEquals(0, objectDao.deleteCallCount)
@@ -144,7 +144,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then the oversized drainHeadroomBytes headroom coerced to a no-op and eviction still ran
         assertTrue(
@@ -176,7 +176,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs after the cache crosses the ceiling
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then eviction continues past the ceiling down to the hysteresis floor (ceiling minus
         // headroom), not merely to the ceiling — so subsequent writes don't immediately
@@ -214,7 +214,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then nothing is measured or evicted
         assertEquals(0, objectDao.deleteCallCount)
@@ -312,7 +312,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.enforceDbSizeLimitIfNeeded()
+        store.evictOverBudget()
 
         // Then the batch size is coerced to at least one row so eviction still drains to the
         // limit instead of stalling (a zero-row batch would trip the progress guard immediately
@@ -354,8 +354,6 @@ class OfflineStoreEvictionTest {
 
     /**
      * Build an [OfflineStore] wired to the supplied [objectDao] with the given eviction settings.
-     * The file-oriented [DbPathProvider]/`dbSizeProvider` are stubbed since eviction now measures
-     * logical payload bytes; they exist only for constructor compatibility.
      */
     private fun buildStore(
         objectDao: ObjectDao,

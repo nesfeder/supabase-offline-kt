@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.testing
 
-import io.github.nesfeder.supabase.offline.internal.db.DbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
@@ -19,16 +18,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import okio.Path
-import okio.Path.Companion.toPath
 
 /** Base directory the in-memory client reports; nothing is ever written under it. */
 internal const val IN_MEMORY_BASE_DIRECTORY: String = "/in-memory/offline"
-
-/** [DbPathProvider] for storage that has no file: reports a fixed path that is never opened. */
-internal object InMemoryDbPathProvider : DbPathProvider {
-    override fun dbPath(): Path = "$IN_MEMORY_BASE_DIRECTORY/offline.db".toPath()
-}
 
 /**
  * In-memory [ObjectDao] mirroring Room's per-table invalidation: any write fans out to observers.
@@ -270,9 +262,6 @@ internal open class InMemoryMutationDao : MutationDao {
         beforeId: Long,
     ): Boolean = mutations.value.any { it.id < beforeId && it.isPendingOf(owner, includeOwnerless) }
 
-    override suspend fun hasPendingBefore(beforeId: Long): Boolean =
-        mutations.value.any { it.syncedAtMs == null && it.id < beforeId }
-
     override suspend fun setOwner(id: Long, owner: String) {
         mutations.update { current ->
             current.map { if (it.id == id) it.copy(owner = owner) else it }
@@ -320,22 +309,6 @@ internal open class InMemoryMutationDao : MutationDao {
     }
 
     override suspend fun countAll(): Int = mutations.value.size
-
-    override suspend fun countPending(): Int = mutations.value.count { it.syncedAtMs == null }
-
-    override fun countPendingFlow(): Flow<Int> = mutations.map { all ->
-        all.count { it.syncedAtMs == null }
-    }
-
-    override suspend fun countForTable(table: String): Int =
-        mutations.value.count { it.table == table }
-
-    override suspend fun countPendingForTable(table: String): Int =
-        mutations.value.count { it.table == table && it.syncedAtMs == null }
-
-    override fun countPendingForTableFlow(table: String): Flow<Int> = mutations.map { all ->
-        all.count { it.table == table && it.syncedAtMs == null }
-    }
 
     override suspend fun deleteById(id: Long) {
         mutations.update { current -> current.filterNot { it.id == id } }

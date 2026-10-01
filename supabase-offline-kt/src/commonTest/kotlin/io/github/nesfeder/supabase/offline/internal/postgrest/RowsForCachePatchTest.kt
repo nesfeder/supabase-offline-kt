@@ -175,7 +175,7 @@ class RowsForCachePatchTest {
         // Given
         val objectDao = FakeObjectDao()
         val store = buildStore(objectDao)
-        val signature = "sig-notes-user-1"
+        val cacheKey = "sig-notes-user-1"
 
         // Request body: the parent's upsert DTO — no id (server will assign it).
         val requestBody = buildJsonArray {
@@ -197,11 +197,11 @@ class RowsForCachePatchTest {
             bodyJson = rowsForCachePatch(requestBody, serverResponse, json),
             filterJson = null,
             onConflict = "user_id,external_id",
-            liveSignatures = setOf(signature),
+            liveCacheKeys = setOf(cacheKey),
         )
 
         // Then
-        val cached = objectDao.getRow("notes", signature)
+        val cached = objectDao.getRow("notes", cacheKey)
         assertNotNull(cached)
         val decoded = json.decodeFromString<List<NoteDtoForTest>>(cached.payload)
         assertEquals("server-log-id", decoded.single().id)

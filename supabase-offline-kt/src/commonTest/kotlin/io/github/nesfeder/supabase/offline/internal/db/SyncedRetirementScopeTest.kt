@@ -48,7 +48,7 @@ class SyncedRetirementScopeTest {
         tick = 40L
         store.addPayload(
             table = TABLE,
-            signature = ALL,
+            cacheKey = ALL,
             payload = """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
             requestStartedAtTick = requestStartedAtTick,
         )
@@ -70,13 +70,13 @@ class SyncedRetirementScopeTest {
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
 
         // When — both queries refresh after the replay
-        for (signature in listOf(ALL, LIST_L)) {
+        for (cacheKey in listOf(ALL, LIST_L)) {
             tick += 10
             val requestStartedAtTick = store.monotonicTickNow()
             tick += 10
             store.addPayload(
                 table = TABLE,
-                signature = signature,
+                cacheKey = cacheKey,
                 payload = """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
                 requestStartedAtTick = requestStartedAtTick,
             )

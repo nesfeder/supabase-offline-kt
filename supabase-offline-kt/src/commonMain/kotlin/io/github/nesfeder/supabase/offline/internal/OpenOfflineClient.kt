@@ -9,7 +9,6 @@ import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.MIN_CACHE_SIZE_BYTES
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
-import io.github.nesfeder.supabase.offline.internal.db.FixedDbPathProvider
 import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
@@ -49,7 +48,6 @@ internal fun openOfflineClient(
                 objectDao = database.objectDao(),
                 storageDao = database.storageDao(),
                 mutationDao = database.mutationDao(),
-                dbPathProvider = FixedDbPathProvider(openedPath),
                 queryCacheLimits = config.toQueryCacheLimits(),
             )
         return SupabaseOfflineClientImpl(

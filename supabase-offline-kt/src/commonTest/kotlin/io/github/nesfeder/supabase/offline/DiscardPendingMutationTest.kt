@@ -83,11 +83,11 @@ class DiscardPendingMutationTest {
     @Test
     fun a_discarded_write_disappears_from_the_overlay() = runTest {
         // Given — a cached row renamed offline
-        objectDao.seedPayload(TABLE, SIGNATURE, """[{"id":1,"title":"original"}]""")
+        objectDao.seedPayload(TABLE, CACHE_KEY, """[{"id":1,"title":"original"}]""")
         renameOffline(1, "renamed")
         assertEquals(
             """[{"id":1,"title":"renamed"}]""",
-            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
+            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
 
         // When
@@ -96,7 +96,7 @@ class DiscardPendingMutationTest {
         // Then
         assertEquals(
             """[{"id":1,"title":"original"}]""",
-            store.overlaidPayloadFlow(TABLE, SIGNATURE).first(),
+            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
     }
 
@@ -142,7 +142,7 @@ class DiscardPendingMutationTest {
 
     private companion object {
         const val TABLE = "tasks"
-        const val SIGNATURE = "tasks?id=eq.1"
+        const val CACHE_KEY = "tasks?id=eq.1"
         val USER_A = QueueIdentity.User("user-a")
         val USER_B = QueueIdentity.User("user-b")
     }

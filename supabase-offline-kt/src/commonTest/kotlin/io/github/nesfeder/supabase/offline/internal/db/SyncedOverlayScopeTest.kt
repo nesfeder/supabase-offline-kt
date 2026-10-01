@@ -261,7 +261,7 @@ class SyncedOverlayScopeTest {
     @Test
     fun a_live_query_waiting_for_its_first_payload_keeps_showing_a_replayed_insert() = runTest {
         // Given — a live query of L, nothing cached for it yet, showing an offline insert of x
-        store.liveSignatureProvider = { setOf(LIST_L) }
+        store.liveCacheKeysOf = { setOf(LIST_L) }
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         assertEquals(
             """[{"id":"x","list_id":"L"}]""",

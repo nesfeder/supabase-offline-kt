@@ -50,9 +50,9 @@ class UnreadableMutationQueueStateTest {
         assertTrue(objectDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
     }
 
-    private fun keptAsideCopiesOf(signature: String): Int =
+    private fun keptAsideCopiesOf(cacheKey: String): Int =
         objectDao.rowsOf(RESERVED_TABLE_NAME).count { row ->
-            row.signature.startsWith("$signature.unreadable.")
+            row.signature.startsWith("$cacheKey.unreadable.")
         }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

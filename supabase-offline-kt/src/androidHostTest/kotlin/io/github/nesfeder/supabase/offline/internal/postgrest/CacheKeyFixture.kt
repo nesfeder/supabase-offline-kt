@@ -86,10 +86,10 @@ internal object CacheKeyFixture {
 
     /** The request block that makes [calls] on a SELECT builder, in order. */
     fun requestOf(calls: JsonArray): SelectRequestBuilder.() -> Unit = {
-        calls.forEach { call -> applyCall(call.jsonArray) }
+        calls.forEach { call -> replayCall(call.jsonArray) }
     }
 
-    private fun SelectRequestBuilder.applyCall(call: JsonArray) {
+    private fun SelectRequestBuilder.replayCall(call: JsonArray) {
         val name = call[0].jsonPrimitive.content
         val options = call.lastOrNull() as? JsonObject
         when (name) {
@@ -121,11 +121,11 @@ internal object CacheKeyFixture {
                 params[call[1].jsonPrimitive.content] =
                     call[2].jsonArray.map { value -> value.jsonPrimitive.content }
             "header" -> headers.append(call[1].jsonPrimitive.content, call[2].jsonPrimitive.content)
-            else -> filter { applyFilter(call) }
+            else -> filter { replayFilter(call) }
         }
     }
 
-    private fun PostgrestFilterBuilder.applyFilter(call: JsonArray) {
+    private fun PostgrestFilterBuilder.replayFilter(call: JsonArray) {
         val name = call[0].jsonPrimitive.content
         val options = call.lastOrNull() as? JsonObject
         when (name) {
@@ -136,11 +136,11 @@ internal object CacheKeyFixture {
                 val referencedTable = options?.get("referencedTable")?.jsonPrimitive?.content
                 if (name == "or") {
                     or(negate = negate, referencedTable = referencedTable) {
-                        nested.forEach { inner -> applyFilter(inner.jsonArray) }
+                        nested.forEach { inner -> replayFilter(inner.jsonArray) }
                     }
                 } else {
                     and(negate = negate, referencedTable = referencedTable) {
-                        nested.forEach { inner -> applyFilter(inner.jsonArray) }
+                        nested.forEach { inner -> replayFilter(inner.jsonArray) }
                     }
                 }
             }

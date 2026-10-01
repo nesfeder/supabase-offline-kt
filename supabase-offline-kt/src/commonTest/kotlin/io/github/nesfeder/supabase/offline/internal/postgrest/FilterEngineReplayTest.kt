@@ -25,7 +25,7 @@ import kotlinx.serialization.json.put
  * that wrapper before splitting — otherwise the replayed filter targets corrupted values like
  * `"(a"` / `"c)"`. Each test drives the same pipeline the offline mutation queue uses: capture
  * ([captureFilterExactly]) → [FilterEngine.encode] → [FilterEngine.decodeOrNull] →
- * [FilterEngine.applyTo], asserting the replayed request carries the caller's original param.
+ * [FilterEngine.replayOnto], asserting the replayed request carries the caller's original param.
  * Overlay parity is asserted via [rowMatch]: a row the overlay treats as matched is one replay
  * reaches.
  *
@@ -52,7 +52,7 @@ class FilterEngineReplayTest {
     /** Replays a descriptor onto a fresh request builder and returns the resulting params. */
     private fun replayParams(descriptor: FilterDescriptor): Map<String, List<String>> {
         val builder = SelectRequestBuilder(schema, conversion)
-        FilterEngine.applyTo(builder, descriptor)
+        FilterEngine.replayOnto(builder, descriptor)
         return builder.params
     }
 

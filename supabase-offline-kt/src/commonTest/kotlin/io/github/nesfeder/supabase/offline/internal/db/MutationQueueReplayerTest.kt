@@ -284,7 +284,7 @@ class MutationQueueReplayerTest {
             MutationQueueReplayer(
                 store = store,
                 supabase = client,
-                postgrestFactory = { _, _ ->
+                remoteTableFor = { _, _ ->
                     factoryCalls++
                     remoteTable
                 },
@@ -645,7 +645,7 @@ class MutationQueueReplayerTest {
         MutationQueueReplayer(
             store = store,
             supabase = client,
-            postgrestFactory = { _, _ -> remoteTable },
+            remoteTableFor = { _, _ -> remoteTable },
             awaitSessionSettled = awaitSessionSettled ?: { client.awaitSettledSession() },
         )
 

@@ -87,7 +87,7 @@ internal class CachingBucketApi(
     }
 
     override suspend fun cachedFile(path: String): CachedFile? = operationGate.call {
-        cache.entryFor(bucketId, path)?.let { entry -> cache.lookup(entry) }
+        cache.entryFor(bucketId, path)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
     override suspend fun ensureCachedFile(path: String, isPublic: Boolean): CachedFile =
@@ -101,7 +101,7 @@ internal class CachingBucketApi(
                     "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
                         "or '..' segment, a '\\' or a control character"
                 )
-        cache.lookup(entry)?.let {
+        cache.useCachedCopy(entry)?.let {
             return it
         }
         val generation = cache.currentGeneration()
@@ -142,7 +142,7 @@ internal class CachingBucketApi(
         } finally {
             file.discard()
         }
-        return cache.lookup(entry)
+        return cache.useCachedCopy(entry)
             ?: throw IOException("The downloaded file left the cache before it could be returned")
     }
 

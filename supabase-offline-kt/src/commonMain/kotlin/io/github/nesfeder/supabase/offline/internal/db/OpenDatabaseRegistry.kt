@@ -120,12 +120,3 @@ internal fun Path.resolvedOrNormalized(fileSystem: FileSystem = FileSystem.SYSTE
         normalized()
     }
 }
-
-/**
- * [DbPathProvider] for a database whose path the factory already resolved.
- *
- * @param path the database file.
- */
-internal class FixedDbPathProvider(private val path: Path) : DbPathProvider {
-    override fun dbPath(): Path = path
-}

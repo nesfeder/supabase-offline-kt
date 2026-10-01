@@ -447,7 +447,7 @@ internal class SupabaseOfflineClientImpl(
 
     /**
      * Client-scoped coordinator shared by every builder this client creates: single-flight refresh
-     * sharing per `(table, signature)` plus the live-signature registry that backs
+     * sharing per `(table, cacheKey)` plus the live-signature registry that backs
      * materialize-on-write in [OfflineStore.patchCachedQueries].
      */
     private val liveQueries = LiveQueries(clientScope)
@@ -456,8 +456,7 @@ internal class SupabaseOfflineClientImpl(
      * SDK-internal recovery accelerator merging auth-session-restored and connectivity-regained
      * edges. Forwarded to every builder to short-circuit a stalled refresh's backoff.
      */
-    private val refreshAccelerator: Flow<Unit> =
-        refreshWakeUps(supabase, networkAvailability, responseTrust)
+    private val wakeUps: Flow<Unit> = refreshWakeUps(supabase, networkAvailability, responseTrust)
 
     /** The identity the overlay and counts are for, read once per session status. */
     private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
@@ -475,10 +474,10 @@ internal class SupabaseOfflineClientImpl(
         if (prepareFileCacheDirectories) fileCache.prepareDirectories()
         // Let the store see which signatures are live so a server-successful mutation materializes
         // into a real cache row for a cache-less-but-observed subscription.
-        store.liveSignatureProvider = liveQueries::liveSignaturesFor
-        store.allLiveSignaturesProvider = liveQueries::allLiveSignatures
-        store.onQueriesMarkedStale = { table, signatures ->
-            liveQueries.requestRefresh(table, signatures)
+        store.liveCacheKeysOf = liveQueries::liveCacheKeysOf
+        store.allLiveCacheKeys = liveQueries::allLiveCacheKeys
+        store.onQueriesMarkedStale = { table, cacheKeys ->
+            liveQueries.requestRefresh(table, cacheKeys)
         }
         store.engineLogger = engineLogger
         store.primaryKeys = primaryKeys
@@ -487,7 +486,7 @@ internal class SupabaseOfflineClientImpl(
         store.identityChanges = sessionChanges()
         store.ownerlessMutationsAreAnonymous = authPluginOrNull() == null
         // The cache is one identity's at a time; without Auth there is only one
-        store.cacheOwnedPerIdentity = authPluginOrNull() != null
+        store.isCacheOwnedPerIdentity = authPluginOrNull() != null
         store.onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) }
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
         // and not added while requests may be walking it.
@@ -608,7 +607,7 @@ internal class SupabaseOfflineClientImpl(
             requestSession = ::requestSession,
             trustPolicy = responseTrust,
             liveQueries = liveQueries,
-            accelerator = refreshAccelerator,
+            wakeUps = wakeUps,
             queueIdentity = { supabase.currentQueueIdentity() },
             requestSync = automaticReplay::request,
             headSender = mutationQueueReplayer,
@@ -730,9 +729,9 @@ internal class SupabaseOfflineClientImpl(
     /**
      * Clears once, locks outermost first: the replayer's send lock, after it cancels passes in
      * flight; the file cache's lock; the store's, and innermost the cache-owner record's, around
-     * [OfflineStore.clearAll]'s one transaction. Signed out, that transaction records the emptied
-     * cache as nobody's; a user's first use claims it, so no user id is written back by the clear.
-     * The scrub runs after that transaction, and the cache files go last.
+     * [OfflineStore.clearLocalData]'s one transaction. Signed out, that transaction records the
+     * emptied cache as nobody's; a user's first use claims it, so no user id is written back by the
+     * clear. The scrub runs after that transaction, and the cache files go last.
      */
     override suspend fun clearAllCache(): Unit = operationGate.call {
         val owner =
@@ -742,7 +741,7 @@ internal class SupabaseOfflineClientImpl(
             }
         mutationQueueReplayer.clearLocalData {
             fileCache.clear {
-                store.clearAll(owner)
+                store.clearLocalData(owner)
                 scrubDatabase()
             }
         }

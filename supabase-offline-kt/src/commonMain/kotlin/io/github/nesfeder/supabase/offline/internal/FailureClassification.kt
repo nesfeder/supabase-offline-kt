@@ -65,18 +65,6 @@ internal fun Int.isPermanentMutationFailureStatus(): Boolean {
 }
 
 /**
- * Returns `true` if this throwable is an HTTP **401 Unauthorized** — the token-refresh race that is
- * transient on the offline-replay path.
- *
- * Right after reconnect the access token can still be expired while supabase-kt's auto-refresh is
- * in flight, so a queued mutation replays into a 401. The syncer keeps the mutation and retries on
- * a later sync; crucially it must **not** count a 401 toward any dead-letter budget, otherwise a
- * bad token window (several rapid reconnect triggers) would silently drop the user's queued write —
- * the exact data loss the transient-401 classification exists to prevent.
- */
-internal fun Throwable.isTransientAuthFailure(): Boolean = httpStatusOrNull() == 401
-
-/**
  * Whether this failure is the network's rather than the server's: a timeout or an [IOException],
  * here or in a cause. A cancellation, or anything carrying an HTTP status, never is. Read fallback,
  * write queueing and replay all decide on it.

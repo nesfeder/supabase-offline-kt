@@ -37,7 +37,7 @@ class ClearLocalDataAtomicityTest {
             )
         }
         mutationDao.failNextDeleteAll = true
-        val cleared = runCatching { store.clearAll() }
+        val cleared = runCatching { store.clearLocalData() }
 
         // When — the app starts again, user B signs in, and a pass runs
         val next = newTestOfflineStore(objectDao = objectDao, mutationDao = mutationDao)
@@ -63,7 +63,7 @@ class ClearLocalDataAtomicityTest {
     fun a_write_that_began_before_local_data_was_cleared_is_not_queued_after_it() = runTest {
         // Given — a write that started, then a clear
         val startedAtTick = store.monotonicTickNow()
-        store.clearAll()
+        store.clearLocalData()
 
         // When — the write reaches the mutation queue
         val outcome =
