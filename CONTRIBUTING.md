@@ -302,6 +302,15 @@ approves or merges. Two cases need care:
   major version, or moves a pass-through dependency, and the triage workflow says so on the pull
   request.
 
+A newer supabase-kt minor never arrives as a Dependabot version update. Instead, the
+[Upstream canary](https://github.com/nesfeder/supabase-offline-kt/blob/main/.github/workflows/upstream-canary.yml)
+workflow checks Maven Central every Monday. When the newest release is a newer minor or major, it
+builds the library and runs its Android host tests against it, in its own checkout only, and
+reports the result in one issue, which the pull request that moves the pin closes. Closing that
+issue without moving the pin brings a new one the next Monday: to hold a minor back, leave the
+issue open and say why in a comment. The `upstream-pin` label marks everything that would move
+supabase-kt or the pass-through set: that issue, and Dependabot's pull requests for them.
+
 Other Gradle dependencies arrive as grouped minor and patch updates, and a new major version as a
 pull request of its own. ktfmt, the formatter, arrives alone in the `formatter` group, because
 its update needs more than the version change: see "Updating ktfmt" under Formatting. GitHub
