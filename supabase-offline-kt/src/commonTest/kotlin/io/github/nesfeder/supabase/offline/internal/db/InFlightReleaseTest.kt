@@ -18,6 +18,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -116,6 +117,59 @@ class InFlightReleaseTest {
         // Then — it sends the write rather than stopping at a send that is no longer happening
         assertEquals(1, next.syncedCount)
         assertEquals(null, next.stop)
+    }
+
+    @Test
+    fun a_keyed_insert_on_the_wire_when_its_pass_is_cancelled_is_recorded_and_not_sent_again() =
+        runTest {
+            // Given — a pass cancelled while its keyed INSERT is on the wire; the server then
+            // accepts it
+            cancelPassThenAccept("""[{"id":"k1","title":"Buy milk"}]""")
+
+            // When
+            val next = replayer.sync()
+
+            // Then — the pass finished the request and recorded it, so nothing is sent again
+            assertEquals(0, store.pendingMutationCount())
+            assertEquals(0, next.syncedCount)
+            assertEquals(1, server.requests.count { it.method == "POST" })
+        }
+
+    @Test
+    fun a_keyless_insert_on_the_wire_when_its_pass_is_cancelled_is_recorded_and_not_sent_again() =
+        runTest {
+            // Given — the same, for an INSERT a resend would duplicate
+            cancelPassThenAccept("""[{"title":"Buy milk"}]""")
+
+            // When
+            val next = replayer.sync()
+
+            // Then
+            assertEquals(0, store.pendingMutationCount())
+            assertEquals(0, next.syncedCount)
+            assertEquals(1, server.requests.count { it.method == "POST" })
+        }
+
+    /**
+     * Queues an INSERT of [body], cancels the pass sending it while its request is on the wire, and
+     * only then lets the server accept it.
+     */
+    private suspend fun TestScope.cancelPassThenAccept(body: String) {
+        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+            enqueueInsert(table = TABLE, body = rows(body))
+        }
+        val onTheWire = CompletableDeferred<Unit>()
+        val accepted = CompletableDeferred<Unit>()
+        server.answer = {
+            onTheWire.complete(Unit)
+            accepted.await()
+            okJson("[]")
+        }
+        val cancelled = async { replayer.sync() }
+        onTheWire.await()
+        cancelled.cancel()
+        accepted.complete(Unit)
+        cancelled.join()
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
