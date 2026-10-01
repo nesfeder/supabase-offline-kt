@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -17,8 +18,6 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -26,8 +25,9 @@ import kotlinx.serialization.json.JsonArray
 /**
  * A pass marks each mutation in flight while it sends it, and releases the mark however the send
  * ends. A pass whose local store fails around a send — a full disk while it records the send — or
- * whose caller is cancelled while the request is on the wire stops there with the mutation still
- * queued, and the next pass, and the next write at the head, send it.
+ * whose caller is cancelled while the request is on the wire, which it then finishes, stops with
+ * the mutation still queued when it was not applied, and the next pass, and the next write at the
+ * head, send it.
  */
 class InFlightReleaseTest {
 
@@ -91,18 +91,23 @@ class InFlightReleaseTest {
 
     @Test
     fun a_pass_cancelled_while_its_request_is_on_the_wire_does_not_stop_the_next() = runTest {
-        // Given — a queued write whose first send hangs until its caller gives up
+        // Given — a queued write whose first send is on the wire when its caller gives up; the pass
+        // finishes that request, which then fails without an answer
         store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val onTheWire = CompletableDeferred<Unit>()
+        val unanswered = CompletableDeferred<Unit>()
         server.answer = {
             onTheWire.complete(Unit)
-            awaitCancellation()
+            unanswered.await()
+            connectivityFailure()
         }
         val cancelled = async { replayer.sync() }
         onTheWire.await()
-        cancelled.cancelAndJoin()
+        cancelled.cancel()
+        unanswered.complete(Unit)
+        cancelled.join()
 
         // When — the next pass runs
         server.answer = { okJson("[]") }
