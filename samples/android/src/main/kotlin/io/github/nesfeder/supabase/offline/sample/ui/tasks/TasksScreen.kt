@@ -284,7 +284,6 @@ private fun subtitleStatus(headline: SyncHeadline): String =
     }
 
 /** All / Open / Done, as a connected button group with one choice. */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun TaskFilterButtons(selected: TaskFilter, onSelect: (TaskFilter) -> Unit) {
     Row(

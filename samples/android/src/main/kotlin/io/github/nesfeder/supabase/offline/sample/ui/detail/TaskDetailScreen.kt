@@ -125,7 +125,6 @@ fun TaskDetailRoute(
  * One task, to edit: a flexible app bar whose title the list row's title flies into, the fields,
  * the done row, the photos with their uploads, and a floating toolbar of actions.
  */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun TaskDetailScreen(
     taskId: String,
@@ -332,7 +331,6 @@ private fun TaskFields(
 }
 
 /** The photos row: thumbnails, then a wavy progress tile per upload. */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun PhotosSection(
     state: TaskDetailUiState.Editing,
