@@ -15,7 +15,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Pins the exported Room schema the library ships: version 1, identity hash
- * `b6a7e9150b888e5e54cb2be30f46a734`, and no other version. Any change to a table, column or index
+ * `d82a2435c50b4595368573f8728a370b`, and no other version. Any change to a table, column or index
  * changes the hash, and Room then takes the destructive fallback on a device — deleting the unsent
  * writes the file holds. The exported schema is the record of what the build compiles; these cases
  * fail the build if it drifts.

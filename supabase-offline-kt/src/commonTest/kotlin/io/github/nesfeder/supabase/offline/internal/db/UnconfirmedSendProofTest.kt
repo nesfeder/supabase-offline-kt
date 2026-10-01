@@ -260,59 +260,20 @@ class UnconfirmedSendProofTest {
     }
 
     @Test
-    fun an_unreadable_record_reads_as_possibly_delivered() = runTest {
-        // Given — an insert whose response was lost, then a record that no longer decodes
+    fun a_send_whose_response_was_lost_is_still_possibly_delivered_after_a_relaunch() = runTest {
+        // Given — an insert whose response was lost: its send is recorded in its row
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
-        objectDao.seedPayload(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE, "{not json")
 
         // When — the next launch replays it
         val report =
             MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
 
-        // Then
+        // Then — it takes the row the lost send committed as its own
         assertEquals(emptyList(), report.rejected)
         assertEquals(1, report.syncedCount)
         assertEquals(1, server.rows(TABLE).size)
-    }
-
-    @Test
-    fun a_missing_record_reads_as_possibly_delivered() = runTest {
-        // Given — an insert whose response was lost, then a record that is gone
-        val server = FakeRelationalPostgrestServer()
-        server.loseResponseAfterCommit = { request -> request.method == "POST" }
-        builderOn(server.supabaseClient()).insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
-        objectDao.delete(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)
-
-        // When
-        val report =
-            MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
-
-        // Then
-        assertEquals(emptyList(), report.rejected)
-        assertEquals(1, report.syncedCount)
-        assertEquals(1, server.rows(TABLE).size)
-    }
-
-    @Test
-    fun a_missing_record_starts_from_the_queued_keyed_inserts_only() = runTest {
-        // Given — a keyed INSERT, a keyless one and an UPDATE queued, and no record
-        val keyed =
-            store.enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"no key"}]"""))
-        store.enqueueUpdate(table = TABLE, body = Json.parseToJsonElement("""{"title":"new"}"""))
-        objectDao.delete(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)
-
-        // When — the next launch reads it
-        val next = relaunch()
-
-        // Then — only the INSERT whose replay can take its rows as already there is recorded
-        assertEquals(setOf(keyed), next.mutationQueueState.unconfirmedSends())
-        assertEquals(
-            """{"version":1,"mutationIds":[$keyed]}""",
-            objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload,
-        )
     }
 
     @Test
@@ -334,8 +295,8 @@ class UnconfirmedSendProofTest {
         }
 
     @Test
-    fun a_retried_rejection_is_refused_again_as_a_duplicate_when_the_record_was_lost() = runTest {
-        // Given — an insert refused as a duplicate, then a launch that finds no record at all
+    fun a_retried_rejection_is_refused_again_as_a_duplicate_after_a_relaunch() = runTest {
+        // Given — an insert refused as a duplicate, then a new launch
         val server = FakeRelationalPostgrestServer()
         server.seed(TABLE, row("""{"id":"k1","title":"someone else's"}"""))
         store.enqueueOwnedBy(null) {
@@ -346,7 +307,6 @@ class UnconfirmedSendProofTest {
                 .sync()
                 .rejected
                 .single()
-        objectDao.delete(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)
         val next = relaunch()
 
         // When — the app retries it first thing

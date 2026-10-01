@@ -169,7 +169,7 @@ internal interface ObjectDao {
      * ([fetchedAtOf]), stale or not. Used by [OfflineStore.enforceDbSizeLimitIfNeeded] to evict old
      * cache entries when the summed payload size grows beyond the configured limit. The engine's
      * reserved rows (see [RESERVED_TABLE_NAME]) are never candidates: they hold the
-     * rejected-mutation list and the owner of each queued mutation, which no refetch can restore.
+     * rejected-mutation list, the cache's owner and the query shapes, which no refetch restores.
      *
      * @param limit maximum number of rows to delete in this batch.
      * @param keptSignatures signatures that are never candidates: queries a live reader shows. A
@@ -309,6 +309,14 @@ internal data class MutationRow(
      * column yet; the write is rejected once they reach the bound.
      */
     @ColumnInfo(name = "schema_cache_misses", defaultValue = "0") val schemaCacheMisses: Int = 0,
+
+    /**
+     * Whether a send of this INSERT started and its outcome is unknown, so the server may already
+     * hold its rows: it then replays as an upsert that takes them as its own. Set only for an
+     * INSERT whose rows all carry the table's key, before its request goes out; cleared on proof
+     * that the write did not run, and when it replays.
+     */
+    @ColumnInfo(name = "send_unconfirmed", defaultValue = "0") val sendUnconfirmed: Boolean = false,
 )
 
 @Dao
@@ -459,10 +467,26 @@ internal interface MutationDao {
      * Marks mutation [id] synced: when, by the device clock, and its [MutationRow.syncSequence].
      */
     @Query(
-        "UPDATE mutation_cache SET synced_at_ms = :syncedAtMs, sync_sequence = :syncSequence " +
-            "WHERE id = :id"
+        "UPDATE mutation_cache SET synced_at_ms = :syncedAtMs, sync_sequence = :syncSequence, " +
+            "send_unconfirmed = 0 WHERE id = :id"
     )
     suspend fun markSynced(id: Long, syncedAtMs: Long, syncSequence: Long)
+
+    /**
+     * Records that a send of mutation [id] started ([MutationRow.sendUnconfirmed]).
+     *
+     * @return `1` when this call set it, `0` when it was set already or there is no such row.
+     */
+    @Query("UPDATE mutation_cache SET send_unconfirmed = 1 WHERE id = :id AND send_unconfirmed = 0")
+    suspend fun markSendUnconfirmed(id: Long): Int
+
+    /** Clears [MutationRow.sendUnconfirmed] of mutation [id]: its send never reached the server. */
+    @Query("UPDATE mutation_cache SET send_unconfirmed = 0 WHERE id = :id")
+    suspend fun clearSendUnconfirmed(id: Long)
+
+    /** The ids of every mutation whose send started and whose outcome is unknown. */
+    @Query("SELECT id FROM mutation_cache WHERE send_unconfirmed = 1")
+    suspend fun unconfirmedSendIds(): List<Long>
 
     /** Deletes every queued mutation (pending + already-synced) across all tables. */
     @Query("DELETE FROM mutation_cache") suspend fun deleteAll()

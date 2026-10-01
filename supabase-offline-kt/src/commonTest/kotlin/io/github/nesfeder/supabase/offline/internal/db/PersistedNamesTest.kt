@@ -10,6 +10,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
@@ -39,7 +40,6 @@ class PersistedNamesTest {
         // Postgres truncates identifiers to NAMEDATALEN - 1 = 63 bytes, so no table has this name.
         assertTrue(RESERVED_TABLE_NAME.encodeToByteArray().size > 63)
         assertEquals("rejected_mutations", REJECTED_MUTATIONS_SIGNATURE)
-        assertEquals("unconfirmed_sends", UNCONFIRMED_SENDS_SIGNATURE)
         assertEquals("cache_owner", CACHE_OWNER_SIGNATURE)
     }
 
@@ -225,22 +225,22 @@ class PersistedNamesTest {
     }
 
     @Test
-    fun unconfirmed_sends_are_written_with_these_keys() = runTest {
+    fun a_started_send_is_recorded_in_its_row_until_it_replays() = runTest {
         // Given — a keyed INSERT whose send is starting
         store.enqueueInsert(
             table = "todos",
             body = Json.parseToJsonElement("""[{"id":"t1"}]""") as JsonArray,
         )
 
-        // When
+        // When — its send starts, and later it replays
         store.markSendUnconfirmed(1)
+        val started = mutationDao.inserted.single().sendUnconfirmed
+        store.markMutationSynced(1, "todos")
 
-        // Then
-        assertEquals(
-            """{"version":1,"mutationIds":[1]}""",
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE))
-                .payload,
-        )
+        // Then — the row's `send_unconfirmed` column holds it, and no reserved row does
+        assertTrue(started)
+        assertFalse(mutationDao.inserted.single().sendUnconfirmed)
+        assertEquals(emptyList(), objectDao.allForTable(RESERVED_TABLE_NAME))
     }
 
     @Test

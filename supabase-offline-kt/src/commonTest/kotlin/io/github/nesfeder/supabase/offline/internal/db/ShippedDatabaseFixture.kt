@@ -9,7 +9,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 
 /**
  * A `supabase_offline.db` exactly as this build leaves it on disk: Room schema version 1, the one
- * schema the library ships, identity hash `b6a7e9150b888e5e54cb2be30f46a734`, holding cached
+ * schema the library ships, identity hash `d82a2435c50b4595368573f8728a370b`, holding cached
  * queries, a storage row, unsent writes and one synced write not yet retired.
  *
  * [SCHEMA_STATEMENTS] are the `createSql` / index `createSql` / `setupQueries` of the exported
@@ -28,7 +28,7 @@ internal object ShippedDatabaseFixture {
     const val VERSION: Long = 1
 
     /** Room identity hash of schema version 1. */
-    const val IDENTITY_HASH: String = "b6a7e9150b888e5e54cb2be30f46a734"
+    const val IDENTITY_HASH: String = "d82a2435c50b4595368573f8728a370b"
 
     /** Schema version 1, statement for statement, from the exported `1.json`. */
     val SCHEMA_STATEMENTS: List<String> =
@@ -45,13 +45,14 @@ internal object ShippedDatabaseFixture {
                 "`table_name` TEXT NOT NULL, `operation` TEXT NOT NULL, `body_json` TEXT NOT NULL, " +
                 "`filter_json` TEXT, `created_at_ms` INTEGER NOT NULL, `synced_at_ms` INTEGER, " +
                 "`default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER, " +
-                "`owner` TEXT, `sync_sequence` INTEGER, `schema_cache_misses` INTEGER NOT NULL DEFAULT 0)",
+                "`owner` TEXT, `sync_sequence` INTEGER, `schema_cache_misses` INTEGER NOT NULL DEFAULT 0, " +
+                "`send_unconfirmed` INTEGER NOT NULL DEFAULT 0)",
             "CREATE INDEX IF NOT EXISTS `index_mutation_cache_owner_synced_at_ms` ON `mutation_cache` " +
                 "(`owner`, `synced_at_ms`)",
             "CREATE INDEX IF NOT EXISTS `index_mutation_cache_table_name` ON `mutation_cache` " +
                 "(`table_name`)",
             "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-            "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b6a7e9150b888e5e54cb2be30f46a734')",
+            "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd82a2435c50b4595368573f8728a370b')",
         )
 
     /** The UPDATE's filter: an AND descriptor, stored without its default `mode`. */
@@ -127,7 +128,10 @@ internal object ShippedDatabaseFixture {
             lastFetchedEpochMs = 1_727_000_000_500,
         )
 
-    /** Four unsent writes, one per operation, plus one synced write not yet retired. */
+    /**
+     * Four unsent writes, one per operation, plus one synced write not yet retired. The INSERT's
+     * send started and its outcome is unknown.
+     */
     val MUTATION_ROWS: List<MutationRow> =
         listOf(
             MutationRow(
@@ -141,6 +145,7 @@ internal object ShippedDatabaseFixture {
                 defaultToNull = true,
                 onConflict = null,
                 ignoreDuplicates = null,
+                sendUnconfirmed = true,
             ),
             MutationRow(
                 id = 2,
@@ -228,11 +233,12 @@ internal object ShippedDatabaseFixture {
                 connection.execSQL(
                     "INSERT INTO mutation_cache (id, table_name, operation, body_json, filter_json, " +
                         "created_at_ms, synced_at_ms, default_to_null, on_conflict, ignore_duplicates, " +
-                        "owner, sync_sequence) VALUES (${row.id}, ${sql(row.table)}, " +
+                        "owner, sync_sequence, send_unconfirmed) VALUES (${row.id}, " +
+                        "${sql(row.table)}, " +
                         "${sql(row.operation)}, ${sql(row.bodyJson)}, ${sql(row.filterJson)}, " +
                         "${row.createdAtMs}, ${row.syncedAtMs ?: "NULL"}, ${sql(row.defaultToNull)}, " +
                         "${sql(row.onConflict)}, ${sql(row.ignoreDuplicates)}, ${sql(row.owner)}, " +
-                        "${row.syncSequence ?: "NULL"})"
+                        "${row.syncSequence ?: "NULL"}, ${if (row.sendUnconfirmed) 1 else 0})"
                 )
             }
             connection.execSQL("PRAGMA user_version = $version")

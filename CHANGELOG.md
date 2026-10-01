@@ -72,8 +72,8 @@ release.
 - The request lambda passed to a read or a write may run more than once, so it must configure the
   same request every time.
 - The on-device database is schema version 1, the one this release ships: each queued write keeps
-  its owner, its replay order and its schema-cache refusals in its own row, and each cached query
-  the replay order it has caught up with.
+  its owner, its replay order, its schema-cache refusals and whether a send of it may have reached
+  the server in its own row, and each cached query the replay order it has caught up with.
 - Replayed writes are kept for the overlay until every cached query of their table has been
   fetched again since, or until they fall beyond the newest 1,000 of the table, whatever the device
   clock says; a table nothing caches keeps none.

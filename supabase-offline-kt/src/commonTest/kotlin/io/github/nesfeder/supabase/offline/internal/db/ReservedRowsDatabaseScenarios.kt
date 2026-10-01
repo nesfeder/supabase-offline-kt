@@ -86,7 +86,7 @@ internal class ReservedRowsDatabaseScenarios(
                 size,
             )
             assertEquals(ShippedDatabaseFixture.OBJECT_ROWS.size, evicted)
-            assertEquals(2L, RawDatabaseQueries.reservedRowCount(path))
+            assertEquals(1L, RawDatabaseQueries.reservedRowCount(path))
         } finally {
             database.close()
         }
@@ -102,7 +102,7 @@ internal class ReservedRowsDatabaseScenarios(
         val database = open(path, RecordingRoomCallback())
         try {
             val objectDao = database.objectDao()
-            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE, "{}", 0))
+            objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE, "{}", 0))
             objectDao.upsert(ObjectRow(RESERVED_TABLE_NAME, CACHE_OWNER_SIGNATURE, "{}", 0))
             val reservedBefore = RawDatabaseQueries.reservedRowCount(path)
 

@@ -169,6 +169,18 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     /** When set, the next [deleteById] fails, as a process dying before the delete would. */
     var failNextDeleteById: Boolean = false
 
+    /**
+     * When set, runs each time a send is recorded ([markSendUnconfirmed]), before the record is
+     * written: a point after a mutation is claimed and before its request is built.
+     */
+    var onMarkSendUnconfirmed: (suspend (id: Long) -> Unit)? = null
+
+    /** When set, the next [markSendUnconfirmed] fails, as a full disk would. */
+    var failNextMarkSendUnconfirmed: Boolean = false
+
+    /** When set, runs after [unconfirmedSendIds] read the rows and before it returns them. */
+    var afterUnconfirmedSendIdsRead: (suspend () -> Unit)? = null
+
     /** When set, runs after each transaction has committed, before its caller goes on. */
     var afterTransaction: (suspend () -> Unit)? = null
 
@@ -198,6 +210,21 @@ internal class FakeMutationDao : InMemoryMutationDao() {
             error("Scripted failure part-way through clearing")
         }
         super.deleteAll()
+    }
+
+    override suspend fun unconfirmedSendIds(): List<Long> {
+        val ids = super.unconfirmedSendIds()
+        afterUnconfirmedSendIdsRead?.invoke()
+        return ids
+    }
+
+    override suspend fun markSendUnconfirmed(id: Long): Int {
+        onMarkSendUnconfirmed?.invoke(id)
+        if (failNextMarkSendUnconfirmed) {
+            failNextMarkSendUnconfirmed = false
+            error("Scripted failure recording the send")
+        }
+        return super.markSendUnconfirmed(id)
     }
 
     override suspend fun deleteById(id: Long) {

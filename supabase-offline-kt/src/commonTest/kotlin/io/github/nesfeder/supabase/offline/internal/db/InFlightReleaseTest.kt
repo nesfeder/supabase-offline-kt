@@ -7,7 +7,7 @@ import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -31,8 +31,8 @@ import kotlinx.serialization.json.JsonArray
  */
 class InFlightReleaseTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val mutationDao = FakeMutationDao()
+    private val store = newTestOfflineStore(mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private val replayer =
         MutationQueueReplayer(
@@ -47,9 +47,7 @@ class InFlightReleaseTest {
         store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        objectDao.failNextUpsertOf { row ->
-            row.table == RESERVED_TABLE_NAME && row.signature == UNCONFIRMED_SENDS_SIGNATURE
-        }
+        mutationDao.failNextMarkSendUnconfirmed = true
 
         // When — one pass meets the failure, and the next runs once the disk recovers
         val failed = runCatching { replayer.sync() }
@@ -72,9 +70,7 @@ class InFlightReleaseTest {
         store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        objectDao.failNextUpsertOf { row ->
-            row.table == RESERVED_TABLE_NAME && row.signature == UNCONFIRMED_SENDS_SIGNATURE
-        }
+        mutationDao.failNextMarkSendUnconfirmed = true
         runCatching { replayer.sync() }
         replayer.sync()
 

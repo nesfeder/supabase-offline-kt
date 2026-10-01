@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
@@ -25,8 +25,8 @@ import kotlinx.serialization.json.JsonArray
  */
 class ReplayPassStopTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val mutationDao = FakeMutationDao()
+    private val store = newTestOfflineStore(mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
 
     @Test
@@ -40,10 +40,7 @@ class ReplayPassStopTest {
         }
         val replayer = MutationQueueReplayer(store = store, supabase = supabase)
         var pass: Job? = null
-        objectDao.onUpsert = { row ->
-            if (row.signature == UNCONFIRMED_SENDS_SIGNATURE && "mutationIds" in row.payload)
-                pass?.cancel()
-        }
+        mutationDao.onMarkSendUnconfirmed = { pass?.cancel() }
 
         // When
         pass = launch(start = CoroutineStart.LAZY) { replayer.sync() }
@@ -56,7 +53,7 @@ class ReplayPassStopTest {
         assertFalse(store.hasUnconfirmedSend(pending.id))
 
         // When — the next pass
-        objectDao.onUpsert = null
+        mutationDao.onMarkSendUnconfirmed = null
         val report = replayer.sync()
 
         // Then — sent once, as the plain insert a write never sent is

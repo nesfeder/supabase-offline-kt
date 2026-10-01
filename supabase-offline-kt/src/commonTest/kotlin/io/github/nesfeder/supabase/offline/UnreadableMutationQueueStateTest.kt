@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.internal.db.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.UNCONFIRMED_SENDS_SIGNATURE
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -49,21 +48,6 @@ class UnreadableMutationQueueStateTest {
         assertEquals(1, report.syncedCount)
         assertEquals(1, store.mutationQueueState.rejections().size)
         assertTrue(objectDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
-    }
-
-    @Test
-    fun an_unreadable_unconfirmed_sends_record_is_kept_aside_once() = runTest {
-        // Given
-        objectDao.seedPayload(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE, "{not json")
-
-        // When — two launches in turn read it
-        listOf(1_000L, 2_000L).forEach { launchedAt ->
-            newTestOfflineStore(objectDao = objectDao, nowMillis = { launchedAt })
-                .hasUnconfirmedSend(1)
-        }
-
-        // Then — the first kept it aside and wrote a readable record in its place
-        assertEquals(1, keptAsideCopiesOf(UNCONFIRMED_SENDS_SIGNATURE))
     }
 
     private fun keptAsideCopiesOf(signature: String): Int =

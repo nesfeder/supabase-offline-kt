@@ -7,7 +7,7 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
@@ -15,6 +15,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -29,24 +30,24 @@ import kotlinx.serialization.json.JsonArray
  */
 class ReplayTokenBindingTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val mutationDao = FakeMutationDao()
+    private val store = newTestOfflineStore(mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
 
     /** Runs [change] once, when the send of a keyed INSERT is recorded as started. */
     private fun changeTheSessionWhenASendStarts(change: suspend () -> Unit) {
         var changed = false
-        objectDao.onUpsert = { row ->
-            if (
-                !changed &&
-                    row.signature == UNCONFIRMED_SENDS_SIGNATURE &&
-                    "mutationIds" in row.payload
-            ) {
+        mutationDao.onMarkSendUnconfirmed = {
+            if (!changed) {
                 changed = true
                 change()
             }
         }
     }
+
+    /** The `Prefer` header of each write sent. */
+    private fun writePrefers(): List<String?> =
+        server.requests.filter { it.method == "POST" }.map { it.prefer }
 
     /** Queues a keyed INSERT for [owner] without sending it, as a write made offline is. */
     private suspend fun queueFor(owner: String, id: String) {
@@ -72,20 +73,52 @@ class ReplayTokenBindingTest {
         // When — a pass as A; B signs in after A was checked, before the request is built
         val report = replayer.sync()
 
-        // Then — nothing went out under B's token; the write is still A's and still queued
+        // Then — nothing went out under B's token; the write is still A's and still queued, and
+        // the send this attempt recorded is cleared: nothing left the device
         assertEquals(emptyList(), postsCarrying("user-b"))
         assertEquals(SyncStop.SessionChanged, report.stop)
         assertEquals(0, report.syncedCount)
         assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.owner })
+        assertFalse(store.hasUnconfirmedSend(store.allPendingMutations().single().id))
 
         // When — A signs in again and a pass runs
         supabase.signInForTest("user-a")
         val later = replayer.sync()
 
-        // Then — it goes out once, with A's token
+        // Then — it goes out once, with A's token, as the plain INSERT a write never sent is
         assertEquals(1, later.syncedCount)
         assertEquals(listOf("""[{"id":"a1"}]"""), postsCarrying("user-a"))
+        assertEquals(listOf<String?>("return=minimal"), writePrefers())
         assertEquals(emptyList(), store.allPendingMutations())
+    }
+
+    @Test
+    fun a_stop_keeps_the_record_an_earlier_send_made() = runTest {
+        // Given — user A's write, whose earlier send may have reached the server
+        val supabase = newTestSupabaseClientWithAuth(server.engine)
+        supabase.signInForTest("user-a")
+        queueFor("user:user-a", id = "a1")
+        val id = store.allPendingMutations().single().id
+        store.markSendUnconfirmed(id)
+        val replayer = MutationQueueReplayer(store = store, supabase = supabase)
+        changeTheSessionWhenASendStarts { supabase.signInForTest("user-b") }
+
+        // When — a pass as A is stopped by B's sign-in before its request is built
+        val report = replayer.sync()
+
+        // Then — the earlier send's record is kept
+        assertEquals(SyncStop.SessionChanged, report.stop)
+        assertTrue(store.hasUnconfirmedSend(id))
+
+        // When — A is back
+        supabase.signInForTest("user-a")
+        replayer.sync()
+
+        // Then — it replays as the upsert that takes a row already there as its own
+        assertTrue(
+            "resolution=ignore-duplicates" in writePrefers().single().orEmpty().split(','),
+            "${writePrefers()}",
+        )
     }
 
     @Test
@@ -121,18 +154,21 @@ class ReplayTokenBindingTest {
         // When — A writes; B signs in after the head was claimed, before the request is built
         val outcome = builder.insertJson(rows("""[{"id":"a1"}]"""))
 
-        // Then — the write stays queued as A's, and nothing went out under B's token
+        // Then — the write stays queued as A's, nothing went out under B's token, and the send
+        // this attempt recorded is cleared
         assertEquals(MutationOutcome.Queued, outcome)
         assertEquals(emptyList(), postsCarrying("user-b"))
         assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.owner })
+        assertFalse(store.hasUnconfirmedSend(store.allPendingMutations().single().id))
 
         // When — A is back
         supabase.signInForTest("user-a")
         val report = MutationQueueReplayer(store = store, supabase = supabase).sync()
 
-        // Then — sent once, as A
+        // Then — sent once, as A, as the plain INSERT
         assertEquals(1, report.syncedCount)
         assertEquals(listOf("""[{"id":"a1"}]"""), postsCarrying("user-a"))
+        assertEquals(listOf<String?>("return=minimal"), writePrefers())
     }
 
     @Test

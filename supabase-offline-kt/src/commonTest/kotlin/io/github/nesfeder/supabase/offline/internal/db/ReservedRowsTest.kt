@@ -36,8 +36,7 @@ class ReservedRowsTest {
 
     @Test
     fun reserved_rows_are_never_evicted_and_never_counted() = runTest {
-        // Given — a cache over its limit, holding a rejected list and the unconfirmed sends as its
-        // oldest rows
+        // Given — a cache over its limit, holding a rejected list as its oldest row
         val store =
             newTestOfflineStore(
                 objectDao = objectDao,
@@ -66,7 +65,6 @@ class ReservedRowsTest {
 
         // Then — the cache row went; the reserved rows stayed and never counted towards the size
         assertNull(objectDao.getRow("todos", "todos"))
-        assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE))
         assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
         assertTrue(reservedBytes > 0)
         assertEquals(0L, objectDao.totalPayloadBytes())
@@ -139,10 +137,9 @@ class ReservedRowsTest {
         store.clearAll()
 
         // Then
-        assertNull(objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE))
         assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
         assertEquals(emptyList(), store.mutationQueueState.rejections())
-        assertEquals(emptySet(), store.mutationQueueState.unconfirmedSends())
+        assertEquals(emptySet(), store.unconfirmedSends())
     }
 
     @Test
@@ -158,14 +155,10 @@ class ReservedRowsTest {
         val rejected =
             assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
                 .payload
-        val unconfirmed =
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE))
-                .payload
         assertTrue(rejected.contains("\"version\":1"), rejected)
-        assertTrue(unconfirmed.contains("\"version\":1"), unconfirmed)
     }
 
-    /** Queues a keyed write owned by [owner] and starts its send, which writes the send record. */
+    /** Queues a keyed write owned by [owner] and starts its send, which records it in its row. */
     private suspend fun OfflineStore.queueOwnedWrite(owner: String) {
         val queued =
             enqueueOwnedBy(owner) {

@@ -5,15 +5,12 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.SdkLogger
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
@@ -131,119 +128,23 @@ internal data class StoredRejectionList(
     val droppedCount: Long = 0,
 )
 
-/** The INSERT mutations whose send started and whose outcome is unknown. */
-@Serializable
-private data class StoredUnconfirmedSends(
-    @EncodeDefault val version: Int = MUTATION_QUEUE_STATE_FORMAT_VERSION,
-    val mutationIds: List<Long> = emptyList(),
-)
-
 /**
- * A queue record's first read: its value, and what to write if the record must start afresh. That
- * is the unreadable payload to keep aside, and the row to replace it or to stand in for a missing
- * one.
- */
-private class FirstRead<T>(
-    val value: T,
-    val unreadablePayload: String? = null,
-    val freshRow: ObjectRow? = null,
-)
-
-/**
- * The mutation queue's two records kept in reserved `object_cache` rows (see
- * [RESERVED_TABLE_NAME]): the rejected list, and which INSERTs may already be on the server. Each
- * is small and rarely written; they are cached in memory after the first read.
+ * The mutation queue's record kept in a reserved `object_cache` row (see [RESERVED_TABLE_NAME]):
+ * the rejected list, one bounded value read and written whole, rarely. It is cached in memory after
+ * the first read.
  *
- * Callers hold the store's mutation-queue lock, and build each row here before opening a
+ * Callers hold the store's mutation-queue lock, and build the row here before opening a
  * transaction, so no transaction waits on a coroutine lock. An unreadable row is kept aside,
  * logged, and started afresh.
- *
- * @property pendingKeyedInsertIds The pending INSERTs whose rows all carry their table's primary
- *   key: what a missing or unreadable unconfirmed-sends row starts from.
  */
 internal class MutationQueueState(
     private val objectDao: ObjectDao,
     private val json: Json,
     private val nowMillis: () -> Long,
     private val logger: () -> SdkLogger,
-    private val pendingKeyedInsertIds: suspend () -> Set<Long>,
 ) {
 
-    /**
-     * Held while the unconfirmed-sends row is first read, and written back when it has to start
-     * afresh, so that write cannot overwrite a change made meanwhile. Innermost of every lock.
-     */
-    private val loadLock = Mutex()
-
     private val rejectedCache = MutableStateFlow<StoredRejectionList?>(null)
-    private val unconfirmedCache = MutableStateFlow<Set<Long>?>(null)
-
-    /* ─────────────────────────── Unconfirmed sends ─────────────────────────── */
-
-    /**
-     * The INSERT mutations whose send started and whose outcome is unknown. Their replay must
-     * tolerate finding their rows already on the server; every other INSERT replays as sent.
-     */
-    suspend fun unconfirmedSends(): Set<Long> {
-        unconfirmedCache.value?.let {
-            return it
-        }
-        return loadLock.withLock {
-            unconfirmedCache.value
-                ?: settleFirstRead(
-                    unconfirmedCache,
-                    UNCONFIRMED_SENDS_SIGNATURE,
-                    readUnconfirmedSends(),
-                )
-        }
-    }
-
-    /**
-     * Reads the unconfirmed-sends row. A missing or unreadable one cannot say which sends were
-     * never made, so every keyed INSERT queued before this process queues any
-     * ([OfflineStore.enqueueOwnedBy]) counts as possibly delivered, the set to write in its place.
-     */
-    private suspend fun readUnconfirmedSends(): FirstRead<Set<Long>> {
-        val payload = objectDao.get(RESERVED_TABLE_NAME, UNCONFIRMED_SENDS_SIGNATURE)?.payload
-        payload
-            ?.let { decodeOrNull(StoredUnconfirmedSends.serializer(), it) }
-            ?.let { stored ->
-                return FirstRead(value = stored.mutationIds.toSet())
-            }
-        val possiblyDelivered = pendingKeyedInsertIds()
-        return FirstRead(
-            value = possiblyDelivered,
-            unreadablePayload = payload,
-            freshRow = unconfirmedSendsRow(possiblyDelivered),
-        )
-    }
-
-    /**
-     * The unconfirmed-sends row with [changes] applied, for the caller's transaction, or `null`
-     * when nothing changes; commit it with [unconfirmedSendsWritten]. Caller holds the
-     * mutation-queue lock.
-     */
-    suspend fun unconfirmedSendsRowWith(
-        changes: (Set<Long>) -> Set<Long>
-    ): Pair<ObjectRow, Set<Long>>? {
-        val current = unconfirmedSends()
-        val next = changes(current)
-        if (next == current) return null
-        return unconfirmedSendsRow(next) to next
-    }
-
-    private fun unconfirmedSendsRow(unconfirmed: Set<Long>): ObjectRow {
-        val stored = StoredUnconfirmedSends(mutationIds = unconfirmed.sorted())
-        return reservedRow(
-            UNCONFIRMED_SENDS_SIGNATURE,
-            json.encodeToString(StoredUnconfirmedSends.serializer(), stored),
-        )
-    }
-
-    /** Records that [unconfirmed] was written. */
-    fun unconfirmedSendsWritten(unconfirmed: Set<Long>) {
-        unconfirmedCache.value = unconfirmed
-    }
 
     /* ─────────────────────────── Rejected list ─────────────────────────── */
 
@@ -368,7 +269,6 @@ internal class MutationQueueState(
      */
     fun resetCaches() {
         rejectedCache.value = StoredRejectionList()
-        unconfirmedCache.value = emptySet()
     }
 
     private suspend fun rejectedList(): StoredRejectionList {
@@ -396,22 +296,6 @@ internal class MutationQueueState(
     }
 
     /**
-     * Sets [cache] from [read] only while it is still empty. A clear that ran during the read has
-     * set it already; then nothing is written either, so no row lands after the clear.
-     */
-    private suspend fun <T : Any> settleFirstRead(
-        cache: MutableStateFlow<T?>,
-        signature: String,
-        read: FirstRead<T>,
-    ): T {
-        if (cache.compareAndSet(null, read.value)) {
-            read.unreadablePayload?.let { payload -> keepAsideUnreadable(signature, payload) }
-            read.freshRow?.let { row -> writeFreshRow(row) }
-        }
-        return cache.value ?: read.value
-    }
-
-    /**
      * Keeps an unreadable reserved payload under `<signature>.unreadable.<ms>` and logs it at
      * ERROR.
      */
@@ -420,22 +304,6 @@ internal class MutationQueueState(
         objectDao.upsert(reservedRow(asideSignature, payload))
         logger().error {
             "The mutation queue's $signature record could not be read; kept it aside as $asideSignature and started a new one"
-        }
-    }
-
-    /**
-     * Writes [row], the value a missing or unreadable record starts afresh from. If the write fails
-     * the value still holds in memory, and the record's next change writes it.
-     */
-    private suspend fun writeFreshRow(row: ObjectRow) {
-        try {
-            objectDao.upsert(row)
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
-            logger().warning {
-                "Could not write the mutation queue's ${row.signature} record (${failure::class.simpleName}); its next change writes it"
-            }
         }
     }
 

@@ -304,11 +304,41 @@ internal open class InMemoryMutationDao : MutationDao {
     override suspend fun markSynced(id: Long, syncedAtMs: Long, syncSequence: Long) {
         mutations.update { current ->
             current.map {
-                if (it.id == id) it.copy(syncedAtMs = syncedAtMs, syncSequence = syncSequence)
+                if (it.id == id)
+                    it.copy(
+                        syncedAtMs = syncedAtMs,
+                        syncSequence = syncSequence,
+                        sendUnconfirmed = false,
+                    )
                 else it
             }
         }
     }
+
+    override suspend fun markSendUnconfirmed(id: Long): Int {
+        var marked = 0
+        mutations.update { current ->
+            marked = 0
+            current.map {
+                if (it.id == id && !it.sendUnconfirmed) {
+                    marked = 1
+                    it.copy(sendUnconfirmed = true)
+                } else {
+                    it
+                }
+            }
+        }
+        return marked
+    }
+
+    override suspend fun clearSendUnconfirmed(id: Long) {
+        mutations.update { current ->
+            current.map { if (it.id == id) it.copy(sendUnconfirmed = false) else it }
+        }
+    }
+
+    override suspend fun unconfirmedSendIds(): List<Long> =
+        mutations.value.filter { it.sendUnconfirmed }.map { it.id }
 
     override suspend fun deleteAll() {
         mutations.value = emptyList()

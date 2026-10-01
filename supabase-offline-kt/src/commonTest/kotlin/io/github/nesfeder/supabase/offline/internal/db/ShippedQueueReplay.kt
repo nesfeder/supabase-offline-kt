@@ -31,9 +31,9 @@ internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgre
  * Exactly what replaying the shipped queue must put on the wire, in order.
  *
  * Writes replay in the order they were queued (their ids 1 to 4), whatever their table. The INSERT
- * carries its key, and the shipped engine kept no record of whether an earlier send of it reached
- * the server, so it replays as an upsert that takes a row already there as its own. The UPDATE
- * replays its body exactly as it was queued.
+ * carries its key and its send is recorded as unconfirmed (`send_unconfirmed`), so it replays as an
+ * upsert that takes a row already there as its own. The UPDATE replays its body exactly as it was
+ * queued.
  */
 internal val SHIPPED_QUEUE_REPLAY: List<RecordedRequest> =
     listOf(

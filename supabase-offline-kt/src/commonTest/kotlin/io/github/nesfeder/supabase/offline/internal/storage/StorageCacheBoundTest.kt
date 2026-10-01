@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline.internal.storage
 import io.github.nesfeder.supabase.offline.internal.db.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.UNCONFIRMED_SENDS_SIGNATURE
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageDao
@@ -260,7 +259,7 @@ class StorageCacheBoundTest {
     fun eviction_leaves_the_mutation_queues_reserved_rows_alone() = runTest {
         // Given — the mutation queue's reserved rows, and a file cache at its bound
         val objectDao = FakeObjectDao()
-        val reservedSignatures = listOf(REJECTED_MUTATIONS_SIGNATURE, UNCONFIRMED_SENDS_SIGNATURE)
+        val reservedSignatures = listOf(REJECTED_MUTATIONS_SIGNATURE)
         reservedSignatures.forEach { signature ->
             objectDao.seedPayload(RESERVED_TABLE_NAME, signature, "{}")
         }

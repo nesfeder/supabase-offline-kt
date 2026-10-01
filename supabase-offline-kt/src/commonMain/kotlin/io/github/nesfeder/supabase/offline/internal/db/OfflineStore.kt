@@ -245,24 +245,21 @@ internal class OfflineStore(
      */
     internal var sdkLogger: SdkLogger = SdkLogger(null, OfflineLogLevel.INFO)
 
-    /**
-     * The mutation queue's records kept beside the rows: the rejected list and the unconfirmed
-     * sends.
-     */
+    /** The mutation queue's record kept beside the rows: the rejected list. */
     internal val mutationQueueState: MutationQueueState =
         MutationQueueState(
             objectDao = this.objectDao,
             json = OfflineJson,
             nowMillis = nowMillis,
             logger = { sdkLogger },
-            pendingKeyedInsertIds = {
-                mutationDao
-                    .pendingAll()
-                    .filter { mutation -> isKeyedInsert(mutation) }
-                    .map { mutation -> mutation.id }
-                    .toSet()
-            },
         )
+
+    /**
+     * The ids of the mutations whose send started and whose outcome is unknown
+     * ([MutationRow.sendUnconfirmed]), read once and kept in step with every change this store
+     * makes to them; `null` until first read. See [unconfirmedSends].
+     */
+    private val unconfirmedSendIds = MutableStateFlow<Set<Long>?>(null)
 
     /**
      * Serializes every change to the mutation queue's bookkeeping together with the mutation rows
@@ -768,6 +765,7 @@ internal class OfflineStore(
                         if (owner != null) objectDao.upsert(cacheOwner.rowOf(owner))
                     }
                     mutationQueueState.resetCaches()
+                    unconfirmedSendIds.value = emptySet()
                 }
                 queryShapes.forgetAll()
                 parsedPayloads.value = emptyMap()
@@ -941,18 +939,14 @@ internal class OfflineStore(
             body: JsonArray,
             filter: FilterDescriptor? = null,
             defaultToNull: Boolean = true,
-        ): Long {
-            // Read before the first INSERT this process queues, so a missing record is started from
-            // the INSERTs queued before it only. Under [enqueueOwnedBy] it is read already.
-            mutationQueueState.unconfirmedSends()
-            return insert(
+        ): Long =
+            insert(
                 table = table,
                 operation = MutationOperation.INSERT,
                 bodyJson = body.toString(),
                 filter = filter,
                 defaultToNull = defaultToNull,
             )
-        }
 
         /**
          * Queues an UPSERT.
@@ -1061,8 +1055,6 @@ internal class OfflineStore(
         enqueue: suspend MutationWriter.() -> Long,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
         if (predatesQueueTeardown(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
-        // Before the insert: the first read of the unconfirmed sends may write.
-        mutationQueueState.unconfirmedSends()
         EnqueueOutcome.Queued(MutationWriter(owner = identity).enqueue())
     }
 
@@ -1320,9 +1312,8 @@ internal class OfflineStore(
         mutationQueueMutex.withLock {
             val idSet = ids.toSet()
             val touched = tables ?: idSet.mapNotNull { id -> mutationDao.byId(id)?.table }
-            val unconfirmed = mutationQueueState.unconfirmedSendsRowWith { current ->
-                current - idSet
-            }
+            // Loaded first, so the change below reaches it.
+            unconfirmedSends()
             val rejected =
                 if (clearRejections && idSet.any { id -> mutationQueueState.hasRejection(id) }) {
                     mutationQueueState.rejectedRowWith(removeIds = idSet)
@@ -1331,11 +1322,9 @@ internal class OfflineStore(
                 }
             mutationDao.runInTransaction {
                 idSet.forEach { id -> mutationDao.deleteById(id) }
-                listOfNotNull(unconfirmed?.first, rejected?.first).forEach { row ->
-                    objectDao.upsert(row)
-                }
+                rejected?.let { (row, _) -> objectDao.upsert(row) }
             }
-            unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
+            unconfirmedSendIds.update { current -> current?.minus(idSet) }
             rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
             loggedOverlaySkips.update { logged -> logged - idSet }
             noteMutationsChanged(touched.toSet())
@@ -1373,16 +1362,14 @@ internal class OfflineStore(
                 serverError = serverError,
             )
         val (rejectedRow, list) = mutationQueueState.rejectedRowWith(add = entry)
-        val unconfirmed = mutationQueueState.unconfirmedSendsRowWith { current ->
-            current - mutation.id
-        }
+        // Loaded first, so the change below reaches it.
+        unconfirmedSends()
         mutationDao.runInTransaction {
             objectDao.upsert(rejectedRow)
             mutationDao.deleteById(mutation.id)
-            unconfirmed?.let { (row, _) -> objectDao.upsert(row) }
         }
         mutationQueueState.rejectedWritten(list)
-        unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
+        unconfirmedSendIds.update { current -> current?.minus(mutation.id) }
         noteMutationsChanged(mutation.table)
         list.entries.firstOrNull { stored -> stored.id == mutation.id } ?: entry
     }
@@ -1406,8 +1393,6 @@ internal class OfflineStore(
             val row =
                 entry.toRequeuedRow(createdAtMs = nowMillis(), owner = identity)
                     ?: return@withLock null
-            // Read before the re-queued write exists: it has never been sent under its new id.
-            mutationQueueState.unconfirmedSends()
             val (rejectedRow, list) = mutationQueueState.rejectedRowWith(removeId = id)
             var newId = 0L
             mutationDao.runInTransaction {
@@ -1549,7 +1534,7 @@ internal class OfflineStore(
             serverJson,
             pending,
             admissionOf(table, signature, shape),
-            mutationQueueState.unconfirmedSends(),
+            unconfirmedSends(),
             sameSelectRowsFor(table, signature, shape, pending, ownJson = serverJson),
         )
     }
@@ -1580,7 +1565,7 @@ internal class OfflineStore(
         if (all.isEmpty()) return cachedJson
 
         val admission = signature?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
-        return overlayFor(admission, mutationQueueState.unconfirmedSends())
+        return overlayFor(admission, unconfirmedSends())
             .overlay(
                 cachedJson,
                 all,
@@ -1693,7 +1678,7 @@ internal class OfflineStore(
                 cachedJson ?: EMPTY_JSON_ARRAY,
                 applicable,
                 admissionOf(table, signature, shape),
-                mutationQueueState.unconfirmedSends(),
+                unconfirmedSends(),
                 sameSelectRowsFor(table, signature, shape, applicable, ownJson = cachedJson),
                 bodyOf,
             )
@@ -2653,30 +2638,27 @@ internal class OfflineStore(
         }
 
     /**
-     * Marks mutation [id] replayed with the next sync sequence, clears its unconfirmed send and any
-     * stale rejected entry in the same transaction, and advances [table]'s stale-refresh watermark
-     * so a refresh that started before the replay cannot land after it.
+     * Marks mutation [id] replayed with the next sync sequence, clearing its send record, and
+     * removes any stale rejected entry in the same transaction, and advances [table]'s
+     * stale-refresh watermark so a refresh that started before the replay cannot land after it.
      */
     suspend fun markMutationSynced(id: Long, table: String) {
         recordLocalMutation(table)
         mutationQueueMutex.withLock {
             val sequence = latestSyncSequence() + 1
-            // Its outcome is known now. And a crash between recording a rejection and removing its
-            // mutation row leaves both: once the write has synced, the stale entry must go, or a
-            // retry would re-send an accepted write.
-            val unconfirmed = mutationQueueState.unconfirmedSendsRowWith { current -> current - id }
+            // Its outcome is known now: markSynced clears its send record. And a crash between
+            // recording a rejection and removing its row leaves both: the stale entry must go too.
+            unconfirmedSends()
             val rejected =
                 if (mutationQueueState.hasRejection(id))
                     mutationQueueState.rejectedRowWith(removeId = id)
                 else null
             mutationDao.runInTransaction {
                 mutationDao.markSynced(id = id, syncedAtMs = nowMillis(), syncSequence = sequence)
-                listOfNotNull(unconfirmed?.first, rejected?.first).forEach { row ->
-                    objectDao.upsert(row)
-                }
+                rejected?.let { (row, _) -> objectDao.upsert(row) }
             }
             latestSyncSequence = sequence
-            unconfirmed?.let { (_, next) -> mutationQueueState.unconfirmedSendsWritten(next) }
+            unconfirmedSendIds.update { current -> current?.minus(id) }
             rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
             noteMutationsChanged(table)
         }
@@ -2694,7 +2676,12 @@ internal class OfflineStore(
     suspend fun markSendUnconfirmed(id: Long): Boolean {
         val mutation = mutationDao.byId(id) ?: return false
         if (!isKeyedInsert(mutation)) return false
-        return updateUnconfirmedSends { current -> current + id }
+        return mutationQueueMutex.withLock {
+            unconfirmedSends()
+            val marked = mutationDao.markSendUnconfirmed(id) > 0
+            if (marked) unconfirmedSendIds.update { current -> current?.plus(id) }
+            marked
+        }
     }
 
     /**
@@ -2717,24 +2704,33 @@ internal class OfflineStore(
      * Clears the record that the send of mutation [id] may have reached the server: it never did.
      */
     suspend fun clearUnconfirmedSend(id: Long) {
-        updateUnconfirmedSends { current -> current - id }
+        mutationQueueMutex.withLock {
+            unconfirmedSends()
+            mutationDao.clearSendUnconfirmed(id)
+            unconfirmedSendIds.update { current -> current?.minus(id) }
+        }
     }
 
     /**
      * Whether mutation [id]'s send started and its outcome is unknown, so the server may hold its
      * rows.
      */
-    suspend fun hasUnconfirmedSend(id: Long): Boolean = id in mutationQueueState.unconfirmedSends()
+    suspend fun hasUnconfirmedSend(id: Long): Boolean = id in unconfirmedSends()
 
-    /** Applies [changes] to the unconfirmed sends. @return `true` when they changed. */
-    private suspend fun updateUnconfirmedSends(changes: (Set<Long>) -> Set<Long>): Boolean =
-        mutationQueueMutex.withLock {
-            val (row, next) =
-                mutationQueueState.unconfirmedSendsRowWith(changes) ?: return@withLock false
-            objectDao.upsert(row)
-            mutationQueueState.unconfirmedSendsWritten(next)
-            true
+    /**
+     * The INSERT mutations whose send started and whose outcome is unknown. Their replay must
+     * tolerate finding their rows already on the server; every other INSERT replays as sent. Read
+     * once from the rows, then kept in step: a writer reads it before its change, so the change
+     * always reaches it.
+     */
+    suspend fun unconfirmedSends(): Set<Long> {
+        unconfirmedSendIds.value?.let {
+            return it
         }
+        val loaded = mutationDao.unconfirmedSendIds().toSet()
+        unconfirmedSendIds.compareAndSet(null, loaded)
+        return unconfirmedSendIds.value ?: loaded
+    }
 
     /**
      * Retires [table]'s synced mutations that no cached query needs any more, and those beyond the

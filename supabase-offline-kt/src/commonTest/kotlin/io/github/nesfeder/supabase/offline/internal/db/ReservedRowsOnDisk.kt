@@ -75,9 +75,10 @@ internal val ON_DISK_OWNERS: Map<Long, String> = mapOf(1L to "user:user-a", 2L t
 
 /**
  * Writes the engine's queue state into this database through its own DAOs, as this build does at
- * run time: [ON_DISK_OWNERS], a rejected list, and a started send of the keyed INSERT 1 — the last
- * two in reserved rows. The clock is the fixture's era, older than every fixture row, so an
- * eviction that did not exclude reserved rows would take them first.
+ * run time: [ON_DISK_OWNERS], a rejected list in a reserved row, and a started send of the keyed
+ * INSERT 1, recorded in its own row (the fixture has it already). The clock is the fixture's era,
+ * older than every fixture row, so an eviction that did not exclude reserved rows would take them
+ * first.
  */
 internal suspend fun OfflineDatabase.writeReservedRows() {
     val store =
