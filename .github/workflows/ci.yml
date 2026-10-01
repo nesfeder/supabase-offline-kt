@@ -3,7 +3,8 @@ name: CI
 # One workflow, one required check: `All Green`.
 #
 #   changes ─┬─ formatting ──────┬─ jvm-tests  Linux  Android host tests of both modules and their
-#            │                   │                    coverage; the public API records (Android
+#            │                   │                    coverage; the Android sample's tests, lint and
+#            │                   │                    debug build; the public API records (Android
 #            │                   │                    and iOS); the build-tool floors check; the
 #            │                   │                    published-artifacts check
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
@@ -161,7 +162,7 @@ jobs:
                 docs=true; workflows=true ;;
               .github/workflows/* | .github/dependabot.yml)
                 workflows=true ;;
-              docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | demo/supabase/*)
+              docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | samples/supabase/*)
                 docs=true ;;
               .github/* | *.md | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
                 | .kempt.toml | config/license-header* | *.properties.example)
@@ -417,6 +418,25 @@ jobs:
           python3 .github/scripts/count-test-results.py "Android host tests" testAndroidHostTest
           supabase-offline-kt supabase-offline-kt-testing
 
+      # The Android sample (samples/android): its host tests, Robolectric's Compose tests among
+      # them, lint against its own baseline, and its debug APK. The APK is also the build-tool
+      # floors' signing proof: the build creates a debug keystore and signs the APK with the
+      # Bouncy Castle the floors raise.
+      - name: Test, lint and build the Android sample
+        if: ${{ !cancelled() }}
+        run: >-
+          ./gradlew
+          :samples:android:testDebugUnitTest
+          :samples:android:lint
+          :samples:android:assembleDebug
+          --continue --stacktrace
+
+      - name: Count the Android sample's tests
+        if: ${{ !cancelled() }}
+        run: >-
+          python3 .github/scripts/count-test-results.py "Android sample tests" testDebugUnitTest
+          samples/android
+
       # The core module's report: it covers some lines, and every file in it is one Codecov can
       # place in the repository.
       - name: Check the coverage report
@@ -466,6 +486,8 @@ jobs:
           path: |
             */build/reports/tests/
             */build/test-results/
+            samples/android/build/reports/
+            samples/android/build/test-results/
           retention-days: 7
 
   ios-tests:
