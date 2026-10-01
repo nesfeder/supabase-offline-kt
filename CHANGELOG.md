@@ -78,11 +78,14 @@ release.
   fetched again since, or until they fall beyond the newest 1,000 of the table, whatever the device
   clock says; a table nothing caches keeps none.
 - A write PostgREST refuses because its schema cache does not know the table or a column yet
-  (`PGRST205`, `PGRST204`), as happens just after a migration, stays queued. It is rejected only
-  at the tenth such refusal, each counted at least 30 seconds after the last, so a table that does
-  not exist cannot hold the queue for ever.
+  (`PGRST205`, `PGRST204`), as happens just after a migration, stays queued, online as well as
+  offline, and its user's later writes wait behind it. It is rejected only at the tenth such
+  refusal, each counted at least 30 seconds after the last while the app runs (the first after it
+  starts counts at once), so a table that does not exist, or a misspelled column, cannot hold the
+  queue for ever.
 - `close()` lets a replay pass finish the request it has on the wire, and record the answer,
-  before it stops, so the next client does not send the write again.
+  before it stops, so the next client does not send the write again. A request the server does
+  not answer holds `close()` for up to its 10-second bound.
 
 ### Deprecated
 
@@ -103,7 +106,8 @@ release.
 - A patched list keeps the time it was fetched, and a list made only of local writes is stale.
 - A queued write is sent with its owner's session token or not at all: a user signing in while
   another's writes replay no longer has them sent as theirs.
-- Offline for longer than a session token lives, a write that may queue is queued instead of
-  throwing `TokenExpiredException`.
+- A write that may queue, made when the session's token has expired and cannot be refreshed
+  (offline, or refused by the Auth server), is queued instead of throwing `TokenExpiredException`,
+  and replays as never sent once the session is good again.
 - A replay refused because its stored filter can no longer be read says so, instead of saying the
   write has no filter.

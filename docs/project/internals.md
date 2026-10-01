@@ -365,7 +365,8 @@ Per-table behavior:
 |-------------------|--------|
 | Success | Mutation marked synced (`synced_at_ms` populated); count incremented |
 | Network failure | The pass stops; the mutation and every one after it stay queued for retry |
-| PostgREST's schema cache does not know the table or a column (`PGRST205`, `PGRST204`) | The pass stops and the mutation stays queued; at the tenth miss, each counted at least 30 seconds after the last, it moves to the rejected list |
+| PostgREST's schema cache does not know the table or a column (`PGRST205`, `PGRST204`) | The pass stops and the mutation stays queued; `syncPendingMutations(table)` rethrows the refusal. At the tenth miss, each counted at least 30 seconds after the last while the app runs (the first after it starts counts at once), it moves to the rejected list |
+| The session changed to another identity before the request left the device | Nothing is sent; the pass stops and the mutation stays queued for its owner's next session |
 | Permanent failure (4xx except 401/408/429) | Mutation moved to the rejected list; continue with the next. A 403 or 409 with an earlier write of the identity still pending holds the pass instead |
 | Unknown error in `syncPendingMutations(table)` | Rethrown to caller; mutation kept in queue |
 | Unknown error in `syncAllPendingMutations()` | The pass stops; the mutation stays queued |
