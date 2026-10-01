@@ -9,12 +9,12 @@ package io.github.nesfeder.supabase.offline.internal.cache
  *   file, which never shrinks after a `DELETE`; `null` for no bound.
  * @property evictionBatchSize how many of the oldest rows one pass deletes at a time; the pass
  *   treats anything below one as one.
- * @property drainHeadroomBytes how far below the bound a pass drains, so a burst of writes does not
- *   start a pass on every write; a value that is not positive, or not below the bound, drains to
- *   the bound itself.
+ * @property evictionHeadroomBytes how far below the bound a pass drains, so a burst of writes does
+ *   not start a pass on every write; a value that is not positive, or not below the bound, drains
+ *   to the bound itself.
  */
 internal data class QueryCacheLimits(
     val maxPayloadBytes: Long?,
     val evictionBatchSize: Int,
-    val drainHeadroomBytes: Long,
+    val evictionHeadroomBytes: Long,
 )

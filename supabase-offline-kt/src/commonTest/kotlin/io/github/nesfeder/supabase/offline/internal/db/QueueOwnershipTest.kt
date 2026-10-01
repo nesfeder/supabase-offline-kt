@@ -35,7 +35,7 @@ class QueueOwnershipTest {
         newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity? = USER_A
-    private val syncer =
+    private val replayer =
         MutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
@@ -62,7 +62,7 @@ class QueueOwnershipTest {
         val requestsBefore = server.requests.size
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — nothing is sent: B has nothing pending, and A's write waits for A
         assertEquals(requestsBefore, server.requests.size)
@@ -78,11 +78,11 @@ class QueueOwnershipTest {
         writeOffline("A's note")
         session = USER_B
         server.answer = { okJson("[]") }
-        syncer.sync()
+        replayer.sync()
 
         // When — user A is back
         session = USER_A
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then
         assertEquals(1, report.syncedCount)
@@ -114,9 +114,9 @@ class QueueOwnershipTest {
         val requestsBefore = server.requests.size
 
         // When — B syncs, then A
-        val asB = syncer.sync()
+        val asB = replayer.sync()
         session = USER_A
-        val asA = syncer.sync()
+        val asA = replayer.sync()
 
         // Then
         assertEquals(1, asB.syncedCount)
@@ -135,12 +135,12 @@ class QueueOwnershipTest {
 
             // When — A's pass sees it but cannot reach the server; then B and A sync online
             server.answer = { connectivityFailure() }
-            syncer.sync()
+            replayer.sync()
             server.answer = { okJson("[]") }
             session = USER_B
-            val asB = syncer.sync()
+            val asB = replayer.sync()
             session = USER_A
-            val asA = syncer.sync()
+            val asA = replayer.sync()
 
             // Then — it became A's at A's first pass: B never sent it, A did
             assertEquals(0, asB.syncedCount)
@@ -157,7 +157,7 @@ class QueueOwnershipTest {
         val requestsBefore = server.requests.size
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then
         assertEquals(requestsBefore, server.requests.size)

@@ -37,7 +37,7 @@ class SessionChangeDuringPassTest {
                     okJson("[]")
                 }
             )
-        val syncer =
+        val replayer =
             MutationQueueReplayer(
                 store = store,
                 supabase = server.supabaseClient(),
@@ -45,7 +45,7 @@ class SessionChangeDuringPassTest {
             )
 
         // When
-        syncer.sync()
+        replayer.sync()
 
         // Then — nothing went out under B, and A's two remaining edits are still queued
         assertEquals(1, server.requests.size, "requests sent: ${server.requests.map { it.body }}")

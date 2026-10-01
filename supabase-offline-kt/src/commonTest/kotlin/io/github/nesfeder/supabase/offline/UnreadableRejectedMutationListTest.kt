@@ -23,7 +23,7 @@ import kotlinx.serialization.json.JsonArray
  * reserved cache rows. If one cannot be read (corruption, or a later build's format after a
  * downgrade), the engine degrades instead of wedging the queue, and keeps the payload aside once.
  */
-class UnreadableMutationQueueStateTest {
+class UnreadableRejectedMutationListTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
@@ -46,7 +46,7 @@ class UnreadableMutationQueueStateTest {
         // Then — the refusal is recorded on a fresh list, the next write went out, and the old
         // payload was kept aside rather than discarded
         assertEquals(1, report.syncedCount)
-        assertEquals(1, store.mutationQueueState.rejections().size)
+        assertEquals(1, store.rejectedList.rejections().size)
         assertTrue(queryCacheDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
     }
 

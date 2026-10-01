@@ -56,7 +56,7 @@ public fun createInMemorySupabaseOfflineClient(
                     QueryCacheLimits(
                         maxPayloadBytes = null,
                         evictionBatchSize = 0,
-                        drainHeadroomBytes = 0,
+                        evictionHeadroomBytes = 0,
                     ),
                 nowMillis = nowMillis,
             ),

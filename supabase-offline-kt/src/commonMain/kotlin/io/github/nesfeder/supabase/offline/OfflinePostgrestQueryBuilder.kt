@@ -418,7 +418,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         // One build of the request serves its schema, its queue capture and the cache patch
         val built = lazy { InsertRequestBuilder(delegate.schema, conversionMethod).apply(request) }
         return executeMutation(
-            verbLabel = "INSERT",
+            operationLabel = "INSERT",
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
@@ -489,7 +489,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         // One build of the request serves its schema, its queue capture and the cache patch
         val built = lazy { UpsertRequestBuilder(delegate.schema, conversionMethod).apply(request) }
         return executeMutation(
-            verbLabel = "UPSERT",
+            operationLabel = "UPSERT",
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
@@ -566,7 +566,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         // One build of the request serves its schema, its queue capture and the cache patch
         val built = lazy { SelectRequestBuilder(delegate.schema, conversionMethod).apply(request) }
         return executeMutation(
-            verbLabel = "UPDATE",
+            operationLabel = "UPDATE",
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
@@ -620,7 +620,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         // One build of the request serves its schema, its queue capture and the cache patch
         val built = lazy { SelectRequestBuilder(delegate.schema, conversionMethod).apply(request) }
         return executeMutation(
-            verbLabel = "DELETE",
+            operationLabel = "DELETE",
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
@@ -745,7 +745,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * @param captureForQueue How the write would be queued; see [QueueCapture].
      */
     private suspend fun executeMutation(
-        verbLabel: String,
+        operationLabel: String,
         table: String,
         mutationStrategy: MutationStrategy,
         writeSchema: () -> String,
@@ -754,7 +754,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
         captureForQueue: () -> QueueCapture,
     ): MutationOutcome = operationGate.call {
         executeMutationNow(
-            verbLabel,
+            operationLabel,
             table,
             mutationStrategy,
             writeSchema,
@@ -772,7 +772,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      *   queued.
      */
     private suspend fun executeMutationNow(
-        verbLabel: String,
+        operationLabel: String,
         table: String,
         mutationStrategy: MutationStrategy,
         writeSchema: () -> String,
@@ -783,18 +783,18 @@ internal class OfflinePostgrestQueryBuilderImpl(
         val performOnline: suspend () -> PostgrestResult = { perform(delegate) }
         if (mutationStrategy == MutationStrategy.OnlineOnly) {
             val result = performOnline()
-            engineLogger.debug { "$verbLabel $table response: ${result.data}" }
+            engineLogger.debug { "$operationLabel $table response: ${result.data}" }
             return MutationOutcome.Applied(result)
         }
         val schema = writeSchema()
         if (schema.isNotBlank() && schema != delegate.postgrest.config.defaultSchema) {
-            return sendToAnotherSchema(verbLabel, schema, table, performOnline)
+            return sendToAnotherSchema(operationLabel, schema, table, performOnline)
         }
 
         val startedAtTick = store.monotonicTickNow()
         // Taken as the write is issued: a session switch while it is in flight must not re-own it.
         val identity = queueIdentity()
-        val direct = DirectSend(verbLabel, table, performOnline, patchCache, startedAtTick)
+        val direct = DirectSend(operationLabel, table, performOnline, patchCache, startedAtTick)
 
         val queueable =
             when (val capture = captureForQueue()) {
@@ -803,17 +803,17 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 is QueueCapture.Refused -> {
                     capture.detail?.let { detail ->
                         engineLogger.debug {
-                            "Offline $verbLabel for $table would not be queued: $detail"
+                            "Offline $operationLabel for $table would not be queued: $detail"
                         }
                     }
                     return direct.send(OfflineLogLevel.ERROR) {
-                        "Refusing to queue offline $verbLabel for $table: ${capture.reason}"
+                        "Refusing to queue offline $operationLabel for $table: ${capture.reason}"
                     }
                 }
             }
         if (identity == null) {
             return direct.send(OfflineLogLevel.WARNING) {
-                "Not queueing offline $verbLabel for $table: the session's identity cannot be told"
+                "Not queueing offline $operationLabel for $table: the session's identity cannot be told"
             }
         }
         // Read from the request's shape, on a handle that needs no session token: a session whose
@@ -822,17 +822,17 @@ internal class OfflinePostgrestQueryBuilderImpl(
             DryRunVerdict.NotDryRun -> Unit
             DryRunVerdict.DryRun ->
                 return direct.send(OfflineLogLevel.INFO) {
-                    "Not queueing offline $verbLabel for $table: a dry run is never queued"
+                    "Not queueing offline $operationLabel for $table: a dry run is never queued"
                 }
             // The write's own failure, before any request: sending it directly reports it as it is.
             is DryRunVerdict.NotBuilt ->
                 return direct.send(OfflineLogLevel.INFO) {
-                    "Not queueing offline $verbLabel for $table: its request could not be built"
+                    "Not queueing offline $operationLabel for $table: its request could not be built"
                 }
             DryRunVerdict.Unavailable -> {
                 reportUnclassifiableWriteOnce()
                 return direct.send(OfflineLogLevel.WARNING) {
-                    "Not queueing offline $verbLabel for $table: it may be a dry run"
+                    "Not queueing offline $operationLabel for $table: it may be a dry run"
                 }
             }
             is DryRunVerdict.Sent -> {
@@ -851,7 +851,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
                 is EnqueueOutcome.Queued -> enqueued.id
                 EnqueueOutcome.LocalDataCleared ->
                     return direct.send(OfflineLogLevel.INFO) {
-                        "Not queueing offline $verbLabel for $table: local data was cleared while it was in flight"
+                        "Not queueing offline $operationLabel for $table: local data was cleared while it was in flight"
                     }
             }
 
@@ -869,13 +869,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
             }
         return when (sent) {
             MutationQueueReplayer.HeadSendOutcome.NotAtHead -> {
-                engineLogger.info { "$verbLabel $table queued behind pending mutations" }
+                engineLogger.info { "$operationLabel $table queued behind pending mutations" }
                 requestSync()
                 MutationOutcome.Queued
             }
 
             is MutationQueueReplayer.HeadSendOutcome.Sent -> {
-                engineLogger.debug { "$verbLabel $table response: ${sent.result.data}" }
+                engineLogger.debug { "$operationLabel $table response: ${sent.result.data}" }
                 requestPassIfPending(identity)
                 MutationOutcome.Applied(sent.result)
             }
@@ -885,12 +885,12 @@ internal class OfflinePostgrestQueryBuilderImpl(
                     val status = sent.cause.httpStatusOrNull()
                     when {
                         sent.cause.isNetworkOrConnectivityFailure() ->
-                            "$verbLabel $table queued offline (network unavailable)"
+                            "$operationLabel $table queued offline (network unavailable)"
                         status == null ->
-                            "$verbLabel $table queued (it could not be sent: " +
+                            "$operationLabel $table queued (it could not be sent: " +
                                 "${sent.cause::class.simpleName})"
                         else ->
-                            "$verbLabel $table queued (the server answered $status; " +
+                            "$operationLabel $table queued (the server answered $status; " +
                                 "it may not have run)"
                     }
                 }
@@ -904,7 +904,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
 
             is MutationQueueReplayer.HeadSendOutcome.Cleared -> {
                 engineLogger.info {
-                    "$verbLabel $table returned after local data was cleared; the cache is left as it was"
+                    "$operationLabel $table returned after local data was cleared; the cache is left as it was"
                 }
                 requestPassIfPending(identity)
                 sent.result?.let { result -> MutationOutcome.Applied(result) }
@@ -922,7 +922,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
      * @throws IOException when it cannot be sent for want of a connection, naming [schema].
      */
     private suspend fun sendToAnotherSchema(
-        verbLabel: String,
+        operationLabel: String,
         schema: String,
         table: String,
         performOnline: suspend () -> PostgrestResult,
@@ -934,13 +934,13 @@ internal class OfflinePostgrestQueryBuilderImpl(
             } catch (failure: Exception) {
                 if (!failure.isNetworkOrConnectivityFailure()) throw failure
                 throw IOException(
-                    "$verbLabel $table in the \"$schema\" schema could not be sent, and a write to a schema " +
+                    "$operationLabel $table in the \"$schema\" schema could not be sent, and a write to a schema " +
                         "other than the client's default is never queued: the queue replays to the " +
                         "default schema only",
                     failure,
                 )
             }
-        engineLogger.debug { "$verbLabel $schema.$table response: ${result.data}" }
+        engineLogger.debug { "$operationLabel $schema.$table response: ${result.data}" }
         if (!result.wasRolledBack) store.markEveryQueryStale("$schema.$table", startedAtTick)
         return MutationOutcome.Applied(result)
     }
@@ -968,7 +968,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
 
     /** A write sent directly, outside the queue, and the cache patch that follows its success. */
     private inner class DirectSend(
-        private val verbLabel: String,
+        private val operationLabel: String,
         private val table: String,
         private val performOnline: suspend () -> PostgrestResult,
         private val patchCache: suspend (result: PostgrestResult, startedAtTick: Long) -> Unit,
@@ -997,7 +997,7 @@ internal class OfflinePostgrestQueryBuilderImpl(
 
         /** The outcome of a write the server applied with [result], its cache patch done. */
         suspend fun applied(result: PostgrestResult): MutationOutcome {
-            engineLogger.debug { "$verbLabel $table response: ${result.data}" }
+            engineLogger.debug { "$operationLabel $table response: ${result.data}" }
             overlay(result)
             return MutationOutcome.Applied(result)
         }
@@ -1010,12 +1010,12 @@ internal class OfflinePostgrestQueryBuilderImpl(
             when {
                 result.wasRolledBack ->
                     engineLogger.debug {
-                        "$verbLabel $table was rolled back (a dry run); the cache is left as it was"
+                        "$operationLabel $table was rolled back (a dry run); the cache is left as it was"
                     }
 
                 store.wasClearedSince(startedAtTick) ->
                     engineLogger.info {
-                        "$verbLabel $table returned after local data was cleared; the cache is left as it was"
+                        "$operationLabel $table returned after local data was cleared; the cache is left as it was"
                     }
 
                 else -> patchCache(result, startedAtTick)

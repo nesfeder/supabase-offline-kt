@@ -129,7 +129,7 @@ class PersistedNamesTest {
     @Test
     fun a_rejected_list_is_written_with_these_keys() = runTest {
         // Given / When — an entry with every field set
-        store.mutationQueueState.addRejection(
+        store.rejectedList.addRejection(
             StoredRejection(
                 id = 7,
                 table = "todos",
@@ -171,7 +171,7 @@ class PersistedNamesTest {
     fun the_count_of_dropped_rejections_is_written_under_this_key() = runTest {
         // Given / When — one more rejection than the list keeps
         repeat(MAX_REJECTED_MUTATIONS + 1) { index ->
-            store.mutationQueueState.addRejection(
+            store.rejectedList.addRejection(
                 StoredRejection(
                     id = index + 1L,
                     table = "t",
@@ -256,7 +256,7 @@ class PersistedNamesTest {
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
 
         // When
-        store.mutationQueueState.rejections()
+        store.rejectedList.rejections()
 
         // Then
         assertEquals(

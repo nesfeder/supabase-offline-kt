@@ -215,7 +215,7 @@ class MutationQueueIdempotentReplayTest {
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         builderOn(server).insertJson(rows("""[{"id":"t1","title":"Buy milk"}]"""))
-        val syncer =
+        val replayer =
             MutationQueueReplayer(
                 store = store,
                 supabase = server.supabaseClient(),
@@ -223,7 +223,7 @@ class MutationQueueIdempotentReplayTest {
             )
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — synced once, and the count the server returned is logged without the row's values
         assertEquals(1, report.syncedCount)

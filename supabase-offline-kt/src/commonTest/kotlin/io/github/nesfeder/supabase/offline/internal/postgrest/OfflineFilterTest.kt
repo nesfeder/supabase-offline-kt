@@ -301,7 +301,7 @@ class OfflineFilterTest {
      * Dropping it broadens a queued UPDATE / DELETE to every row the rest of the filter (or RLS)
      * allows, so the engine now replays an empty list as the caller wrote it — `in.()`, which
      * matches nothing. A value that is not a list at all still does not apply, and [replaysFully]
-     * reports it so the syncer refuses the replay instead.
+     * reports it so the replayer refuses the replay instead.
      */
     @Test
     fun applyTo_inOperator_appliesEmptyListAsMatchNothing() {

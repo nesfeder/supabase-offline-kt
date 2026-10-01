@@ -129,7 +129,7 @@ class OfflineStoreEvictionTest {
 
     @Test
     fun eviction_not_blocked_when_min_retained_exceeds_small_limit() = runTest {
-        // Given a small cache limit and a default-scale drainHeadroomBytes far larger than it
+        // Given a small cache limit and a default-scale evictionHeadroomBytes far larger than it
         val queryCacheDao = FakeQueryCacheDao()
         repeat(4) { index ->
             queryCacheDao.seedPayload(
@@ -145,20 +145,21 @@ class OfflineStoreEvictionTest {
                 queryCacheDao = queryCacheDao,
                 maxPayloadBytes = 8_192L,
                 evictionBatchSize = 1,
-                drainHeadroomBytes = 50L * 1024L * 1024L,
+                evictionHeadroomBytes = 50L * 1024L * 1024L,
             )
 
         // When enforcement runs
         store.evictOverBudget()
 
-        // Then the oversized drainHeadroomBytes headroom coerced to a no-op and eviction still ran
+        // Then the oversized evictionHeadroomBytes headroom coerced to a no-op and eviction still
+        // ran
         assertTrue(
             queryCacheDao.totalPayloadBytes() <= 8_192L,
             "small cache should evict to the ceiling",
         )
         assertTrue(
             queryCacheDao.evictedRows >= 1,
-            "eviction must not be blocked by drainHeadroomBytes",
+            "eviction must not be blocked by evictionHeadroomBytes",
         )
     }
 
@@ -180,7 +181,7 @@ class OfflineStoreEvictionTest {
                 queryCacheDao = queryCacheDao,
                 maxPayloadBytes = 700L,
                 evictionBatchSize = 1,
-                drainHeadroomBytes = 300L,
+                evictionHeadroomBytes = 300L,
             )
 
         // When enforcement runs after the cache crosses the ceiling
@@ -374,7 +375,7 @@ class OfflineStoreEvictionTest {
         queryCacheDao: QueryCacheDao,
         maxPayloadBytes: Long?,
         evictionBatchSize: Int = 10,
-        drainHeadroomBytes: Long = 0L,
+        evictionHeadroomBytes: Long = 0L,
         nowMillis: () -> Long = { 0L },
     ): OfflineStore =
         newTestOfflineStore(
@@ -383,7 +384,7 @@ class OfflineStoreEvictionTest {
                 QueryCacheLimits(
                     maxPayloadBytes = maxPayloadBytes,
                     evictionBatchSize = evictionBatchSize,
-                    drainHeadroomBytes = drainHeadroomBytes,
+                    evictionHeadroomBytes = evictionHeadroomBytes,
                 ),
             nowMillis = nowMillis,
         )

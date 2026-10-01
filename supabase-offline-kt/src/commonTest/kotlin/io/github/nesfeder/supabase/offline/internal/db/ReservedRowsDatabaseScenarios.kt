@@ -47,7 +47,7 @@ internal class ReservedRowsDatabaseScenarios(
                     )
                 Triple(
                     reopened.readShippedFixtureContents(),
-                    store.mutationQueueState.rejections(),
+                    store.rejectedList.rejections(),
                     reopened.pendingOwners(),
                 )
             } finally {
@@ -253,7 +253,7 @@ internal class ReservedRowsDatabaseScenarios(
             val mutationDao = database.mutationDao()
             val store =
                 newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
-            val (rejectedRow, _) = store.mutationQueueState.rejectedRowWith(add = ON_DISK_REJECTION)
+            val (rejectedRow, _) = store.rejectedList.rejectedRowWith(add = ON_DISK_REJECTION)
 
             // When — a transaction that writes the rejection and deletes the write, then fails
             val failure = runCatching {
@@ -332,7 +332,7 @@ internal class ReservedRowsDatabaseScenarios(
                 reopened.readShippedFixtureContents(),
             )
             assertEquals(ON_DISK_PENDING_OWNERS, reopened.pendingOwners())
-            assertEquals(listOf(ON_DISK_REJECTION), store.mutationQueueState.rejections())
+            assertEquals(listOf(ON_DISK_REJECTION), store.rejectedList.rejections())
         } finally {
             reopened.close()
         }

@@ -70,7 +70,7 @@ internal val UNLIMITED_TEST_CACHE_SETTINGS: QueryCacheLimits =
     QueryCacheLimits(
         maxPayloadBytes = null,
         evictionBatchSize = 0,
-        drainHeadroomBytes = 0,
+        evictionHeadroomBytes = 0,
     )
 
 /**

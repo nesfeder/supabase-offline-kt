@@ -164,7 +164,7 @@ class QueryShapeRecordsTest {
                 QueryCacheLimits(
                     maxPayloadBytes = 70,
                     evictionBatchSize = 1,
-                    drainHeadroomBytes = 0,
+                    evictionHeadroomBytes = 0,
                 )
             )
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = list("A"))

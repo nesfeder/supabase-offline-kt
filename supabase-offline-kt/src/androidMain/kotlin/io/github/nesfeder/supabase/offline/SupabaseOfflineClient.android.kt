@@ -61,16 +61,15 @@ public fun createSupabaseOfflineClient(
     config: SupabaseOfflineConfig = SupabaseOfflineConfig(),
 ): SupabaseOfflineClient {
     val configuredDirectory = config.offlineStoragePath
-    val defaultDatabasePath = defaultDatabasePath(context)
+    val defaultPath = defaultDatabasePath(context)
     return openOfflineClient(
         supabase = supabase,
         config = config,
-        databasePath =
-            configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
+        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultPath,
         dataDirectory = configuredDirectory ?: PlatformBaseDirectory(context).path,
         openDatabase = { databasePath ->
             buildOfflineDatabase(offlineDatabaseBuilder(context, databasePath.toString()))
         },
-        defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
+        defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
     )
 }

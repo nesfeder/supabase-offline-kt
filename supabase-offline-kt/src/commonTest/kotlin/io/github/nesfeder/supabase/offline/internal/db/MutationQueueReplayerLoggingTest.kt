@@ -19,8 +19,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 
 /**
- * What a replay logs, ported from the previous standalone engine's syncer tests: INFO when a table
- * starts and finishes, DEBUG per replayed write, and a WARNING when a write is dropped as
+ * What a replay logs, ported from the previous standalone engine's replayer tests: INFO when a
+ * table starts and finishes, DEBUG per replayed write, and a WARNING when a write is dropped as
  * permanently rejected or the table pauses for connectivity. No message carries row data.
  */
 class MutationQueueReplayerLoggingTest {
@@ -28,7 +28,7 @@ class MutationQueueReplayerLoggingTest {
     private val server = RecordingPostgrestServer()
     private val logger = RecordingOfflineLogger()
     private val store = newTestOfflineStore()
-    private val syncer =
+    private val replayer =
         MutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
@@ -45,7 +45,7 @@ class MutationQueueReplayerLoggingTest {
         store.enqueueInsert(table = TABLE, body = ROWS)
 
         // When
-        syncer.syncTable(table = TABLE)
+        replayer.syncTable(table = TABLE)
 
         // Then
         assertEquals(
@@ -63,7 +63,7 @@ class MutationQueueReplayerLoggingTest {
         store.enqueueInsert(table = TABLE, body = ROWS)
 
         // When
-        syncer.syncTable(table = TABLE)
+        replayer.syncTable(table = TABLE)
 
         // Then
         assertEquals(listOf("Synced INSERT mutation for $TABLE"), messagesAt(OfflineLogLevel.DEBUG))
@@ -76,7 +76,7 @@ class MutationQueueReplayerLoggingTest {
         server.answer = { postgrestError(HttpStatusCode.Conflict) }
 
         // When
-        syncer.syncTable(table = TABLE)
+        replayer.syncTable(table = TABLE)
 
         // Then
         assertEquals(
@@ -92,7 +92,7 @@ class MutationQueueReplayerLoggingTest {
         server.answer = { connectivityFailure() }
 
         // When
-        syncer.syncTable(table = TABLE)
+        replayer.syncTable(table = TABLE)
 
         // Then
         assertEquals(

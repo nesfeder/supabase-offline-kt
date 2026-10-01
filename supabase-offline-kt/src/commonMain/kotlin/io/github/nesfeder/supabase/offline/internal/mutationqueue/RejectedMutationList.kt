@@ -39,7 +39,7 @@ internal const val MAX_REJECTED_TEXT_CHARS: Int = 4 * 1024
 internal const val MAX_REJECTED_LIST_CHARS: Int = 512 * 1024
 
 /** Version written into every reserved row, so a later format can recognise this one. */
-private const val MUTATION_QUEUE_STATE_FORMAT_VERSION: Int = 1
+private const val REJECTED_MUTATION_LIST_FORMAT_VERSION: Int = 1
 
 /**
  * What the server said when it refused a write, as persisted.
@@ -129,21 +129,21 @@ internal data class StoredRejection(
  */
 @Serializable
 internal data class StoredRejectionList(
-    @EncodeDefault val version: Int = MUTATION_QUEUE_STATE_FORMAT_VERSION,
+    @EncodeDefault val version: Int = REJECTED_MUTATION_LIST_FORMAT_VERSION,
     val entries: List<StoredRejection> = emptyList(),
     val droppedCount: Long = 0,
 )
 
 /**
- * The mutation queue's record kept in a reserved `object_cache` row (see [RESERVED_TABLE_NAME]):
- * the rejected list, one bounded value read and written whole, rarely. It is cached in memory after
- * the first read.
+ * The mutation queue's rejected list, kept in a reserved `object_cache` row (see
+ * [RESERVED_TABLE_NAME]): one bounded value read and written whole, rarely. It is cached in memory
+ * after the first read.
  *
  * Callers hold the store's mutation-queue lock, and build the row here before opening a
  * transaction, so no transaction waits on a coroutine lock. An unreadable row is kept aside,
  * logged, and started afresh.
  */
-internal class MutationQueueState(
+internal class RejectedMutationList(
     private val queryCacheDao: QueryCacheDao,
     private val json: Json,
     private val nowMillis: () -> Long,

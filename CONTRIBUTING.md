@@ -167,9 +167,11 @@ The script errs towards breaking. If it calls a change breaking that is not, cop
 `compat/overrides.txt`, followed by two spaces, `# ` and the reason. The reviewer judges the reason.
 An override stays until the release after it empties the file, so the release check sees it too; a
 line your pull request adds must match one of its findings. A rename inside a test that pins a
-stored format (a `persistedContract` file in `compat/policy.json`) takes the same route: override
-each `persisted-contract-changed` finding, and show in the pull request that only identifiers
-changed and every literal the test pins is byte for byte the same.
+stored format (a `persistedContract` file in `compat/policy.json`) rates `format`, even when only
+identifiers change. Before the first release, the pull request's line under `## Unreleased` covers
+it. After it, do not override that finding until the classifier ties an override to the file's
+contents: an override names only the file, so it would also pass a later edit there that does
+change a stored format.
 
 The rules the script applies are in `compat/policy.json`. A pull request is rated under the stricter
 of its own rules and its base's: a change that loosens them applies from the next pull request on,

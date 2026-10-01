@@ -15,7 +15,7 @@
             "notNull": true
           },
           {
-            "fieldPath": "signature",
+            "fieldPath": "cacheKey",
             "columnName": "signature",
             "affinity": "TEXT",
             "notNull": true

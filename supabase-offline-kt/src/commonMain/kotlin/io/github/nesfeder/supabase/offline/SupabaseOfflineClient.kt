@@ -527,7 +527,7 @@ internal class SupabaseOfflineClientImpl(
         clientScope.launch {
             auth.sessionStatus.collect { status ->
                 val identity = replayIdentityFor(status) ?: return@collect
-                if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.request()
+                if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
             }
         }
     }
@@ -609,7 +609,7 @@ internal class SupabaseOfflineClientImpl(
             liveQueries = liveQueries,
             wakeUps = wakeUps,
             queueIdentity = { supabase.currentQueueIdentity() },
-            requestSync = automaticReplay::request,
+            requestSync = automaticReplay::requestPass,
             headSender = mutationQueueReplayer,
             operationGate = operationGate,
             readShapePostgrest = readShape,
@@ -830,7 +830,7 @@ internal class SupabaseOfflineClientImpl(
      */
     internal fun rejectedMutations(): Flow<List<RejectedMutation>> {
         return operationGate.callCollecting(
-            store.mutationQueueState.rejectionsFlow().map { entries ->
+            store.rejectedList.rejectionsFlow().map { entries ->
                 entries.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) }
             }
         )
@@ -842,7 +842,7 @@ internal class SupabaseOfflineClientImpl(
      * @return The list; it throws if the persisted list cannot be decoded.
      */
     internal suspend fun rejectedMutationList(): List<RejectedMutation> = operationGate.call {
-        store.mutationQueueState.rejections().map { entry ->
+        store.rejectedList.rejections().map { entry ->
             entry.toRejectedMutation(store.json, primaryKeys)
         }
     }
@@ -867,7 +867,7 @@ internal class SupabaseOfflineClientImpl(
     internal suspend fun retryRejectedMutation(id: Long): Long? = operationGate.call {
         val identity = supabase.currentQueueIdentity() ?: return@call null
         val newId = store.retryRejectedMutation(id, identity.storedValue) ?: return@call null
-        automaticReplay.request()
+        automaticReplay.requestPass()
         newId
     }
 

@@ -91,7 +91,7 @@ internal suspend fun OfflineDatabase.writeReservedRows() {
             nowMillis = { 1_600_000_000_000 },
         )
     ON_DISK_OWNERS.forEach { (id, owner) -> mutationDao().setOwner(id, owner) }
-    store.mutationQueueState.addRejection(ON_DISK_REJECTION)
+    store.rejectedList.addRejection(ON_DISK_REJECTION)
     store.markSendUnconfirmed(1L)
 }
 

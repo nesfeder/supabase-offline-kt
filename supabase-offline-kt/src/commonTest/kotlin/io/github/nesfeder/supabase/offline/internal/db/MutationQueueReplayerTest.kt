@@ -35,7 +35,7 @@ import kotlinx.coroutines.test.runTest
 
 /**
  * Behavioural pins for [MutationQueueReplayer] — the replay path that pushes queued offline
- * mutations to Supabase. The syncer previously had no test coverage; these cases lock in FIFO
+ * mutations to Supabase. The replayer previously had no test coverage; these cases lock in FIFO
  * replay, per-failure-class handling (network pause vs. permanent drop vs. transient 401 vs.
  * bounded unknown-error dead-letter), the single-sweep-per-table `distinct()` fix, the concurrency
  * mutex, and the refuse-to-replay-unfiltered guard for legacy null-descriptor UPDATE/DELETE rows.
@@ -64,10 +64,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onInsert = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then: every mutation replayed once, in enqueue order, and none stays pending
         assertEquals(3, synced)
@@ -92,10 +92,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onInsert = { throw ConnectTimeoutException("connect timed out", null) },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then: the whole table pauses on the first mutation; nothing synced or dropped, order kept
         assertEquals(0, synced)
@@ -130,19 +130,20 @@ class MutationQueueReplayerTest {
                     if (call == 1) throw forbidden else postgrestResultOf("[]", client.postgrest)
                 },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
-        // Then: the 403 mutation leaves the queue for the rejected list, the syncer continues, and
+        // Then: the 403 mutation leaves the queue for the rejected list, the replayer continues,
+        // and
         // the second mutation syncs
         assertEquals(1, synced)
         assertEquals(2, remoteTable.recordedInsertBodies.size, "both mutations were attempted")
         assertEquals(0, store.pendingMutationCount())
         assertEquals(
             listOf(403),
-            store.mutationQueueState.rejections().map { it.serverError?.status },
+            store.rejectedList.rejections().map { it.serverError?.status },
         )
     }
 
@@ -160,10 +161,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onInsert = { throw unauthorized },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When: 401 is transient, so it is rethrown (not permanent) — and NOT dropped
-        assertFailsWith<ResponseException> { syncer.syncTable(table = table) }
+        assertFailsWith<ResponseException> { replayer.syncTable(table = table) }
 
         // Then: the queued write survives for a later sync (once the token is refreshed)
         assertEquals(1, store.pendingMutationCount())
@@ -185,11 +186,11 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onInsert = { throw unauthorized },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When: far more than MAX_REPLAY_FAILURES (5) consecutive 401 replays occur, each rethrows
         repeat(8) {
-            assertFailsWith<ResponseException> { syncer.syncTable(table = table) }
+            assertFailsWith<ResponseException> { replayer.syncTable(table = table) }
             assertEquals(
                 1,
                 store.pendingMutationCount(),
@@ -217,11 +218,11 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onInsert = { throw serverError },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When: far more replays than the old five-strike budget
         repeat(8) {
-            assertFailsWith<ResponseException> { syncer.syncTable(table = table) }
+            assertFailsWith<ResponseException> { replayer.syncTable(table = table) }
             assertEquals(1, store.pendingMutationCount(), "mutation stays pending across retries")
         }
 
@@ -252,11 +253,11 @@ class MutationQueueReplayerTest {
                         postgrestResultOf("[]", client.postgrest)
                     },
                 )
-            val syncer = syncer(store, client, remoteTable)
+            val replayer = replayer(store, client, remoteTable)
 
             // When: two syncAllTables run concurrently
-            val first = launch { syncer.syncAllTables() }
-            val second = launch { syncer.syncAllTables() }
+            val first = launch { replayer.syncAllTables() }
+            val second = launch { replayer.syncAllTables() }
             reachedInsert.await() // first holds the lock, parked in insert()
             releaseInsert.complete(Unit) // let it finish
             advanceUntilIdle()
@@ -282,7 +283,7 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onInsert = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer =
+        val replayer =
             MutationQueueReplayer(
                 store = store,
                 supabase = client,
@@ -293,7 +294,7 @@ class MutationQueueReplayerTest {
             )
 
         // When
-        val synced = syncer.syncAllTables()
+        val synced = replayer.syncAllTables()
 
         // Then: the table is swept once (not once per pending mutation), all three synced
         assertEquals(3, synced)
@@ -325,16 +326,16 @@ class MutationQueueReplayerTest {
                     postgrestResultOf("[]", client.postgrest)
                 }, // would succeed if ever called
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then: the unfiltered DELETE never fires; the row leaves the queue for the rejected list
         assertEquals(0, synced)
         assertEquals(0, remoteTable.recordedDeleteCount, "unfiltered DELETE must never execute")
         assertEquals(0, store.pendingMutationCount(), "the legacy null-filter row leaves the queue")
-        assertEquals(1, store.mutationQueueState.rejections().size)
+        assertEquals(1, store.rejectedList.rejections().size)
     }
 
     @Test
@@ -359,10 +360,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onUpdate = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then: the unfiltered UPDATE never fires and the poison row is dropped
         assertEquals(0, synced)
@@ -397,10 +398,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onUpdate = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then: the broadened UPDATE never fires and the row is dropped rather than retried
         assertEquals(0, synced)
@@ -434,10 +435,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onDelete = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then
         assertEquals(0, synced)
@@ -472,10 +473,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onDelete = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then: it would have replayed as a fully unfiltered DELETE
         assertEquals(0, synced)
@@ -511,10 +512,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onUpdate = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then
         assertEquals(1, synced)
@@ -549,10 +550,10 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onDelete = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer = syncer(store, client, remoteTable)
+        val replayer = replayer(store, client, remoteTable)
 
         // When
-        val synced = syncer.syncTable(table = table)
+        val synced = replayer.syncTable(table = table)
 
         // Then: the DELETE replays once, counts as synced and leaves nothing pending
         assertEquals(1, synced)
@@ -585,11 +586,11 @@ class MutationQueueReplayerTest {
                 postgrest = client.postgrest,
                 onInsert = { postgrestResultOf("[]", client.postgrest) },
             )
-        val syncer = syncer(store, client, remoteTable, awaitSessionSettled = { false })
+        val replayer = replayer(store, client, remoteTable, awaitSessionSettled = { false })
 
         // When both public entry points fire
-        val syncedForTable = syncer.syncTable(table = table)
-        val syncedForAll = syncer.syncAllTables()
+        val syncedForTable = replayer.syncTable(table = table)
+        val syncedForAll = replayer.syncAllTables()
 
         // Then nothing reaches the wire — the write is neither replayed on the anon key (where
         // RLS would 403 it into the permanent-failure drop) nor removed from the queue
@@ -613,14 +614,14 @@ class MutationQueueReplayerTest {
                 onInsert = { postgrestResultOf("[]", client.postgrest) },
             )
         var settled = false
-        val syncer = syncer(store, client, remoteTable, awaitSessionSettled = { settled })
+        val replayer = replayer(store, client, remoteTable, awaitSessionSettled = { settled })
 
         // When the first trigger races restore and the second lands after it settles — the
         // second going through syncAllTables so the post-deferral proceed path is pinned on
         // both public entry points
-        val deferredCount = syncer.syncTable(table = table)
+        val deferredCount = replayer.syncTable(table = table)
         settled = true
-        val replayedCount = syncer.syncAllTables()
+        val replayedCount = replayer.syncAllTables()
 
         // Then the deferred write replays intact on the second trigger
         assertEquals(0, deferredCount)
@@ -633,12 +634,12 @@ class MutationQueueReplayerTest {
     }
 
     /**
-     * Builds the syncer under test. When [awaitSessionSettled] is omitted the gate is the
+     * Builds the replayer under test. When [awaitSessionSettled] is omitted the gate is the
      * production default, [awaitSettledSession] — and because [testClient] installs Postgrest but
      * not Auth, every existing case also pins the fail-open path (no Auth plugin ⇒ replay proceeds,
      * no wait).
      */
-    private fun syncer(
+    private fun replayer(
         store: OfflineStore,
         client: SupabaseClient,
         remoteTable: FakeRemoteTable,

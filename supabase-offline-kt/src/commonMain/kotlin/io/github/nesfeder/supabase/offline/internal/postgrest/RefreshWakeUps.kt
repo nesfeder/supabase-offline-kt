@@ -5,7 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.status.SessionStatus
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.isReplaySafeSessionStatus
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.isSettledSessionStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -51,18 +51,18 @@ internal fun refreshWakeUps(
 ): Flow<Unit> {
     val sessionReady: (SessionStatus) -> Boolean =
         when (trustPolicy) {
-            ResponseTrustPolicy.SETTLED_SESSION -> ::isReplaySafeSessionStatus
+            ResponseTrustPolicy.SETTLED_SESSION -> ::isSettledSessionStatus
             ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY -> { status ->
                 status is SessionStatus.Authenticated
             }
         }
-    val authEdges =
+    val authWakeUps =
         supabase.pluginManager.getPluginOrNull(Auth)?.sessionStatus?.let { statuses ->
             risingEdges(statuses.map(sessionReady))
         } ?: emptyFlow()
-    val connectivityEdges =
+    val connectivityWakeUps =
         networkAvailability?.let { availability -> risingEdges(availability) } ?: emptyFlow()
-    return merge(authEdges, connectivityEdges)
+    return merge(authWakeUps, connectivityWakeUps)
 }
 
 /**

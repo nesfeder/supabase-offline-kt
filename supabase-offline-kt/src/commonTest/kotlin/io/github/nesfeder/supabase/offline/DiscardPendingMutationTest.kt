@@ -36,7 +36,7 @@ class DiscardPendingMutationTest {
     private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = USER_A
-    private val syncer =
+    private val replayer =
         MutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
@@ -47,7 +47,7 @@ class DiscardPendingMutationTest {
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
-            headSender = syncer,
+            headSender = replayer,
         )
 
     private suspend fun renameOffline(id: Int, title: String) {
@@ -65,12 +65,12 @@ class DiscardPendingMutationTest {
                 postgrestError(HttpStatusCode.InternalServerError, code = "54000")
             else okJson("[]")
         }
-        val stuck = syncer.sync()
+        val stuck = replayer.sync()
         val poison = store.allPendingMutations().first()
 
         // When
-        val discarded = syncer.discardPendingMutation(poison.id, session)
-        val report = syncer.sync()
+        val discarded = replayer.discardPendingMutation(poison.id, session)
+        val report = replayer.sync()
 
         // Then
         assertIs<SyncStop.TransientFailure>(stuck.stop)
@@ -91,7 +91,7 @@ class DiscardPendingMutationTest {
         )
 
         // When
-        syncer.discardPendingMutation(store.allPendingMutations().single().id, session)
+        replayer.discardPendingMutation(store.allPendingMutations().single().id, session)
 
         // Then
         assertEquals(
@@ -107,7 +107,7 @@ class DiscardPendingMutationTest {
 
         // When — user B tries to discard it
         val discarded =
-            syncer.discardPendingMutation(store.allPendingMutations().single().id, USER_B)
+            replayer.discardPendingMutation(store.allPendingMutations().single().id, USER_B)
 
         // Then
         assertFalse(discarded)
@@ -129,7 +129,7 @@ class DiscardPendingMutationTest {
 
         // When
         val discarded =
-            syncer.discardPendingMutation(store.allPendingMutations().single().id, session)
+            replayer.discardPendingMutation(store.allPendingMutations().single().id, session)
         release.complete(Unit)
 
         // Then — too late: it is already going out

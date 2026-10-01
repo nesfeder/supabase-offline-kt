@@ -47,7 +47,7 @@ class AuthPluginQueueIdentityTest {
     private val store = newTestOfflineStore()
     private val builder =
         OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from(TABLE), store = store)
-    private val syncer = MutationQueueReplayer(store = store, supabase = supabase)
+    private val replayer = MutationQueueReplayer(store = store, supabase = supabase)
 
     private fun sentBodies(): List<String> =
         server.requests.filter { it.method == "POST" }.map { it.body }
@@ -62,7 +62,7 @@ class AuthPluginQueueIdentityTest {
 
             // When — a pass while still signed out
             server.answer = { okJson("[]") }
-            val signedOut = syncer.sync()
+            val signedOut = replayer.sync()
 
             // Then — the anonymous write went out
             assertEquals(MutationOutcome.Queued, anonymousOutcome)
@@ -85,7 +85,7 @@ class AuthPluginQueueIdentityTest {
             server.answer = { connectivityFailure() }
             val userAOutcome = builder.insertJson(rows("""[{"id":"n1","title":"A's note"}]"""))
             server.answer = { okJson("[]") }
-            val signedIn = syncer.sync()
+            val signedIn = replayer.sync()
 
             // Then — A's write queued and went out under A
             assertEquals(MutationOutcome.Queued, userAOutcome)

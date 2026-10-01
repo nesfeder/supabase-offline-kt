@@ -88,7 +88,8 @@ release.
   not answer holds `close()` for up to its 10-second bound.
 - The library's internal code is renamed and grouped into packages under
   `io.github.nesfeder.supabase.offline.internal`. No public declaration, stored name or stored
-  format changed.
+  format changed. The exported Room schema records one field's new Kotlin name, `cacheKey`; its
+  column is still `signature`, and the schema's identity hash is unchanged.
 
 ### Deprecated
 

@@ -297,7 +297,7 @@ internal class CachingBucketApi(
         path: String,
         probe: DownloadRequestProbe,
         failure: Exception,
-        readCached: suspend (StorageCacheEntry) -> T?,
+        readCached: suspend (FileCacheEntry) -> T?,
     ): T {
         if (failure.indicatesServerObjectMissing()) {
             cache.invalidateObject(bucketId, path)
@@ -336,7 +336,7 @@ internal class CachingBucketApi(
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
-        entryProvider: () -> StorageCacheEntry?,
+        entryProvider: () -> FileCacheEntry?,
         fetch: suspend (ByteWriteChannel) -> Unit,
     ): StreamedDownload = coroutineScope {
         val pipe = ByteChannel()
@@ -412,7 +412,7 @@ internal class CachingBucketApi(
          * Opens the file for [entry] and holds it; the cache hands it back even to a cancelled
          * caller.
          */
-        suspend fun open(entry: StorageCacheEntry?): TemporaryDownload? =
+        suspend fun open(entry: FileCacheEntry?): TemporaryDownload? =
             entry?.let { cache.openTemporaryDownload(it) }?.also { opened -> temporary = opened }
 
         /** Deletes the file if it is still held. */

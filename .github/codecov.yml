@@ -95,7 +95,7 @@ component_management:
         - "supabase-offline-kt/src/**/internal/db/**"
         - "!supabase-offline-kt/src/**/internal/db/ReservedRows.kt"
     - component_id: storage
-      name: Storage cache
+      name: File cache
       paths:
         - "supabase-offline-kt/src/**/internal/storage/**"
     - component_id: testing-support

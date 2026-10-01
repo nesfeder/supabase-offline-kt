@@ -36,12 +36,12 @@ internal val AUTH_SESSION_SETTLE_TIMEOUT: Duration = 10.seconds
  *
  * Extracted as a pure function so the mapping is unit-testable without a real Supabase auth client.
  */
-internal fun isReplaySafeSessionStatus(status: SessionStatus): Boolean =
+internal fun isSettledSessionStatus(status: SessionStatus): Boolean =
     status is SessionStatus.Authenticated || status is SessionStatus.NotAuthenticated
 
 /**
  * Suspends until this client's session is settled — [SessionStatus.Authenticated] or
- * [SessionStatus.NotAuthenticated], see [isReplaySafeSessionStatus] — bounded by [timeout].
+ * [SessionStatus.NotAuthenticated], see [isSettledSessionStatus] — bounded by [timeout].
  *
  * Callers that replay queued mutations gate on this: a replay fired while the session restores or
  * its refresh has not landed would send the signed-in user's writes on the anon key, where RLS
@@ -57,7 +57,7 @@ internal suspend fun SupabaseClient.awaitSettledSession(
 ): Boolean =
     try {
         withTimeoutOrNull(timeout) {
-            auth.sessionStatus.first { status -> isReplaySafeSessionStatus(status) }
+            auth.sessionStatus.first { status -> isSettledSessionStatus(status) }
         } != null
     } catch (cancellation: CancellationException) {
         throw cancellation

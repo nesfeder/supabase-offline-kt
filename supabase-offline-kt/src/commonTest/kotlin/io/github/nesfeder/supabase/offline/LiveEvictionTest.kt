@@ -68,7 +68,7 @@ class LiveEvictionTest {
                                     maxPayloadBytes =
                                         (LARGE_LIST.length + LIST_A.length + 1).toLong(),
                                     evictionBatchSize = 1,
-                                    drainHeadroomBytes = 0,
+                                    evictionHeadroomBytes = 0,
                                 ),
                             nowMillis = { clock },
                         ),

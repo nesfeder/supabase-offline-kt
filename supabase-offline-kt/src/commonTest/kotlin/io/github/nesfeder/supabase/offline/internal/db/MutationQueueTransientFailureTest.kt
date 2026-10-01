@@ -49,10 +49,10 @@ class MutationQueueTransientFailureTest {
         // Given
         store.enqueueInsert(table = TABLE, body = ROWS)
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — far more sweeps than any retry budget
-        repeat(SWEEPS) { syncer.syncAllTables() }
+        repeat(SWEEPS) { replayer.syncAllTables() }
 
         // Then
         assertEquals(SWEEPS, server.requests.size)
@@ -63,13 +63,13 @@ class MutationQueueTransientFailureTest {
         // Given — a queued write and a server that keeps answering [status]
         store.enqueueInsert(table = TABLE, body = ROWS)
         val server = RecordingPostgrestServer(answer = { postgrestError(status) })
-        val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — both entry points, far more often than the old five-strike budget
         repeat(SWEEPS) {
-            syncer.syncAllTables()
+            replayer.syncAllTables()
             try {
-                syncer.syncTable(table = TABLE)
+                replayer.syncTable(table = TABLE)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (_: Exception) {

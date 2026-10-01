@@ -33,11 +33,11 @@ class AutomaticReplayTest {
                 if (passes == 1) release.await()
                 SyncReport(0, emptyList(), 0, stop = null)
             }
-        automaticReplay.request()
+        automaticReplay.requestPass()
         runCurrent()
 
         // When — ten more requests arrive while it runs, then it finishes
-        repeat(10) { automaticReplay.request() }
+        repeat(10) { automaticReplay.requestPass() }
         release.complete(Unit)
         runCurrent()
 
@@ -61,19 +61,19 @@ class AutomaticReplayTest {
             }
 
         // When / Then — the first runs at once
-        automaticReplay.request()
+        automaticReplay.requestPass()
         runCurrent()
         assertEquals(1, passes)
 
         // The next waits out one second
-        automaticReplay.request()
+        automaticReplay.requestPass()
         advanceTimeBy(999.milliseconds)
         assertEquals(1, passes)
         advanceTimeBy(2.milliseconds)
         assertEquals(2, passes)
 
         // Then two
-        automaticReplay.request()
+        automaticReplay.requestPass()
         advanceTimeBy(1_999.milliseconds)
         assertEquals(2, passes)
         advanceTimeBy(2.milliseconds)
@@ -92,7 +92,7 @@ class AutomaticReplayTest {
                 maxBackoff = 4.seconds,
             ) {
                 passTimes += testScheduler.currentTime
-                if (passTimes.size < 6) automaticReplay.request()
+                if (passTimes.size < 6) automaticReplay.requestPass()
                 SyncReport(
                     0,
                     emptyList(),
@@ -102,7 +102,7 @@ class AutomaticReplayTest {
             }
 
         // When
-        automaticReplay.request()
+        automaticReplay.requestPass()
         advanceTimeBy(20.seconds)
 
         // Then — waits of 1, 2 and 4 seconds, then 4 again
@@ -121,13 +121,13 @@ class AutomaticReplayTest {
                     else null
                 SyncReport(0, emptyList(), 0, stop)
             }
-        automaticReplay.request()
+        automaticReplay.requestPass()
         runCurrent()
-        automaticReplay.request()
+        automaticReplay.requestPass()
         advanceTimeBy(1.seconds + 1.milliseconds)
 
         // When — the next request comes after the good pass
-        automaticReplay.request()
+        automaticReplay.requestPass()
         runCurrent()
 
         // Then — it ran at once

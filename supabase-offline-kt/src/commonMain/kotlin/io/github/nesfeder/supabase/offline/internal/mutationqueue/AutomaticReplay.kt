@@ -51,7 +51,7 @@ internal class AutomaticReplay(
     private val worker = scope.launch(start = CoroutineStart.LAZY) { runPasses() }
 
     /** Asks for a pass. Returns at once; the pass runs in [scope]. */
-    fun request() {
+    fun requestPass() {
         requests.trySend(Unit)
         worker.start()
     }
@@ -72,7 +72,7 @@ internal class AutomaticReplay(
                     null
                 }
             backoff =
-                if (report == null || report.stop.mayPass()) {
+                if (report == null || report.stop.isWorthWaitingOut()) {
                     if (backoff == Duration.ZERO) initialBackoff else minOf(backoff * 2, maxBackoff)
                 } else {
                     Duration.ZERO
@@ -82,6 +82,6 @@ internal class AutomaticReplay(
     }
 
     /** Whether a pass that stopped this way stopped on a failure worth waiting out. */
-    private fun SyncStop?.mayPass(): Boolean =
+    private fun SyncStop?.isWorthWaitingOut(): Boolean =
         this is SyncStop.TransientFailure || this is SyncStop.HeldBehindEarlierMutations
 }

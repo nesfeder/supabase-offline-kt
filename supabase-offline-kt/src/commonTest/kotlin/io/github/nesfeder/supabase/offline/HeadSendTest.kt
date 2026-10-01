@@ -40,7 +40,7 @@ class HeadSendTest {
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
     private var syncRequests = 0
-    private val syncer =
+    private val replayer =
         MutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
@@ -52,7 +52,7 @@ class HeadSendTest {
             store = store,
             queueIdentity = { session },
             requestSync = { syncRequests++ },
-            headSender = syncer,
+            headSender = replayer,
         )
 
     private suspend fun rename(title: String): MutationOutcome =
@@ -66,7 +66,7 @@ class HeadSendTest {
         // When / Then — the caller gets the refusal; nothing is queued or put on the rejected list
         assertFailsWith<PostgrestRestException> { rename("A") }
         assertEquals(0, store.allPendingMutations().size)
-        assertEquals(emptyList(), store.mutationQueueState.rejections())
+        assertEquals(emptyList(), store.rejectedList.rejections())
     }
 
     @Test
@@ -107,7 +107,7 @@ class HeadSendTest {
         parked.await()
 
         // When — a pass runs meanwhile
-        val report = syncer.sync()
+        val report = replayer.sync()
         release.complete(Unit)
 
         // Then — the pass stopped at it; the write went out once and was applied
@@ -151,7 +151,7 @@ class HeadSendTest {
                 store = store,
                 queueIdentity = { USER_A },
                 requestSync = { syncRequests++ },
-                headSender = syncer,
+                headSender = replayer,
             )
         session = USER_B
 
@@ -162,7 +162,7 @@ class HeadSendTest {
         assertEquals(MutationOutcome.Queued, outcome)
         assertEquals(0, server.requests.size)
         session = USER_A
-        assertEquals(1, syncer.sync().syncedCount)
+        assertEquals(1, replayer.sync().syncedCount)
     }
 
     @Test
@@ -311,11 +311,12 @@ class HeadSendTest {
             release.await()
             okJson("[]")
         }
-        val pass = async { syncer.sync() }
+        val pass = async { replayer.sync() }
         parked.await()
 
         // When — its own caller offers it at the head meanwhile
-        val outcome = syncer.sendAtHead(id, USER_A, send = { error("sent twice") }, onAccepted = {})
+        val outcome =
+            replayer.sendAtHead(id, USER_A, send = { error("sent twice") }, onAccepted = {})
         release.complete(Unit)
         pass.await()
 

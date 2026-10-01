@@ -165,12 +165,11 @@ public fun createSupabaseOfflineClient(
             // Best effort: the cache directories inside it are excluded on their own as well.
         }
     }
-    val defaultDatabasePath = defaultDatabasePath()
+    val defaultPath = defaultDatabasePath()
     return openOfflineClient(
         supabase = supabase,
         config = config,
-        databasePath =
-            configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultDatabasePath,
+        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultPath,
         dataDirectory = dataDirectory,
         openDatabase = { databasePath ->
             buildOfflineDatabase(
@@ -178,7 +177,7 @@ public fun createSupabaseOfflineClient(
                     .addCallback(BackupExclusionCallback(databasePath))
             )
         },
-        defaultDatabasePath = defaultDatabasePath.takeIf { configuredDirectory != null },
+        defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
     )
 }
 

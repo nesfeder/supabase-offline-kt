@@ -91,7 +91,7 @@ internal fun SupabaseOfflineConfig.toQueryCacheLimits(): QueryCacheLimits =
         evictionBatchSize = 10,
         // A pass drains 50 MB below the bound, or to the bound when it is 50 MB or less, so the
         // next writes do not start another at once.
-        drainHeadroomBytes = 50L * 1024L * 1024L,
+        evictionHeadroomBytes = 50L * 1024L * 1024L,
     )
 
 /**

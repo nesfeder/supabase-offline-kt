@@ -23,9 +23,9 @@ import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.db.staleStampOf
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueState
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutationList
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
@@ -244,8 +244,8 @@ internal class OfflineStore(
     internal var engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO)
 
     /** The mutation queue's record kept beside the rows: the rejected list. */
-    internal val mutationQueueState: MutationQueueState =
-        MutationQueueState(
+    internal val rejectedList: RejectedMutationList =
+        RejectedMutationList(
             queryCacheDao = this.queryCacheDao,
             json = EngineJson,
             nowMillis = nowMillis,
@@ -765,7 +765,7 @@ internal class OfflineStore(
                         queryCacheDao.deleteAll()
                         if (owner != null) queryCacheDao.upsert(cacheOwner.rowOf(owner))
                     }
-                    mutationQueueState.resetCaches()
+                    rejectedList.resetCaches()
                     unconfirmedSendIds.value = emptySet()
                 }
                 queryShapes.forgetAll()
@@ -1316,8 +1316,8 @@ internal class OfflineStore(
             // Loaded first, so the change below reaches it.
             unconfirmedSends()
             val rejected =
-                if (clearRejections && idSet.any { id -> mutationQueueState.hasRejection(id) }) {
-                    mutationQueueState.rejectedRowWith(removeIds = idSet)
+                if (clearRejections && idSet.any { id -> rejectedList.hasRejection(id) }) {
+                    rejectedList.rejectedRowWith(removeIds = idSet)
                 } else {
                     null
                 }
@@ -1326,7 +1326,7 @@ internal class OfflineStore(
                 rejected?.let { (row, _) -> queryCacheDao.upsert(row) }
             }
             unconfirmedSendIds.update { current -> current?.minus(idSet) }
-            rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
+            rejected?.let { (_, next) -> rejectedList.rejectedWritten(next) }
             loggedOverlaySkips.update { logged -> logged - idSet }
             noteMutationsChanged(touched.toSet())
         }
@@ -1362,14 +1362,14 @@ internal class OfflineStore(
                 message = message,
                 serverError = serverError,
             )
-        val (rejectedRow, list) = mutationQueueState.rejectedRowWith(add = entry)
+        val (rejectedRow, list) = rejectedList.rejectedRowWith(add = entry)
         // Loaded first, so the change below reaches it.
         unconfirmedSends()
         mutationDao.runInTransaction {
             queryCacheDao.upsert(rejectedRow)
             mutationDao.deleteById(mutation.id)
         }
-        mutationQueueState.rejectedWritten(list)
+        rejectedList.rejectedWritten(list)
         unconfirmedSendIds.update { current -> current?.minus(mutation.id) }
         noteMutationsChanged(mutation.table)
         list.entries.firstOrNull { stored -> stored.id == mutation.id } ?: entry
@@ -1387,20 +1387,20 @@ internal class OfflineStore(
     suspend fun retryRejectedMutation(id: Long, identity: String?): Long? =
         mutationQueueMutex.withLock {
             val entry =
-                mutationQueueState.rejections().firstOrNull { rejection -> rejection.id == id }
+                rejectedList.rejections().firstOrNull { rejection -> rejection.id == id }
                     ?: return@withLock null
             if (identity != null && entry.owner != null && entry.owner != identity)
                 return@withLock null
             val row =
                 entry.toRequeuedRow(createdAtMs = nowMillis(), owner = identity)
                     ?: return@withLock null
-            val (rejectedRow, list) = mutationQueueState.rejectedRowWith(removeId = id)
+            val (rejectedRow, list) = rejectedList.rejectedRowWith(removeId = id)
             var newId = 0L
             mutationDao.runInTransaction {
                 newId = mutationDao.insert(row)
                 queryCacheDao.upsert(rejectedRow)
             }
-            mutationQueueState.rejectedWritten(list)
+            rejectedList.rejectedWritten(list)
             noteMutationsChanged(row.table)
             newId
         }
@@ -1412,7 +1412,7 @@ internal class OfflineStore(
      * @return `true` when an entry was removed.
      */
     suspend fun dismissRejectedMutation(id: Long): Boolean = mutationQueueMutex.withLock {
-        mutationQueueState.removeRejection(id) != null
+        rejectedList.removeRejection(id) != null
     }
 
     suspend fun pendingMutationsForTable(table: String): List<MutationRow> =
@@ -2648,8 +2648,7 @@ internal class OfflineStore(
             // recording a rejection and removing its row leaves both: the stale entry must go too.
             unconfirmedSends()
             val rejected =
-                if (mutationQueueState.hasRejection(id))
-                    mutationQueueState.rejectedRowWith(removeId = id)
+                if (rejectedList.hasRejection(id)) rejectedList.rejectedRowWith(removeId = id)
                 else null
             mutationDao.runInTransaction {
                 mutationDao.markSynced(id = id, syncedAtMs = nowMillis(), syncSequence = sequence)
@@ -2657,7 +2656,7 @@ internal class OfflineStore(
             }
             latestSyncSequence = sequence
             unconfirmedSendIds.update { current -> current?.minus(id) }
-            rejected?.let { (_, next) -> mutationQueueState.rejectedWritten(next) }
+            rejected?.let { (_, next) -> rejectedList.rejectedWritten(next) }
             noteMutationsChanged(table)
         }
     }
@@ -2794,10 +2793,10 @@ internal class OfflineStore(
      * Summed payload length decreases as rows are deleted, so it terminates.
      *
      * Eviction is **triggered** once the cache exceeds [QueryCacheLimits.maxPayloadBytes] and then
-     * **drains** down to a hysteresis floor of `max - drainHeadroomBytes` (coerced to the ceiling
-     * when [QueryCacheLimits.drainHeadroomBytes] is non-positive or meets/exceeds the ceiling).
-     * Draining a little below the ceiling keeps a burst of writes that crosses the limit from
-     * re-triggering a pass on every subsequent write.
+     * **drains** down to a hysteresis floor of `max - evictionHeadroomBytes` (coerced to the
+     * ceiling when [QueryCacheLimits.evictionHeadroomBytes] is non-positive or meets/exceeds the
+     * ceiling). Draining a little below the ceiling keeps a burst of writes that crosses the limit
+     * from re-triggering a pass on every subsequent write.
      *
      * Termination is guaranteed three independent ways:
      * 1. the `currentBytes > evictionFloorBytes` loop condition (the floor is never above the
@@ -2823,11 +2822,12 @@ internal class OfflineStore(
 
         // Once triggered, drain a little below the ceiling to this hysteresis floor so a burst of
         // writes crossing the limit doesn't re-trigger a pass on every subsequent write. When
-        // drainHeadroomBytes is non-positive or meets/exceeds the ceiling the headroom coerces to
+        // evictionHeadroomBytes is non-positive or meets/exceeds the ceiling the headroom coerces
+        // to
         // zero and the floor is the ceiling, keeping small-cache configs evicting fully.
         val evictionFloorBytes =
-            if (queryCacheLimits.drainHeadroomBytes in 1L until max)
-                max - queryCacheLimits.drainHeadroomBytes
+            if (queryCacheLimits.evictionHeadroomBytes in 1L until max)
+                max - queryCacheLimits.evictionHeadroomBytes
             else max
 
         evictionMutex.withLock {

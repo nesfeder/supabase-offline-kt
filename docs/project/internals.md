@@ -447,7 +447,7 @@ file never shrinks and could never tell an eviction pass to stop. Eviction is
   size-based eviction off. Any other value is at least `MIN_CACHE_SIZE_BYTES`.
 - `evictionBatchSize = 10`: how many of the oldest rows one step of a pass deletes. A value below
   one is treated as one.
-- `drainHeadroomBytes = 50 MB`: headroom. A pass that starts above the bound drains to 50 MB below it,
+- `evictionHeadroomBytes = 50 MB`: headroom. A pass that starts above the bound drains to 50 MB below it,
   so a burst of writes does not start a pass on every write. When the bound is 50 MB or less, a
   pass drains to the bound itself.
 

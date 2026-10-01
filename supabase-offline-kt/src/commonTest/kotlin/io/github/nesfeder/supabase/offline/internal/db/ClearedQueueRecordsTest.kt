@@ -34,7 +34,7 @@ class ClearedQueueRecordsTest {
         // When — cleared, then read the way the overlay and the counts read them
         store.clearLocalData()
         val unconfirmed = store.unconfirmedSends()
-        val rejections = store.mutationQueueState.rejections()
+        val rejections = store.rejectedList.rejections()
 
         // Then — every record reads empty, and nothing was written back
         assertTrue(unconfirmed.isEmpty() && rejections.isEmpty())

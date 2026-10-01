@@ -72,7 +72,7 @@ private const val LOW_WATER_FRACTION: Long = 10L
  *   untransformed object.
  * @property file where the entry's bytes live.
  */
-internal class StorageCacheEntry(
+internal class FileCacheEntry(
     val bucketId: String,
     val objectPath: String,
     val transform: String?,
@@ -98,7 +98,7 @@ internal class StorageCacheEntry(
  * @property sink an open sink to the temporary file; [StorageFileCache.commit] closes it.
  */
 internal class TemporaryDownload(
-    val entry: StorageCacheEntry,
+    val entry: FileCacheEntry,
     val path: Path,
     val sink: BufferedSink,
 )
@@ -203,9 +203,9 @@ internal class StorageFileCache(
      *
      * @return the entry, or `null` when the object cannot be cached.
      */
-    fun entryFor(bucketId: String, objectPath: String): StorageCacheEntry? {
+    fun entryFor(bucketId: String, objectPath: String): FileCacheEntry? {
         val file = objectFilePathOrNull(dataDirectory, bucketId, objectPath) ?: return null
-        return StorageCacheEntry(bucketId, objectPath, transform = null, file = file)
+        return FileCacheEntry(bucketId, objectPath, transform = null, file = file)
     }
 
     /**
@@ -218,10 +218,10 @@ internal class StorageFileCache(
         bucketId: String,
         objectPath: String,
         transform: String,
-    ): StorageCacheEntry? {
+    ): FileCacheEntry? {
         if (!isCacheableBucketId(bucketId) || !isCacheableObjectPath(objectPath)) return null
         val key = "$bucketId::$objectPath$VARIANT_SEPARATOR$transform"
-        return StorageCacheEntry(
+        return FileCacheEntry(
             bucketId,
             objectPath,
             transform,
@@ -242,7 +242,7 @@ internal class StorageFileCache(
      * @param entry the entry.
      * @return the cached file, reporting the size of the file on disk.
      */
-    suspend fun useCachedCopy(entry: StorageCacheEntry): CachedFile? =
+    suspend fun useCachedCopy(entry: FileCacheEntry): CachedFile? =
         withContext(Dispatchers.IO) {
             if (!store.cacheServesCurrentIdentity()) return@withContext null
             val row =
@@ -270,7 +270,7 @@ internal class StorageFileCache(
      * @param block the read.
      * @return what [block] returns.
      */
-    suspend fun <T> withPinned(entry: StorageCacheEntry, block: suspend () -> T): T {
+    suspend fun <T> withPinned(entry: FileCacheEntry, block: suspend () -> T): T {
         lock.withLock { pins[entry.key] = (pins[entry.key] ?: 0) + 1 }
         try {
             return block()
@@ -290,7 +290,7 @@ internal class StorageFileCache(
      * @param entry the entry.
      * @return the bytes.
      */
-    suspend fun readBytes(entry: StorageCacheEntry): ByteArray? =
+    suspend fun readBytes(entry: FileCacheEntry): ByteArray? =
         withPinned(entry) {
             val cached = useCachedCopy(entry) ?: return@withPinned null
             withContext(Dispatchers.IO) {
@@ -312,7 +312,7 @@ internal class StorageFileCache(
      * @param channel where the bytes go.
      * @return `false` when nothing was cached, so nothing was written.
      */
-    suspend fun copyTo(entry: StorageCacheEntry, channel: ByteWriteChannel): Boolean =
+    suspend fun copyTo(entry: FileCacheEntry, channel: ByteWriteChannel): Boolean =
         withPinned(entry) {
             val cached = useCachedCopy(entry) ?: return@withPinned false
             copyFile(cached.path.toPath(), channel)
@@ -349,13 +349,13 @@ internal class StorageFileCache(
      * @return the temporary download, or `null` when the file system refuses or the directory
      *   resolves outside the cache (logged).
      */
-    suspend fun openTemporaryDownload(entry: StorageCacheEntry): TemporaryDownload? {
+    suspend fun openTemporaryDownload(entry: FileCacheEntry): TemporaryDownload? {
         currentCoroutineContext().ensureActive()
         return onIoHandingBackItsResult { createTemporaryDownload(entry) }
     }
 
     /** [openTemporaryDownload]'s body: creates the file under the lock. */
-    private suspend fun createTemporaryDownload(entry: StorageCacheEntry): TemporaryDownload? =
+    private suspend fun createTemporaryDownload(entry: FileCacheEntry): TemporaryDownload? =
         lock.withLock {
             sweepTemporaryFilesOnce()
             val directory = entry.file.parent ?: return@withLock null
@@ -391,7 +391,7 @@ internal class StorageFileCache(
      *
      * @param startedInGeneration [currentGeneration] as read before the download started.
      */
-    suspend fun write(entry: StorageCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
+    suspend fun write(entry: FileCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
         val temporary = openTemporaryDownload(entry) ?: return
         try {
             withContext(Dispatchers.IO) { temporary.sink.write(bytes) }
@@ -569,7 +569,7 @@ internal class StorageFileCache(
      * The entry [row] describes, derived from its bucket and path — never from the file it
      * recorded.
      */
-    private fun entryForRow(row: CachedFileRow): StorageCacheEntry? {
+    private fun entryForRow(row: CachedFileRow): FileCacheEntry? {
         val separator = row.path.indexOf(VARIANT_SEPARATOR)
         if (separator < 0) return entryFor(row.bucketId, row.path)
         return variantEntryFor(
@@ -584,7 +584,7 @@ internal class StorageFileCache(
      * another path mapping. A recorded file outside the data directory only means the directory
      * moved.
      */
-    private fun CachedFileRow.recordsOutdatedPath(entry: StorageCacheEntry): Boolean {
+    private fun CachedFileRow.recordsOutdatedPath(entry: FileCacheEntry): Boolean {
         val recorded = localPath.toPath().normalized()
         return recorded != entry.file && recorded.isStrictlyInside(dataDirectory)
     }
@@ -618,7 +618,7 @@ internal class StorageFileCache(
      * was none.
      */
     private suspend fun restoreRowLocked(
-        entry: StorageCacheEntry,
+        entry: FileCacheEntry,
         replaced: CachedFileRow?,
         recordedSize: Long?,
     ) {
@@ -637,7 +637,7 @@ internal class StorageFileCache(
      * Drops [entry]'s row when it still records an outdated path, and that file when nothing owns
      * it.
      */
-    private suspend fun dropOutdatedRowLocked(entry: StorageCacheEntry) {
+    private suspend fun dropOutdatedRowLocked(entry: FileCacheEntry) {
         val row = store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return
         if (!row.recordsOutdatedPath(entry)) return
         removeRowLocked(row)
@@ -666,7 +666,7 @@ internal class StorageFileCache(
     }
 
     /** Moves [source]'s cached file to [destination]'s, recording the destination first. */
-    private suspend fun moveFileLocked(source: StorageCacheEntry, destination: StorageCacheEntry) {
+    private suspend fun moveFileLocked(source: FileCacheEntry, destination: FileCacheEntry) {
         val directory = destination.file.parent ?: return
         if (!resolvesInsideDataDirectory(source.file) || !resolvesInsideDataDirectory(directory))
             return

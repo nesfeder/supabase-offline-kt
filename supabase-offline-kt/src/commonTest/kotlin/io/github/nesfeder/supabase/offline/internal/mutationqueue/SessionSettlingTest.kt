@@ -10,7 +10,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * Pins [isReplaySafeSessionStatus] — the status mapping behind the mutation-replay gate.
+ * Pins [isSettledSessionStatus] — the status mapping behind the mutation-replay gate.
  *
  * The invariant: a replay may only proceed once the session has settled into an identity the
  * requests will really go out as — signed in (the user JWT, which supabase-kt attaches **only**
@@ -38,7 +38,7 @@ class SessionSettlingTest {
             )
 
         // When / Then
-        assertTrue(isReplaySafeSessionStatus(status))
+        assertTrue(isSettledSessionStatus(status))
     }
 
     @Test
@@ -47,7 +47,7 @@ class SessionSettlingTest {
         val status = SessionStatus.Initializing
 
         // When / Then — replaying here sends the anon key
-        assertFalse(isReplaySafeSessionStatus(status))
+        assertFalse(isSettledSessionStatus(status))
     }
 
     @Test
@@ -60,7 +60,7 @@ class SessionSettlingTest {
             )
 
         // When / Then — currentSessionOrNull() is null here too; deferring keeps the queue
-        assertFalse(isReplaySafeSessionStatus(status))
+        assertFalse(isSettledSessionStatus(status))
     }
 
     @Test
@@ -68,7 +68,7 @@ class SessionSettlingTest {
         // Given — both terminal signed-out variants supabase-kt emits
         // When / Then — the session is settled: the writes made signed out replay on the anon key,
         // and a signed-in user's writes are not the current identity's, so none of them is sent
-        assertTrue(isReplaySafeSessionStatus(SessionStatus.NotAuthenticated(isSignOut = true)))
-        assertTrue(isReplaySafeSessionStatus(SessionStatus.NotAuthenticated(isSignOut = false)))
+        assertTrue(isSettledSessionStatus(SessionStatus.NotAuthenticated(isSignOut = true)))
+        assertTrue(isSettledSessionStatus(SessionStatus.NotAuthenticated(isSignOut = false)))
     }
 }

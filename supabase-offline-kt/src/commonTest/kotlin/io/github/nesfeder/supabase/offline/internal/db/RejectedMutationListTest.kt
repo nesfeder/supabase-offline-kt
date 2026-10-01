@@ -47,7 +47,7 @@ class RejectedMutationListTest {
             nowMillis = { clock },
         )
     private val server = RecordingPostgrestServer()
-    private val syncer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+    private val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     @Test
     fun a_permanent_rejection_keeps_the_write_and_the_servers_reason() = runTest {
@@ -65,7 +65,7 @@ class RejectedMutationListTest {
         clock = 5_000L
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — it left the queue, and the rejection says what the server said
         assertEquals(0, store.pendingMutationCount())
@@ -95,15 +95,15 @@ class RejectedMutationListTest {
         // Given — a write rejected in one process
         val id = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
         server.answer = { postgrestError(HttpStatusCode.UnprocessableEntity) }
-        syncer.sync()
+        replayer.sync()
 
         // When — a new process opens the same database
         val restarted =
             newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
         // Then
-        assertEquals(listOf(id), restarted.mutationQueueState.rejections().map { it.id })
-        assertEquals(422, restarted.mutationQueueState.rejections().single().serverError?.status)
+        assertEquals(listOf(id), restarted.rejectedList.rejections().map { it.id })
+        assertEquals(422, restarted.rejectedList.rejections().single().serverError?.status)
     }
 
     @Test
@@ -121,7 +121,7 @@ class RejectedMutationListTest {
             )
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — refused locally: no server error, a reason, nothing sent
         val rejected = report.rejected.single()
@@ -146,7 +146,7 @@ class RejectedMutationListTest {
         )
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then
         assertEquals(MutationQueueOperation.Update, report.rejected.single().operation)
@@ -177,7 +177,7 @@ class RejectedMutationListTest {
         )
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — both refused locally, saying the filter cannot be read; neither sent without it
         assertEquals(
@@ -199,10 +199,10 @@ class RejectedMutationListTest {
         server.answer = { postgrestError(HttpStatusCode.BadRequest, code = "22P02") }
 
         // When
-        syncer.sync()
+        replayer.sync()
 
         // Then — the oldest five went first
-        val ids = store.mutationQueueState.rejections().map { it.id }
+        val ids = store.rejectedList.rejections().map { it.id }
         assertEquals(MAX_REJECTED_MUTATIONS, ids.size)
         assertEquals((6L..105L).toList(), ids)
     }
@@ -212,15 +212,15 @@ class RejectedMutationListTest {
         // Given
         val id = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
         server.answer = { postgrestError(HttpStatusCode.BadRequest) }
-        syncer.sync()
+        replayer.sync()
 
         // When
         val dismissed = store.dismissRejectedMutation(id)
 
         // Then
         assertTrue(dismissed)
-        assertEquals(emptyList(), store.mutationQueueState.rejections())
-        assertEquals(emptyList(), store.mutationQueueState.rejectionsFlow().first())
+        assertEquals(emptyList(), store.rejectedList.rejections())
+        assertEquals(emptyList(), store.rejectedList.rejectionsFlow().first())
     }
 
     @Test
@@ -228,13 +228,13 @@ class RejectedMutationListTest {
         // Given — a rejected write, and a newer write queued after it
         val rejectedId = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"first"}]"""))
         server.answer = { postgrestError(HttpStatusCode.Forbidden) }
-        syncer.sync()
+        replayer.sync()
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"second"}]"""))
 
         // When — the app fixed the cause and retries it
         val newId = assertNotNull(store.retryRejectedMutation(rejectedId, identity = null))
         server.answer = { okJson("[]") }
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — it replayed after the newer write, under a new id, and left the list
         assertTrue(newId > rejectedId)
@@ -243,7 +243,7 @@ class RejectedMutationListTest {
             listOf("""[{"title":"second"}]""", """[{"title":"first"}]"""),
             server.requests.takeLast(2).map { it.body },
         )
-        assertEquals(emptyList(), store.mutationQueueState.rejections())
+        assertEquals(emptyList(), store.rejectedList.rejections())
     }
 
     @Test
@@ -254,7 +254,7 @@ class RejectedMutationListTest {
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
 
         // When
-        val rejections = store.mutationQueueState.rejections()
+        val rejections = store.rejectedList.rejections()
 
         // Then — read as a fresh list, the old payload kept under its own key, and said at ERROR
         assertEquals(emptyList(), rejections)
@@ -276,12 +276,12 @@ class RejectedMutationListTest {
         server.answer = { postgrestError(HttpStatusCode.BadRequest) }
 
         // When
-        val report = syncer.sync()
+        val report = replayer.sync()
 
         // Then — the pass stopped with the write still queued rather than losing it
         assertIs<SyncStop.TransientFailure>(report.stop)
         assertEquals(1, store.allPendingMutations().size)
-        assertEquals(emptyList(), store.mutationQueueState.rejections())
+        assertEquals(emptyList(), store.rejectedList.rejections())
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
