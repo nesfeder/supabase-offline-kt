@@ -11,9 +11,9 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
- * The failures of work the screens started, waiting to be shown. There is one for the whole app:
- * a write can fail after the screen that made it has closed, so the app shows each failure, once,
- * on whichever screen is in front by then.
+ * The failures of work the screens started, waiting to be shown. There is one for the whole app: a
+ * write can fail after the screen that made it has closed, so the app shows each failure, once, on
+ * whichever screen is in front by then.
  */
 class FailureReports {
     private val failures = Channel<Throwable>(Channel.UNLIMITED)
