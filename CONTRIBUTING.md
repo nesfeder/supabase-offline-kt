@@ -1,9 +1,10 @@
 # Contributing
 
-Thank you for helping. Instructions for building, testing and releasing the library itself will
-follow; for now, this file covers reporting a problem, labels, formatting, changing the public API,
-test coverage, the documentation site, how dependency updates are handled, and continuous
-integration: the `full-ci` label, and what to do when CI fails for a reason outside the change.
+Thank you for helping. Instructions for building and testing the library itself will follow; for
+now, this file covers reporting a problem, labels, formatting, changing the public API, what is
+published, releasing, test coverage, the documentation site, how dependency updates are handled,
+and continuous integration: the `full-ci` label, and what to do when CI fails for a reason outside
+the change.
 
 ## Reporting a problem
 
@@ -169,7 +170,11 @@ line your pull request adds must match one of its findings.
 
 The rules the script applies are in `compat/policy.json`. A pull request is rated under the stricter
 of its own rules and its base's: a change that loosens them applies from the next pull request on,
-one that tightens them at once, and either is reported for review.
+one that tightens them at once, and either is reported for review. The release check compares with
+the last release, so a rule that loosens takes effect there only in the release after it: once
+1.0 has shipped, a type closed for implementation in one pull request and given a new member in a
+later one of the same release is still rated breaking when that release is made. Close the type in
+one release and add to it in the next.
 
 ### 3. What is never allowed
 
@@ -187,6 +192,39 @@ one that tightens them at once, and either is reported for review.
   package also has to be listed in `compat/gated-declarations.txt`, so it shows in the pull
   request; regenerate that file with
   `bash scripts/check-api-visibility.sh --list-gated > compat/gated-declarations.txt`.
+
+## What is published
+
+Every published module applies the `supabase-offline.published` convention plugin, which sets up
+its Maven Central publication: the POM from the `POM_*` properties of `gradle.properties` (a
+module's own `gradle.properties` can override `POM_NAME` and `POM_DESCRIPTION`), a sources jar, an
+HTML reference of the public packages in the documentation jar, and signing.
+
+CI publishes both modules to a repository inside the build directory and checks what Maven Central
+would receive, with `scripts/check-published-artifacts.py`: every POM field Central requires, the
+sources and documentation jars, the checksums, no absolute path of the machine that built them, and
+the files, dependencies, klib names and Kotlin module files each artifact declares, against the
+record `compat/published-artifacts.txt`. Run it locally the same way:
+
+```bash
+python3 scripts/check-published-artifacts.py
+```
+
+It fails when anything in the record changed. A dependency line there is what every consumer's
+build resolves, so a change to it is a change to the library even when no source changed: a
+dependency added or moved, a new target, a renamed module. If your change means to alter what is
+published, rewrite the record with `python3 scripts/check-published-artifacts.py --update` and
+commit it, and the reviewer reads its diff. A Dependabot update of a dependency the library
+publishes (supabase-kt, Kotlin, Room, androidx.sqlite) needs the same, pushed to its branch.
+
+## Releasing
+
+Releases are published from GitHub Actions by the Release workflow, which a maintainer starts by
+hand; nothing is published from a laptop. The steps, what the owner does in the Central Portal and
+in the repository settings, and what to do when a release stops halfway are in
+[RELEASING.md](https://github.com/nesfeder/supabase-offline-kt/blob/main/RELEASING.md). A pull
+request prepares a release by setting `VERSION_NAME` without `-SNAPSHOT` and naming the changelog
+section and the compatibility row after the version; the workflow refuses anything else.
 
 ## Coverage
 
@@ -337,8 +375,9 @@ release of the plugin fixes it yet, is closed with a **build-tool floor**: a `bu
 library in `gradle/libs.versions.toml` at the patched version, with a comment naming the advisory
 and the plugin release that will make it unnecessary. The build applies every floor as a
 dependency constraint, which only ever raises a version, to the classpaths those plugins and tools
-resolve: the root build script's, build-logic's, and each module's lint and Swift export tools
-(the `supabase-offline.build-tool-floors` convention plugin, which every role plugin applies).
+resolve: the root build script's, build-logic's, and each module's lint and Swift export tools,
+the Kotlin Gradle plugin's publishing validation and Dokka's generator (the
+`supabase-offline.build-tool-floors` convention plugin, which every role plugin applies).
 Nothing that ships is affected. `python3 scripts/check-build-tool-floors.py` resolves those
 classpaths, for every module Gradle lists, and fails when a floor does not hold, or when nothing
 asks for less than a floor any more, which means a plugin release has made it unnecessary: remove

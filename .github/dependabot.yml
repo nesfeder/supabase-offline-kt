@@ -79,6 +79,10 @@ updates:
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "io.opentelemetry:opentelemetry-api"
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "com.fasterxml.jackson.*"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "org.jsoup:jsoup"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
     # A dependency joins the first group that matches it. The first three names are the labels the
     # triage workflow applies.
     groups:
@@ -106,6 +110,12 @@ updates:
           # Kover's plugin and the library build-logic compiles against share one version.
           - "org.jetbrains.kotlinx.kover"
           - "org.jetbrains.kotlinx:kover-gradle-plugin"
+          # The publishing plugin and Dokka, the same way. What they change in the published files
+          # shows in scripts/check-published-artifacts.py, which CI runs.
+          - "com.vanniktech.maven.publish"
+          - "com.vanniktech:gradle-maven-publish-plugin"
+          - "org.jetbrains.dokka"
+          - "org.jetbrains.dokka:dokka-gradle-plugin"
           # The build-tool floors (`buildToolFloor-*` in the catalog): libraries the plugins bring,
           # raised to patched versions. Keep in step with the catalog.
           - "org.bouncycastle:*"
@@ -115,6 +125,8 @@ updates:
           - "org.jdom:jdom2"
           - "org.bitbucket.b_c:jose4j"
           - "io.opentelemetry:*"
+          - "com.fasterxml.jackson.*"
+          - "org.jsoup:jsoup"
         update-types: ["minor", "patch"]
       test-libraries:
         patterns:
