@@ -3,11 +3,15 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.user.UserInfo
+import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
+import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
@@ -186,6 +190,42 @@ class ReplayTokenBindingTest {
         assertEquals(emptyList(), postsCarrying("user-b"))
         assertEquals(SyncStop.SessionChanged, report.stop)
         assertEquals(1, store.allPendingMutations().size)
+    }
+
+    @Test
+    fun a_token_naming_no_user_holds_its_users_queue_and_warns_once() = runTest {
+        // Given — A's session, whose token names no user, and A's write queued
+        val logger = RecordingOfflineLogger()
+        val supabase = newTestSupabaseClientWithAuth(server.engine)
+        supabase.auth.importSession(
+            UserSession(
+                accessToken = "opaque-token",
+                refreshToken = "refresh-token",
+                expiresIn = 3600,
+                tokenType = "bearer",
+                user = UserInfo(aud = "authenticated", id = "user-a"),
+            ),
+            autoRefresh = false,
+        )
+        queueFor("user:user-a", id = "a1")
+        val replayer =
+            MutationQueueReplayer(
+                store = store,
+                supabase = supabase,
+                sdkLogger = logger.asSdkLogger(),
+            )
+
+        // When — three passes
+        val stops = List(3) { replayer.sync().stop }
+
+        // Then — nothing sent and the write still queued, and one WARN says why
+        assertTrue(stops.all { it == SyncStop.SessionChanged }, "$stops")
+        assertTrue(server.requests.isEmpty(), "${server.requests}")
+        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(
+            1,
+            logger.entriesAt(OfflineLogLevel.WARNING).count { "token" in it.message },
+        )
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray
