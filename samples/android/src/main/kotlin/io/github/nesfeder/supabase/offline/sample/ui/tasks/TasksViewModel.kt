@@ -17,12 +17,8 @@ import io.github.nesfeder.supabase.offline.sample.offlineTasksApplication
 import io.github.nesfeder.supabase.offline.sample.ui.status.SyncHeadline
 import io.github.nesfeder.supabase.offline.sample.ui.status.syncHeadlineOf
 import io.github.nesfeder.supabase.offline.sample.ui.status.withSyncedMoment
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -34,9 +30,6 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
-/** How long a swiped-away task can be brought back before it is deleted. */
-val DELETE_UNDO_WINDOW: Duration = 5.seconds
 
 /** Which tasks the list shows. */
 enum class TaskFilter {
@@ -87,21 +80,23 @@ sealed interface TasksMessage {
 
 /**
  * The Tasks screen's state: the live task list, the sync headline, the filter, and deletions that
- * can still be undone.
+ * can still be undone. A swiped-away task is only hidden until its snackbar goes; then it is
+ * deleted, unless the user chose Undo.
  *
- * @param commitScope where a deletion waits out its undo window; it outlives this ViewModel, so a
- *   task swiped away just before the app closes is still deleted.
+ * @param commitScope where deletions run; it outlives this ViewModel, so a task swiped away just
+ *   before the screen goes is still deleted.
  */
 class TasksViewModel(
     private val repository: TaskRepository,
     private val commitScope: CoroutineScope,
-    private val undoWindow: Duration = DELETE_UNDO_WINDOW,
 ) : ViewModel() {
 
     private val filter = MutableStateFlow(TaskFilter.All)
     private val hiddenTaskIds = MutableStateFlow<Set<String>>(emptySet())
     private val isRefreshing = MutableStateFlow(false)
-    private val pendingDeletions = mutableMapOf<String, Job>()
+
+    /** Tasks swiped away whose deletion can still be undone. */
+    private val undoableDeletions = mutableSetOf<String>()
     private val messageChannel = Channel<TasksMessage>(Channel.BUFFERED)
 
     private val snapshots: Flow<TaskListSnapshot> =
@@ -144,23 +139,30 @@ class TasksViewModel(
         viewModelScope.launch { repository.setTaskDone(task.id, isDone) }
     }
 
-    /** Hides [task] at once and deletes it when the undo window closes. */
+    /** Hides [task] at once; it is deleted by [commitDelete], or brought back by [undoDelete]. */
     fun delete(task: Task) {
+        if (!undoableDeletions.add(task.id)) return
         hiddenTaskIds.update { it + task.id }
-        pendingDeletions.remove(task.id)?.cancel()
-        pendingDeletions[task.id] =
-            commitScope.launch {
-                delay(undoWindow)
-                repository.deleteTask(task.id)
-                hiddenTaskIds.update { it - task.id }
-            }
         messageChannel.trySend(TasksMessage.Deleted(task.id, task.title))
     }
 
-    /** Brings back a task swiped away less than the undo window ago. */
+    /** Brings back a task swiped away whose deletion has not been committed. */
     fun undoDelete(taskId: String) {
-        pendingDeletions.remove(taskId)?.cancel()
-        hiddenTaskIds.update { it - taskId }
+        if (undoableDeletions.remove(taskId)) hiddenTaskIds.update { it - taskId }
+    }
+
+    /** Deletes a swiped-away task for good: its undo snackbar has gone. */
+    fun commitDelete(taskId: String) {
+        if (!undoableDeletions.remove(taskId)) return
+        commitScope.launch {
+            repository.deleteTask(taskId)
+            hiddenTaskIds.update { it - taskId }
+        }
+    }
+
+    override fun onCleared() {
+        // Nothing can undo them any more.
+        undoableDeletions.toList().forEach(::commitDelete)
     }
 
     /** Pull-to-refresh: asks the server for the list again, or says why it cannot. */

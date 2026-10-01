@@ -20,12 +20,14 @@ import androidx.compose.material3.ListItemShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxDefaults
 import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,13 +59,19 @@ fun TaskRow(
     onOpen: (taskId: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val dismissState = rememberSwipeToDismissBoxState()
+    val threshold = SwipeToDismissBoxDefaults.positionalThreshold
+    // Remembered, not saved: a row that comes back from Undo must come back unswiped.
+    val dismissState = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, threshold) }
     val haptics = LocalHapticFeedback.current
+    // The box re-runs its dismiss callback whenever the callback changes, so it must be stable.
+    val latestTask by rememberUpdatedState(task)
+    val latestOnDelete by rememberUpdatedState(onDelete)
+    val onDismiss = remember { { _: SwipeToDismissBoxValue -> latestOnDelete(latestTask) } }
     SwipeToDismissBox(
         state = dismissState,
         modifier = modifier,
         enableDismissFromStartToEnd = false,
-        onDismiss = { onDelete(task) },
+        onDismiss = onDismiss,
         backgroundContent = { DeleteBackground(dismissState, shapes) },
     ) {
         SharedBounds(SharedKeys.taskContainer(task.id)) {

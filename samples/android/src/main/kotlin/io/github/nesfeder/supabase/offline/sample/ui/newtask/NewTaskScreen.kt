@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -46,13 +47,19 @@ fun NewTaskRoute(
     viewModel: NewTaskViewModel = viewModel(factory = NewTaskViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    LaunchedEffect(state) { if (state is NewTaskUiState.Added) onClose() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val close = {
+        // The keyboard belongs to this screen; it must not stay up over the list.
+        keyboard?.hide()
+        onClose()
+    }
+    LaunchedEffect(state) { if (state is NewTaskUiState.Added) close() }
     NewTaskScreen(
         state = state,
         onTitleChange = viewModel::onTitleChange,
         onNotesChange = viewModel::onNotesChange,
         onAdd = viewModel::add,
-        onClose = onClose,
+        onClose = close,
     )
 }
 

@@ -27,6 +27,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
@@ -55,6 +56,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.nesfeder.supabase.offline.sample.R
 import io.github.nesfeder.supabase.offline.sample.data.Task
 import io.github.nesfeder.supabase.offline.sample.ui.components.EmptyState
+import io.github.nesfeder.supabase.offline.sample.ui.components.segmentedScreenAppBarColors
 import io.github.nesfeder.supabase.offline.sample.ui.navigation.SharedBounds
 import io.github.nesfeder.supabase.offline.sample.ui.navigation.SharedKeys
 import io.github.nesfeder.supabase.offline.sample.ui.status.RollingText
@@ -85,20 +87,31 @@ fun TasksRoute(
             launch {
                 when (message) {
                     is TasksMessage.Deleted -> {
-                        val result =
-                            snackbarHostState.showSnackbar(
-                                message =
-                                    resources.getString(
-                                        R.string.tasks_deleted,
-                                        message.title.ifBlank {
-                                            resources.getString(R.string.task_untitled)
-                                        },
-                                    ),
-                                actionLabel = resources.getString(R.string.action_undo),
-                                duration = SnackbarDuration.Short,
-                            )
-                        if (result == SnackbarResult.ActionPerformed) {
-                            viewModel.undoDelete(message.taskId)
+                        // A newer deletion ends the older one's chance to be undone.
+                        snackbarHostState.currentSnackbarData?.dismiss()
+                        var answered = false
+                        try {
+                            val result =
+                                snackbarHostState.showSnackbar(
+                                    message =
+                                        resources.getString(
+                                            R.string.tasks_deleted,
+                                            message.title.ifBlank {
+                                                resources.getString(R.string.task_untitled)
+                                            },
+                                        ),
+                                    actionLabel = resources.getString(R.string.action_undo),
+                                    duration = SnackbarDuration.Short,
+                                )
+                            answered = true
+                            if (result == SnackbarResult.ActionPerformed) {
+                                viewModel.undoDelete(message.taskId)
+                            } else {
+                                viewModel.commitDelete(message.taskId)
+                            }
+                        } finally {
+                            // The screen went before the snackbar did: nothing can undo it now.
+                            if (!answered) viewModel.commitDelete(message.taskId)
                         }
                     }
                     is TasksMessage.Rejected -> {
@@ -154,8 +167,11 @@ fun TasksScreen(
     val listState = rememberLazyListState()
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        // Segmented rows are drawn in the surface colour, so they sit on a surface container.
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = {
             LargeFlexibleTopAppBar(
+                colors = segmentedScreenAppBarColors(),
                 title = { Text(stringResource(R.string.tasks_title)) },
                 subtitle = { TasksSubtitle(state) },
                 scrollBehavior = scrollBehavior,
@@ -284,6 +300,11 @@ private fun TaskFilterButtons(selected: TaskFilter, onSelect: (TaskFilter) -> Un
                         filters.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
                         else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
                     },
+                // The default unchecked colour is the screen's own surface container.
+                colors =
+                    ToggleButtonDefaults.colors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                    ),
                 modifier = Modifier.weight(1f).semantics { role = Role.RadioButton },
             ) {
                 Text(stringResource(filter.label))

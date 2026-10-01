@@ -47,6 +47,7 @@ import io.github.nesfeder.supabase.offline.sample.data.NetworkStatus
 import io.github.nesfeder.supabase.offline.sample.data.RefreshState
 import io.github.nesfeder.supabase.offline.sample.data.RejectedMutation
 import io.github.nesfeder.supabase.offline.sample.platform.SessionState
+import io.github.nesfeder.supabase.offline.sample.ui.components.segmentedScreenAppBarColors
 import io.github.nesfeder.supabase.offline.sample.ui.status.RollingText
 
 /** The Sync destination: the screen wired to its ViewModel. */
@@ -98,8 +99,11 @@ fun SyncScreen(state: SyncUiState, actions: SyncActions, modifier: Modifier = Mo
     var confirming by rememberSaveable { mutableStateOf<Confirmation?>(null) }
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        // Segmented rows are drawn in the surface colour, so they sit on a surface container.
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = {
             MediumFlexibleTopAppBar(
+                colors = segmentedScreenAppBarColors(),
                 title = { Text(stringResource(R.string.sync_title)) },
                 scrollBehavior = scrollBehavior,
             )
