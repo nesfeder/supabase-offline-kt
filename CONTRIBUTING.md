@@ -246,8 +246,9 @@ Material for MkDocs prints a notice about MkDocs 2.0 on every run. Set
 
 - Every page must be listed under `nav` in `mkdocs.yml`.
 - Some pages are pulled in from elsewhere in the repository when the site is built: this file,
-  `CHANGELOG.md`, and the sample schema in `demo/supabase/schema.sql`. Edit those files, not the
-  pages that include them. Links inside them must be absolute URLs, because they are resolved
+  `CHANGELOG.md`, and the sample schema in
+  `samples/supabase/migrations/20260930000000_offline_tasks.sql`. Edit those files, not the pages
+  that include them. Links inside them must be absolute URLs, because they are resolved
   relative to the page that includes them.
 - A page that has not been written yet opens with a "Not written yet" note, and a page written
   for the engine before 0.1.0 opens with a "Written for an earlier engine" note. Both are plain
@@ -411,11 +412,11 @@ changed it or something else running as the same user did. If the path is not on
 re-run the job; if the same path comes back, it belongs in the snapshot's exclusion list, with its
 reason.
 
-Two kinds of red come from the runners themselves, and are read, not excluded. A red that names
-only a runner's directory with its `.runner_migrated` or `.credentials_migrated` is GitHub
-refreshing that runner's settings; one that names a runner's new `bin.*`, `externals.*` or
-`update.finished` is the runner updating itself. The runner's `_diag` log records either. Re-run the
-job.
+One kind of red comes from the runners themselves, and is read, not excluded: a red that names
+only a runner's directory with its new `bin.*`, `externals.*` or `update.finished` is the runner
+updating itself, which its `_diag` log records. Re-run the job. (The two marker files a runner's
+service rewrites daily, `.runner_migrated` and `.credentials_migrated`, are excluded: a job cannot
+reconfigure a runner.)
 
 **A job killed before its last two steps** (the Mac restarted or slept, or the runner service
 stopped) cleans up nothing itself. What the next job on the runner does about it:

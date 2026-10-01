@@ -34,6 +34,11 @@ EXCLUDED=(
     # Their control files beside them (.env, .path, .runner, bin, ...) are watched.
     'actions-runner-*/_work'
     'actions-runner-*/_diag'
+    # Two marker files each runner's service rewrites by itself once a day (measured: 23:04 UTC,
+    # 24 hours and one second apart), during whatever job is running. A job cannot reconfigure
+    # a runner (that needs the registration token), so nothing a job does shows here.
+    'actions-runner-*/.runner_migrated'
+    'actions-runner-*/.credentials_migrated'
     # macOS and its services, every minute or every few: user defaults, the keychains, caches and
     # the shared app-group containers. The job's Java tools have a home of their own; its native
     # tools (xcodebuild, simctl) use this one, but were measured writing nothing in these.
@@ -181,8 +186,8 @@ recorded_by() {
 
 # How to read a red that names a runner's own files: printed after the differences.
 print_runner_note() {
-    echo "  A red that names only a runner's directory with its .runner_migrated or"
-    echo "  .credentials_migrated, or a runner's new bin.*, externals.* or update.finished, is that"
+    echo "  A red that names only a runner's directory, or a runner's new bin.*, externals.* or"
+    echo "  update.finished, is that"
     echo "  runner refreshing its own settings or updating itself; its _diag log says so. Re-run the"
     echo "  job, and do not add an exclusion for it."
 }
