@@ -294,8 +294,7 @@ internal class MutationQueueReplayer(
                 HeadSendOutcome.Cleared(result = null, cause = cause)
             // The session's token expired and could not be refreshed: nothing left the device
             cause is TokenExpiredException -> {
-                if (newlyUnconfirmed && failure.provesWriteNotApplied())
-                    store.clearUnconfirmedSend(mutationId)
+                if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
             }
             postgrestCodeOf(cause) in SCHEMA_CACHE_MISS_CODES &&
@@ -317,11 +316,13 @@ internal class MutationQueueReplayer(
     }
 
     /**
-     * Whether this failed send provably did not apply its write: no attempt reached the server, or
-     * PostgREST itself answered that it could not reach the database.
+     * Whether this failed send provably did not apply its write: no attempt reached the server, the
+     * session's token could not be refreshed (thrown before the request is built), or PostgREST
+     * itself answered that it could not reach the database.
      */
     private fun SendOutcome.Failed.provesWriteNotApplied(): Boolean =
         neverReachedServer ||
+            thrown is TokenExpiredException ||
             postgrestCodeOf(thrown).let { code ->
                 code in POSTGREST_DID_NOT_RUN_CODES || code in SCHEMA_CACHE_MISS_CODES
             }
