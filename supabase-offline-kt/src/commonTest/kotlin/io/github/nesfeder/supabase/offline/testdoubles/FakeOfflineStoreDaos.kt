@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.internal.db.ObjectDao
 import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryObjectDao
+import kotlinx.coroutines.flow.update
 
 /*
  * Recording and scripting extensions of the engine's in-memory DAOs, which live in
@@ -85,20 +86,22 @@ internal class FakeObjectDao : InMemoryObjectDao() {
      * defaults to `0L` for callers that don't care about age.
      */
     fun seedPayload(table: String, signature: String, payload: String, updatedAt: Long = 0L) {
-        rows[table to signature] =
+        val row =
             ObjectRow(
                 table = table,
                 signature = signature,
                 payload = payload,
                 updatedAt = updatedAt,
             )
+        rows.update { current -> current + ((table to signature) to row) }
     }
 
     /** Look up a row without going through the suspend contract. */
-    fun getRow(table: String, signature: String): ObjectRow? = rows[table to signature]
+    fun getRow(table: String, signature: String): ObjectRow? = rows.value[table to signature]
 
     /** Every row of [table], without going through the suspend contract. */
-    fun rowsOf(table: String): List<ObjectRow> = rows.values.filter { row -> row.table == table }
+    fun rowsOf(table: String): List<ObjectRow> =
+        rows.value.values.filter { row -> row.table == table }
 
     override suspend fun get(table: String, signature: String): ObjectRow? {
         val row = super.get(table, signature)
@@ -143,9 +146,9 @@ internal class FakeObjectDao : InMemoryObjectDao() {
 /**
  * [InMemoryMutationDao] that exposes the queue for assertions. The in-memory DAO already mirrors
  * Room's mutation-queue semantics: an auto-incrementing id on insert (like `autoGenerate`), rows
- * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and reactive
- * per-table flows that re-emit on every queue change. Syncer tests drive a real `OfflineStore` over
- * it and observe replay, mark-synced, drop and dead-letter transitions.
+ * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and a pending flow
+ * that re-emits on every queue change. Syncer tests drive a real `OfflineStore` over it and observe
+ * replay, mark-synced, drop and rejection transitions.
  */
 internal class FakeMutationDao : InMemoryMutationDao() {
 
@@ -157,11 +160,33 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     var pendingListReads: Int = 0
         private set
 
+    /** How many times each table's mutation rows, pending and synced, were read as one list. */
+    val tableListReads: Map<String, Int>
+        get() = tableListReadCounts.toMap()
+
+    private val tableListReadCounts = mutableMapOf<String, Int>()
+
+    /** How many rows were ever inserted into the queue, whether removed since or not. */
+    var insertCalls: Int = 0
+        private set
+
     /** When set, the next [deleteAll] fails, as a process dying part-way through clearing would. */
     var failNextDeleteAll: Boolean = false
 
     /** When set, the next [deleteById] fails, as a process dying before the delete would. */
     var failNextDeleteById: Boolean = false
+
+    /**
+     * When set, runs each time a send is recorded ([markSendUnconfirmed]), before the record is
+     * written: a point after a mutation is claimed and before its request is built.
+     */
+    var onMarkSendUnconfirmed: (suspend (id: Long) -> Unit)? = null
+
+    /** When set, the next [markSendUnconfirmed] fails, as a full disk would. */
+    var failNextMarkSendUnconfirmed: Boolean = false
+
+    /** When set, runs after [unconfirmedSendIds] read the rows and before it returns them. */
+    var afterUnconfirmedSendIdsRead: (suspend () -> Unit)? = null
 
     /** When set, runs after each transaction has committed, before its caller goes on. */
     var afterTransaction: (suspend () -> Unit)? = null
@@ -169,6 +194,11 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     override suspend fun runInTransaction(block: suspend () -> Unit) {
         super.runInTransaction(block)
         afterTransaction?.invoke()
+    }
+
+    override suspend fun insert(row: MutationRow): Long {
+        insertCalls++
+        return super.insert(row)
     }
 
     override suspend fun pendingAll(): List<MutationRow> {
@@ -181,12 +211,32 @@ internal class FakeMutationDao : InMemoryMutationDao() {
         return super.pendingForTable(table)
     }
 
+    override suspend fun allForTable(table: String): List<MutationRow> {
+        tableListReadCounts[table] = (tableListReadCounts[table] ?: 0) + 1
+        return super.allForTable(table)
+    }
+
     override suspend fun deleteAll() {
         if (failNextDeleteAll) {
             failNextDeleteAll = false
             error("Scripted failure part-way through clearing")
         }
         super.deleteAll()
+    }
+
+    override suspend fun unconfirmedSendIds(): List<Long> {
+        val ids = super.unconfirmedSendIds()
+        afterUnconfirmedSendIdsRead?.invoke()
+        return ids
+    }
+
+    override suspend fun markSendUnconfirmed(id: Long): Int {
+        onMarkSendUnconfirmed?.invoke(id)
+        if (failNextMarkSendUnconfirmed) {
+            failNextMarkSendUnconfirmed = false
+            error("Scripted failure recording the send")
+        }
+        return super.markSendUnconfirmed(id)
     }
 
     override suspend fun deleteById(id: Long) {

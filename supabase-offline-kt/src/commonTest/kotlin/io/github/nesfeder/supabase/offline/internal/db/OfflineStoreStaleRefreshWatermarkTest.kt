@@ -4,16 +4,9 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.NumericDeltaColumn
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
-import io.github.nesfeder.supabase.offline.testdoubles.FakePostgrestQueryBuilderWrapper
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
-import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
-import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -23,10 +16,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.double
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Tests for the stale-refresh watermark in [OfflineStore.addPayload] — the guard that refuses a
@@ -420,99 +409,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         assertEquals(emptyList(), mutationDao.inserted)
     }
 
-    @Test
-    fun a_delta_rebased_replay_stamps_the_watermark_exactly_like_an_absolute_one() = runTest {
-        // Given — a delta-declared UPDATE queued offline (an accumulating-total edit: the
-        // caller's intent is "+1 000", not the frozen absolute it computed at enqueue), and a
-        // refresh for the same table already in flight at tick 10
-        val objectDao = FakeObjectDao()
-        objectDao.seedPayload("projects", "sig-A", oneProject)
-        val mutationDao = FakeMutationDao()
-        var tick = 10L
-        val store = buildStore(objectDao, mutationDao = mutationDao, tick = { tick })
-        store.enqueueUpdate(
-            table = "projects",
-            body = buildJsonObject { put("total_minutes", JsonPrimitive(9000.0)) },
-            filter = projectOneFilter,
-            deltaColumns =
-                listOf(NumericDeltaColumn(column = "total_minutes", snapshotValue = 8000.0)),
-        )
-        val requestStartedAtTick = store.monotonicTickNow()
-
-        // When — reconnect drains the queue through the real syncer. The replay re-reads the row
-        // (the server moved to 8 500 meanwhile) and rebases the delta onto it.
-        tick = 20L
-        val client = deltaTestClient()
-        val wrapper =
-            FakePostgrestQueryBuilderWrapper(
-                table = "projects",
-                postgrest = client.postgrest,
-                onSelect = {
-                    postgrestResultOf(
-                        """[{"id":"project-1","total_minutes":8500.0}]""",
-                        client.postgrest,
-                    )
-                },
-                onUpdate = { postgrestResultOf("[]", client.postgrest) },
-            )
-        val synced =
-            MutationQueueReplayer(
-                    store = store,
-                    supabase = client,
-                    postgrestFactory = { _, _ -> wrapper },
-                )
-                .syncTable(table = "projects")
-
-        // Then — the rebase itself is untouched by the watermark. The read-before-write goes out
-        // on the raw PostgREST wrapper, never through addPayload, so nothing can refuse it.
-        assertEquals(1, synced)
-        assertEquals(
-            9500.0,
-            wrapper.recordedUpdateBodies
-                .last()
-                .jsonObject
-                .getValue("total_minutes")
-                .jsonPrimitive
-                .double,
-        )
-
-        // And — the refresh that was already in flight returns the pre-replay server state
-        tick = 30L
-        val outcome =
-            store.addPayload(
-                table = "projects",
-                signature = "sig-A",
-                payload = oneProject,
-                requestStartedAtTick = requestStartedAtTick,
-            )
-        store.retireCoveredSyncedMutations("projects", requestStartedAtTick)
-
-        // Then — a delta-rebased replay establishes new server truth exactly like an absolute one:
-        // it stamps the watermark, so the stale response is refused and its retirement suppressed.
-        // The mutation row survives, keeping the write visible through the overlay until a SELECT
-        // issued after the replay brings back the rebased value.
-        assertEquals(AddPayloadOutcome.DROPPED_STALE, outcome)
-        assertEquals(oneProject, objectDao.getRow("projects", "sig-A")?.payload)
-        assertEquals(1, mutationDao.inserted.size)
-        assertNotNull(mutationDao.inserted.single().syncedAtMs)
-    }
-
     // ── helpers ─────────────────────────────────────────────────────────────
-
-    private val projectOneFilter =
-        FilterDescriptor(
-            mode = FilterDescriptor.Mode.AND,
-            conditions =
-                listOf(
-                    FilterDescriptor.Condition(
-                        column = "id",
-                        operatorId = "eq",
-                        value = "project-1",
-                    )
-                ),
-        )
-
-    private fun deltaTestClient(): SupabaseClient = newTestSupabaseClient()
 
     /**
      * Applies the online-success insert of `project-2` — the write the stale response would erase.

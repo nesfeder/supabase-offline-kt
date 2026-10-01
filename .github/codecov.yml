@@ -85,7 +85,6 @@ component_management:
       paths:
         - "supabase-offline-kt/src/**/internal/mutationqueue/**"
         - "supabase-offline-kt/src/**/internal/db/MutationQueue*.kt"
-        - "supabase-offline-kt/src/**/internal/db/NumericDeltaCodec.kt"
         - "supabase-offline-kt/src/**/internal/db/OfflineMutationOverlay.kt"
         - "supabase-offline-kt/src/**/internal/db/ReservedRows.kt"
     - component_id: local-database
@@ -93,7 +92,6 @@ component_management:
       paths:
         - "supabase-offline-kt/src/**/internal/db/**"
         - "!supabase-offline-kt/src/**/internal/db/MutationQueue*.kt"
-        - "!supabase-offline-kt/src/**/internal/db/NumericDeltaCodec.kt"
         - "!supabase-offline-kt/src/**/internal/db/OfflineMutationOverlay.kt"
         - "!supabase-offline-kt/src/**/internal/db/ReservedRows.kt"
     - component_id: storage

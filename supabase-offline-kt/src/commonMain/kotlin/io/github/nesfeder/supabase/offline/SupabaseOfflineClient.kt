@@ -301,9 +301,11 @@ public interface SupabaseOfflineClient {
      *   error stays in the unread channel.
      * - At once, the client's own work stops (refreshes, replay passes), and so does every Storage
      *   call and sync: syncs, downloads, uploads, updates, deletes, moves, copies, signed URLs,
-     *   list, info and exists. Their callers get the same error, never a cancellation. A stopped
-     *   write may still have been applied, so the cached copies it touched are dropped: one extra
-     *   download later, never a stale copy.
+     *   list, info and exists. Their callers get the same error, never a cancellation. A replay
+     *   pass that has a queued write on the wire finishes that request and records its answer
+     *   first, so the next client does not send the write again. A stopped Storage write may still
+     *   have been applied, so the cached copies it touched are dropped: one extra download later,
+     *   never a stale copy.
      * - Every other call already running is left to finish, and each of these can hold `close()` up
      *   to its bound: a PostgREST write, a clear, a one-shot `select` that goes to the network (its
      *   retries while a session restores included), a read of the cache, and the start or
@@ -519,8 +521,7 @@ internal class SupabaseOfflineClientImpl(
         clientScope.launch {
             auth.sessionStatus.collect { status ->
                 val identity = replayIdentityFor(status) ?: return@collect
-                if (store.pendingMutationsOf(identity.storedValue)?.isNotEmpty() == true)
-                    backgroundSync.request()
+                if (store.hasPendingMutationsOf(identity.storedValue)) backgroundSync.request()
             }
         }
     }

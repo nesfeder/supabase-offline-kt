@@ -7,8 +7,9 @@ import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
@@ -17,8 +18,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -26,13 +26,14 @@ import kotlinx.serialization.json.JsonArray
 /**
  * A pass marks each mutation in flight while it sends it, and releases the mark however the send
  * ends. A pass whose local store fails around a send — a full disk while it records the send — or
- * whose caller is cancelled while the request is on the wire stops there with the mutation still
- * queued, and the next pass, and the next write at the head, send it.
+ * whose caller is cancelled while the request is on the wire, which it then finishes, stops with
+ * the mutation still queued when it was not applied, and the next pass, and the next write at the
+ * head, send it.
  */
 class InFlightReleaseTest {
 
-    private val objectDao = FakeObjectDao()
-    private val store = newTestOfflineStore(objectDao = objectDao)
+    private val mutationDao = FakeMutationDao()
+    private val store = newTestOfflineStore(mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private val replayer =
         MutationQueueReplayer(
@@ -47,9 +48,7 @@ class InFlightReleaseTest {
         store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        objectDao.failNextUpsertOf { row ->
-            row.table == RESERVED_TABLE_NAME && row.signature == UNCONFIRMED_SENDS_SIGNATURE
-        }
+        mutationDao.failNextMarkSendUnconfirmed = true
 
         // When — one pass meets the failure, and the next runs once the disk recovers
         val failed = runCatching { replayer.sync() }
@@ -72,9 +71,7 @@ class InFlightReleaseTest {
         store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        objectDao.failNextUpsertOf { row ->
-            row.table == RESERVED_TABLE_NAME && row.signature == UNCONFIRMED_SENDS_SIGNATURE
-        }
+        mutationDao.failNextMarkSendUnconfirmed = true
         runCatching { replayer.sync() }
         replayer.sync()
 
@@ -95,18 +92,23 @@ class InFlightReleaseTest {
 
     @Test
     fun a_pass_cancelled_while_its_request_is_on_the_wire_does_not_stop_the_next() = runTest {
-        // Given — a queued write whose first send hangs until its caller gives up
+        // Given — a queued write whose first send is on the wire when its caller gives up; the pass
+        // finishes that request, which then fails without an answer
         store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val onTheWire = CompletableDeferred<Unit>()
+        val unanswered = CompletableDeferred<Unit>()
         server.answer = {
             onTheWire.complete(Unit)
-            awaitCancellation()
+            unanswered.await()
+            connectivityFailure()
         }
         val cancelled = async { replayer.sync() }
         onTheWire.await()
-        cancelled.cancelAndJoin()
+        cancelled.cancel()
+        unanswered.complete(Unit)
+        cancelled.join()
 
         // When — the next pass runs
         server.answer = { okJson("[]") }
@@ -115,6 +117,59 @@ class InFlightReleaseTest {
         // Then — it sends the write rather than stopping at a send that is no longer happening
         assertEquals(1, next.syncedCount)
         assertEquals(null, next.stop)
+    }
+
+    @Test
+    fun a_keyed_insert_on_the_wire_when_its_pass_is_cancelled_is_recorded_and_not_sent_again() =
+        runTest {
+            // Given — a pass cancelled while its keyed INSERT is on the wire; the server then
+            // accepts it
+            cancelPassThenAccept("""[{"id":"k1","title":"Buy milk"}]""")
+
+            // When
+            val next = replayer.sync()
+
+            // Then — the pass finished the request and recorded it, so nothing is sent again
+            assertEquals(0, store.pendingMutationCount())
+            assertEquals(0, next.syncedCount)
+            assertEquals(1, server.requests.count { it.method == "POST" })
+        }
+
+    @Test
+    fun a_keyless_insert_on_the_wire_when_its_pass_is_cancelled_is_recorded_and_not_sent_again() =
+        runTest {
+            // Given — the same, for an INSERT a resend would duplicate
+            cancelPassThenAccept("""[{"title":"Buy milk"}]""")
+
+            // When
+            val next = replayer.sync()
+
+            // Then
+            assertEquals(0, store.pendingMutationCount())
+            assertEquals(0, next.syncedCount)
+            assertEquals(1, server.requests.count { it.method == "POST" })
+        }
+
+    /**
+     * Queues an INSERT of [body], cancels the pass sending it while its request is on the wire, and
+     * only then lets the server accept it.
+     */
+    private suspend fun TestScope.cancelPassThenAccept(body: String) {
+        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+            enqueueInsert(table = TABLE, body = rows(body))
+        }
+        val onTheWire = CompletableDeferred<Unit>()
+        val accepted = CompletableDeferred<Unit>()
+        server.answer = {
+            onTheWire.complete(Unit)
+            accepted.await()
+            okJson("[]")
+        }
+        val cancelled = async { replayer.sync() }
+        onTheWire.await()
+        cancelled.cancel()
+        accepted.complete(Unit)
+        cancelled.join()
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

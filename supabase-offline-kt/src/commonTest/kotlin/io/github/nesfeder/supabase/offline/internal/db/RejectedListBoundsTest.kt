@@ -100,6 +100,45 @@ class RejectedListBoundsTest {
     }
 
     @Test
+    fun one_large_entry_drops_as_many_of_the_oldest_as_the_budget_needs() = runTest {
+        // Given — a list close to its size budget
+        val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS - 20) + "\"}]"
+        val entries = (1L..31L).map { id -> rejection(id = id, bodyJson = body) }
+        entries.forEach { entry -> store.mutationQueueState.addRejection(entry) }
+        val droppedBefore = store.mutationQueueState.droppedCount()
+
+        // When — one entry with the longest body and server texts the list keeps
+        val text = "t".repeat(MAX_REJECTED_TEXT_CHARS)
+        val large =
+            rejection(id = 32L, bodyJson = body)
+                .copy(
+                    message = text,
+                    serverError = StoredServerError(400, "x", text, details = text, hint = text),
+                )
+        store.mutationQueueState.addRejection(large)
+
+        // Then — exactly the oldest entries that take the list over its budget went, and no more
+        val all = store.mutationQueueState.rejections()
+        val kept = (entries + large).takeLastWhileWithin(MAX_REJECTED_LIST_CHARS)
+        assertEquals(kept.map { it.id }, all.map { it.id })
+        assertEquals(
+            droppedBefore + (entries.size + 1 - kept.size),
+            store.mutationQueueState.droppedCount(),
+        )
+    }
+
+    /** The newest entries whose encoded lengths sum to at most [budget], oldest first. */
+    private fun List<StoredRejection>.takeLastWhileWithin(budget: Int): List<StoredRejection> {
+        var total = 0
+        return asReversed()
+            .takeWhile { entry ->
+                total += store.json.encodeToString(StoredRejection.serializer(), entry).length
+                total <= budget
+            }
+            .asReversed()
+    }
+
+    @Test
     fun the_count_of_dropped_entries_can_be_reset() = runTest {
         // Given
         repeat(MAX_REJECTED_MUTATIONS + 3) { index ->

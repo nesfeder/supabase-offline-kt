@@ -27,8 +27,9 @@ internal fun Throwable.httpStatusOrNull(): Int? {
 }
 
 /**
- * Returns `true` if this throwable clearly represents a **permanent** mutation failure – i.e. one
- * that will not succeed when retried.
+ * Returns `true` if this throwable's status marks a **permanent** mutation failure – i.e. one that
+ * will not succeed when retried. The replayer asks only after ruling out PostgREST's schema-cache
+ * misses (`PGRST204`, `PGRST205`): 4xx answers that pass once the cache reloads.
  */
 internal fun Throwable.isPermanentMutationFailure(): Boolean {
     val status = httpStatusOrNull() ?: return false
@@ -56,7 +57,7 @@ internal fun Int.isPermanentMutationFailureStatus(): Boolean {
     if (status == 408 || status == 429) return false
 
     // Treat all other 4xx (403 / 404 / 409 / 422, …) as permanent: the request itself is "bad"
-    // and will not start succeeding just by retrying.
+    // and will not start succeeding just by retrying. A schema-cache miss is decided before this
     if (status in 400..499) return true
 
     // 5xx, 1xx, 2xx, 3xx and unknown → assume transient / server side

@@ -3,21 +3,22 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.auth.exception.TokenExpiredException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.result.PostgrestResult
-import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.SdkLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.ReplayOwner
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.everyRowCarriesPrimaryKey
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.installReplayOwnerCheck
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterEngine
@@ -32,6 +33,7 @@ import io.github.nesfeder.supabase.offline.internal.util.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.util.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.util.isPermanentMutationFailure
 import io.ktor.client.plugins.ResponseException
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -41,13 +43,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
@@ -88,6 +90,21 @@ internal class MutationQueueReplayer(
 
     /** Passes in flight, so [clearLocalData] can cancel them. */
     private val activePasses = MutableStateFlow<Set<Job>>(emptySet())
+
+    /**
+     * When this process last counted a schema-cache miss of each mutation, as a
+     * [OfflineStore.monotonicTickNow] tick; see [schemaCacheMissReachesBound]. Guarded by
+     * [sendLock].
+     */
+    private val schemaCacheMissesCountedAt = mutableMapOf<Long, Long>()
+
+    /** Whether this replayer has warned of a session whose token does not name its user. */
+    private val warnedOfTokenNotNamingUser = MutableStateFlow(false)
+
+    init {
+        // Before anything is sent: a mutation goes out with its owner's token, or not at all
+        supabase.installReplayOwnerCheck()
+    }
 
     /**
      * Replays the current identity's mutations across every table.
@@ -158,7 +175,10 @@ internal class MutationQueueReplayer(
         activePasses.value.forEach { pass ->
             pass.cancel(CancellationException("Local data cleared"))
         }
-        sendLock.withLock { clear() }
+        sendLock.withLock {
+            clear()
+            schemaCacheMissesCountedAt.clear()
+        }
     }
 
     /**
@@ -180,8 +200,9 @@ internal class MutationQueueReplayer(
         data class Sent(val result: PostgrestResult) : HeadSendOutcome
 
         /**
-         * It may not have run on the server — no connection or no answer, or a `503`/`520` — and
-         * stays queued.
+         * It may not have run on the server — no connection or no answer, a `503`/`520`, a table or
+         * column PostgREST's schema cache does not know yet, or a session token that could not be
+         * refreshed — and stays queued.
          */
         data class StaysQueued(val cause: Exception) : HeadSendOutcome
 
@@ -217,12 +238,18 @@ internal class MutationQueueReplayer(
         if (!claimed) return HeadSendOutcome.NotAtHead
         try {
             val newlyUnconfirmed = store.markSendUnconfirmed(mutationId)
+            val owner = ReplayOwner(identity)
             val result =
-                when (val sent = sendCapturingEngineFailure(send)) {
+                when (val sent = sendCapturingEngineFailure { withContext(owner) { send() } }) {
                     is SendOutcome.Succeeded -> sent.value
                     is SendOutcome.Failed ->
                         return sendLock.withLock {
-                            headFailureOutcome(mutationId, sent, newlyUnconfirmed, generation)
+                            if (owner.stoppedForAnotherSession) {
+                                stoppedForAnotherSession(mutationId, newlyUnconfirmed, identity)
+                                HeadSendOutcome.NotAtHead
+                            } else {
+                                headFailureOutcome(mutationId, sent, newlyUnconfirmed, generation)
+                            }
                         }
                 }
             if (clearGeneration.value != generation)
@@ -246,6 +273,31 @@ internal class MutationQueueReplayer(
         }
     }
 
+    /**
+     * Keeps a mutation whose request the owner check stopped queued for its owner's next session.
+     * It never left the device, so a send record this attempt made is cleared. When the session is
+     * still [owner]'s, its token names another user or none, which holds the queue: said once.
+     */
+    private suspend fun stoppedForAnotherSession(
+        mutationId: Long,
+        newlyUnconfirmed: Boolean,
+        owner: QueueIdentity,
+    ) {
+        if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+        if (currentIdentity() == owner) {
+            if (warnedOfTokenNotNamingUser.compareAndSet(expect = false, update = true)) {
+                sdkLogger.warning {
+                    "The session's access token does not name the session's user; its queued " +
+                        "mutations are held until the two agree"
+                }
+            }
+            return
+        }
+        sdkLogger.info {
+            "The session changed before a queued mutation was sent; it stays queued for its owner"
+        }
+    }
+
     /** Where a failed head send leaves its mutation. Caller holds [sendLock]. */
     private suspend fun headFailureOutcome(
         mutationId: Long,
@@ -257,6 +309,16 @@ internal class MutationQueueReplayer(
         return when {
             clearGeneration.value != generation ->
                 HeadSendOutcome.Cleared(result = null, cause = cause)
+            // The session's token expired and could not be refreshed: nothing left the device
+            cause is TokenExpiredException -> {
+                if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+                HeadSendOutcome.StaysQueued(cause)
+            }
+            postgrestCodeOf(cause) in SCHEMA_CACHE_MISS_CODES &&
+                !schemaCacheMissReachesBound(mutationId) -> {
+                if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+                HeadSendOutcome.StaysQueued(cause)
+            }
             cause.isNetworkOrConnectivityFailure() ||
                 cause.httpStatusOrNull() in STAYS_QUEUED_STATUSES -> {
                 if (newlyUnconfirmed && failure.provesWriteNotApplied())
@@ -271,11 +333,34 @@ internal class MutationQueueReplayer(
     }
 
     /**
-     * Whether this failed send provably did not apply its write: no attempt reached the server, or
-     * PostgREST itself answered that it could not reach the database.
+     * Whether this failed send provably did not apply its write. It did not when no attempt reached
+     * the server, when the session's token could not be refreshed (thrown before the request is
+     * built), or when PostgREST itself answered that it could not reach the database.
      */
     private fun SendOutcome.Failed.provesWriteNotApplied(): Boolean =
-        neverReachedServer || postgrestCodeOf(thrown) in POSTGREST_DID_NOT_RUN_CODES
+        neverReachedServer ||
+            thrown is TokenExpiredException ||
+            postgrestCodeOf(thrown).let { code ->
+                code in POSTGREST_DID_NOT_RUN_CODES || code in SCHEMA_CACHE_MISS_CODES
+            }
+
+    /**
+     * Counts a schema-cache miss of mutation [mutationId], unless this process counted one less
+     * than [SCHEMA_CACHE_MISS_SPACING] ago, and says whether its misses reached
+     * [SCHEMA_CACHE_MISS_BOUND]. Caller holds [sendLock].
+     */
+    private suspend fun schemaCacheMissReachesBound(mutationId: Long): Boolean {
+        val now = store.monotonicTickNow()
+        val last = schemaCacheMissesCountedAt[mutationId]
+        if (last != null && now - last < SCHEMA_CACHE_MISS_SPACING.inWholeNanoseconds) return false
+        schemaCacheMissesCountedAt[mutationId] = now
+        val misses = store.recordSchemaCacheMiss(mutationId)
+        sdkLogger.warning {
+            "PostgREST's schema cache does not know a table or column yet; " +
+                "miss $misses of $SCHEMA_CACHE_MISS_BOUND before the write is rejected"
+        }
+        return misses >= SCHEMA_CACHE_MISS_BOUND
+    }
 
     /** The PostgREST error code [failure] or a cause carries, or `null`. */
     private fun postgrestCodeOf(failure: Throwable): String? {
@@ -312,7 +397,7 @@ internal class MutationQueueReplayer(
     private suspend fun remainingFor(identity: QueueIdentity?, table: String?): Int {
         if (identity == null)
             return store.allPendingMutations().count { row -> table == null || row.table == table }
-        return store.pendingMutationsOf(identity.storedValue, table)?.size ?: 0
+        return store.pendingMutationsOf(identity.storedValue, table).size
     }
 
     /** The next step of a pass, chosen under [sendLock]. */
@@ -343,27 +428,25 @@ internal class MutationQueueReplayer(
         return Claim.Send(candidate)
     }
 
-    /** One pass. Reads the identity's queue once, then re-checks each mutation as it claims it. */
+    /**
+     * One pass. Reads the identity's queue once, then re-checks each mutation as it claims it.
+     * Cancelled, it stops between mutations: a request already sent finishes and its answer is
+     * recorded, since a write the server applied but the queue kept would be sent again.
+     */
     private suspend fun runPass(table: String?, schema: String, generation: Long): SyncReport {
+        val pass = currentCoroutineContext().job
         val identity = currentIdentity()
         if (identity == null) {
             sdkLogger.warning { "The session's identity cannot be told; not replaying" }
             return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.IdentityUnknown)
         }
-        val ready = sendLock.withLock {
+        sendLock.withLock {
             if (clearGeneration.value != generation)
                 return SyncReport(0, emptyList(), 0, SyncStop.LocalDataCleared)
-            store.retireAgedSyncedMutations()
+            store.retireUnneededSyncedMutations()
             store.adoptOwnerlessMutations(identity.storedValue)
         }
-        val queue = if (ready) store.pendingMutationsOf(identity.storedValue, table) else null
-        if (queue == null)
-            return SyncReport(
-                0,
-                emptyList(),
-                remainingFor(null, table),
-                SyncStop.OwnershipUnreadable,
-            )
+        val queue = store.pendingMutationsOf(identity.storedValue, table)
         if (queue.isEmpty()) return SyncReport(0, emptyList(), 0, null)
         sdkLogger.info {
             if (table == null) "Syncing ${queue.size} pending mutations"
@@ -377,6 +460,7 @@ internal class MutationQueueReplayer(
         var stop: SyncStop? = null
 
         for (candidate in queue) {
+            pass.ensureActive()
             val mutation =
                 when (val claim = sendLock.withLock { claim(candidate, identity, generation) }) {
                     is Claim.Stop -> {
@@ -392,30 +476,34 @@ internal class MutationQueueReplayer(
             var released = false
             val (outcome, recorded) =
                 try {
-                    val outcome =
-                        try {
-                            val tableApi =
-                                tableApis.getOrPut(mutation.table) {
-                                    postgrestFactory(schema, mutation.table)
+                    // Runs to its outcome once sent; the owner check stops the request if the pass
+                    // is cancelled first
+                    withContext(NonCancellable) {
+                        val outcome =
+                            try {
+                                val tableApi =
+                                    tableApis.getOrPut(mutation.table) {
+                                        postgrestFactory(schema, mutation.table)
+                                    }
+                                replay(mutation, tableApi, identity, pass)
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
+                            } catch (localFailure: Exception) {
+                                // Request failures are outcomes already; this is the store failing
+                                // around one.
+                                sdkLogger.error {
+                                    "Replay of ${mutation.operation} on ${mutation.table} stopped by a local failure " +
+                                        "(${localFailure::class.simpleName}); keeping it for a later sync"
                                 }
-                            replay(mutation, tableApi, identity)
-                        } catch (cancellation: CancellationException) {
-                            throw cancellation
-                        } catch (localFailure: Exception) {
-                            // Request failures are outcomes already; this is the store failing
-                            // around one.
-                            sdkLogger.error {
-                                "Replay of ${mutation.operation} on ${mutation.table} stopped by a local failure " +
-                                    "(${localFailure::class.simpleName}); keeping it for a later sync"
+                                ReplayOutcome.Stopped(localFailure)
                             }
-                            ReplayOutcome.Stopped(localFailure)
+                        sendLock.withLock {
+                            inFlight -= mutation.id
+                            released = true
+                            outcome to
+                                if (clearGeneration.value != generation) SyncStop.LocalDataCleared
+                                else record(mutation, outcome, rejected, syncedTables)
                         }
-                    sendLock.withLock {
-                        inFlight -= mutation.id
-                        released = true
-                        outcome to
-                            if (clearGeneration.value != generation) SyncStop.LocalDataCleared
-                            else record(mutation, outcome, rejected, syncedTables)
                     }
                 } finally {
                     if (!released)
@@ -459,6 +547,7 @@ internal class MutationQueueReplayer(
     ): SyncStop? =
         when (outcome) {
             ReplayOutcome.Synced -> {
+                schemaCacheMissesCountedAt -= mutation.id
                 store.markMutationSynced(id = mutation.id, table = mutation.table)
                 syncedTables += mutation.table
                 sdkLogger.debug { "Synced ${mutation.operation} mutation for ${mutation.table}" }
@@ -480,26 +569,55 @@ internal class MutationQueueReplayer(
                     SyncStop.TransientFailure(unrecorded)
                 }
 
+            is ReplayOutcome.SchemaCacheMiss ->
+                if (schemaCacheMissReachesBound(mutation.id)) {
+                    schemaCacheMissesCountedAt -= mutation.id
+                    val serverError = serverErrorOf(outcome.cause)
+                    record(
+                        mutation,
+                        ReplayOutcome.Rejected(
+                            message = serverError?.message ?: SCHEMA_CACHE_MISS_REASON,
+                            serverError = serverError,
+                        ),
+                        rejected,
+                        syncedTables,
+                    )
+                } else {
+                    SyncStop.TransientFailure(outcome.cause)
+                }
+
             is ReplayOutcome.Held -> SyncStop.HeldBehindEarlierMutations(mutation.id, outcome.cause)
             is ReplayOutcome.Stopped -> SyncStop.TransientFailure(outcome.cause)
+            ReplayOutcome.SessionChanged -> SyncStop.SessionChanged
         }
 
     /** How one mutation's replay ended. */
     private sealed interface ReplayOutcome {
         data object Synced : ReplayOutcome
 
+        /** The session stopped being the owner's before the request left; nothing was sent. */
+        data object SessionChanged : ReplayOutcome
+
         data class Rejected(val message: String, val serverError: StoredServerError?) :
             ReplayOutcome
 
         data class Held(val cause: Throwable) : ReplayOutcome
 
+        /** PostgREST's schema cache did not know the table or a column; the write did not run. */
+        data class SchemaCacheMiss(val cause: Exception) : ReplayOutcome
+
         data class Stopped(val cause: Throwable) : ReplayOutcome
     }
 
+    /**
+     * Sends [mutation] as [identity], the pass [pass] running it: stopped before it leaves the
+     * device when the session is no longer [identity]'s or [pass] was cancelled.
+     */
     private suspend fun replay(
         mutation: MutationRow,
         tableApi: PostgrestQueryBuilderWrapper,
         identity: QueueIdentity,
+        pass: Job,
     ): ReplayOutcome {
         // Decided before this attempt is recorded: only an earlier attempt can have reached the
         // server.
@@ -508,13 +626,25 @@ internal class MutationQueueReplayer(
             is Prepared.Refused -> prepared.outcome
             is Prepared.Ready -> {
                 val newlyUnconfirmed = store.markSendUnconfirmed(mutation.id)
-                when (val sent = sendCapturingEngineFailure { prepared.request(tableApi) }) {
+                val owner = ReplayOwner(identity, sender = pass)
+                val sent = sendCapturingEngineFailure {
+                    withContext(owner) { prepared.request(tableApi) }
+                }
+                when (sent) {
                     is SendOutcome.Succeeded -> ReplayOutcome.Synced
-                    is SendOutcome.Failed -> {
-                        if (newlyUnconfirmed && sent.provesWriteNotApplied())
-                            store.clearUnconfirmedSend(mutation.id)
-                        classify(mutation, sent.thrown, identity)
-                    }
+                    is SendOutcome.Failed ->
+                        if (owner.stoppedWithItsSender) {
+                            // It never left the device: the pass ends here, cancelled
+                            if (newlyUnconfirmed) store.clearUnconfirmedSend(mutation.id)
+                            throw CancellationException("The replay pass was stopped")
+                        } else if (owner.stoppedForAnotherSession) {
+                            stoppedForAnotherSession(mutation.id, newlyUnconfirmed, identity)
+                            ReplayOutcome.SessionChanged
+                        } else {
+                            if (newlyUnconfirmed && sent.provesWriteNotApplied())
+                                store.clearUnconfirmedSend(mutation.id)
+                            classify(mutation, sent.thrown, identity)
+                        }
                 }
             }
         }
@@ -530,6 +660,9 @@ internal class MutationQueueReplayer(
                 sdkLogger.warning { "Network unavailable, pausing sync for ${mutation.table}" }
                 ReplayOutcome.Stopped(failure)
             }
+
+            postgrestCodeOf(failure) in SCHEMA_CACHE_MISS_CODES ->
+                ReplayOutcome.SchemaCacheMiss(failure)
 
             failure.isPermanentMutationFailure() -> {
                 val status = failure.httpStatusOrNull()
@@ -586,6 +719,14 @@ internal class MutationQueueReplayer(
     private fun prepare(mutation: MutationRow, earlierSendUnconfirmed: Boolean): Prepared {
         val json = store.json
         val filter = decodeOrNull(mutation.filterJson, json)
+        // A stored filter that no longer decodes is not a missing one: sending without it would
+        // reach rows the write never targeted
+        if (mutation.filterJson != null && filter == null)
+            return refuse(
+                mutation,
+                "has a filter that can no longer be read",
+                "The queued filter can no longer be read",
+            )
         return when (mutation.operation) {
             MutationOperation.INSERT -> {
                 val body =
@@ -638,20 +779,7 @@ internal class MutationQueueReplayer(
                 val replayableFilter =
                     replayableFilterOrNull(filter)
                         ?: return refuseUnreplayableFilter(mutation, filter)
-                Prepared.Ready { tableApi ->
-                    applyUpdate(
-                        tableApi = tableApi,
-                        body =
-                            rebaseDeltasAgainstServer(
-                                tableApi = tableApi,
-                                table = mutation.table,
-                                body = body,
-                                filter = replayableFilter,
-                                deltaColumns = decodeNumericDeltaColumns(mutation.deltaJson, json),
-                            ),
-                        filter = replayableFilter,
-                    )
-                }
+                Prepared.Ready { tableApi -> applyUpdate(tableApi, body, replayableFilter) }
             }
 
             MutationOperation.DELETE -> {
@@ -786,33 +914,6 @@ internal class MutationQueueReplayer(
         }
     }
 
-    /**
-     * Rebases [body]'s delta-declared columns onto the value the server holds now, read with the
-     * UPDATE's own filter (see [NumericDeltaColumn]). Applies only when the filter matches exactly
-     * one row; otherwise [body] is sent as it is. Read failures propagate, so the mutation stays
-     * queued.
-     */
-    private suspend fun rebaseDeltasAgainstServer(
-        tableApi: PostgrestQueryBuilderWrapper,
-        table: String,
-        body: JsonElement,
-        filter: FilterDescriptor,
-        deltaColumns: List<NumericDeltaColumn>,
-    ): JsonElement {
-        if (deltaColumns.isEmpty()) return body
-
-        val current = tableApi.select(Columns.ALL) { applyTo(this, filter) }
-        val rows = parseJsonArrayOrNull(store.json, current.data)
-        if (rows == null || rows.size != 1) {
-            sdkLogger.warning {
-                "delta-encoded UPDATE on $table re-read ${rows?.size ?: "an unusable payload"}; replaying the absolute body"
-            }
-            return body
-        }
-        val row = rows.single() as? JsonObject ?: return body
-        return rebaseNumericDeltas(body = body, serverRow = row, deltaColumns = deltaColumns)
-    }
-
     private suspend fun applyUpdate(
         tableApi: PostgrestQueryBuilderWrapper,
         body: JsonElement,
@@ -876,6 +977,25 @@ internal class MutationQueueReplayer(
          * connection broke during the request, which may have committed.
          */
         val POSTGREST_DID_NOT_RUN_CODES = setOf("PGRST000", "PGRST002")
+
+        /**
+         * PostgREST's codes for a table (PGRST205) or column (PGRST204) its schema cache does not
+         * know: the statement never ran, and the cache may not have caught up with a migration.
+         */
+        val SCHEMA_CACHE_MISS_CODES = setOf("PGRST204", "PGRST205")
+
+        /**
+         * Schema-cache misses after which a write is rejected: at [SCHEMA_CACHE_MISS_SPACING]
+         * apart, minutes of misses, where a migration's cache reload takes seconds.
+         */
+        const val SCHEMA_CACHE_MISS_BOUND = 10
+
+        /** How long after a counted schema-cache miss the next one counts, in one process. */
+        val SCHEMA_CACHE_MISS_SPACING = 30.seconds
+
+        /** Why a write is rejected at the bound, when the server's answer carries no message. */
+        const val SCHEMA_CACHE_MISS_REASON =
+            "The server's schema does not have the table or a column this write needs"
 
         /** Postgres: `ON CONFLICT` names columns with no unique or exclusion constraint. */
         const val NO_MATCHING_CONFLICT_TARGET = "42P10"

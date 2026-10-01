@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
-import io.github.nesfeder.supabase.offline.internal.db.MutationOwners
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
@@ -12,7 +11,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWith
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 
@@ -48,10 +46,7 @@ class OwnerlessMutationAdoptionTest {
         // Then — untouched and unsent
         assertEquals(0, signedOut.syncedCount)
         assertEquals(emptyList(), server.requests.map { it.body })
-        assertEquals(
-            emptyMap(),
-            assertIs<MutationOwners.Known>(store.mutationQueueState.owners()).byId,
-        )
+        assertEquals(listOf(null), store.allPendingMutations().map { it.owner })
     }
 
     @Test

@@ -50,6 +50,7 @@ of macOS (3.9) and on CI runners.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -71,7 +72,20 @@ OVERRIDES = "compat/overrides.txt"
 PUBLISHED_RECORD = "compat/published-artifacts.txt"
 MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
 RELEASE_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
-CHANGELOG_HEADINGS = ["Breaking", "Added", "Changed", "Deprecated", "Fixed"]
+
+
+def api_compat_headings() -> list[str]:
+    """The `### ` headings of a changelog section, from api-compat.py, the one list: the pull-request
+    check reads them, and a release starts the next section with the same."""
+    spec = importlib.util.spec_from_file_location("api_compat", Path(__file__).with_name("api-compat.py"))
+    module = importlib.util.module_from_spec(spec)
+    # Its dataclasses look their module up by name while it loads
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return list(module.HEADINGS)
+
+
+CHANGELOG_HEADINGS = api_compat_headings()
 BOT_NAME = "github-actions[bot]"
 # GitHub's own address for its Actions bot, which shows the commits under that bot's name.
 BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -599,6 +613,8 @@ def self_test() -> int:
         expect(notes == "### Added\n\n- Offline reads.\n- Queued writes.\n\n### Fixed\n\n- A fix.\n",
                "notes keep the section's entries and drop its heading and empty subheadings")
 
+        expect("Removed" in CHANGELOG_HEADINGS and CHANGELOG_HEADINGS[0] == "Breaking",
+               "the changelog headings are api-compat.py's, Removed included")
         expect(next_version("0.1.0") == "0.2.0-SNAPSHOT" and next_version("1.4.2") == "1.5.0-SNAPSHOT",
                "the next version is the next minor's snapshot")
         bumped = make_repository(work, "bumped", dict(base, **{CHANGELOG: FIXTURE_CHANGELOG.split("## Unreleased")[0] + "## [0.1.0]" + FIXTURE_CHANGELOG.split("## [0.1.0]")[1]}))

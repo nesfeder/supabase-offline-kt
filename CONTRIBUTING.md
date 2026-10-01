@@ -178,9 +178,10 @@ one release and add to it in the next.
 
 ### 3. What is never allowed
 
-- **Editing an exported Room schema** (`supabase-offline-kt/schemas/`). A shipped schema is what
-  devices have on disk. A schema change is a new version with a migration and a migration test, and
-  it waits for a minor release.
+- **Editing an exported Room schema** (`supabase-offline-kt/schemas/`) once a release has shipped
+  it. A shipped schema is what devices have on disk. A schema change is then a new version with a
+  migration and a migration test, and it waits for a minor release. Until the first release, the
+  one schema it will ship, version 1, may change; the script rates that a stored-format change.
 - **Changing a stored name or format without saying so.** The tests that pin what is on the device
   (the reserved rows, the persisted names and JSON keys, the stored mutation formats and their
   replay, the file-cache layout, and where the database and the cached files live) are listed in

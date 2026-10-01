@@ -5,41 +5,37 @@ package io.github.nesfeder.supabase.offline.internal.db
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.execSQL
-import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 
 /**
- * A `supabase_offline.db` exactly as an install of the engine's previous home left it on disk: Room
- * schema version 2, identity hash `5a519d822fb8c3ead14608102c6846d9`, holding cached queries, a
- * storage row and unsent writes.
+ * A `supabase_offline.db` exactly as this build leaves it on disk: Room schema version 1, the one
+ * schema the library ships, identity hash `d82a2435c50b4595368573f8728a370b`, holding cached
+ * queries, a storage row, unsent writes and one synced write not yet retired.
  *
- * [SCHEMA_STATEMENTS] are the `createSql` / index `createSql` / `setupQueries` of that release's
- * exported `schemas/<database class>/2.json`, copied verbatim with `${TABLE_NAME}` substituted —
- * the file is written with the raw SQLite driver, never through Room, so nothing the library does
- * today can shape it. `OfflineDatabaseSchemaContinuityTest` checks the copy against the exported
- * schema file.
- *
- * [writeVersion1To] writes the same rows at schema version 1 (from `1.json`, before `delta_json`
- * existed), for the one migration an older install still has to take.
+ * [SCHEMA_STATEMENTS] are the `createSql` / index `createSql` / `setupQueries` of the exported
+ * `schemas/<database class>/1.json`, copied verbatim with `${TABLE_NAME}` substituted — the file is
+ * written with the raw SQLite driver, never through Room, so nothing the library does today can
+ * shape it. `OfflineDatabaseSchemaContinuityTest` checks the copy against the exported schema file.
  *
  * The rows use the stored formats the engine reads back: `operation` strings (written as literals,
  * so the file does not follow the library's constants), `filter_json` as the JSON encoding of
- * `FilterDescriptor` (an AND descriptor omits its default `mode`), `delta_json` as a JSON list of
- * `NumericDeltaColumn` (a null `minValue` is omitted), and booleans as SQLite integers.
+ * `FilterDescriptor` (an AND descriptor omits its default `mode`), and booleans as SQLite integers.
+ * The unsent writes carry no owner, as a write queued with no session model does.
  */
 internal object ShippedDatabaseFixture {
 
-    /** Room schema version of the shipped database. */
-    const val VERSION: Long = 2
+    /** Room schema version of the database. */
+    const val VERSION: Long = 1
 
-    /** Room identity hash of schema version 2. */
-    const val IDENTITY_HASH: String = "5a519d822fb8c3ead14608102c6846d9"
+    /** Room identity hash of schema version 1. */
+    const val IDENTITY_HASH: String = "d82a2435c50b4595368573f8728a370b"
 
-    /** Schema version 2, statement for statement, from the exported `2.json`. */
+    /** Schema version 1, statement for statement, from the exported `1.json`. */
     val SCHEMA_STATEMENTS: List<String> =
         listOf(
             "CREATE TABLE IF NOT EXISTS `object_cache` (`table_name` TEXT NOT NULL, `signature` TEXT NOT NULL, " +
-                "`payload` TEXT NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`table_name`, `signature`))",
+                "`payload` TEXT NOT NULL, `updated_at` INTEGER NOT NULL, " +
+                "`synced_through` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`table_name`, `signature`))",
             "CREATE TABLE IF NOT EXISTS `storage_objects` (`key` TEXT NOT NULL, `bucketId` TEXT NOT NULL, " +
                 "`path` TEXT NOT NULL, `localPath` TEXT NOT NULL, `sizeBytes` INTEGER, `eTag` TEXT, " +
                 "`lastFetchedEpochMs` INTEGER NOT NULL, PRIMARY KEY(`key`))",
@@ -48,26 +44,15 @@ internal object ShippedDatabaseFixture {
             "CREATE TABLE IF NOT EXISTS `mutation_cache` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                 "`table_name` TEXT NOT NULL, `operation` TEXT NOT NULL, `body_json` TEXT NOT NULL, " +
                 "`filter_json` TEXT, `created_at_ms` INTEGER NOT NULL, `synced_at_ms` INTEGER, " +
-                "`default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER, `delta_json` TEXT)",
+                "`default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER, " +
+                "`owner` TEXT, `sync_sequence` INTEGER, `schema_cache_misses` INTEGER NOT NULL DEFAULT 0, " +
+                "`send_unconfirmed` INTEGER NOT NULL DEFAULT 0)",
+            "CREATE INDEX IF NOT EXISTS `index_mutation_cache_owner_synced_at_ms` ON `mutation_cache` " +
+                "(`owner`, `synced_at_ms`)",
+            "CREATE INDEX IF NOT EXISTS `index_mutation_cache_table_name` ON `mutation_cache` " +
+                "(`table_name`)",
             "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-            "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5a519d822fb8c3ead14608102c6846d9')",
-        )
-
-    /** Room identity hash of schema version 1. */
-    const val VERSION_1_IDENTITY_HASH: String = "da81d9c688873737d807333f92e2e56d"
-
-    /** Schema version 1, statement for statement, from the exported `1.json`. */
-    val VERSION_1_SCHEMA_STATEMENTS: List<String> =
-        listOf(
-            SCHEMA_STATEMENTS[0],
-            SCHEMA_STATEMENTS[1],
-            SCHEMA_STATEMENTS[2],
-            "CREATE TABLE IF NOT EXISTS `mutation_cache` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                "`table_name` TEXT NOT NULL, `operation` TEXT NOT NULL, `body_json` TEXT NOT NULL, " +
-                "`filter_json` TEXT, `created_at_ms` INTEGER NOT NULL, `synced_at_ms` INTEGER, " +
-                "`default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER)",
-            "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-            "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'da81d9c688873737d807333f92e2e56d')",
+            "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd82a2435c50b4595368573f8728a370b')",
         )
 
     /** The UPDATE's filter: an AND descriptor, stored without its default `mode`. */
@@ -79,11 +64,6 @@ internal object ShippedDatabaseFixture {
     const val DELETE_FILTER_JSON: String =
         """{"mode":"OR","conditions":[{"column":"id","operatorId":"in","value":"(7,8)"},""" +
             """{"column":"status","operatorId":"eq","value":"archived"}]}"""
-
-    /** The UPDATE's delta declarations; the second has no floor, so its `minValue` is omitted. */
-    const val UPDATE_DELTA_JSON: String =
-        """[{"column":"done_count","snapshotValue":4.0,"minValue":0.0},""" +
-            """{"column":"minutes_spent","snapshotValue":30.0}]"""
 
     /** [UPDATE_FILTER_JSON] decoded. */
     val UPDATE_FILTER: FilterDescriptor =
@@ -115,14 +95,10 @@ internal object ShippedDatabaseFixture {
                 ),
         )
 
-    /** [UPDATE_DELTA_JSON] decoded. */
-    val UPDATE_DELTAS: List<NumericDeltaColumn> =
-        listOf(
-            NumericDeltaColumn(column = "done_count", snapshotValue = 4.0, minValue = 0.0),
-            NumericDeltaColumn(column = "minutes_spent", snapshotValue = 30.0),
-        )
-
-    /** Cached SELECT payloads, one plain and one positional window. */
+    /**
+     * Cached SELECT payloads, one plain and one positional window; the first was fetched after the
+     * synced write replayed, and holds it.
+     */
     val OBJECT_ROWS: List<ObjectRow> =
         listOf(
             ObjectRow(
@@ -130,6 +106,7 @@ internal object ShippedDatabaseFixture {
                 signature = "todos?select=*&user_id=eq.u-1",
                 payload = """[{"id":1,"title":"Buy milk","done":false}]""",
                 updatedAt = 1_727_000_000_000,
+                syncedThrough = 1,
             ),
             ObjectRow(
                 table = "todos",
@@ -151,7 +128,10 @@ internal object ShippedDatabaseFixture {
             lastFetchedEpochMs = 1_727_000_000_500,
         )
 
-    /** Four unsent writes, one per operation, plus one synced write not yet retired. */
+    /**
+     * Four unsent writes, one per operation, plus one synced write not yet retired. The INSERT's
+     * send started and its outcome is unknown.
+     */
     val MUTATION_ROWS: List<MutationRow> =
         listOf(
             MutationRow(
@@ -165,7 +145,7 @@ internal object ShippedDatabaseFixture {
                 defaultToNull = true,
                 onConflict = null,
                 ignoreDuplicates = null,
-                deltaJson = null,
+                sendUnconfirmed = true,
             ),
             MutationRow(
                 id = 2,
@@ -178,20 +158,18 @@ internal object ShippedDatabaseFixture {
                 defaultToNull = false,
                 onConflict = "list_id,user_id",
                 ignoreDuplicates = true,
-                deltaJson = null,
             ),
             MutationRow(
                 id = 3,
                 table = "todos",
                 operation = "UPDATE",
-                bodyJson = """{"title":"Walk the dog twice","done_count":5,"minutes_spent":45}""",
+                bodyJson = """{"title":"Walk the dog twice","done":true}""",
                 filterJson = UPDATE_FILTER_JSON,
                 createdAtMs = 1_727_000_003_000,
                 syncedAtMs = null,
                 defaultToNull = null,
                 onConflict = null,
                 ignoreDuplicates = null,
-                deltaJson = UPDATE_DELTA_JSON,
             ),
             MutationRow(
                 id = 4,
@@ -204,7 +182,6 @@ internal object ShippedDatabaseFixture {
                 defaultToNull = null,
                 onConflict = null,
                 ignoreDuplicates = null,
-                deltaJson = null,
             ),
             MutationRow(
                 id = 5,
@@ -217,42 +194,17 @@ internal object ShippedDatabaseFixture {
                 defaultToNull = true,
                 onConflict = null,
                 ignoreDuplicates = null,
-                deltaJson = null,
+                owner = "user:u-1",
+                syncSequence = 1,
             ),
         )
 
-    /** [MUTATION_ROWS] as a schema version 1 install holds them: no `delta_json` column yet. */
-    val VERSION_1_MUTATION_ROWS: List<MutationRow> = MUTATION_ROWS.map { row ->
-        row.copy(deltaJson = null)
-    }
-
     /**
-     * Writes the shipped database to [path] with the raw SQLite [driver] — this build's own unless
-     * a test names another: schema version 2, every fixture row, and `PRAGMA user_version = 2`.
+     * Writes the database to [path] with the raw SQLite [driver] — this build's own unless a test
+     * names another: schema version 1, every fixture row, and `PRAGMA user_version = 1`.
      */
     fun writeTo(path: String, driver: SQLiteDriver = defaultSQLiteDriver()) {
-        write(
-            path,
-            driver,
-            version = VERSION,
-            schemaStatements = SCHEMA_STATEMENTS,
-            mutationRows = MUTATION_ROWS,
-        )
-    }
-
-    /**
-     * Writes the same database at schema version 1 — the `1.json` schema, the rows without
-     * `delta_json`, and `PRAGMA user_version = 1` — as an install that never ran a version-2 build
-     * holds it.
-     */
-    fun writeVersion1To(path: String, driver: SQLiteDriver = defaultSQLiteDriver()) {
-        write(
-            path,
-            driver,
-            version = 1,
-            schemaStatements = VERSION_1_SCHEMA_STATEMENTS,
-            mutationRows = VERSION_1_MUTATION_ROWS,
-        )
+        write(path, driver, version = VERSION, schemaStatements = SCHEMA_STATEMENTS)
     }
 
     private fun write(
@@ -260,16 +212,15 @@ internal object ShippedDatabaseFixture {
         driver: SQLiteDriver,
         version: Long,
         schemaStatements: List<String>,
-        mutationRows: List<MutationRow>,
     ) {
-        val hasDeltaColumn = version >= VERSION
         val connection = driver.open(path)
         try {
             schemaStatements.forEach { statement -> connection.execSQL(statement) }
             OBJECT_ROWS.forEach { row ->
                 connection.execSQL(
-                    "INSERT INTO object_cache (table_name, signature, payload, updated_at) VALUES (" +
-                        "${sql(row.table)}, ${sql(row.signature)}, ${sql(row.payload)}, ${row.updatedAt})"
+                    "INSERT INTO object_cache (table_name, signature, payload, updated_at, " +
+                        "synced_through) VALUES (${sql(row.table)}, ${sql(row.signature)}, " +
+                        "${sql(row.payload)}, ${row.updatedAt}, ${row.syncedThrough})"
                 )
             }
             connection.execSQL(
@@ -278,16 +229,16 @@ internal object ShippedDatabaseFixture {
                     "${sql(STORAGE_ROW.path)}, ${sql(STORAGE_ROW.localPath)}, ${STORAGE_ROW.sizeBytes}, " +
                     "${sql(STORAGE_ROW.eTag)}, ${STORAGE_ROW.lastFetchedEpochMs})"
             )
-            mutationRows.forEach { row ->
-                val deltaColumn = if (hasDeltaColumn) ", delta_json" else ""
-                val deltaValue = if (hasDeltaColumn) ", ${sql(row.deltaJson)}" else ""
+            MUTATION_ROWS.forEach { row ->
                 connection.execSQL(
                     "INSERT INTO mutation_cache (id, table_name, operation, body_json, filter_json, " +
-                        "created_at_ms, synced_at_ms, default_to_null, on_conflict, ignore_duplicates" +
-                        "$deltaColumn) VALUES (${row.id}, ${sql(row.table)}, ${sql(row.operation)}, " +
-                        "${sql(row.bodyJson)}, ${sql(row.filterJson)}, ${row.createdAtMs}, " +
-                        "${row.syncedAtMs ?: "NULL"}, ${sql(row.defaultToNull)}, ${sql(row.onConflict)}, " +
-                        "${sql(row.ignoreDuplicates)}$deltaValue)"
+                        "created_at_ms, synced_at_ms, default_to_null, on_conflict, ignore_duplicates, " +
+                        "owner, sync_sequence, send_unconfirmed) VALUES (${row.id}, " +
+                        "${sql(row.table)}, " +
+                        "${sql(row.operation)}, ${sql(row.bodyJson)}, ${sql(row.filterJson)}, " +
+                        "${row.createdAtMs}, ${row.syncedAtMs ?: "NULL"}, ${sql(row.defaultToNull)}, " +
+                        "${sql(row.onConflict)}, ${sql(row.ignoreDuplicates)}, ${sql(row.owner)}, " +
+                        "${row.syncSequence ?: "NULL"}, ${if (row.sendUnconfirmed) 1 else 0})"
                 )
             }
             connection.execSQL("PRAGMA user_version = $version")

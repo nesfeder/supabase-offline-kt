@@ -26,6 +26,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
@@ -844,6 +845,50 @@ class KnownRowsPruningTest {
     }
 
     @Test
+    fun a_row_moved_in_by_key_is_read_from_the_newest_fetch_after_one_lands() = runTest {
+        // Given — row 5 in list A, list B, and a queued upsert of some of its columns moving it
+        // into list B, read once
+        val (store, _) =
+            storeOf(
+                Triple(
+                    "list-a",
+                    """[{"id":5,"list":"A","title":"older","code":"c5"}]""",
+                    NOW - 3_000,
+                ),
+                Triple("list-b", LIST_B, NOW - 4_000),
+            )
+        store.queryShapes.remember(
+            TABLE,
+            "everything",
+            shapeOf(queriesFor(Keys.INT).single { query -> query.signature == "everything" }),
+            persist = false,
+        )
+        store.enqueueUpsert(
+            TABLE,
+            JsonArray(listOf(OfflineJson.parseToJsonElement("""{"id":5,"list":"B"}"""))),
+        )
+        val first = store.overlayCachedPayload(TABLE, "list-b", LIST_B)
+
+        // When — a newer fetch of every row lands, holding row 5 as it is now
+        store.addPayload(
+            TABLE,
+            "everything",
+            """[{"id":5,"list":"A","title":"newest","code":"c5"}]""",
+        )
+        val second = store.overlayCachedPayload(TABLE, "list-b", LIST_B)
+
+        // Then — each read moved in the newest copy it could know
+        assertEquals(
+            """[{"id":1,"list":"B","title":"b"},{"id":5,"list":"B","title":"older","code":"c5"}]""",
+            first,
+        )
+        assertEquals(
+            """[{"id":1,"list":"B","title":"b"},{"id":5,"list":"B","title":"newest","code":"c5"}]""",
+            second,
+        )
+    }
+
+    @Test
     fun a_queued_partial_upsert_then_a_moving_update_brings_the_whole_newest_row() = runTest {
         // Given — row 5 held by two lists, and list B
         val (store, _) =
@@ -958,6 +1003,101 @@ class KnownRowsPruningTest {
         )
     }
 
+    @Test
+    fun a_query_an_update_leaves_fresh_shows_what_the_server_then_holds() = runTest {
+        // Given / When / Then — per scenario: a table the server holds whole, every query's
+        // payload its answer, and an update the server applies; each query the patch neither
+        // marked stale nor stamped stale shows the rows the server now returns for it
+        var fresh = 0
+        val mismatches = mutableListOf<String>()
+        repeat(SCENARIOS * 4) { seed ->
+            val random = Random(seed)
+            val server =
+                List(ROWS) { index ->
+                    buildJsonObject {
+                        put("id", index)
+                        put("list", LISTS[random.nextInt(LISTS.size)])
+                        put("status", STATUSES[random.nextInt(STATUSES.size)])
+                        put("position", random.nextInt(ROWS))
+                        put("title", "t$index")
+                    }
+                }
+            val queries = TRUTH_QUERIES
+            val objectDao = FakeObjectDao()
+            val store = newTestOfflineStore(objectDao = objectDao, nowMillis = { NOW })
+            store.liveSignatureProvider = { emptySet() }
+            val marked = mutableSetOf<String>()
+            store.onQueriesMarkedStale = { _, signatures -> marked += signatures }
+            queries.entries.forEachIndexed { position, (signature, conditions) ->
+                val shape = QueryShape("*", conditions, hasOtherFilters = false)
+                store.queryShapes.remember(TABLE, signature, shape, persist = false)
+                val answer = server.filter { row -> conditions.all { truth(row, it) } }
+                objectDao.seedPayload(
+                    TABLE,
+                    signature,
+                    JsonArray(answer).toString(),
+                    NOW - position,
+                )
+            }
+            val patch =
+                JsonObject(
+                    buildMap {
+                        if (random.nextBoolean())
+                            put("list", JsonPrimitive(LISTS[random.nextInt(3)]))
+                        if (isEmpty() || random.nextBoolean())
+                            put("status", JsonPrimitive(STATUSES[random.nextInt(2)]))
+                        if (random.nextBoolean()) put("title", JsonPrimitive("u$seed"))
+                    }
+                )
+            val filter = List(1 + random.nextInt(2)) { random.truthCondition() }
+
+            store.patchCachedQueries(
+                TABLE,
+                MutationOperation.UPDATE,
+                patch.toString(),
+                FilterEngine.encode(FilterDescriptor(conditions = filter), OfflineJson),
+                liveSignatures = emptySet(),
+            )
+
+            val after = server.map { row ->
+                if (filter.all { truth(row, it) }) JsonObject(row + patch) else row
+            }
+            queries.forEach { (signature, conditions) ->
+                val stored = checkNotNull(objectDao.getRow(TABLE, signature))
+                if (signature in marked || isStaleStamp(stored.updatedAt)) return@forEach
+                fresh++
+                val shown =
+                    payloadRowsOf(OfflineJson, stored.payload).orEmpty().sortedBy { row ->
+                        (row as JsonObject).getValue("id").toString().toInt()
+                    }
+                val truth = after.filter { row -> conditions.all { truth(row, it) } }
+                if (shown != truth) mismatches += "seed $seed $signature: $shown, not $truth"
+            }
+        }
+        assertEquals(emptyList(), mismatches.take(3))
+        assertTrue(fresh > SCENARIOS, "too few queries left fresh: $fresh")
+    }
+
+    /** A condition the engine evaluates or not, as the server would apply it. */
+    private fun Random.truthCondition(): FilterDescriptor.Condition =
+        when (nextInt(5)) {
+            0 -> FilterDescriptor.Condition("list", "eq", LISTS[nextInt(LISTS.size)])
+            1 -> FilterDescriptor.Condition("status", "neq", "done")
+            2 -> FilterDescriptor.Condition("id", "eq", nextInt(ROWS).toString())
+            3 -> FilterDescriptor.Condition("position", "gt", nextInt(ROWS).toString())
+            else -> FilterDescriptor.Condition("position", "eq", nextInt(ROWS).toString())
+        }
+
+    /** Whether the server would find [row] meets [condition]: `eq`, `neq` and `gt`. */
+    private fun truth(row: JsonObject, condition: FilterDescriptor.Condition): Boolean {
+        val value = (row.getValue(condition.column) as JsonPrimitive).content
+        return when (condition.operatorId) {
+            "eq" -> value == condition.value
+            "neq" -> value != condition.value
+            else -> value.toInt() > condition.value.toInt()
+        }
+    }
+
     private companion object {
         const val TABLE = "tasks"
         const val NOW = 1_000_000L
@@ -973,6 +1113,19 @@ class KnownRowsPruningTest {
         val LISTS = listOf("A", "B", "C")
         val STATUSES = listOf("open", "done")
         val FLAGS = listOf("normal", "urgent")
+        /** The queries of the ground-truth scenarios: every row is held by one of them. */
+        val TRUTH_QUERIES: Map<String, List<FilterDescriptor.Condition>> =
+            linkedMapOf(
+                "list-a" to listOf(FilterDescriptor.Condition("list", "eq", "A")),
+                "list-b" to listOf(FilterDescriptor.Condition("list", "eq", "B")),
+                "done" to listOf(FilterDescriptor.Condition("status", "eq", "done")),
+                "b-open" to
+                    listOf(
+                        FilterDescriptor.Condition("list", "eq", "B"),
+                        FilterDescriptor.Condition("status", "eq", "open"),
+                    ),
+                "everything" to emptyList(),
+            )
         val WRITES =
             listOf(
                 MutationOperation.INSERT,

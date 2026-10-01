@@ -169,5 +169,20 @@ internal class RecordingPostgrestServer(
 
         /** A transport failure: the request never reaches a server. */
         fun connectivityFailure(): Nothing = throw IOException("network unreachable")
+
+        /**
+         * The last path segment of the Auth server's token endpoint, as [RecordedRequest.table].
+         */
+        const val TOKEN_ENDPOINT: String = "token"
+
+        /** The Auth server refusing a refresh token, as it does one revoked. */
+        fun MockRequestHandleScope.refreshRefused(): HttpResponseData =
+            respond(
+                content =
+                    """{"error":"invalid_grant","error_description":"Invalid Refresh Token"}""",
+                status = HttpStatusCode.BadRequest,
+                headers =
+                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
     }
 }

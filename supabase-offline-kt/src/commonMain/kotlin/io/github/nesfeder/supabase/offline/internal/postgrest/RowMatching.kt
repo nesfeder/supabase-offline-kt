@@ -298,6 +298,62 @@ private fun textEquality(value: String, literal: String): RowMatch =
     }
 
 /**
+ * Whether `eq` on a column, between any two of [values] (a row's value, or a literal written as
+ * one), matches exactly when they are written alike — one UUID in any case, for a column read as
+ * `uuid` when [asUuid] — and excludes otherwise, never unknown. So only when every value is of one
+ * kind — whole numbers not below zero (JSON numbers or digit strings), UUIDs of a `uuid` column, or
+ * plain text — and no two texts differ in letter case alone.
+ */
+internal fun equalityDecidedByContent(values: Sequence<JsonElement?>, asUuid: Boolean): Boolean {
+    var kind: EqualityKind? = null
+    val folded = HashMap<String, String>()
+    for (value in values) {
+        val next = equalityKindOf(value, asUuid) ?: return false
+        if (kind != null && kind != next) return false
+        kind = next
+        if (next == EqualityKind.TEXT) {
+            val content = (value as JsonPrimitive).content
+            if (folded.getOrPut(content.lowercase()) { content } != content) return false
+        }
+    }
+    return true
+}
+
+/** The kinds of value [equalityDecidedByContent] compares by content. */
+private enum class EqualityKind {
+    WHOLE_NUMBER,
+    UUID,
+    TEXT,
+}
+
+/**
+ * [value]'s [EqualityKind], or `null` for one `eq` may judge unknown against a value of its kind: a
+ * missing or null value, an array, object or boolean, a fraction, or text that some type reads
+ * otherwise (see [textEquality]).
+ */
+private fun equalityKindOf(value: JsonElement?, asUuid: Boolean): EqualityKind? {
+    val primitive = value as? JsonPrimitive ?: return null
+    if (primitive is JsonNull) return null
+    val content = primitive.content
+    if (!primitive.isString) {
+        if (primitive.booleanOrNull != null) return null
+        return if (WHOLE_NUMBER.matches(content)) EqualityKind.WHOLE_NUMBER else null
+    }
+    return when {
+        WHOLE_NUMBER.matches(content) -> EqualityKind.WHOLE_NUMBER
+        isUuid(content) -> if (asUuid) EqualityKind.UUID else null
+        isTextShaped(content) &&
+            content.trimmedLength() == content.length &&
+            postgresBooleanOrNull(content) == null &&
+            macDigitsOrNull(content) == null -> EqualityKind.TEXT
+        else -> null
+    }
+}
+
+/** A whole number not below zero, written without leading zeros. */
+private val WHOLE_NUMBER = Regex("0|[1-9][0-9]*")
+
+/**
  * Whether [value] and [literal] are equal but for letter case or trailing spaces; allocates
  * nothing.
  */

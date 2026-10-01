@@ -14,7 +14,6 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
-import io.github.nesfeder.supabase.offline.internal.db.MUTATION_OWNERS_SIGNATURE
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryStorageDao
@@ -23,20 +22,15 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeObjectDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.TOKEN_ENDPOINT
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.refreshRefused
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
-import io.ktor.client.engine.mock.MockRequestHandleScope
-import io.ktor.client.engine.mock.respond
-import io.ktor.client.request.HttpResponseData
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -44,7 +38,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
@@ -410,7 +403,10 @@ class CacheBelongsToOneIdentityTest {
         awaitCacheOwner("user:B")
         assertEquals(emptyList(), objectDao.rowsOf(TABLE).map { row -> row.payload })
         assertEquals(1, mutationDao.inserted.count { row -> row.syncedAtMs == null })
-        assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE))
+        assertEquals(
+            listOf("user:A"),
+            mutationDao.inserted.filter { row -> row.syncedAtMs == null }.map { row -> row.owner },
+        )
         assertEquals(rowsOf("B"), items.select(readStrategy = ReadStrategy.CacheFirst()).data)
 
         // When — A signs back in, offline
@@ -658,19 +654,6 @@ class CacheBelongsToOneIdentityTest {
                 refreshToken = "refresh-token",
                 expiresIn = -60,
                 tokenType = "bearer",
-            )
-
-        /** The last path segment of the Auth server's token endpoint. */
-        const val TOKEN_ENDPOINT = "token"
-
-        /** The Auth server refusing a refresh token, as it does one revoked. */
-        fun MockRequestHandleScope.refreshRefused(): HttpResponseData =
-            respond(
-                content =
-                    """{"error":"invalid_grant","error_description":"Invalid Refresh Token"}""",
-                status = HttpStatusCode.BadRequest,
-                headers =
-                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
     }
 }

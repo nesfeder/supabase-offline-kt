@@ -32,6 +32,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -150,16 +151,17 @@ class MutationQueueAcrossCloseTest {
         first.from(TABLE).insertJson(rowWithId(1))
         first.from(TABLE).insertJson(rowWithId(2))
 
-        // When — A's pass commits the first on the server, and A closes before the answer arrives
+        // When — A's pass commits the first on the server, and A closes before the answer
+        // arrives; the pass finishes that request once it does
         online.store(true)
         val pass = callerScope.async { runCatching { first.syncAllPendingMutations() } }
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) { while (server.rows(TABLE).isEmpty()) delay(5) }
         }
         first.close()
+        held.complete(Unit)
         val passOutcome =
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { pass.await() } }
-        held.complete(Unit)
         val reopened =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
@@ -174,8 +176,8 @@ class MutationQueueAcrossCloseTest {
             )
         reopened.syncAllPendingMutations()
 
-        // Then — A's pass was stopped; the reopened client sent the rest; each row is on the server
-        // once, and nothing was refused as a duplicate of itself
+        // Then — A's pass stopped after the first; the reopened client sent the rest; each row is
+        // on the server once, and nothing was refused as a duplicate of itself
         assertClientClosedError(passOutcome.exceptionOrNull(), "the pass in flight at close()")
         assertEquals(
             listOf(1, 2),
@@ -189,6 +191,70 @@ class MutationQueueAcrossCloseTest {
         reopened.close()
     }
 
+    @Test
+    fun a_pass_finishes_the_request_on_the_wire_at_close_so_a_keyless_insert_is_not_sent_twice() =
+        runTest {
+            // Given — a keyless INSERT queued offline, over one database; the server commits it and
+            // holds its answer
+            val objects = FakeObjectDao()
+            val storage = InMemoryStorageDao()
+            val mutations = FakeMutationDao()
+            val online = AtomicBoolean(false)
+            val committed = AtomicInt(0)
+            val held = CompletableDeferred<Unit>()
+            val server =
+                RecordingPostgrestServer(
+                    answer = { request ->
+                        if (!online.load()) connectivityFailure()
+                        if (request.method == "POST") committed.addAndFetch(1)
+                        held.await()
+                        okJson("[]")
+                    }
+                )
+            val first =
+                newTestOfflineClient(
+                    supabase = server.supabaseClient(),
+                    store =
+                        newTestOfflineStore(
+                            objectDao = objects,
+                            storageDao = storage,
+                            mutationDao = mutations,
+                        ),
+                    coordinatorScope = idleCoroutineScope(),
+                    closeWait = 5.seconds,
+                )
+            first.from(TABLE).insertJson(KEYLESS_ROW)
+
+            // When — a pass has it on the wire when the client closes, and the answer arrives while
+            // close() waits
+            online.store(true)
+            callerScope.async { runCatching { first.syncAllPendingMutations() } }
+            withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) { while (committed.load() == 0) delay(5) }
+            }
+            val closing = callerScope.async(start = CoroutineStart.UNDISPATCHED) { first.close() }
+            held.complete(Unit)
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { closing.await() } }
+            val reopened =
+                newTestOfflineClient(
+                    supabase = server.supabaseClient(),
+                    store =
+                        newTestOfflineStore(
+                            objectDao = objects,
+                            storageDao = storage,
+                            mutationDao = mutations,
+                        ),
+                    coordinatorScope = idleCoroutineScope(),
+                    closeWait = IDLE_CLOSE_WAIT,
+                )
+            reopened.syncAllPendingMutations()
+
+            // Then — the pass recorded the answer before it stopped, so nothing is sent again
+            assertEquals(1, committed.load())
+            assertEquals(0, reopened.pendingMutationCount())
+            reopened.close()
+        }
+
     private fun rowWithId(id: Int): JsonArray =
         Json.parseToJsonElement("""[{"id":$id,"title":"row $id"}]""") as JsonArray
 
@@ -199,5 +265,7 @@ class MutationQueueAcrossCloseTest {
         /** An idle client's work can never finish, so its `close()` always waits this long. */
         val IDLE_CLOSE_WAIT: Duration = 100.milliseconds
         val ROW: JsonArray = Json.parseToJsonElement("""[{"id":1}]""") as JsonArray
+        val KEYLESS_ROW: JsonArray =
+            Json.parseToJsonElement("""[{"title":"no key"}]""") as JsonArray
     }
 }

@@ -1,0 +1,168 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
+package io.github.nesfeder.supabase.offline.internal.testing
+
+import io.github.nesfeder.supabase.offline.internal.db.ObjectRow
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
+import io.github.nesfeder.supabase.offline.internal.db.StorageRow
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+
+/**
+ * The in-memory DAOs back the testing artifact's client, whose live readers run on one thread while
+ * a refresh writes on another, as Room's do. Every read sees a whole state, and every observer ends
+ * on what the DAO holds, however the threads interleave.
+ */
+class InMemoryDaosAcrossThreadsTest {
+
+    @Test
+    fun the_object_dao_reads_while_another_thread_writes() = runTest {
+        // Given
+        val dao = InMemoryObjectDao()
+        val failures = AtomicInt(0)
+
+        // When — one thread writes payloads while another reads, and registers observers
+        withContext(Dispatchers.Default) {
+            whileWriting(write = { index -> dao.upsert(payloadRow(index)) }) {
+                repeat(READS) { read ->
+                    countingFailures(failures) {
+                        dao.rowsWithSignaturePrefix(RESERVED_TABLE_NAME, "shape:")
+                        dao.maxSyncedThrough()
+                        dao.minSyncedThroughForTable(TABLE)
+                        dao.signaturesForTable(TABLE)
+                        dao.observe(TABLE, "observed-${read % SIGNATURES}")
+                    }
+                }
+            }
+        }
+
+        // Then
+        assertEquals(0, failures.load())
+    }
+
+    @Test
+    fun writers_on_two_threads_leave_each_observer_on_what_the_dao_holds() = runTest {
+        // Given — observers of every signature the writers touch
+        val dao = InMemoryObjectDao()
+        val observed = List(SIGNATURES) { index -> dao.observe(TABLE, "q$index") }
+
+        // When — two threads write the same signatures
+        withContext(Dispatchers.Default) {
+            List(2) { writer ->
+                    launch {
+                        repeat(WRITES) { round ->
+                            dao.upsert(
+                                ObjectRow(
+                                    table = TABLE,
+                                    signature = "q${round % SIGNATURES}",
+                                    payload = "[$writer,$round]",
+                                    updatedAt = 1L,
+                                )
+                            )
+                        }
+                    }
+                }
+                .joinAll()
+        }
+
+        // Then
+        observed.forEachIndexed { index, flow ->
+            assertEquals(dao.get(TABLE, "q$index"), flow.first())
+        }
+    }
+
+    @Test
+    fun the_storage_dao_reads_while_another_thread_writes() = runTest {
+        // Given
+        val dao = InMemoryStorageDao()
+        val failures = AtomicInt(0)
+
+        // When
+        withContext(Dispatchers.Default) {
+            whileWriting(write = { index -> dao.upsert(storageRow(index)) }) {
+                repeat(READS) { read ->
+                    countingFailures(failures) {
+                        dao.all()
+                        dao.totalSizeBytes()
+                        dao.forObject(
+                            BUCKET,
+                            "file-${read % SIGNATURES}",
+                            "file-${read % SIGNATURES}@",
+                        )
+                        dao.delete(BUCKET, "file-${read % SIGNATURES}")
+                    }
+                }
+            }
+        }
+
+        // Then
+        assertEquals(0, failures.load())
+    }
+
+    /** Runs [write] on a thread of its own, over and over, until [read] returns. */
+    private suspend fun CoroutineScope.whileWriting(
+        write: suspend (index: Int) -> Unit,
+        read: suspend () -> Unit,
+    ) {
+        val writing = AtomicBoolean(true)
+        val writer = launch {
+            var index = 0
+            while (writing.load()) write(index++)
+        }
+        launch { read() }.join()
+        writing.store(false)
+        writer.join()
+    }
+
+    /** Runs [block], counting any failure it throws in [failures]. */
+    private suspend fun countingFailures(failures: AtomicInt, block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            failures.addAndFetch(1)
+        }
+    }
+
+    private fun payloadRow(index: Int): ObjectRow =
+        ObjectRow(
+            table = TABLE,
+            signature = "q${index % SIGNATURES}",
+            payload = "[]",
+            updatedAt = 1L,
+            syncedThrough = index.toLong(),
+        )
+
+    private fun storageRow(index: Int): StorageRow =
+        StorageRow(
+            key = "$BUCKET::file-${index % SIGNATURES}",
+            bucketId = BUCKET,
+            path = "file-${index % SIGNATURES}",
+            localPath = "/in-memory/file-$index",
+            sizeBytes = index.toLong(),
+            eTag = null,
+            lastFetchedEpochMs = 1L,
+        )
+
+    private companion object {
+        const val TABLE = "todos"
+        const val BUCKET = "avatars"
+        const val SIGNATURES = 500
+        const val READS = 20_000
+        const val WRITES = 5_000
+    }
+}

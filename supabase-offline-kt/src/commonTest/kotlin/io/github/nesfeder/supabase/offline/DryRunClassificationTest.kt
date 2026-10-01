@@ -143,36 +143,67 @@ class DryRunClassificationTest {
     }
 
     @Test
-    fun a_write_that_fails_before_its_request_is_built_is_not_reported_as_unclassifiable() =
-        runTest {
-            // Given — an expired session, and no network to refresh it: supabase-kt fails the write
-            // while building its request, before the dry-run check can read it
-            val logger = RecordingOfflineLogger()
-            val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-            val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
-            supabase.signInForTest("user-a", expiresInSeconds = -60)
-            val builder =
-                OfflinePostgrestQueryBuilderImpl(
-                    delegate = supabase.postgrest.from(TABLE),
-                    store = store,
-                    sdkLogger = logger.asSdkLogger(),
-                )
+    fun a_write_whose_session_token_cannot_be_refreshed_is_classified_and_queued() = runTest {
+        // Given — an expired session, and no network to refresh it: supabase-kt fails the write
+        // while building its request, but the check reads it on a handle that needs no token
+        val logger = RecordingOfflineLogger()
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
+        supabase.signInForTest("user-a", expiresInSeconds = -60)
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = supabase.postgrest.from(TABLE),
+                store = store,
+                sdkLogger = logger.asSdkLogger(),
+            )
 
-            // When
-            val outcome = runCatching {
+        // When
+        val outcome =
+            builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+                filter { eq("id", 1) }
+            }
+
+        // Then — queued, without a false "cannot tell" ERROR
+        assertEquals(MutationOutcome.Queued, outcome)
+        assertEquals(
+            0,
+            logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
+        )
+    }
+
+    @Test
+    fun a_write_whose_request_cannot_be_built_fails_to_its_caller_and_is_never_queued() = runTest {
+        // Given — a request lambda that throws from its second run, the dry-run check's; the first
+        // built the request the queue would capture
+        val logger = RecordingOfflineLogger()
+        val server = RecordingPostgrestServer(answer = { okJson("[]") })
+        val builder =
+            OfflinePostgrestQueryBuilderImpl(
+                delegate = server.supabaseClient().postgrest.from(TABLE),
+                store = store,
+                sdkLogger = logger.asSdkLogger(),
+            )
+        var runs = 0
+
+        // When
+        val failure =
+            assertFailsWith<IllegalStateException> {
                 builder.updateJson(patch(), MutationStrategy.QueueIfOffline) {
+                    runs++
+                    check(runs < 2) { "cannot build" }
                     filter { eq("id", 1) }
                 }
             }
 
-            // Then — the write's own failure reaches the caller, without a false "cannot tell"
-            // ERROR
-            assertTrue(outcome.isFailure)
-            assertEquals(
-                0,
-                logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
-            )
-        }
+        // Then — the caller gets the write's own failure; nothing queued, sent or reported
+        assertEquals("cannot build", failure.message)
+        assertEquals(0, mutationDao.insertCalls)
+        assertTrue(server.requests.isEmpty(), "${server.requests}")
+        assertEquals(
+            0,
+            logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
+        )
+    }
 
     private fun patch(): JsonElement = Json.parseToJsonElement("""{"title":"new"}""")
 

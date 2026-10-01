@@ -7,24 +7,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.RecordedRequest
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
-/**
- * The row the server holds for the fixture's delta-declared UPDATE when it replays: `done_count`
- * moved from the queued snapshot 4 to 6, and `minutes_spent` from 30 to 40, while the write sat in
- * the queue.
- */
-internal const val SHIPPED_UPDATE_TARGET_ON_SERVER: String =
-    """[{"id":2,"done_count":6.0,"minutes_spent":40.0}]"""
-
-/**
- * A server for [replayShippedQueue]: answers reads with [SHIPPED_UPDATE_TARGET_ON_SERVER], writes
- * with `[]`.
- */
+/** A server for [replayShippedQueue]: answers every write with `[]`. */
 internal fun shippedQueueServer(): RecordingPostgrestServer =
-    RecordingPostgrestServer(
-        answer = { request ->
-            if (request.method == "GET") okJson(SHIPPED_UPDATE_TARGET_ON_SERVER) else okJson("[]")
-        }
-    )
+    RecordingPostgrestServer(answer = { okJson("[]") })
 
 /**
  * Replays every queued write in this database — opened from [ShippedDatabaseFixture] — against
@@ -46,14 +31,9 @@ internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgre
  * Exactly what replaying the shipped queue must put on the wire, in order.
  *
  * Writes replay in the order they were queued (their ids 1 to 4), whatever their table. The INSERT
- * carries its key, and the shipped engine kept no record of whether an earlier send of it reached
- * the server, so it replays as an upsert that takes a row already there as its own. The
- * delta-declared UPDATE first re-reads its row with its own filter, then sends the rebased body:
- * `done_count` 6 + (5 - 4) = 7 and `minutes_spent` 40 + (45 - 30) = 55, written as integers because
- * the queued body wrote them as integers, while `title` replays as queued.
- *
- * Before the mutation queue was reworked, the same queue replayed table by table (`todos` 1, 3, 4,
- * then `list_members` 2) and the rebased values as `7.0` and `55.0`.
+ * carries its key and its send is recorded as unconfirmed (`send_unconfirmed`), so it replays as an
+ * upsert that takes a row already there as its own. The UPDATE replays its body exactly as it was
+ * queued.
  */
 internal val SHIPPED_QUEUE_REPLAY: List<RecordedRequest> =
     listOf(
@@ -76,22 +56,13 @@ internal val SHIPPED_QUEUE_REPLAY: List<RecordedRequest> =
             body = """[{"list_id":"l-1","user_id":"u-2","role":"editor"}]""",
         ),
         RecordedRequest(
-            method = "GET",
-            table = "todos",
-            query = mapOf("select" to "*", "id" to "eq.2", "user_id" to "eq.u-1"),
-            prefer = "",
-            contentProfile = null,
-            acceptProfile = "public",
-            body = "",
-        ),
-        RecordedRequest(
             method = "PATCH",
             table = "todos",
             query = mapOf("id" to "eq.2", "user_id" to "eq.u-1"),
             prefer = "return=minimal",
             contentProfile = "public",
             acceptProfile = null,
-            body = """{"title":"Walk the dog twice","done_count":7,"minutes_spent":55}""",
+            body = """{"title":"Walk the dog twice","done":true}""",
         ),
         RecordedRequest(
             method = "DELETE",

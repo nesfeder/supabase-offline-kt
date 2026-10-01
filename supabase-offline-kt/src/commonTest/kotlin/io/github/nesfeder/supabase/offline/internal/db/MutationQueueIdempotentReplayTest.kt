@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.NumericDeltaColumn
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
@@ -25,7 +24,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * A write whose response was lost stays queued and replays, so replaying it must not apply it twice
@@ -36,8 +34,8 @@ import kotlinx.serialization.json.JsonPrimitive
  *   sent, or never connected, replays as a plain INSERT, so a duplicate id is refused;
  * - an UPSERT, an UPDATE of absolute values and a DELETE — as sent.
  *
- * Two are not, and are pinned here as such: an INSERT whose key the server generates is inserted
- * twice, and an UPDATE with numeric delta columns applies its delta twice.
+ * One is not, and is pinned here as such: an INSERT whose key the server generates is inserted
+ * twice.
  */
 class MutationQueueIdempotentReplayTest {
 
@@ -321,28 +319,6 @@ class MutationQueueIdempotentReplayTest {
             // Then — pinned as it is: two rows
             assertEquals(2, server.rows(TABLE).size)
         }
-
-    @Test
-    fun a_delta_update_whose_response_was_lost_applies_its_delta_twice() = runTest {
-        // Given — not idempotent: the replay rebases the delta onto a value that already carries it
-        val server = FakeRelationalPostgrestServer()
-        server.seed(TABLE, row("""{"id":"t1","done_count":10}"""))
-        server.loseResponseAfterCommit = { request -> request.method == "PATCH" }
-
-        // When — 10 becomes 15 on the server, the response is lost, and the queue replays +5
-        builderOn(server).updateJson(
-            body = Json.parseToJsonElement("""{"done_count":15}"""),
-            deltaColumns = listOf(NumericDeltaColumn(column = "done_count", snapshotValue = 10.0)),
-        ) {
-            filter { eq("id", "t1") }
-        }
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
-
-        // Then — pinned as it is: 20, not 15
-        val doneCount =
-            (server.rows(TABLE).single()["done_count"] as JsonPrimitive).content.toDouble()
-        assertEquals(20.0, doneCount)
-    }
 
     private fun builderOn(server: FakeRelationalPostgrestServer): OfflinePostgrestQueryBuilderImpl =
         OfflinePostgrestQueryBuilderImpl(

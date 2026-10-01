@@ -148,6 +148,42 @@ class RejectedMutationListTest {
     }
 
     @Test
+    fun a_filter_that_can_no_longer_be_read_is_refused_for_that_reason() = runTest {
+        // Given — an UPDATE and an INSERT whose stored filters no longer decode
+        mutationDao.insert(
+            MutationRow(
+                table = TABLE,
+                operation = MutationOperation.UPDATE,
+                bodyJson = """{"done":true}""",
+                filterJson = "{not a filter",
+                createdAtMs = 0L,
+            )
+        )
+        mutationDao.insert(
+            MutationRow(
+                table = TABLE,
+                operation = MutationOperation.INSERT,
+                bodyJson = """[{"id":"t1"}]""",
+                filterJson = "{not a filter",
+                createdAtMs = 0L,
+            )
+        )
+
+        // When
+        val report = syncer.sync()
+
+        // Then — both refused locally, saying the filter cannot be read; neither sent without it
+        assertEquals(
+            listOf(
+                "The queued filter can no longer be read",
+                "The queued filter can no longer be read",
+            ),
+            report.rejected.map { it.message },
+        )
+        assertTrue(server.requests.isEmpty())
+    }
+
+    @Test
     fun the_list_keeps_the_newest_hundred() = runTest {
         // Given — 105 writes the server refuses
         repeat(105) { index ->

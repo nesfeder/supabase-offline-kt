@@ -207,7 +207,9 @@ class OfflineStoreQueueAndCacheTest {
                 defaultToNull = false,
                 onConflict = null,
                 ignoreDuplicates = null,
-                deltaJson = null,
+                owner = null,
+                syncSequence = null,
+                schemaCacheMisses = 0,
             ),
             mutationDao.inserted.single(),
         )
@@ -282,7 +284,6 @@ class OfflineStoreQueueAndCacheTest {
         // Then
         val row = mutationDao.inserted.single()
         assertNull(row.filterJson)
-        assertNull(row.deltaJson)
     }
 
     @Test

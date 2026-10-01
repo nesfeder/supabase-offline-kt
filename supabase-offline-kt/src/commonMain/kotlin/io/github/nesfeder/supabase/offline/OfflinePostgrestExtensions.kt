@@ -71,14 +71,11 @@ public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.upsert(
  *
  * @param value row to update.
  * @param mutationStrategy offline strategy; defaults to [MutationStrategy.QueueIfOffline].
- * @param deltaColumns columns of [value] carrying a change relative to a snapshot rather than an
- *   absolute; see [OfflinePostgrestQueryBuilder.updateJson] and [NumericDeltaColumn].
  * @param request request-configuration block (e.g. `filter { … }; select()`).
  * @return [MutationOutcome.Applied] with the server response, or [MutationOutcome.Queued].
  */
 public suspend inline fun <reified T : Any> OfflinePostgrestQueryBuilder.update(
     value: T,
     mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
-    deltaColumns: List<NumericDeltaColumn> = emptyList(),
     noinline request: PostgrestRequestBuilder.() -> Unit = {},
-): MutationOutcome = updateWith(serializer(), value, mutationStrategy, deltaColumns, request)
+): MutationOutcome = updateWith(serializer(), value, mutationStrategy, request)

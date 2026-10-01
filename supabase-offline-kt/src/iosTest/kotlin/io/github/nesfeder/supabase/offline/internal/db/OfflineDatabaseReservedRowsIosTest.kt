@@ -11,9 +11,9 @@ import okio.FileSystem
 import okio.SYSTEM
 
 /**
- * The engine's reserved `object_cache` rows on a real iOS database file: an older build that opens
- * the file reads around them, they persist across reopening without disturbing the schema, and this
- * build's eviction, size and queue-order queries behave on real SQLite as they do in memory. See
+ * The engine's queue state and reserved `object_cache` rows on a real iOS database file: they
+ * persist across reopening without disturbing the schema, and this build's eviction, size and
+ * queue-order queries behave on real SQLite as they do in memory. See
  * [ReservedRowsDatabaseScenarios].
  */
 class OfflineDatabaseReservedRowsIosTest {
@@ -34,11 +34,6 @@ class OfflineDatabaseReservedRowsIosTest {
     @AfterTest
     fun tearDown() {
         FileSystem.SYSTEM.deleteRecursively(directory, mustExist = false)
-    }
-
-    @Test
-    fun an_older_build_reads_around_reserved_rows() = runTest {
-        scenarios.anOlderBuildReadsAroundReservedRows(dbPath)
     }
 
     @Test
@@ -72,8 +67,8 @@ class OfflineDatabaseReservedRowsIosTest {
     }
 
     @Test
-    fun an_earlier_builds_queue_is_adopted_in_place() = runTest {
-        scenarios.anEarlierBuildsQueueIsAdoptedInPlace(dbPath)
+    fun a_queue_without_owners_is_adopted_in_place() = runTest {
+        scenarios.aQueueWithoutOwnersIsAdoptedInPlace(dbPath)
     }
 
     @Test

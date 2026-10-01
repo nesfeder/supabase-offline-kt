@@ -20,7 +20,7 @@ import kotlinx.serialization.json.contentOrNull
  */
 internal sealed interface QueueIdentity {
 
-    /** How the identity is persisted in the mutation-owner records. */
+    /** How the identity is persisted in a mutation row's `owner` column. */
     val storedValue: String
 
     /**

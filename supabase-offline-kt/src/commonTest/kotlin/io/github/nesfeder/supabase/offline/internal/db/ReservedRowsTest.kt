@@ -36,8 +36,7 @@ class ReservedRowsTest {
 
     @Test
     fun reserved_rows_are_never_evicted_and_never_counted() = runTest {
-        // Given — a cache over its limit, holding a rejected list and the owner records as its
-        // oldest rows
+        // Given — a cache over its limit, holding a rejected list as its oldest row
         val store =
             newTestOfflineStore(
                 objectDao = objectDao,
@@ -66,7 +65,6 @@ class ReservedRowsTest {
 
         // Then — the cache row went; the reserved rows stayed and never counted towards the size
         assertNull(objectDao.getRow("todos", "todos"))
-        assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE))
         assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
         assertTrue(reservedBytes > 0)
         assertEquals(0L, objectDao.totalPayloadBytes())
@@ -139,10 +137,9 @@ class ReservedRowsTest {
         store.clearAll()
 
         // Then
-        assertNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE))
         assertNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
         assertEquals(emptyList(), store.mutationQueueState.rejections())
-        assertEquals(MutationOwners.Known(emptyMap()), store.mutationQueueState.owners())
+        assertEquals(emptySet(), store.unconfirmedSends())
     }
 
     @Test
@@ -158,17 +155,16 @@ class ReservedRowsTest {
         val rejected =
             assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_SIGNATURE))
                 .payload
-        val owners =
-            assertNotNull(objectDao.getRow(RESERVED_TABLE_NAME, MUTATION_OWNERS_SIGNATURE)).payload
         assertTrue(rejected.contains("\"version\":1"), rejected)
-        assertTrue(owners.contains("\"version\":1"), owners)
     }
 
-    /** Queues a write owned by [owner], which writes the owner records. */
+    /** Queues a keyed write owned by [owner] and starts its send, which records it in its row. */
     private suspend fun OfflineStore.queueOwnedWrite(owner: String) {
-        enqueueOwnedBy(owner) {
-            enqueueInsert("todos", Json.parseToJsonElement("""[{"title":"x"}]""") as JsonArray)
-        }
+        val queued =
+            enqueueOwnedBy(owner) {
+                enqueueInsert("todos", Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray)
+            }
+        markSendUnconfirmed((queued as EnqueueOutcome.Queued).id)
     }
 
     private fun rejection(id: Long): StoredRejection =
