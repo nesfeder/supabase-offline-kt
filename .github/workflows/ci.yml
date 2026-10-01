@@ -441,7 +441,45 @@ jobs:
               :samples:android:assembleDebug
             )
           fi
-          ./gradlew "${tasks[@]}" --continue --stacktrace
+          # Temporary: what the build waits on while packageDebug runs. Every 20 seconds after
+          # the task starts, until the sample's APK is assembled, a thread dump of each JVM and a
+          # look at the machine.
+          diag="$RUNNER_TEMP/package-debug-diagnostic"
+          mkdir -p "$diag"
+          (
+            until grep -q 'Task :samples:android:packageDebug' "$diag/gradle.log" 2> /dev/null; do
+              sleep 2
+            done
+            date -u +%T.%N > "$diag/package-debug-started.txt"
+            for round in 1 2 3 4 5 6 7 8 9; do
+              sleep 20
+              if grep -q 'Task :samples:android:assembleDebug' "$diag/gradle.log"; then break; fi
+              {
+                date -u +%T.%N
+                cat /proc/loadavg
+                grep -E 'MemFree|MemAvailable' /proc/meminfo
+                cat /proc/sys/kernel/random/entropy_avail
+                top -b -n 1 | head -n 20
+              } > "$diag/machine-$round.txt" 2>&1
+              jps -l > "$diag/jvms-$round.txt" 2>&1
+              while read -r pid name; do
+                [[ "$name" == *Jps* ]] && continue
+                jcmd "$pid" Thread.print > "$diag/threads-$round-$pid.txt" 2>&1
+              done < "$diag/jvms-$round.txt"
+            done
+          ) > "$diag/watcher.log" 2>&1 &
+          watcher=$!
+          trap 'kill "$watcher" 2> /dev/null || true' EXIT
+          ./gradlew "${tasks[@]}" --continue --stacktrace 2>&1 | tee "$diag/gradle.log"
+
+      - name: Keep the packageDebug diagnostic
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-debug-diagnostic
+          path: ${{ runner.temp }}/package-debug-diagnostic/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Count the tests that ran
         if: ${{ !cancelled() }}
