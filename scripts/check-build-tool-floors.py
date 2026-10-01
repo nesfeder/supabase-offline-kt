@@ -351,12 +351,14 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
                      accessors: bool = True, swift: str | None = None, root: str | None = None,
                      second_lint: str | None = None, projects: list[str] | None = None,
                      dokka: str | None = None, test_platform: bool = True,
-                     result_listener: str | None = None, test_platform_core: str | None = None) -> str:
+                     result_listener: str | None = None, test_platform_core: str | None = None,
+                     dotted: str | None = None) -> str:
     """A log of the two checked commands: every module listed, then every report.
 
     `lib` and `other` are the graphs of the two floored packages everywhere; the other arguments
     replace one configuration's graph, drop a report, or change the module list. The second module
-    is an application's: it alone has two configurations of the unified test platform.
+    is an application's: it alone has configurations of the unified test platform, one of them with
+    dots in its name.
     """
     listed = MODULES if projects is None else projects
     hierarchy = "".join(f"+--- Project '{module}'\n" for module in listed)
@@ -384,7 +386,9 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
                "\\--- com.example:core:1.0\n     "
                f"{other if test_platform_core is None else test_platform_core}\n"
                "unified-test-platform-android-test-plugin-result-listener-gradle - The same.\n"
-               f"{lib if result_listener is None else result_listener}\n"))
+               f"{lib if result_listener is None else result_listener}\n"
+               "unified-test-platform-plugin.with.dots - The same.\n"
+               f"{lib if dotted is None else dotted}\n"))
     if accessors:
         sections.append("> Task :build-logic:dependencies\n\n"
                         "precompiledScriptPluginAccessorsGenerationClasspath - The plugins.\n"
@@ -412,6 +416,9 @@ SELF_TEST_CASES: list[tuple[str, str, str | None]] = [
     ("a package below its floor in another unified test platform configuration only",
      self_test_report(test_platform_core="\\--- org.example:other:4.5.6\n"),
      ":module-b:dependencies unified-test-platform-core: org.example:other resolves to 4.5.6"),
+    ("a package below its floor in a configuration with dots in its name",
+     self_test_report(dotted="+--- org.example:lib:1.79\n"),
+     ":module-b:dependencies unified-test-platform-plugin.with.dots: org.example:lib resolves to 1.79"),
     ("no module with a unified test platform configuration",
      self_test_report(test_platform=False),
      "<every module>:dependencies unified-test-platform-*: not in the Gradle report"),
