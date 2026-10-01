@@ -11,6 +11,9 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.internal.ApplicationContextInitializer
 import io.github.nesfeder.supabase.offline.internal.recordedApplicationContext
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import java.io.File
 import kotlin.random.Random
@@ -134,5 +137,32 @@ class OfflinePluginAndroidTest {
         val second = pluginClient { dataDirectory = directory.absolutePath }
         assertEquals(0, second.offline.pendingMutationCount())
         second.close()
+    }
+
+    @Test
+    fun the_cache_size_install_sets_bounds_the_database() = runTest {
+        // Given — the smallest bound there is, and a read larger than it, on the real database
+        val server =
+            RecordingPostgrestServer(
+                answer = { okJson("""[{"id":1,"pad":"${"x".repeat(5_000)}"}]""") }
+            )
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest) { maxRetries = 0 }
+                install(Offline) {
+                    dataDirectory = uniqueDirectory().absolutePath
+                    cacheSizeBytes = 4_096L
+                }
+            }
+
+        // When — the read is cached, and the network goes
+        supabase.offline.from("todos").select()
+        server.answer = { connectivityFailure() }
+
+        // Then — the bound evicted it at once
+        assertFailsWith<CacheMissException> {
+            supabase.offline.from("todos").select(readStrategy = ReadStrategy.CacheOnly())
+        }
+        supabase.close()
     }
 }
