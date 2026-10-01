@@ -256,7 +256,7 @@ internal class OfflineStore(
 
     /**
      * The ids of the mutations whose send started and whose outcome is unknown
-     * ([MutationRow.sendUnconfirmed]), read once and kept in step with every change this store
+     * ([MutationRow.sendUnconfirmed]). Read once, then kept in step with every change this store
      * makes to them; `null` until first read. See [unconfirmedSends].
      */
     private val unconfirmedSendIds = MutableStateFlow<Set<Long>?>(null)
@@ -2638,9 +2638,9 @@ internal class OfflineStore(
         }
 
     /**
-     * Marks mutation [id] replayed with the next sync sequence, clearing its send record, and
-     * removes any stale rejected entry in the same transaction, and advances [table]'s
-     * stale-refresh watermark so a refresh that started before the replay cannot land after it.
+     * Marks mutation [id] replayed with the next sync sequence, clearing its send record. In the
+     * same transaction it removes any stale rejected entry; it also advances [table]'s
+     * stale-refresh watermark, so a refresh that started before the replay cannot land after it.
      */
     suspend fun markMutationSynced(id: Long, table: String) {
         recordLocalMutation(table)

@@ -173,8 +173,8 @@ class DryRunClassificationTest {
 
     @Test
     fun a_write_whose_request_cannot_be_built_fails_to_its_caller_and_is_never_queued() = runTest {
-        // Given — a request lambda that throws from its second run: the queue's capture is the
-        // first, so the dry-run check is the run that cannot build the request
+        // Given — a request lambda that throws from its second run, the dry-run check's; the first
+        // built the request the queue would capture
         val logger = RecordingOfflineLogger()
         val server = RecordingPostgrestServer(answer = { okJson("[]") })
         val builder =

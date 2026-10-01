@@ -274,8 +274,8 @@ internal class MutationQueueReplayer(
     }
 
     /**
-     * Keeps a mutation whose request the owner check stopped queued for its owner's next session:
-     * it never left the device, so a send record this attempt made is cleared. When the session is
+     * Keeps a mutation whose request the owner check stopped queued for its owner's next session.
+     * It never left the device, so a send record this attempt made is cleared. When the session is
      * still [owner]'s, its token names another user or none, which holds the queue: said once.
      */
     private suspend fun stoppedForAnotherSession(
@@ -333,9 +333,9 @@ internal class MutationQueueReplayer(
     }
 
     /**
-     * Whether this failed send provably did not apply its write: no attempt reached the server, the
-     * session's token could not be refreshed (thrown before the request is built), or PostgREST
-     * itself answered that it could not reach the database.
+     * Whether this failed send provably did not apply its write. It did not when no attempt reached
+     * the server, when the session's token could not be refreshed (thrown before the request is
+     * built), or when PostgREST itself answered that it could not reach the database.
      */
     private fun SendOutcome.Failed.provesWriteNotApplied(): Boolean =
         neverReachedServer ||

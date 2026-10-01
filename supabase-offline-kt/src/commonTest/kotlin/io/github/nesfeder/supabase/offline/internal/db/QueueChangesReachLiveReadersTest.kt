@@ -21,7 +21,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 
 /**
- * A live reader re-reads its table's mutation rows only when the store says they changed, so every
+ * A live reader re-reads its table's mutation rows only when the store says they changed. So every
  * change to the queue must say so: a rejection, a retry, a replay and a clear each reach a reader
  * already showing the table, not only the enqueue and the removal.
  */

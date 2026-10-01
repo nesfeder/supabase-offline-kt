@@ -311,10 +311,10 @@ internal data class MutationRow(
     @ColumnInfo(name = "schema_cache_misses", defaultValue = "0") val schemaCacheMisses: Int = 0,
 
     /**
-     * Whether a send of this INSERT started and its outcome is unknown, so the server may already
-     * hold its rows: it then replays as an upsert that takes them as its own. Set only for an
-     * INSERT whose rows all carry the table's key, before its request goes out; cleared on proof
-     * that the write did not run, and when it replays.
+     * Whether a send of this INSERT started and its outcome is unknown. The server may then hold
+     * its rows, so it replays as an upsert that takes them as its own. Set only for an INSERT whose
+     * rows all carry the table's key, before its request goes out; cleared on proof that the write
+     * did not run, and when it replays.
      */
     @ColumnInfo(name = "send_unconfirmed", defaultValue = "0") val sendUnconfirmed: Boolean = false,
 )
