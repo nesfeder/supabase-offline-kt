@@ -1,0 +1,83 @@
+name: Release resume
+
+# Finishes a release that Maven Central has published but whose last steps did not run: the tag,
+# the GitHub Release, the Swift package (not set up yet) and the post-release branch. It
+# never builds and never publishes to Maven Central, so it cannot change what Central serves; a
+# published version cannot be rebuilt identically, and must not be. Each step does only what is
+# missing, so it can run again. RELEASING.md says when to use it.
+#
+# The input is the commit the stopped Release run built, as its summary names it. The job checks
+# that the commit is on main, that its VERSION_NAME is a release version whose changelog section
+# exists, that no tag of that version points anywhere else, and that Maven Central serves every
+# artifact of that version, before it changes anything. It runs behind the `release` environment,
+# so a resume waits for the same approval a release does; it uses none of that environment's
+# secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: The full commit SHA the stopped Release run built (its summary names it)
+        type: string
+        required: true
+
+permissions: {}
+
+# Shared with Release: one release at a time, never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  finish:
+    name: Tag and announce a published release
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write # the tag, the GitHub Release and the post-release branch
+    steps:
+      # main as it is now, never the input commit: nothing from that commit runs until the check
+      # below has found it on main, and even then only its files are read. The pushes are this
+      # job's purpose, so the checkout keeps its credentials. All history and every tag, to find
+      # the commit and any tag already pushed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: true
+
+      - name: Check the commit is the published release
+        id: version
+        env:
+          SHA: ${{ inputs.sha }}
+        run: python3 scripts/release.py check-resume --sha "$SHA" --github-output "$GITHUB_OUTPUT"
+
+      - name: Push the tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: python3 scripts/release.py push-tag --version "$VERSION" --sha "$SHA"
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/release.py publish-github-release --version "$VERSION"
+
+      # A placeholder that does nothing, as in release.yml; the Swift distribution fills it in.
+      - name: Publish the Swift package (not set up yet)
+        run: echo "The Swift package is not published by this workflow yet; nothing to do."
+
+      # As in release.yml: the branch, and its pull request's link in the summary.
+      - name: Push the post-release branch
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/release.py push-post-release-branch --version "$VERSION"

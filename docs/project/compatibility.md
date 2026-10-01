@@ -93,9 +93,16 @@ different supabase-kt minor can fail at runtime even when your app compiles.
 | --- | --- |
 | Unreleased | 3.8.0 |
 
-Each release adds its row. Moving to a new supabase-kt minor is a minor release of
+Each release renames the `Unreleased` row to its version, and the release workflow refuses a
+version without its row. Moving to a new supabase-kt minor is a minor release of
 supabase-offline-kt, even when nothing else changes, because it changes which supabase-kt your app
 must use. A supabase-kt patch can arrive in a patch release.
+
+Every Monday a scheduled job looks for a newer supabase-kt minor, builds this library against it,
+runs its Android host tests, and reports the result in one issue labelled
+[`upstream-pin`](https://github.com/nesfeder/supabase-offline-kt/labels/upstream-pin). A maintainer
+adopts that minor deliberately, in a pull request that records it in this table, adds an entry to
+the changelog, and closes the issue.
 
 ## How this is enforced
 
@@ -109,7 +116,7 @@ must use. A supabase-kt patch can arrive in a patch release.
 - Some changes reach no record, so a reviewer checks them by hand: parameter names and their order
   (a renamed parameter breaks a call that names it), changed defaults and documented behaviour, the
   bodies of inline functions, and new deprecation levels or opt-in requirements.
-- The release workflow will run the same script over everything since the last release tag, and
-  refuse a version number too small for what it finds.
+- The release workflow runs the same script over everything since the last release tag, and
+  refuses a version number too small for what it finds ([Releasing](releasing.md)).
 
 The details for contributors are in [Contributing](contributing.md#changing-the-public-api).

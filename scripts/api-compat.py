@@ -833,6 +833,14 @@ def emit(text: str) -> None:
 HEADINGS = ["Breaking", "Added", "Changed", "Deprecated", "Removed", "Fixed"]
 
 
+def section_title(heading: str) -> str:
+    """A '## ' heading's title: 'Unreleased', or a release's version without the brackets and date
+    Keep a Changelog puts around it ('## [0.1.0] - 2026-10-01' is '0.1.0')."""
+    title = heading[3:].strip()
+    match = re.match(r"^\[?(\d+\.\d+\.\d+)\]?(?:\s+-\s+\S+)?$", title)
+    return match.group(1) if match else title
+
+
 def changelog_section(content: Optional[str], title: str) -> Dict[str, Set[str]]:
     """Bullets under each ### heading of the '## <title>' section."""
     result: Dict[str, Set[str]] = {heading: set() for heading in HEADINGS}
@@ -841,7 +849,7 @@ def changelog_section(content: Optional[str], title: str) -> Dict[str, Set[str]]
     inside, heading = False, None
     for line in content.splitlines():
         if line.startswith("## "):
-            inside = line[3:].strip().lower() == title.lower()
+            inside = section_title(line).lower() == title.lower()
             heading = None
             continue
         if not inside:
@@ -1584,6 +1592,14 @@ def self_test() -> int:
         expect(quietly(command_check_release, repository.git,
                        argparse.Namespace(from_tag="0.1.0", version="0.1.1", head=head, swift_report=None)) == 1,
                "check-release honours a Breaking bullet a person wrote", failures)
+        # The same bullet once the release has renamed the section to its version and date.
+        repository.write("CHANGELOG.md", CHANGELOG_BASE.replace(
+            "## Unreleased\n\n### Added\n\n### Fixed",
+            "## [0.1.1] - 2026-10-01\n\n### Breaking\n\n- Automatic replay is now on by default.\n\n### Added\n\n### Fixed", 1))
+        head = repository.commit("dated release section")
+        expect(quietly(command_check_release, repository.git,
+                       argparse.Namespace(from_tag="0.1.0", version="0.1.1", head=head, swift_report=None)) == 1,
+               "check-release reads a Breaking bullet under a dated release heading", failures)
 
     with fixture() as (repository, base):
         expect(quietly(command_check_release, repository.git,

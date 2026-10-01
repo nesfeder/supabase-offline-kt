@@ -22,8 +22,8 @@ This README is the entry point. Deep dives live in [docs/](./docs).
   staleness model.
 - [docs/persistence.md](./docs/reference/on-device-data.md) — Room schema for `object_cache`,
   `mutation_cache`, `storage_objects` and DB locations per platform.
-- [docs/release.md](./docs/project/releasing.md) — Release runbook: CI flow, Android + iOS steps, manual
-  XCFramework rebuild, consumer integration.
+- [docs/project/releasing.md](./docs/project/releasing.md) — Where releases are published and what
+  each one carries.
 - [docs/test-apps.md](./docs/samples/index.md) — Walkthrough of the Android (Compose) and iOS
   (SwiftUI + TCA) TODO demo apps with cited code.
 
@@ -138,9 +138,7 @@ For iOS, set your Apple Developer **Team ID** in
 to a physical device (the simulator works without it).
 
 > The iOS demo embeds the KMP framework directly via the Gradle task above — it does **not**
-> consume the SDK through `Package.swift`. `Package.swift` is purely for downstream SwiftPM
-> consumers and resolves binary targets from GitHub Releases (see
-> [docs/release.md → iOS release](./docs/project/releasing.md#ios-release)).
+> consume the SDK through `Package.swift`.
 
 ### 6. Try the offline behavior
 
@@ -236,19 +234,14 @@ _ = try await offline.syncAllPendingMutations()
 
 ## Consumer integration
 
-Library coordinates and SPM setup live in
-[docs/release.md → Consumer integration](./docs/project/releasing.md#consumer-integration). Short version:
-
-- **Android (Gradle):** `io.github.nesfeder.supabase-offline-kt:shared-android:X.Y.Z` from the
-  GitHub Packages Maven repo at `https://maven.pkg.github.com/nesfeder/supabase-offline-kt`.
+- **Kotlin Multiplatform and Android (Gradle):**
+  `io.github.nesfeder.supabase-offline:supabase-offline-kt:X.Y.Z` from Maven Central, and
+  `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:X.Y.Z` for tests. See
+  [Releasing](./docs/project/releasing.md).
 - **iOS (SwiftPM):** depend on `https://github.com/nesfeder/supabase-offline-kt.git` and add
   the `SupabaseOffline` and `SupabaseOfflineSupport` products to your app target.
 
-## Release
-
-See [docs/release.md](./docs/project/releasing.md) for the full runbook. TL;DR: cut a `release/vX.Y.Z`
-branch, bump `version` in [shared/build.gradle.kts](shared/build.gradle.kts), push the branch,
-let CI publish the Android AAR and commit the iOS XCFrameworks, then merge and tag.
+Maintainers release by following [RELEASING.md](./RELEASING.md).
 
 ## Troubleshooting
 

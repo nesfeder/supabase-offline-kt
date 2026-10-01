@@ -1,0 +1,389 @@
+name: Upstream canary
+
+# The decision surface for the supabase-kt minors that .github/dependabot.yml holds back.
+#
+# Every Monday it compares the pinned supabase-kt BOM with the newest release on Maven Central.
+# When upstream has a newer minor, it moves the pin in its own checkout only, builds and runs the
+# Android host tests of both modules against it, and opens or updates one issue labelled
+# `upstream-pin` saying what came out and whether the library still builds and passes. Nothing is
+# committed and no pull request is opened: moving the pin is a decision, made in a pull request
+# that also moves the pass-through set and updates the compatibility page and the changelog
+# (CONTRIBUTING.md, "Held dependencies"; docs/project/compatibility.md, "supabase-kt").
+#
+# A newer patch of the pinned minor is left to Dependabot, which proposes supabase-kt patches as
+# pull requests, and pre-releases are ignored. When nothing is newer, the job says so and builds
+# nothing. A build or test failure against the newer release is the finding, reported in the
+# issue; the workflow fails only on its own errors (Maven Central unreachable, the catalog
+# unreadable, a value it cannot trust, the issue not written).
+#
+# The build runs a release nobody here has reviewed, with whatever newer Ktor, okio, coroutines or
+# serialization it brings, so it is kept away from every credential:
+#   canary  contents: read only. Compares the versions and hands on the versions, the build's
+#           outcome and the test counts as job outputs. The build itself runs as a separate
+#           unprivileged user, on a copy of the checkout without .git, with no Gradle daemon and
+#           seven named environment variables (.github/scripts/build-as-unprivileged-user.sh). It
+#           cannot reach the job's token, the Actions cache token the setup actions' post steps
+#           hold, those steps' programs, the workspace or the step files, nor write any directory
+#           the runner finds programs in (the image leaves its JDKs world-writable, and the JDK's
+#           bin leads every later step's PATH). Its processes are stopped before anything else
+#           runs, the steps after it find nothing through the PATH, and only its JUnit XML comes
+#           back.
+#   report  issues: write only. Checks out nothing and runs nothing from the build. It refuses any
+#           value the canary could not have produced, and writes the issue from fixed text and
+#           those values.
+# So a hostile build can at worst misreport its own result: it can write neither the issue tracker
+# nor the Actions cache that other runs restore.
+#
+# Only the schedule, which runs on main, and a maintainer's manual run start it. Dependabot can
+# raise neither event, and no pull request or push starts it: check-workflows.py holds the
+# triggers, the jobs and their permissions.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Mondays 07:00 UTC, an hour after Dependabot's Gradle run
+  workflow_dispatch:
+    inputs:
+      pretend_pinned:
+        description: >-
+          Testing only: a version such as 3.7.0 to compare with upstream in place of the catalog's
+          pin, so the build and the issue can be exercised. It rewrites the open tracking issue,
+          if there is one. Leave empty for a real check.
+        type: string
+        required: false
+        default: ''
+
+permissions: {}
+
+# One run at a time; a second waits instead of cancelling one that may be writing the issue.
+concurrency:
+  group: upstream-canary
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  canary:
+    name: Build against the newest supabase-kt
+    if: github.repository == 'nesfeder/supabase-offline-kt'
+    runs-on: ubuntu-latest
+    # The host tests take 5 to 7 minutes in ci.yml with a warm Gradle cache; this job has none.
+    timeout-minutes: 30
+    permissions:
+      contents: read # the checkout
+    # Whatever runs after the build can rewrite the counts, so the report job trusts none of these.
+    outputs:
+      newer: ${{ steps.versions.outputs.newer }}
+      latest: ${{ steps.versions.outputs.latest }}
+      pinned: ${{ steps.versions.outputs.pinned }}
+      catalog-pin: ${{ steps.versions.outputs.catalog-pin }}
+      pretend: ${{ steps.versions.outputs.pretend }}
+      outcome: ${{ steps.build.outcome }}
+      core-tests: ${{ steps.counts.outputs.core-tests }}
+      core-skipped: ${{ steps.counts.outputs.core-skipped }}
+      core-failed: ${{ steps.counts.outputs.core-failed }}
+      testing-tests: ${{ steps.counts.outputs.testing-tests }}
+      testing-skipped: ${{ steps.counts.outputs.testing-skipped }}
+      testing-failed: ${{ steps.counts.outputs.testing-failed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Every version is checked to be a plain release number (digits and two dots) before it
+      # reaches a comparison, sed or an output.
+      - name: Compare the pin with the newest supabase-kt release
+        id: versions
+        env:
+          PRETEND_PINNED: ${{ inputs.pretend_pinned }}
+        run: |
+          set -euo pipefail
+          plain_version='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          catalog_pin=$(sed -n 's/^supabase-bom = "\([^"]*\)"$/\1/p' gradle/libs.versions.toml)
+          if [[ ! "$catalog_pin" =~ $plain_version ]]; then
+            echo "::error::gradle/libs.versions.toml has no single plain supabase-bom version"
+            exit 1
+          fi
+          pinned="$catalog_pin"
+          pretend=false
+          if [[ -n "$PRETEND_PINNED" ]]; then
+            if [[ ! "$PRETEND_PINNED" =~ $plain_version ]]; then
+              echo "::error::pretend_pinned must be a plain version such as 3.7.0"
+              exit 1
+            fi
+            pinned="$PRETEND_PINNED"
+            pretend=true
+          fi
+
+          # The newest plain release: betas and release candidates never become the pin.
+          metadata_url=https://repo1.maven.org/maven2/io/github/jan-tennert/supabase/bom/maven-metadata.xml
+          metadata=$(curl --fail --silent --show-error --location --max-time 60 \
+            --retry 3 --retry-delay 10 --retry-all-errors "$metadata_url")
+          latest=$(grep -oE '<version>[^<]*</version>' <<< "$metadata" \
+            | sed -e 's/<version>//' -e 's:</version>::' \
+            | grep -E "$plain_version" | sort -V | tail -n 1 || true)
+          if [[ ! "$latest" =~ $plain_version ]]; then
+            echo "::error::No plain release version in $metadata_url"
+            exit 1
+          fi
+
+          # A newer minor or major is the canary's to report; a newer patch is Dependabot's.
+          latest_minor="${latest%.*}"
+          pinned_minor="${pinned%.*}"
+          higher_minor=$(printf '%s\n%s\n' "$pinned_minor" "$latest_minor" | sort -V | tail -n 1)
+          newer=false
+          if [[ "$latest_minor" != "$pinned_minor" && "$higher_minor" == "$latest_minor" ]]; then
+            newer=true
+            verdict="supabase-kt $latest is newer than the pinned minor ($pinned): building and testing against it."
+          elif [[ "$latest_minor" == "$pinned_minor" && "$latest" != "$pinned" ]]; then
+            verdict="The newest supabase-kt release, $latest, is in the pinned minor ($pinned). Dependabot proposes patches, so nothing is built."
+          else
+            verdict="The newest supabase-kt release is $latest and the pin is $pinned. Nothing is newer, so nothing is built."
+          fi
+          if [[ "$pretend" == true ]]; then
+            verdict="$verdict (A manual test run: pretend_pinned $pinned stands in for the catalog's $catalog_pin.)"
+          fi
+          echo "$verdict"
+          echo "$verdict" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "newer=$newer"
+            echo "latest=$latest"
+            echo "pinned=$pinned"
+            echo "catalog-pin=$catalog_pin"
+            echo "pretend=$pretend"
+          } >> "$GITHUB_OUTPUT"
+
+      # setup-gradle's Gradle User Home is the job's own, under RUNNER_TEMP, and its cache is off.
+      # The build uses the build user's Gradle home instead, so this one stays empty and the post
+      # step has nothing to save.
+      - name: Give setup-gradle a Gradle home of its own
+        if: steps.versions.outputs.newer == 'true'
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
+
+      - uses: $/.github/actions/setup-project
+        if: steps.versions.outputs.newer == 'true'
+        with:
+          gradle-cache: 'false'
+
+      # In this checkout only: the job holds no credential that could push it. With pretend_pinned
+      # the newest release can be the catalog's own pin, and then nothing changes.
+      - name: Move the pin to the newest release in this checkout
+        if: steps.versions.outputs.newer == 'true'
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          set -euo pipefail
+          sed -i "s/^supabase-bom = \"[^\"]*\"$/supabase-bom = \"$LATEST\"/" gradle/libs.versions.toml
+          moved_to=$(sed -n 's/^supabase-bom = "\([^"]*\)"$/\1/p' gradle/libs.versions.toml)
+          if [[ "$moved_to" != "$LATEST" ]]; then
+            echo "::error::The pin in gradle/libs.versions.toml did not move to $LATEST"
+            exit 1
+          fi
+          changed=$(git diff --name-only)
+          if [[ -n "$changed" && "$changed" != gradle/libs.versions.toml ]]; then
+            echo "::error::Moving the pin changed more than gradle/libs.versions.toml"
+            exit 1
+          fi
+          # Between stop-commands markers, so nothing in the diff is read as a workflow command.
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::$token"
+          git diff
+          echo "::$token::"
+
+      # Before any upstream code runs: the user, its copy of the checkout, and the proof of what it
+      # cannot reach (listed in the job summary). Any doubt fails the job instead of building.
+      - name: Prepare the unprivileged build user
+        if: steps.versions.outputs.newer == 'true'
+        run: bash .github/scripts/build-as-unprivileged-user.sh prepare
+
+      # A failure here is what the issue reports, not a failure of this job.
+      - name: Build and run the Android host tests as the build user
+        id: build
+        if: steps.versions.outputs.newer == 'true'
+        continue-on-error: true
+        timeout-minutes: 20
+        run: >-
+          bash .github/scripts/build-as-unprivileged-user.sh build
+          :supabase-offline-kt:testAndroidHostTest
+          :supabase-offline-kt-testing:testAndroidHostTest
+          --continue
+
+      # Whatever happened above, before the post steps run. From here on, the shell and every
+      # program are named by absolute path, never found through the PATH the build ran beside.
+      - name: Stop the build user and collect its test results
+        if: always() && steps.versions.outputs.newer == 'true'
+        shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+        run: >-
+          /usr/bin/bash .github/scripts/build-as-unprivileged-user.sh collect
+          "$RUNNER_TEMP/build-user-results" testAndroidHostTest
+          supabase-offline-kt supabase-offline-kt-testing
+
+      # Each module's counts from the XML collected above. A module with no results, or with a file
+      # that cannot be read (a run cut off mid-write), gets none, and the issue says so.
+      - name: Count the tests that ran
+        id: counts
+        if: steps.versions.outputs.newer == 'true'
+        continue-on-error: true
+        shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          /usr/bin/python3 -I - <<'PYTHON'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          MODULES = {"core": "supabase-offline-kt", "testing": "supabase-offline-kt-testing"}
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as outputs:
+              for key, module in MODULES.items():
+                  results = Path(os.environ["RUNNER_TEMP"], "build-user-results", module)
+                  files = sorted(results.glob("*.xml"))
+                  if not files:
+                      print(f"{module}: no test results")
+                      continue
+                  try:
+                      suites = [ElementTree.parse(file).getroot() for file in files]
+                      tests, skipped, failures, errors = (
+                          sum(int(suite.get(name, "0")) for suite in suites)
+                          for name in ("tests", "skipped", "failures", "errors"))
+                  except (ElementTree.ParseError, ValueError) as error:
+                      print(f"::warning::{module}: a test results file cannot be read"
+                            f" ({type(error).__name__}); the issue reports no counts for it")
+                      continue
+                  print(f"{module}: {tests} tests, {skipped} skipped, {failures + errors} failed")
+                  outputs.write(f"{key}-tests={tests}\n{key}-skipped={skipped}\n"
+                                f"{key}-failed={failures + errors}\n")
+          PYTHON
+
+  # One issue, kept open by this workflow and found by the marker on its first line: a new release
+  # retitles it, and a new release or a changed result adds a comment, so watchers hear of it. The
+  # pull request that moves the pin closes it.
+  report:
+    name: Open or update the tracking issue
+    needs: canary
+    if: github.repository == 'nesfeder/supabase-offline-kt' && (needs.canary.outputs.newer == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # the tracking issue and its label
+    steps:
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          LATEST: ${{ needs.canary.outputs.latest }}
+          PINNED: ${{ needs.canary.outputs.pinned }}
+          CATALOG_PIN: ${{ needs.canary.outputs.catalog-pin }}
+          PRETEND: ${{ needs.canary.outputs.pretend }}
+          OUTCOME: ${{ needs.canary.outputs.outcome }}
+          CORE_TESTS: ${{ needs.canary.outputs.core-tests }}
+          CORE_SKIPPED: ${{ needs.canary.outputs.core-skipped }}
+          CORE_FAILED: ${{ needs.canary.outputs.core-failed }}
+          TESTING_TESTS: ${{ needs.canary.outputs.testing-tests }}
+          TESTING_SKIPPED: ${{ needs.canary.outputs.testing-skipped }}
+          TESTING_FAILED: ${{ needs.canary.outputs.testing-failed }}
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Only values the canary job can produce; the message names the output, never its value.
+          refuse() {
+            echo "::error::The canary job's $1 is not a value it produces, so no issue was written."
+            exit 1
+          }
+          plain_version='^[0-9]+\.[0-9]+\.[0-9]+$'
+          count='^(0|[1-9][0-9]{0,8})$'
+          [[ "$LATEST" =~ $plain_version ]] || refuse latest
+          [[ "$PINNED" =~ $plain_version ]] || refuse pinned
+          [[ "$CATALOG_PIN" =~ $plain_version ]] || refuse catalog-pin
+          [[ "$PRETEND" == true || "$PRETEND" == false ]] || refuse pretend
+          case "$OUTCOME" in success | failure | cancelled | skipped) ;; *) refuse outcome ;; esac
+          # A module's three counts are all there or all missing.
+          for module in CORE TESTING; do
+            tests_name="${module}_TESTS"
+            skipped_name="${module}_SKIPPED"
+            failed_name="${module}_FAILED"
+            if [[ -z "${!tests_name}${!skipped_name}${!failed_name}" ]]; then continue; fi
+            for name in "$tests_name" "$skipped_name" "$failed_name"; do
+              [[ "${!name}" =~ $count ]] || refuse "$(tr 'A-Z_' 'a-z-' <<< "$name")"
+            done
+          done
+
+          if [[ "$OUTCOME" == success ]]; then
+            result=passed
+            finding="Against $LATEST, the library builds and its Android host tests pass."
+          else
+            result=failed
+            finding="Against $LATEST, the build or the Android host tests fail: the table below and the run's log show which."
+          fi
+          row() {
+            if [[ -z "$2" ]]; then
+              echo "| $1 | no counts; see the run's log | | |"
+            else
+              echo "| $1 | $2 | $3 | $4 |"
+            fi
+          }
+          table="### Android host tests against supabase-kt $LATEST
+
+          | Module | Tests | Skipped | Failed |
+          |---|---:|---:|---:|
+          $(row supabase-offline-kt "$CORE_TESTS" "$CORE_SKIPPED" "$CORE_FAILED")
+          $(row supabase-offline-kt-testing "$TESTING_TESTS" "$TESTING_SKIPPED" "$TESTING_FAILED")
+          | **Total** | **$(( ${CORE_TESTS:-0} + ${TESTING_TESTS:-0} ))** | $(( ${CORE_SKIPPED:-0} + ${TESTING_SKIPPED:-0} )) | $(( ${CORE_FAILED:-0} + ${TESTING_FAILED:-0} )) |"
+          title="supabase-kt $LATEST is available"
+          marker="<!-- upstream-canary version=$LATEST result=$result -->"
+          checked_on=$(date -u +%Y-%m-%d)
+          compatibility_url="$REPOSITORY_URL/blob/main/docs/project/compatibility.md#supabase-kt"
+          held_url="$REPOSITORY_URL/blob/main/CONTRIBUTING.md#held-dependencies"
+
+          body_file="$RUNNER_TEMP/upstream-canary-issue.md"
+          {
+            echo "$marker"
+            echo "supabase-kt $LATEST is on Maven Central. This library pins $PINNED (\`supabase-bom\` in \`gradle/libs.versions.toml\`), and $LATEST is newer than that minor."
+            echo
+            if [[ "$PRETEND" == true ]]; then
+              echo "> [!NOTE]"
+              echo "> A manual test of this workflow: \`pretend_pinned\` set to $PINNED stood in for the catalog's pin, $CATALOG_PIN."
+              echo
+            fi
+            echo "**$finding**"
+            echo
+            echo "$table"
+            echo
+            echo "Checked on $checked_on by [this run]($RUN_URL), at commit $COMMIT. The canary moves the pin in its own checkout and commits nothing. It runs the Android host tests only; the iOS tests run in the pull request that moves the pin."
+            echo
+            echo "**What to do.** Moving the pin is a decision, not a routine update. Read upstream's release notes for changes to the PostgREST query builder, filters, Storage, and request and retry behavior, and check the Kotlin version it was built with. Then open a pull request that moves \`supabase-bom\` and the pass-through set (Ktor, okio, kotlinx.coroutines, kotlinx.serialization) to the versions $LATEST was built with, records the new minor in the [supabase-kt table]($compatibility_url), adds a changelog entry, and closes this issue. See [Held dependencies]($held_url)."
+            echo
+            echo "Closing this issue without moving the pin brings a new one the next Monday: to hold this minor back, leave it open and say why in a comment. This description is rewritten on every check, so notes belong in comments."
+            echo
+            echo "<sub>Kept current every Monday by the Upstream canary workflow while supabase-kt has a newer minor than the pin.</sub>"
+          } > "$body_file"
+          echo "$table" >> "$GITHUB_STEP_SUMMARY"
+
+          # The label, if it has gone; the Dependabot triage workflow puts it on pull requests.
+          labels=$(gh label list --limit 200 --json name --jq '.[].name')
+          if ! grep -qx upstream-pin <<< "$labels"; then
+            gh label create upstream-pin --color d93f0b \
+              --description "supabase-kt or a library it is built against: a newer release, or a pull request moving it"
+          fi
+
+          issues=$(gh issue list --label upstream-pin --state open --limit 100 --json number,author,body)
+          existing=$(jq -r '[.[] | select(.author.login == "app/github-actions"
+            and (.body | startswith("<!-- upstream-canary ")))] | first | .number // empty' <<< "$issues")
+          if [[ -z "$existing" ]]; then
+            url=$(gh issue create --title "$title" --label upstream-pin --body-file "$body_file")
+            echo "Opened $url"
+          else
+            previous_marker=$(jq -r --argjson number "$existing" \
+              '.[] | select(.number == $number) | .body | split("\n") | first | rtrimstr("\r")' <<< "$issues")
+            gh issue edit "$existing" --title "$title" --body-file "$body_file" > /dev/null
+            url="$REPOSITORY_URL/issues/$existing"
+            if [[ "$previous_marker" != "$marker" ]]; then
+              gh issue comment "$existing" \
+                --body "$finding Checked on $checked_on by [this run]($RUN_URL); the description above is current." > /dev/null
+            fi
+            echo "Updated $url"
+          fi
+          echo "Tracking issue: $url ($result)" >> "$GITHUB_STEP_SUMMARY"

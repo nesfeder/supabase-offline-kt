@@ -40,6 +40,9 @@ release.
   keeps everything in memory, for tests.
 - A record of the public API of both artifacts, checked on every change, so the API cannot change
   without a reviewer seeing it.
+- Published on Maven Central as `io.github.nesfeder.supabase-offline:supabase-offline-kt` and
+  `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing`, for Android, `iosArm64` and
+  `iosSimulatorArm64`, each with its sources, an HTML API reference and a signature on every file.
 
 ### Changed
 

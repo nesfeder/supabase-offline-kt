@@ -8,8 +8,10 @@ The build applies them as dependency constraints to these configurations, which 
   * the root build script's ``classpath``, which holds every plugin (``build.gradle.kts``);
   * build-logic's ``precompiledScriptPluginAccessorsGenerationClasspath``, the plugins' full
     runtime that kotlin-dsl resolves (``build-logic/build.gradle.kts``);
-  * every module's ``androidLintTool`` and ``swiftExportClasspathResolvable``, the lint and Swift
-    export tools (``supabase-offline.build-tool-floors``, which every role plugin applies).
+  * every module's ``androidLintTool``, ``swiftExportClasspathResolvable``,
+    ``kotlinBouncyCastleConfiguration`` and ``dokkaHtmlGeneratorRuntimeResolver~internal``: the
+    lint and Swift export tools, the Kotlin Gradle plugin's publishing validation and Dokka's
+    generator (``supabase-offline.build-tool-floors``, which every role plugin applies).
 
 It takes the modules from Gradle's own ``projects`` report, asks Gradle for the resolved graphs (the
 ``buildEnvironment`` and ``dependencies`` reports) and fails when:
@@ -68,13 +70,14 @@ REQUIRED = [
 ]
 # Configurations checked in every module whose `dependencies` report has them. At least one module
 # must have each.
-PER_MODULE = ["androidLintTool", "swiftExportClasspathResolvable"]
+PER_MODULE = ["androidLintTool", "swiftExportClasspathResolvable", "kotlinBouncyCastleConfiguration",
+              "dokkaHtmlGeneratorRuntimeResolver~internal"]
 
 TASK = re.compile(r"^> Task (?P<path>\S+)")
 # A project in the `projects` report's hierarchy; its "Project locations" lines are lower case, and
 # an included build is not a project of this build.
 PROJECT = re.compile(r"^[| +\\-]*Project '(?P<path>:[^']+)'")
-CONFIGURATION = re.compile(r"^(?P<name>[A-Za-z][A-Za-z0-9_]*)( - .*| \(n\))?$")
+CONFIGURATION = re.compile(r"^(?P<name>[A-Za-z][A-Za-z0-9_~]*)( - .*| \(n\))?$")
 NODE = re.compile(r"^[| ]*[+\\]--- (?P<body>.+)$")
 MARKERS = re.compile(r"( \([cn*]\)| FAILED)+$")
 LIBRARY = re.compile(r"^(?P<alias>[\w.-]+)\s*=\s*\{(?P<body>[^}]*)\}\s*(#.*)?$")
@@ -332,7 +335,8 @@ MODULES = [":module-a", ":module-b"]
 
 def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True,
                      accessors: bool = True, swift: str | None = None, root: str | None = None,
-                     second_lint: str | None = None, projects: list[str] | None = None) -> str:
+                     second_lint: str | None = None, projects: list[str] | None = None,
+                     dokka: str | None = None) -> str:
     """A log of the two checked commands: every module listed, then every report.
 
     `lib` and `other` are the graphs of the two floored packages everywhere; the other arguments
@@ -355,7 +359,10 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
             f"> Task {module}:dependencies\n\nProject '{module}'\n\n"
             + (f"androidLintTool\n{lint_graph}\n" if lint else "")
             + "androidLintToolDeclarable (n)\nNo dependencies\n\n"
-            + f"swiftExportClasspathResolvable\n{other if swift is None else swift}\n")
+            + f"swiftExportClasspathResolvable\n{other if swift is None else swift}\n"
+            + f"kotlinBouncyCastleConfiguration - Bouncy Castle.\n{lib}\n"
+            + "dokkaHtmlGeneratorRuntimeResolver~internal - [Internal Dokka Configuration] Dokka.\n"
+            + f"{other if dokka is None else dokka}\n")
     if accessors:
         sections.append("> Task :build-logic:dependencies\n\n"
                         "precompiledScriptPluginAccessorsGenerationClasspath - The plugins.\n"
@@ -372,6 +379,10 @@ SELF_TEST_CASES: list[tuple[str, str, str | None]] = [
     ("a package below its floor in the Swift export configurations only",
      self_test_report(swift="\\--- org.example:other:{strictly 4.5} -> 4.5.13\n"),
      ":module-a:dependencies swiftExportClasspathResolvable: org.example:other resolves to 4.5.13"),
+    ("a package below its floor in Dokka's generator only",
+     self_test_report(dokka="\\--- org.example:other:4.5.6\n"),
+     ":module-a:dependencies dokkaHtmlGeneratorRuntimeResolver~internal: org.example:other resolves"
+     " to 4.5.6"),
     ("a package below its floor in the root build script's classpath only",
      self_test_report(root="+--- org.example:lib:1.79\n" + OTHER_OK),
      ":buildEnvironment classpath: org.example:lib resolves to 1.79"),

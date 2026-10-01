@@ -1,0 +1,14 @@
+# Every issue starts from a form: blank issues are off for everyone without write access.
+# Questions go to Discussions, which the owner turns on the day the repository goes public
+# (scripts/go-public.sh sets it). Until then that link leads nowhere.
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/nesfeder/supabase-offline-kt/discussions
+    about: How to use the library, or whether it fits your app.
+  - name: Read the documentation
+    url: https://nesfeder.github.io/supabase-offline-kt/
+    about: Setup, behavior and the samples.
+  - name: Report a security vulnerability
+    url: https://github.com/nesfeder/supabase-offline-kt/security/policy
+    about: Privately, never in an issue. The security policy says how.

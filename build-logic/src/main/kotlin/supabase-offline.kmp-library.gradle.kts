@@ -5,6 +5,7 @@ import io.github.nesfeder.supabase.offline.buildlogic.catalogLibrary
 import io.github.nesfeder.supabase.offline.buildlogic.catalogVersion
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
+import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 
 // supabase-offline.kmp-library: what every Kotlin Multiplatform library module shares. A module
 // keeps its own namespace, host-test setup and dependencies.
@@ -22,6 +23,13 @@ pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
         // Expect/actual classes are Beta; this silences the warning they raise.
         // See: https://youtrack.jetbrains.com/issue/KT-61573
         compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes") }
+
+        // A klib records the paths of its sources, the KSP output included. Relative to the
+        // repository root, so a published klib names no directory of the machine that built it.
+        val repositoryRoot = isolated.rootProject.projectDirectory.asFile.absolutePath
+        targets.withType<KotlinNativeTarget>().configureEach {
+            compilerOptions { freeCompilerArgs.add("-Xklib-relative-path-base=$repositoryRoot") }
+        }
 
         // The Android target of a module that applies the Android KMP library plugin.
         targets.withType<KotlinMultiplatformAndroidLibraryTarget>().configureEach {

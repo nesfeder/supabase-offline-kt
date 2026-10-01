@@ -1,9 +1,43 @@
 # Contributing
 
-Thank you for helping. Instructions for building, testing and releasing the library itself will
-follow; for now, this file covers formatting, changing the public API, test coverage, the
-documentation site, how dependency updates are handled, and what to do when CI fails for a reason
-outside the change.
+Thank you for helping. Instructions for building and testing the library itself will follow; for
+now, this file covers reporting a problem, labels, formatting, changing the public API, what is
+published, releasing, test coverage, the documentation site, how dependency updates are handled,
+and continuous integration: the `full-ci` label, and what to do when CI fails for a reason outside
+the change.
+
+## Reporting a problem
+
+Open an issue from one of the
+[forms](https://github.com/nesfeder/supabase-offline-kt/issues/new/choose): a bug report asks for
+the versions, the platform, whether it happens online, offline or on reconnect, and a minimal
+reproduction; a feature request asks for the problem you want solved. Questions go to
+[Discussions](https://github.com/nesfeder/supabase-offline-kt/discussions), which open when the
+repository goes public.
+
+**A security vulnerability is never reported in an issue.** Report it privately, as
+[SECURITY.md](https://github.com/nesfeder/supabase-offline-kt/blob/main/SECURITY.md) describes.
+
+Everyone taking part in issues, discussions and pull requests follows the
+[code of conduct](https://github.com/nesfeder/supabase-offline-kt/blob/main/CODE_OF_CONDUCT.md).
+
+## Labels
+
+The maintainer who merges a pull request labels it from the type in its title, so that a release's
+generated notes (`.github/release.yml`) put it in the right group:
+
+| Title type | Label |
+| --- | --- |
+| `feat` | `enhancement` |
+| `fix` | `bug` |
+| `docs` | `documentation` |
+| `ci` | `ci` |
+
+A pull request that moves a held dependency by hand (see "Held dependencies") also gets
+`upstream-pin`, `toolchain` or `persistence`, the labels the Dependabot triage workflow gives
+Dependabot's updates of the same dependencies. Any other type needs no label and is listed under
+"Other changes". `dependencies`, `gradle`, `github-actions` and `docs-toolchain` are Dependabot's
+own, and no person applies them. `full-ci` is described under "Continuous integration".
 
 ## Formatting
 
@@ -136,7 +170,11 @@ line your pull request adds must match one of its findings.
 
 The rules the script applies are in `compat/policy.json`. A pull request is rated under the stricter
 of its own rules and its base's: a change that loosens them applies from the next pull request on,
-one that tightens them at once, and either is reported for review.
+one that tightens them at once, and either is reported for review. The release check compares with
+the last release, so a rule that loosens takes effect there only in the release after it: once
+1.0 has shipped, a type closed for implementation in one pull request and given a new member in a
+later one of the same release is still rated breaking when that release is made. Close the type in
+one release and add to it in the next.
 
 ### 3. What is never allowed
 
@@ -155,6 +193,39 @@ one that tightens them at once, and either is reported for review.
   package also has to be listed in `compat/gated-declarations.txt`, so it shows in the pull
   request; regenerate that file with
   `bash scripts/check-api-visibility.sh --list-gated > compat/gated-declarations.txt`.
+
+## What is published
+
+Every published module applies the `supabase-offline.published` convention plugin, which sets up
+its Maven Central publication: the POM from the `POM_*` properties of `gradle.properties` (a
+module's own `gradle.properties` can override `POM_NAME` and `POM_DESCRIPTION`), a sources jar, an
+HTML reference of the public packages in the documentation jar, and signing.
+
+CI publishes both modules to a repository inside the build directory and checks what Maven Central
+would receive, with `scripts/check-published-artifacts.py`: every POM field Central requires, the
+sources and documentation jars, the checksums, no absolute path of the machine that built them, and
+the files, dependencies, klib names and Kotlin module files each artifact declares, against the
+record `compat/published-artifacts.txt`. Run it locally the same way:
+
+```bash
+python3 scripts/check-published-artifacts.py
+```
+
+It fails when anything in the record changed. A dependency line there is what every consumer's
+build resolves, so a change to it is a change to the library even when no source changed: a
+dependency added or moved, a new target, a renamed module. If your change means to alter what is
+published, rewrite the record with `python3 scripts/check-published-artifacts.py --update` and
+commit it, and the reviewer reads its diff. A Dependabot update of a dependency the library
+publishes (supabase-kt, Kotlin, Room, androidx.sqlite) needs the same, pushed to its branch.
+
+## Releasing
+
+Releases are published from GitHub Actions by the Release workflow, which a maintainer starts by
+hand; nothing is published from a laptop. The steps, what the owner does in the Central Portal and
+in the repository settings, and what to do when a release stops halfway are in
+[RELEASING.md](https://github.com/nesfeder/supabase-offline-kt/blob/main/RELEASING.md). A pull
+request prepares a release by setting `VERSION_NAME` without `-SNAPSHOT` and naming the changelog
+section and the compatibility row after the version; the workflow refuses anything else.
 
 ## Coverage
 
@@ -214,8 +285,9 @@ Material for MkDocs prints a notice about MkDocs 2.0 on every run. Set
 
 - Every page must be listed under `nav` in `mkdocs.yml`.
 - Some pages are pulled in from elsewhere in the repository when the site is built: this file,
-  `CHANGELOG.md`, and the sample schema in `demo/supabase/schema.sql`. Edit those files, not the
-  pages that include them. Links inside them must be absolute URLs, because they are resolved
+  `CHANGELOG.md`, and the sample schema in
+  `samples/supabase/migrations/20260930000000_offline_tasks.sql`. Edit those files, not the pages
+  that include them. Links inside them must be absolute URLs, because they are resolved
   relative to the page that includes them.
 - A page that has not been written yet opens with a "Not written yet" note, and a page written
   for the engine before 0.1.0 opens with a "Written for an earlier engine" note. Both are plain
@@ -269,6 +341,15 @@ approves or merges. Two cases need care:
   major version, or moves a pass-through dependency, and the triage workflow says so on the pull
   request.
 
+A newer supabase-kt minor never arrives as a Dependabot version update. Instead, the
+[Upstream canary](https://github.com/nesfeder/supabase-offline-kt/blob/main/.github/workflows/upstream-canary.yml)
+workflow checks Maven Central every Monday. When the newest release is a newer minor or major, it
+builds the library and runs its Android host tests against it, in its own checkout only, and
+reports the result in one issue, which the pull request that moves the pin closes. Closing that
+issue without moving the pin brings a new one the next Monday: to hold a minor back, leave the
+issue open and say why in a comment. The `upstream-pin` label marks everything that would move
+supabase-kt or the pass-through set: that issue, and Dependabot's pull requests for them.
+
 Other Gradle dependencies arrive as grouped minor and patch updates, and a new major version as a
 pull request of its own. ktfmt, the formatter, arrives alone in the `formatter` group, because
 its update needs more than the version change: see "Updating ktfmt" under Formatting. GitHub
@@ -295,8 +376,9 @@ release of the plugin fixes it yet, is closed with a **build-tool floor**: a `bu
 library in `gradle/libs.versions.toml` at the patched version, with a comment naming the advisory
 and the plugin release that will make it unnecessary. The build applies every floor as a
 dependency constraint, which only ever raises a version, to the classpaths those plugins and tools
-resolve: the root build script's, build-logic's, and each module's lint and Swift export tools
-(the `supabase-offline.build-tool-floors` convention plugin, which every role plugin applies).
+resolve: the root build script's, build-logic's, and each module's lint and Swift export tools,
+the Kotlin Gradle plugin's publishing validation and Dokka's generator (the
+`supabase-offline.build-tool-floors` convention plugin, which every role plugin applies).
 Nothing that ships is affected. `python3 scripts/check-build-tool-floors.py` resolves those
 classpaths, for every module Gradle lists, and fails when a floor does not hold, or when nothing
 asks for less than a floor any more, which means a plugin release has made it unnecessary: remove
@@ -355,6 +437,16 @@ that entry first (the repository's Actions → Caches page, or `gh cache delete 
 the restore step printed), then find out how it got there: the job saves the files only after both
 have passed their checksums.
 
+### Dependabot's pull requests and the `full-ci` label, while the repository is private
+
+While the repository is private, CI holds the iOS tests on every run of a Dependabot pull request,
+and its check reads `All Green (iOS tests held)`, which does not satisfy the required `All Green`.
+To run them, a maintainer reads Dependabot's push and then adds the `full-ci` label: that labeled
+event, and only that one, runs the whole graph, the iOS tests included. The label counts only when a
+person adds it. When Dependabot pushes again, the check reads held again: read the new push, then
+remove the label and add it again. Adding any other label runs nothing. Once the repository is
+public, the iOS tests run on every pull request and the label is not needed.
+
 ### The self-hosted runner, while the repository is private
 
 While the repository is private, the iOS tests may run on a self-hosted Mac instead of GitHub's
@@ -369,11 +461,11 @@ changed it or something else running as the same user did. If the path is not on
 re-run the job; if the same path comes back, it belongs in the snapshot's exclusion list, with its
 reason.
 
-Two kinds of red come from the runners themselves, and are read, not excluded. A red that names
-only a runner's directory with its `.runner_migrated` or `.credentials_migrated` is GitHub
-refreshing that runner's settings; one that names a runner's new `bin.*`, `externals.*` or
-`update.finished` is the runner updating itself. The runner's `_diag` log records either. Re-run the
-job.
+One kind of red comes from the runners themselves, and is read, not excluded: a red that names
+only a runner's directory with its new `bin.*`, `externals.*` or `update.finished` is the runner
+updating itself, which its `_diag` log records. Re-run the job. (The two marker files a runner's
+service rewrites daily, `.runner_migrated` and `.credentials_migrated`, are excluded: a job cannot
+reconfigure a runner.)
 
 **A job killed before its last two steps** (the Mac restarted or slept, or the runner service
 stopped) cleans up nothing itself. What the next job on the runner does about it:

@@ -7,8 +7,10 @@ plugins { `kotlin-dsl` }
 dependencies {
     compileOnly(libs.android.gradleApi)
     compileOnly(libs.androidx.room.gradlePlugin)
+    compileOnly(libs.dokka.gradlePlugin)
     compileOnly(libs.kotlin.gradlePlugin)
     compileOnly(libs.kover.gradlePlugin)
+    compileOnly(libs.mavenPublish.gradlePlugin)
 
     // The build-tool floors (gradle/libs.versions.toml, `buildToolFloor-*`) for the plugins' full
     // runtime, which kotlin-dsl resolves to generate accessors. Constraints never lower a version.
