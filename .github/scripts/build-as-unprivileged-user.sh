@@ -6,19 +6,27 @@
 # hold, those post steps' programs, the workspace or the step's file commands.
 #
 #   prepare                           create the user, close the runner user's home to other users,
+#                                     close every directory the runner resolves programs through,
 #                                     copy the checkout without .git, and prove what the user
 #                                     cannot reach; any doubt fails the step
 #   build <gradle argument>...        run ./gradlew in the copy as that user, with no daemon and an
 #                                     environment of seven named variables
 #   collect <directory> <test task> <module>...
-#                                     stop everything the user started, delete its files in the
-#                                     shared temporary directories, restore the home's mode, and
-#                                     copy back each module's JUnit XML: regular files only, from
-#                                     inside the copy
+#                                     stop everything the user started, lock the account, delete
+#                                     its files in the shared temporary directories, restore the
+#                                     home's mode, and copy back each module's JUnit XML: regular
+#                                     files only, from inside the copy
 #
-# GitHub-hosted Linux runners only: it needs passwordless sudo and useradd.
+# GitHub-hosted Linux runners only: it needs passwordless sudo and useradd. Run it as
+# /usr/bin/bash: after the build, nothing may be found through the PATH the job inherits.
 
 set -euo pipefail
+
+# The PATH the job's steps inherit, whose directories prepare closes and proves the build user
+# cannot write. This script never looks a program up through it.
+readonly INHERITED_PATH="${PATH:-}"
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 
 readonly BUILD_USER=canary-build
 readonly BUILD_HOME="/home/$BUILD_USER"
@@ -62,11 +70,77 @@ must() {
     echo "  can $description"
 }
 
+# Every directory a step of the runner user finds programs in, with each one's real path and every
+# ancestor of both, since a writable ancestor can swap out what is below it: the inherited PATH,
+# the JDK and the runner's own directories.
+runner_directories() {
+    local runner_root=$1 entry directory parent
+    local -a entries
+    IFS=: read -r -a entries <<< "$INHERITED_PATH"
+    entries+=("$JAVA_HOME" "$runner_root" "$runner_root/bin" "$runner_root/externals")
+    for entry in "${entries[@]}"; do
+        for directory in "$entry" "$(realpath -m "$entry")"; do
+            while :; do
+                printf '%s\n' "$directory"
+                parent=$(dirname "$directory")
+                if [[ "$parent" == "$directory" ]]; then
+                    break
+                fi
+                directory=$parent
+            done
+        done
+    done | sort -u
+}
+
+# The image makes its JDKs world-writable, and setup-java puts the JDK's bin first on every later
+# step's PATH: other users lose write access to them, to every directory runner_directories lists,
+# and to every program in a PATH directory.
+close_runner_directories() {
+    local runner_root=$1 directory entry
+    sudo chmod -R o-w "$(realpath -e "$JAVA_HOME")"
+    if [[ -d /usr/lib/jvm ]]; then
+        sudo chmod -R o-w /usr/lib/jvm
+    fi
+    while IFS= read -r directory; do
+        if [[ -d "$directory" && -n "$(find -H "$directory" -maxdepth 0 -perm -o+w)" ]]; then
+            sudo chmod o-w "$directory"
+            echo "  closed $directory to other users"
+        fi
+    done < <(runner_directories "$runner_root")
+    local -a entries
+    IFS=: read -r -a entries <<< "$INHERITED_PATH"
+    for entry in "${entries[@]}"; do
+        if [[ -d "$entry" ]]; then
+            # Best effort: a link back into the directory makes find report a loop. The check in
+            # prepare is what decides.
+            sudo find -L "$entry" -maxdepth 1 -type f -perm -o+w -exec chmod o-w {} + 2> /dev/null || true
+        fi
+    done
+}
+
 prepare() {
     : "${GITHUB_WORKSPACE:?}" "${RUNNER_TEMP:?}" "${RUNNER_WORKSPACE:?}" "${GITHUB_ENV:?}"
     : "${GITHUB_STEP_SUMMARY:?}" "${HOME:?}"
     build_environment
     cd /
+
+    local -a entries
+    local entry
+    IFS=: read -r -a entries <<< "$INHERITED_PATH"
+    for entry in "${entries[@]}"; do
+        if [[ "$entry" != /* ]]; then
+            echo "::error::The inherited PATH has an entry that is not an absolute path."
+            exit 1
+        fi
+    done
+    local step_shell worker runner_root
+    step_shell=$PPID
+    worker=$(ps -o ppid= -p "$step_shell" | tr -d ' ')
+    runner_root=$(dirname "$(dirname "$(readlink -f "/proc/$worker/exe")")")
+    if [[ "$runner_root" != /?* ]]; then
+        echo "::error::The runner's own directory cannot be found."
+        exit 1
+    fi
 
     if id "$BUILD_USER" > /dev/null 2>&1; then
         echo "::error::A user named $BUILD_USER already exists."
@@ -80,6 +154,8 @@ prepare() {
     # and the step files; other users lose all access to it until collect restores the mode.
     stat -c '%a' "$HOME" > "$RUNNER_TEMP/runner-home-mode"
     sudo chmod o-rwx "$HOME"
+
+    close_runner_directories "$runner_root"
 
     sudo -u "$BUILD_USER" -- mkdir -m 0755 "$COPY"
     tar -C "$GITHUB_WORKSPACE" --exclude=.git -cf - . | sudo -u "$BUILD_USER" -- tar -xf - -C "$COPY"
@@ -116,12 +192,9 @@ prepare() {
     must_not "write the step's file commands" test -w "$GITHUB_ENV"
     must_not "write the actions and their post steps" test -w "$(dirname "$RUNNER_WORKSPACE")/_actions"
     must_not "read this step's environment" cat "/proc/$$/environ"
-    local step_shell worker runner_root file
-    step_shell=$PPID
-    worker=$(ps -o ppid= -p "$step_shell" | tr -d ' ')
     must_not "read the step shell's environment" cat "/proc/$step_shell/environ"
     must_not "read the runner worker's environment" cat "/proc/$worker/environ"
-    runner_root=$(dirname "$(dirname "$(readlink -f "/proc/$worker/exe")")")
+    local file directory checked=0
     for file in .credentials .credentials_rsaparams .runner; do
         if [[ -e "$runner_root/$file" ]]; then
             must_not "read the runner's $file" cat "$runner_root/$file"
@@ -130,6 +203,36 @@ prepare() {
     if [[ -e /var/run/docker.sock ]]; then
         must_not "use the Docker socket" test -w /var/run/docker.sock
     fi
+
+    # Where a later step of the runner user finds its programs.
+    echo "::group::Directories the runner finds programs in: the build user can write none"
+    while IFS= read -r directory; do
+        if as_build_user test -w "$directory" > /dev/null 2>&1; then
+            echo "::endgroup::"
+            echo "::error::The build user can write $directory, where the runner finds programs."
+            exit 1
+        fi
+        echo "  cannot write $directory"
+        checked=$((checked + 1))
+    done < <(runner_directories "$runner_root")
+    echo "::endgroup::"
+    local writable_program
+    for entry in "${entries[@]}"; do
+        if [[ -d "$entry" ]]; then
+            writable_program=$(find -L "$entry" -maxdepth 1 -type f -perm -o+w -print -quit 2> /dev/null)
+            if [[ -n "$writable_program" ]]; then
+                echo "::error::$writable_program, on the runner's PATH, is writable by other users."
+                exit 1
+            fi
+        fi
+    done
+    echo "  cannot write any of the $checked directories the runner finds programs in (each PATH"
+    echo "  entry, the JDK and the runner's own, with real paths and ancestors), nor any program in"
+    echo "  a PATH directory"
+    {
+        echo "- cannot write any of the $checked directories the runner finds programs in, nor any"
+        echo "  program in a PATH directory. The PATH: \`$INHERITED_PATH\`"
+    } >> "$GITHUB_STEP_SUMMARY"
     must "run Java" "$JAVA_HOME/bin/java" -version
     must "read the Android SDK" test -r "$ANDROID_HOME"
     must "write its copy of the checkout" test -w "$COPY"
@@ -140,6 +243,20 @@ build() {
     cd "$COPY"
     as_build_user bash .github/scripts/run-gradle.sh --no-daemon \
         -Pkotlin.compiler.execution.strategy=in-process "$@"
+}
+
+stop_build_user_processes() {
+    local attempt
+    for attempt in $(seq 1 20); do
+        sudo pkill -KILL -u "$BUILD_USER" || true
+        if ! pgrep -u "$BUILD_USER" > /dev/null; then
+            echo "Stopped every process of $BUILD_USER (checked $attempt times)."
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "::error::A process of the build user is still running."
+    exit 1
 }
 
 collect() {
@@ -153,20 +270,16 @@ collect() {
         return 0
     fi
 
-    # Everything the user started stops first, so nothing can change what is copied back.
-    sudo pkill -KILL -u "$BUILD_USER" || true
-    local attempt
-    for attempt in $(seq 1 20); do
-        if ! pgrep -u "$BUILD_USER" > /dev/null; then
-            break
-        fi
-        sleep 0.5
-    done
-    if pgrep -u "$BUILD_USER" > /dev/null; then
-        echo "::error::A process of the build user is still running."
-        exit 1
+    # Everything the user started stops first, so nothing can change what is copied back. Each
+    # check kills again, so a process forked during the previous kill is caught too.
+    stop_build_user_processes
+    # Then no login, cron or at job can run as the user, and anything started meanwhile stops.
+    sudo usermod --lock --expiredate 1 "$BUILD_USER"
+    sudo crontab -r -u "$BUILD_USER" 2> /dev/null || true
+    if command -v atq > /dev/null; then
+        sudo atq | awk -v user="$BUILD_USER" '$NF == user { print $1 }' | xargs -r sudo atrm
     fi
-    echo "Stopped every process of $BUILD_USER (checked $attempt times)."
+    stop_build_user_processes
 
     # Its files in the directories every user shares, which a later step could otherwise read.
     local shared=(/tmp /var/tmp /dev/shm)

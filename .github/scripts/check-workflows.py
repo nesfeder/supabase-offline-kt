@@ -31,7 +31,8 @@ It fails when:
      repository guard as a conjunct of its own, or holds a write permission and runs an action
      (a checkout or a reusable workflow included); or a step runs Gradle other than as the
      unprivileged build user, with only Gradle arguments, between a step that prepares that user
-     and a step under always() that stops it.
+     and a step under always() that stops it; or a step after that build runs an action, or runs
+     without the absolute shell below or with a first command that is not an absolute path.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -89,7 +90,12 @@ REPOSITORY_GUARD = "github.repository == 'nesfeder/supabase-offline-kt'"
 # The one way a listed workflow may run Gradle: as the unprivileged build user, after the step that
 # prepares it and before the step that stops it, so the build never holds the runner's tokens.
 BUILD_USER_SCRIPT = "bash .github/scripts/build-as-unprivileged-user.sh"
-RUNS_GRADLE = re.compile(r"gradlew|run-gradle|gradle-wrapper|GradleWrapperMain")
+# After the build, nothing is found through the PATH the build ran beside: the shell and the first
+# command are absolute, and collect is the script run by /usr/bin/bash.
+ABSOLUTE_SHELL = "/usr/bin/bash --noprofile --norc -e -o pipefail {0}"
+COLLECT = "/" + "usr/bin/" + BUILD_USER_SCRIPT + " collect "
+RUNS_GRADLE = re.compile(r"gradlew|run-gradle|gradle-wrapper|GradleWrapperMain"
+                         r"|(^|[\s;&|(`/])gradle(\s|$)")
 GRADLE_ARGUMENT = re.compile(r"[-:A-Za-z0-9=._]+")
 
 
@@ -323,11 +329,17 @@ def build_user_problems(where: str, steps: list) -> list[str]:
         if not prepared or steps[prepared[-1]].get("continue-on-error", False) is not False:
             problems.append(f"{where} builds without first preparing the build user")
         collected = [after for after in range(index + 1, len(runs))
-                     if runs[after].startswith(BUILD_USER_SCRIPT + " collect ")]
+                     if runs[after].startswith(COLLECT)]
         condition = " ".join(str(steps[collected[0]].get("if", "")).split()) if collected else ""
         if (not collected or not condition.startswith("always()")
                 or steps[collected[0]].get("continue-on-error", False) is not False):
             problems.append(f"{where} does not stop the build user under always() after the build")
+        # An action has neither a shell nor a run line, so it fails this too.
+        for after in range(index + 1, len(steps)):
+            if steps[after].get("shell") != ABSOLUTE_SHELL or not runs[after].startswith("/"):
+                problems.append(f"{where} has a step after the build that is not an absolute"
+                                " command in the absolute shell")
+                break
     return problems
 
 
@@ -477,7 +489,10 @@ jobs:
           {BUILD_USER_SCRIPT} build
           :a:testAndroidHostTest --continue
       - if: always() && steps.versions.outputs.newer == 'true'
-        run: {BUILD_USER_SCRIPT} collect "$RUNNER_TEMP/results" testAndroidHostTest a
+        shell: {ABSOLUTE_SHELL}
+        run: /usr/bin/{BUILD_USER_SCRIPT} collect "$RUNNER_TEMP/results" testAndroidHostTest a
+      - shell: {ABSOLUTE_SHELL}
+        run: /usr/bin/python3 -I -c pass
   report:
     needs: canary
     if: {REPOSITORY_GUARD} && (needs.canary.outputs.newer == 'true')
@@ -736,9 +751,36 @@ CASES: list[tuple[str, str, str, str]] = [
      "does not stop the build user under always()"),
     ("no step stops the build user", "upstream-canary.yml",
      COMPLIANT_CANARY.replace("      - if: always() && steps.versions.outputs.newer == 'true'\n"
-                              f"        run: {BUILD_USER_SCRIPT} collect \"$RUNNER_TEMP/results\""
-                              " testAndroidHostTest a\n", ""),
+                              f"        shell: {ABSOLUTE_SHELL}\n"
+                              f"        run: /usr/bin/{BUILD_USER_SCRIPT} collect"
+                              " \"$RUNNER_TEMP/results\" testAndroidHostTest a\n", ""),
      "does not stop the build user under always()"),
+    ("the build user is stopped through the inherited PATH", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"        run: /usr/bin/{BUILD_USER_SCRIPT} collect",
+                              f"        run: {BUILD_USER_SCRIPT} collect"),
+     "does not stop the build user under always()"),
+    ("a step after the build in the default shell", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - shell: {ABSOLUTE_SHELL}\n        run: /usr/bin/python3",
+                              "      - run: /usr/bin/python3"),
+     "a step after the build that is not an absolute command"),
+    ("a step after the build finds python3 through the PATH", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace("run: /usr/bin/python3 -I -c pass", "run: python3 -I -c pass"),
+     "a step after the build that is not an absolute command"),
+    ("an action after the build", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - shell: {ABSOLUTE_SHELL}\n"
+                              "        run: /usr/bin/python3 -I -c pass\n",
+                              "      - uses: $/.github/actions/setup\n"),
+     "a step after the build that is not an absolute command"),
+    ("the image's own gradle command", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n",
+                              f"      - run: gradle -p . help\n"
+                              f"      - run: {BUILD_USER_SCRIPT} prepare\n"),
+     "runs Gradle outside the unprivileged build user"),
+    ("the image's gradle by its path", "upstream-canary.yml",
+     COMPLIANT_CANARY.replace(f"      - run: {BUILD_USER_SCRIPT} prepare\n",
+                              f"      - run: /usr/bin/gradle help\n"
+                              f"      - run: {BUILD_USER_SCRIPT} prepare\n"),
+     "runs Gradle outside the unprivileged build user"),
     ("the canary gains a third job", "upstream-canary.yml",
      COMPLIANT_CANARY + "  other: {runs-on: ubuntu-latest, steps: [{run: echo}]}\n",
      "upstream-canary.yml: jobs"),
@@ -771,7 +813,13 @@ def self_test() -> None:
         for index, (name, file_name, content, expected) in enumerate(CASES):
             root = Path(work) / f"case-{index}"
             write_compliant_tree(root)
-            (root / ".github" / "workflows" / file_name).write_text(content)
+            target = root / ".github" / "workflows" / file_name
+            # A replacement that matched nothing would test the compliant file again.
+            if target.exists() and target.read_text() == content:
+                print(f"FAIL {name}: the case changes nothing in {file_name}")
+                failures += 1
+                continue
+            target.write_text(content)
             problems = check_tree(root)
             caught = any(expected in problem for problem in problems)
             print(f"{'ok  ' if caught else 'FAIL'} {name}: {'caught' if caught else problems}")

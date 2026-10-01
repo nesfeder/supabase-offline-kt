@@ -23,8 +23,11 @@ name: Upstream canary
 #           unprivileged user, on a copy of the checkout without .git, with no Gradle daemon and
 #           seven named environment variables (.github/scripts/build-as-unprivileged-user.sh). It
 #           cannot reach the job's token, the Actions cache token the setup actions' post steps
-#           hold, those steps' programs, the workspace or the step files, and its processes are
-#           stopped before anything else runs. Only its JUnit XML comes back.
+#           hold, those steps' programs, the workspace or the step files, nor write any directory
+#           the runner finds programs in (the image leaves its JDKs world-writable, and the JDK's
+#           bin leads every later step's PATH). Its processes are stopped before anything else
+#           runs, the steps after it find nothing through the PATH, and only its JUnit XML comes
+#           back.
 #   report  issues: write only. Checks out nothing and runs nothing from the build. It refuses any
 #           value the canary could not have produced, and writes the issue from fixed text and
 #           those values.
@@ -207,11 +210,13 @@ jobs:
           :supabase-offline-kt-testing:testAndroidHostTest
           --continue
 
-      # Whatever happened above, before the post steps run.
+      # Whatever happened above, before the post steps run. From here on, the shell and every
+      # program are named by absolute path, never found through the PATH the build ran beside.
       - name: Stop the build user and collect its test results
         if: always() && steps.versions.outputs.newer == 'true'
+        shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
         run: >-
-          bash .github/scripts/build-as-unprivileged-user.sh collect
+          /usr/bin/bash .github/scripts/build-as-unprivileged-user.sh collect
           "$RUNNER_TEMP/build-user-results" testAndroidHostTest
           supabase-offline-kt supabase-offline-kt-testing
 
@@ -221,8 +226,9 @@ jobs:
         id: counts
         if: steps.versions.outputs.newer == 'true'
         continue-on-error: true
+        shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
         run: |
-          python3 - <<'PYTHON'
+          /usr/bin/python3 -I - <<'PYTHON'
           import os
           from pathlib import Path
           from xml.etree import ElementTree
