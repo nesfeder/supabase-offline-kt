@@ -369,11 +369,11 @@ changed it or something else running as the same user did. If the path is not on
 re-run the job; if the same path comes back, it belongs in the snapshot's exclusion list, with its
 reason.
 
-Two kinds of red come from the runners themselves, and are read, not excluded. A red that names
-only a runner's directory with its `.runner_migrated` or `.credentials_migrated` is GitHub
-refreshing that runner's settings; one that names a runner's new `bin.*`, `externals.*` or
-`update.finished` is the runner updating itself. The runner's `_diag` log records either. Re-run the
-job.
+One kind of red comes from the runners themselves, and is read, not excluded: a red that names
+only a runner's directory with its new `bin.*`, `externals.*` or `update.finished` is the runner
+updating itself, which its `_diag` log records. Re-run the job. (The two marker files a runner's
+service rewrites daily, `.runner_migrated` and `.credentials_migrated`, are excluded: a job cannot
+reconfigure a runner.)
 
 **A job killed before its last two steps** (the Mac restarted or slept, or the runner service
 stopped) cleans up nothing itself. What the next job on the runner does about it:
