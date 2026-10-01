@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
  * Everything the screens read and write, for the signed-in user. It names no Android type, so it
  * would compile in `commonMain` unchanged.
  *
- * Reads are live: each returns a flow of [Snapshot]s served from the device first and refreshed
+ * Reads are live: each returns a flow of [RowsSnapshot]s served from the device first and refreshed
  * from the server when it can be reached. Writes change the device's copy at once and wait in the
  * mutation queue until the server has them, so they work offline; photo uploads are the exception
  * and need the network.
@@ -136,7 +136,7 @@ interface TaskRepository {
      * as soon as [setNetworkEnabled] returns; the counts catch up with a write shortly after it, so
      * wait for them rather than reading them straight after.
      */
-    val syncStatus: StateFlow<TaskSyncStatus>
+    val syncStatus: StateFlow<AppSyncStatus>
 
     /**
      * Asks the server for the task list again, as pull-to-refresh does.

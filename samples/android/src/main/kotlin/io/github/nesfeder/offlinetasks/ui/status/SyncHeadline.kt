@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.status
 
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
-import io.github.nesfeder.offlinetasks.data.TaskSyncStatus
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,11 +40,11 @@ sealed interface SyncHeadline {
 }
 
 /** The headline for [status] and the task list's [refresh], in order of what matters most. */
-fun syncHeadlineOf(status: TaskSyncStatus, refresh: TaskRefreshState): SyncHeadline {
+fun syncHeadlineOf(status: AppSyncStatus, refresh: TaskRefreshState): SyncHeadline {
     val pending = status.pendingMutationCount
     return when {
-        status.network == TaskNetworkStatus.Offline ||
-            status.network == TaskNetworkStatus.Disabled -> SyncHeadline.Offline(pending)
+        status.network == AppNetworkStatus.Offline || status.network == AppNetworkStatus.Disabled ->
+            SyncHeadline.Offline(pending)
         status.isSyncing && pending > 0 -> SyncHeadline.Syncing(pending)
         refresh is TaskRefreshState.Stalled -> SyncHeadline.ShowingSavedData
         pending > 0 -> SyncHeadline.Waiting(pending)

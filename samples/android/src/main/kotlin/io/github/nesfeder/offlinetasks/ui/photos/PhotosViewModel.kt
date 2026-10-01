@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
@@ -31,7 +31,7 @@ class PhotosViewModel(private val repository: TaskRepository) : ViewModel() {
     /** The screen's state. */
     val uiState: StateFlow<PhotosUiState> =
         combine(repository.allPhotos(), repository.syncStatus) { snapshot, status ->
-                val online = status.network == TaskNetworkStatus.Online
+                val online = status.network == AppNetworkStatus.Online
                 val photos = snapshot.value
                 if (photos == null) {
                     PhotosUiState.NoDataYet(isLoading = online)

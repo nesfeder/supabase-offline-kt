@@ -14,7 +14,7 @@ import kotlin.time.Instant
  * @property fetchedAt when the server last answered this query, or null if it never has.
  * @property hasPendingMutations true when a queued write changes these rows.
  */
-data class Snapshot<out T>(
+data class RowsSnapshot<out T>(
     val value: T?,
     val isFromCache: Boolean,
     val fetchedAt: Instant?,
@@ -23,10 +23,10 @@ data class Snapshot<out T>(
 )
 
 /** The task list as a live query sees it. */
-typealias TaskListSnapshot = Snapshot<List<Task>>
+typealias TaskListSnapshot = RowsSnapshot<List<Task>>
 
 /** A list of photos as a live query sees it. */
-typealias PhotoListSnapshot = Snapshot<List<TaskPhoto>>
+typealias PhotoListSnapshot = RowsSnapshot<List<TaskPhoto>>
 
 /** What a live query's refresh from the server is doing. */
 sealed interface TaskRefreshState {

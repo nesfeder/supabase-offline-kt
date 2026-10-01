@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.data.inmemory
 
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
@@ -12,7 +13,6 @@ import io.github.nesfeder.offlinetasks.data.TASK_TITLE_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
 import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.data.characterCount
@@ -75,7 +75,7 @@ class InMemoryTaskRepositoryTest {
         assertTrue(snapshot.isFromCache)
         assertEquals(TaskRefreshState.Paused, snapshot.refresh)
         // The network is current when the switch returns; the count catches up with the write.
-        assertEquals(TaskNetworkStatus.Disabled, repository.syncStatus.value.network)
+        assertEquals(AppNetworkStatus.Disabled, repository.syncStatus.value.network)
         repository.awaitPendingCount(1)
     }
 
@@ -239,7 +239,7 @@ class InMemoryTaskRepositoryTest {
         assertTrue(snapshot.isFromCache)
         assertEquals(6, snapshot.value?.size)
         assertIs<TaskMutationOutcome.Queued>(outcome)
-        assertEquals(TaskNetworkStatus.Online, repository.syncStatus.value.network)
+        assertEquals(AppNetworkStatus.Online, repository.syncStatus.value.network)
     }
 
     @Test

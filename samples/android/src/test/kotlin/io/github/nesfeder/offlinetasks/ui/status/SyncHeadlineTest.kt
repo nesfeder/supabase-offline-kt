@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.status
 
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
-import io.github.nesfeder.offlinetasks.data.TaskSyncStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.flow
@@ -16,7 +16,7 @@ class SyncHeadlineTest {
     @Test
     fun offline_wins_over_everything_else() {
         // Given
-        val status = status(TaskNetworkStatus.Disabled, pending = 2, isSyncing = true)
+        val status = status(AppNetworkStatus.Disabled, pending = 2, isSyncing = true)
 
         // When
         val headline = syncHeadlineOf(status, TaskRefreshState.Stalled(IllegalStateException()))
@@ -30,24 +30,24 @@ class SyncHeadlineTest {
         assertEquals(
             SyncHeadline.Syncing(3),
             syncHeadlineOf(
-                status(TaskNetworkStatus.Online, 3, isSyncing = true),
+                status(AppNetworkStatus.Online, 3, isSyncing = true),
                 TaskRefreshState.Idle,
             ),
         )
         assertEquals(
             SyncHeadline.ShowingSavedData,
             syncHeadlineOf(
-                status(TaskNetworkStatus.Online, 3),
+                status(AppNetworkStatus.Online, 3),
                 TaskRefreshState.Stalled(Exception()),
             ),
         )
         assertEquals(
             SyncHeadline.Waiting(3),
-            syncHeadlineOf(status(TaskNetworkStatus.Online, 3), TaskRefreshState.Refreshing),
+            syncHeadlineOf(status(AppNetworkStatus.Online, 3), TaskRefreshState.Refreshing),
         )
         assertEquals(
             SyncHeadline.UpToDate,
-            syncHeadlineOf(status(TaskNetworkStatus.Online, 0), TaskRefreshState.Idle),
+            syncHeadlineOf(status(AppNetworkStatus.Online, 0), TaskRefreshState.Idle),
         )
     }
 
@@ -78,8 +78,8 @@ class SyncHeadlineTest {
         assertEquals(listOf<SyncHeadline>(SyncHeadline.UpToDate), shown)
     }
 
-    private fun status(network: TaskNetworkStatus, pending: Int, isSyncing: Boolean = false) =
-        TaskSyncStatus(
+    private fun status(network: AppNetworkStatus, pending: Int, isSyncing: Boolean = false) =
+        AppSyncStatus(
             network = network,
             pendingMutationCount = pending,
             rejectedMutationCount = 0,

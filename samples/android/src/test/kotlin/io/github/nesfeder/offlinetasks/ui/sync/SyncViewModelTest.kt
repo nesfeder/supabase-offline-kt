@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.sync
 
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.platform.SessionState
@@ -42,13 +42,13 @@ class SyncViewModelTest {
         viewModel.setSimulateOffline(true)
 
         // Then
-        viewModel.ready { it.status.network == TaskNetworkStatus.Disabled }
+        viewModel.ready { it.status.network == AppNetworkStatus.Disabled }
 
         // When
         viewModel.setSimulateOffline(false)
 
         // Then
-        viewModel.ready { it.status.network == TaskNetworkStatus.Online }
+        viewModel.ready { it.status.network == AppNetworkStatus.Online }
     }
 
     @Test

@@ -178,7 +178,15 @@ fun TaskDetailScreen(
                     scrollBehavior = scrollBehavior,
                 )
             },
-            snackbarHost = { AppSnackbarHost() },
+            snackbarHost = {
+                // The toolbar floats over the content, where the scaffold does not see it: the
+                // snackbar sits above it, as it would above a floating action button.
+                val toolbarClearance =
+                    if (state == TaskDetailUiState.Gone) 0.dp
+                    else
+                        FloatingToolbarDefaults.ContainerSize + FloatingToolbarDefaults.ScreenOffset
+                AppSnackbarHost(Modifier.padding(bottom = toolbarClearance))
+            },
         ) { padding ->
             if (state == TaskDetailUiState.Gone) {
                 EmptyState(

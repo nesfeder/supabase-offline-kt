@@ -7,13 +7,13 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.ServerFaults
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskSyncReport
-import io.github.nesfeder.offlinetasks.data.TaskSyncStatus
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
@@ -38,7 +38,7 @@ sealed interface SyncUiState {
 
     /** Everything the app knows about syncing, and the switches that change it. */
     data class Ready(
-        val status: TaskSyncStatus,
+        val status: AppSyncStatus,
         val pendingTasks: Int,
         val pendingPhotos: Int,
         /** The task list's refresh from the server. */

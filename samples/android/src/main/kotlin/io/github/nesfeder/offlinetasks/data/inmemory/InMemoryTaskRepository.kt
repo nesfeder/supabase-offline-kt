@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.data.inmemory
 
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.PhotoFile
@@ -11,21 +13,20 @@ import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
+import io.github.nesfeder.offlinetasks.data.RowsSnapshot
 import io.github.nesfeder.offlinetasks.data.ServerFaults
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
-import io.github.nesfeder.offlinetasks.data.Snapshot
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.Task
 import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskSyncReport
-import io.github.nesfeder.offlinetasks.data.TaskSyncStatus
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -111,7 +112,7 @@ class InMemoryTaskRepository(
     private val publishedStorageFailing = MutableStateFlow(state.value.storageFailing)
 
     // Published as each change is made, so `value` is current the moment a write returns.
-    override val syncStatus: StateFlow<TaskSyncStatus> = publishedSyncStatus.asStateFlow()
+    override val syncStatus: StateFlow<AppSyncStatus> = publishedSyncStatus.asStateFlow()
 
     override val isServerOutage: StateFlow<Boolean> = publishedServerOutage.asStateFlow()
 
@@ -282,7 +283,7 @@ class InMemoryTaskRepository(
     override suspend fun refreshTasks() {
         // A one-shot read that must reach the server, as a NetworkOnly select is: off the network
         // it fails at once, and against a failing server it fails once the attempt has.
-        if (state.value.network != TaskNetworkStatus.Online) throw NetworkUnavailableException()
+        if (state.value.network != AppNetworkStatus.Online) throw NetworkUnavailableException()
         detached { refreshFromServer(force = true) }
         unreachableServerError()?.let { throw it }
     }
@@ -340,13 +341,24 @@ class InMemoryTaskRepository(
 
     /**
      * Runs [block] in this repository's scope, so a screen that goes away cannot cut it short. Its
-     * failure is handed to the caller, never to the scope, which goes on serving every screen.
+     * failure is handed to the caller, never to the scope, which goes on serving every screen;
+     * cancellation stays cancellation.
      */
-    private suspend fun <T> detached(block: suspend () -> T): T =
-        scope.async { runCatching { block() } }.await().getOrThrow()
+    private suspend fun <T> detached(block: suspend () -> T): T {
+        val outcome = scope.async {
+            try {
+                Result.success(block())
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                Result.failure(failure)
+            }
+        }
+        return outcome.await().getOrThrow()
+    }
 
     /** A live query: [read] of every state, refreshed from the server when it is not fresh. */
-    private fun <T> observe(read: (DeviceState) -> Snapshot<T>): Flow<Snapshot<T>> =
+    private fun <T> observe(read: (DeviceState) -> RowsSnapshot<T>): Flow<RowsSnapshot<T>> =
         state.map(read).distinctUntilChanged().onStart {
             scope.launch { refreshFromServer(force = false) }
         }
@@ -489,14 +501,14 @@ class InMemoryTaskRepository(
         try {
             val start = state.value
             if (!force && start.confirmedByServer && start.cache != null) return
-            if (start.network != TaskNetworkStatus.Online) return
+            if (start.network != AppNetworkStatus.Online) return
             updateState { it.copy(refresh = TaskRefreshState.Refreshing) }
             delay(latency)
             writeLock.withLock {
                 val current = state.value
                 when {
                     current.userId != start.userId -> Unit
-                    current.network != TaskNetworkStatus.Online ->
+                    current.network != AppNetworkStatus.Online ->
                         updateState { it.copy(refresh = TaskRefreshState.Paused) }
                     current.serverOutage ->
                         updateState {
@@ -551,7 +563,7 @@ class InMemoryTaskRepository(
     private fun unreachableServerError(): Throwable? {
         val current = state.value
         return when {
-            current.network != TaskNetworkStatus.Online -> NetworkUnavailableException()
+            current.network != AppNetworkStatus.Online -> NetworkUnavailableException()
             current.serverOutage -> ServerUnreachableException()
             else -> null
         }
@@ -598,17 +610,17 @@ private data class DeviceState(
     val lastSyncedAt: Instant? = null,
     val lastSyncError: Throwable? = null,
 ) {
-    val network: TaskNetworkStatus
+    val network: AppNetworkStatus
         get() =
             when {
-                !networkEnabled -> TaskNetworkStatus.Disabled
-                deviceOnline == null -> TaskNetworkStatus.Unknown
-                deviceOnline -> TaskNetworkStatus.Online
-                else -> TaskNetworkStatus.Offline
+                !networkEnabled -> AppNetworkStatus.Disabled
+                deviceOnline == null -> AppNetworkStatus.Unknown
+                deviceOnline -> AppNetworkStatus.Online
+                else -> AppNetworkStatus.Offline
             }
 
     val canReachServer: Boolean
-        get() = network == TaskNetworkStatus.Online && !serverOutage
+        get() = network == AppNetworkStatus.Online && !serverOutage
 
     /** The cached rows with every queued write applied on top, as the screens see them. */
     fun visibleRows(): DeviceRows? {
@@ -654,8 +666,8 @@ private data class DeviceState(
         return snapshotOf(photos, hasPendingMutations = pending.isNotEmpty())
     }
 
-    private fun <T> snapshotOf(value: T?, hasPendingMutations: Boolean): Snapshot<T> =
-        Snapshot(
+    private fun <T> snapshotOf(value: T?, hasPendingMutations: Boolean): RowsSnapshot<T> =
+        RowsSnapshot(
             value = value,
             isFromCache = !confirmedByServer,
             fetchedAt = fetchedAt,
@@ -663,8 +675,8 @@ private data class DeviceState(
             refresh = refresh,
         )
 
-    fun toSyncStatus(): TaskSyncStatus =
-        TaskSyncStatus(
+    fun toSyncStatus(): AppSyncStatus =
+        AppSyncStatus(
             network = network,
             pendingMutationCount = queue.size,
             rejectedMutationCount = rejected.size,
@@ -675,7 +687,7 @@ private data class DeviceState(
 
     /** Off the network a refresh is paused and the rows shown are only the device's. */
     fun withRefreshForNetwork(): DeviceState =
-        if (network == TaskNetworkStatus.Online) this
+        if (network == AppNetworkStatus.Online) this
         else copy(refresh = TaskRefreshState.Paused, confirmedByServer = false)
 
     /** The head write accepted: it leaves the queue and the cache takes the server's copy. */

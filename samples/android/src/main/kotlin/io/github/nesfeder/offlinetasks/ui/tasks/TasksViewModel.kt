@@ -7,10 +7,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.Task
 import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
@@ -176,7 +176,7 @@ class TasksViewModel(
     /** Pull-to-refresh: asks the server for the list again, or says why it cannot. */
     fun refresh() {
         val network = repository.syncStatus.value.network
-        if (network == TaskNetworkStatus.Offline || network == TaskNetworkStatus.Disabled) {
+        if (network == AppNetworkStatus.Offline || network == AppNetworkStatus.Disabled) {
             messageChannel.trySend(TasksMessage.RefreshNeedsNetwork)
             return
         }
@@ -209,7 +209,7 @@ class TasksViewModel(
 
     private fun stateOf(
         snapshot: TaskListSnapshot,
-        network: TaskNetworkStatus,
+        network: AppNetworkStatus,
         headline: SyncHeadline,
         filter: TaskFilter,
         hidden: Set<String>,
@@ -218,7 +218,7 @@ class TasksViewModel(
         val tasks = snapshot.value
         if (tasks == null) {
             val canAskServer =
-                network == TaskNetworkStatus.Online || network == TaskNetworkStatus.Unknown
+                network == AppNetworkStatus.Online || network == AppNetworkStatus.Unknown
             return TasksUiState.NoDataYet(
                 headline = headline,
                 filter = filter,

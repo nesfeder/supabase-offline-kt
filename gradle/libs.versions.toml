@@ -16,6 +16,8 @@ androidx-core = "1.19.1"
 androidx-exifinterface = "1.4.2"
 androidx-lifecycle = "2.11.0"
 androidx-navigation3 = "1.2.0"
+# The version navigation3-ui resolves today; the sample reads its back-gesture state directly.
+androidx-navigationevent = "1.1.1"
 androidx-test-core = "1.7.0"
 androidx-testExt = "1.3.0"
 # Build-tool floors: patched minimum versions of libraries that the Gradle plugins and their tools
@@ -108,6 +110,7 @@ androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-
 androidx-lifecycle-viewmodel-navigation3 = { module = "androidx.lifecycle:lifecycle-viewmodel-navigation3", version.ref = "androidx-lifecycle" }
 androidx-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "androidx-navigation3" }
 androidx-navigation3-ui = { module = "androidx.navigation3:navigation3-ui", version.ref = "androidx-navigation3" }
+androidx-navigationevent-compose = { module = "androidx.navigationevent:navigationevent-compose", version.ref = "androidx-navigationevent" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 androidx-room-gradlePlugin = { module = "androidx.room:room-gradle-plugin", version.ref = "room" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }

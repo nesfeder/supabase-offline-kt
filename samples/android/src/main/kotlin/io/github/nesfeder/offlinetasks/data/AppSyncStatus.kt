@@ -5,8 +5,8 @@ package io.github.nesfeder.offlinetasks.data
 import kotlin.time.Instant
 
 /** Everything the app shows about syncing, in one value that changes as a whole. */
-data class TaskSyncStatus(
-    val network: TaskNetworkStatus,
+data class AppSyncStatus(
+    val network: AppNetworkStatus,
     val pendingMutationCount: Int,
     val rejectedMutationCount: Int,
     /** True while a replay of the mutation queue is running. */
@@ -18,7 +18,7 @@ data class TaskSyncStatus(
 )
 
 /** What the app knows about reaching the server. */
-enum class TaskNetworkStatus {
+enum class AppNetworkStatus {
     /** Not known yet. */
     Unknown,
 

@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.testing
 
-import io.github.nesfeder.offlinetasks.data.Snapshot
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppSyncStatus
+import io.github.nesfeder.offlinetasks.data.RowsSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskRepository
-import io.github.nesfeder.offlinetasks.data.TaskSyncStatus
 import io.github.nesfeder.offlinetasks.data.inmemory.InMemoryTaskRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +22,7 @@ class RepositoryFixture(
     /** Brings the device's network back and waits until the repository has seen it. */
     suspend fun goOnline() {
         deviceOnline.value = true
-        repository.syncStatus.first { it.network == TaskNetworkStatus.Online }
+        repository.syncStatus.first { it.network == AppNetworkStatus.Online }
     }
 }
 
@@ -46,8 +46,9 @@ fun TestScope.repositoryFixture(
 }
 
 /** The first snapshot from [this] that [matches]; virtual time runs until one arrives. */
-suspend fun <T> Flow<Snapshot<T>>.awaitSnapshot(matches: (Snapshot<T>) -> Boolean): Snapshot<T> =
-    first(matches)
+suspend fun <T> Flow<RowsSnapshot<T>>.awaitSnapshot(
+    matches: (RowsSnapshot<T>) -> Boolean
+): RowsSnapshot<T> = first(matches)
 
 /** The task list once the server has answered it. */
 suspend fun TaskRepository.awaitServerTasks() =
@@ -57,11 +58,11 @@ suspend fun TaskRepository.awaitServerTasks() =
  * Waits until [count] writes wait in the queue. Counts catch up with a write shortly after it, as
  * the contract says, so a test waits for them rather than reading them straight after the write.
  */
-suspend fun TaskRepository.awaitPendingCount(count: Int): TaskSyncStatus = syncStatus.first {
+suspend fun TaskRepository.awaitPendingCount(count: Int): AppSyncStatus = syncStatus.first {
     it.pendingMutationCount == count
 }
 
 /** Waits until [count] refused writes are kept. */
-suspend fun TaskRepository.awaitRejectedCount(count: Int): TaskSyncStatus = syncStatus.first {
+suspend fun TaskRepository.awaitRejectedCount(count: Int): AppSyncStatus = syncStatus.first {
     it.rejectedMutationCount == count
 }

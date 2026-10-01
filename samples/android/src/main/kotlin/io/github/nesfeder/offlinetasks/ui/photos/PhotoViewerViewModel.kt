@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
@@ -65,7 +65,7 @@ class PhotoViewerViewModel(
                 } else {
                     PhotoViewerUiState.Showing(
                         photo,
-                        canDelete = status.network == TaskNetworkStatus.Online,
+                        canDelete = status.network == AppNetworkStatus.Online,
                     )
                 }
             }

@@ -356,11 +356,11 @@ issue open and say why in a comment. The `upstream-pin` label marks everything t
 supabase-kt or the pass-through set: that issue, and Dependabot's pull requests for them.
 
 Other Gradle dependencies arrive as grouped minor and patch updates, and a new major version as a
-pull request of its own. The Android sample's libraries (Compose, Material 3, Navigation 3,
-lifecycle, activity, core, Coil) arrive in a group of their own, `sample-android`, so an update
-that breaks the sample never holds up the library's. ktfmt, the formatter, arrives alone in the
-`formatter` group, because its update needs more than the version change: see "Updating ktfmt"
-under Formatting. GitHub
+pull request of its own. The Android sample's libraries (Compose, Material 3, Navigation 3 and
+its navigation events, lifecycle, activity, core, Coil) arrive in a group of their own,
+`sample-android`, so an update that breaks the sample never holds up the library's. ktfmt, the
+formatter, arrives alone in the `formatter` group, because its update needs more than the version
+change: see "Updating ktfmt" under Formatting. GitHub
 Actions arrive as one group, and so does the documentation toolchain, which holds MkDocs below 2:
 MkDocs 2 removes the plugin and theme systems Material for MkDocs depends on.
 

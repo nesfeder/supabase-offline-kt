@@ -151,6 +151,7 @@ updates:
           - "androidx.exifinterface*"
           - "androidx.lifecycle*"
           - "androidx.navigation3*"
+          - "androidx.navigationevent*"
           - "io.coil-kt*"
         update-types: ["minor", "patch"]
       # Everything else. A major version matches no group and arrives as its own pull request.

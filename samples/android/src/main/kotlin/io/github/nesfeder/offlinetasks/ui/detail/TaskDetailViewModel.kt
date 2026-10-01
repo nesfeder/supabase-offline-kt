@@ -7,15 +7,15 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.TASK_NOTES_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.TASK_TITLE_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.Task
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.TaskRepository
-import io.github.nesfeder.offlinetasks.data.TaskSyncStatus
 import io.github.nesfeder.offlinetasks.data.takeCharacters
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
@@ -243,7 +243,7 @@ class TaskDetailViewModel(
         draft: Draft?,
         photos: List<TaskPhoto>,
         uploads: List<UploadProgress>,
-        status: TaskSyncStatus,
+        status: AppSyncStatus,
     ): TaskDetailUiState =
         when (lookup) {
             TaskLookup.Unknown -> opening
@@ -259,15 +259,15 @@ class TaskDetailViewModel(
                     syncState = syncStateOf(lookup.task, status),
                     photos = photos,
                     uploads = uploads,
-                    canChangePhotos = status.network == TaskNetworkStatus.Online,
+                    canChangePhotos = status.network == AppNetworkStatus.Online,
                 )
             }
         }
 
-    private fun syncStateOf(task: Task, status: TaskSyncStatus): TaskDetailSyncState =
+    private fun syncStateOf(task: Task, status: AppSyncStatus): TaskDetailSyncState =
         when {
             !task.hasPendingMutations -> TaskDetailSyncState.Synced
-            status.network != TaskNetworkStatus.Online -> TaskDetailSyncState.SavedOnDevice
+            status.network != AppNetworkStatus.Online -> TaskDetailSyncState.SavedOnDevice
             status.isSyncing -> TaskDetailSyncState.Syncing
             else -> TaskDetailSyncState.WaitingToSync
         }

@@ -44,8 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.nesfeder.offlinetasks.R
+import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
-import io.github.nesfeder.offlinetasks.data.TaskNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.components.segmentedScreenAppBarColors
@@ -154,8 +154,8 @@ private fun LazyListScope.connectionGroup(state: SyncUiState.Ready, actions: Syn
             count = 2,
             icon =
                 when (network) {
-                    TaskNetworkStatus.Online -> R.drawable.ic_cloud_done
-                    TaskNetworkStatus.Disabled -> R.drawable.ic_wifi_off
+                    AppNetworkStatus.Online -> R.drawable.ic_cloud_done
+                    AppNetworkStatus.Disabled -> R.drawable.ic_wifi_off
                     else -> R.drawable.ic_cloud_off
                 },
             headline = stringResource(network.label),
@@ -163,7 +163,7 @@ private fun LazyListScope.connectionGroup(state: SyncUiState.Ready, actions: Syn
         )
     }
     item(key = "simulate-offline") {
-        val simulating = state.status.network == TaskNetworkStatus.Disabled
+        val simulating = state.status.network == AppNetworkStatus.Disabled
         SegmentedListItem(
             checked = simulating,
             onCheckedChange = actions.onSimulateOffline,
@@ -182,7 +182,7 @@ private fun LazyListScope.queueGroup(state: SyncUiState.Ready, actions: SyncActi
     groupTitle("queue", R.string.sync_queue)
     item(key = "pending") {
         val pending = state.status.pendingMutationCount
-        val canSync = state.status.network == TaskNetworkStatus.Online
+        val canSync = state.status.network == AppNetworkStatus.Online
         SegmentedListItem(
             shapes = ListItemDefaults.segmentedShapes(index = 0, count = 1),
             leadingContent = { Icon(painterResource(R.drawable.ic_cloud_upload), null) },
@@ -484,20 +484,20 @@ private fun ConfirmationDialog(step: Confirmation, onConfirm: () -> Unit, onDism
     )
 }
 
-private val TaskNetworkStatus.label: Int
+private val AppNetworkStatus.label: Int
     get() =
         when (this) {
-            TaskNetworkStatus.Unknown -> R.string.network_unknown
-            TaskNetworkStatus.Online -> R.string.network_online
-            TaskNetworkStatus.Offline -> R.string.network_offline
-            TaskNetworkStatus.Disabled -> R.string.network_disabled
+            AppNetworkStatus.Unknown -> R.string.network_unknown
+            AppNetworkStatus.Online -> R.string.network_online
+            AppNetworkStatus.Offline -> R.string.network_offline
+            AppNetworkStatus.Disabled -> R.string.network_disabled
         }
 
-private val TaskNetworkStatus.description: Int
+private val AppNetworkStatus.description: Int
     get() =
         when (this) {
-            TaskNetworkStatus.Unknown -> R.string.network_unknown_body
-            TaskNetworkStatus.Online -> R.string.network_online_body
-            TaskNetworkStatus.Offline -> R.string.network_offline_body
-            TaskNetworkStatus.Disabled -> R.string.network_disabled_body
+            AppNetworkStatus.Unknown -> R.string.network_unknown_body
+            AppNetworkStatus.Online -> R.string.network_online_body
+            AppNetworkStatus.Offline -> R.string.network_offline_body
+            AppNetworkStatus.Disabled -> R.string.network_disabled_body
         }
