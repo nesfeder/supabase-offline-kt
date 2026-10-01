@@ -9,7 +9,7 @@ plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
-    // The build-tool floors on this module's lint tool, as on every module of the build.
+    // The build-tool floors on this module's lint tool and test platform, as on every module.
     id("supabase-offline.build-tool-floors")
 }
 
