@@ -25,6 +25,12 @@ set -euo pipefail
 # inside these folders, and what changes in them is the user's own doing.
 UNLISTED=(Desktop Documents Downloads Movies Music Pictures .Trash)
 
+# Recorded by name only, never timed, with everything inside listed as usual: each runner's own
+# folder. A child added or removed there is listed on its own line, so the folder's own times add
+# no detection, and the runner's service rewrites a child by rename once a day (its settings, at
+# about 23:04 UTC), which moves them. The name still shows a runner folder added or removed.
+UNTIMED=('actions-runner-*')
+
 # Neither recorded nor listed. Something other than the job writes each of these while it runs;
 # each line says what, and why the job does not write there. Everything else is watched, including
 # the rest of Library, the runners' own files, and the Gradle and Kotlin/Native homes.
@@ -115,8 +121,16 @@ take_snapshot() {
         find_args+=(-path "./$pattern")
         first=0
     done
-    local format='%N%t%z%t%m%t%c%t%p'
-    find_args+=(')' -prune -exec stat -f '%N%t-%t-%t-%t-' '{}' + -o -exec stat -f "$format" '{}' +)
+    local format='%N%t%z%t%m%t%c%t%p' name_only='%N%t-%t-%t-%t-'
+    find_args+=(')' -prune -exec stat -f "$name_only" '{}' + -o '(')
+    first=1
+    for pattern in "${UNTIMED[@]}"; do
+        if [[ "$first" -eq 0 ]]; then find_args+=(-o); fi
+        # The folder itself only, not what is inside it, which is listed below as usual.
+        find_args+=('(' -path "./$pattern" ! -path "./$pattern/*" ')')
+        first=0
+    done
+    find_args+=(')' -exec stat -f "$name_only" '{}' + -o -exec stat -f "$format" '{}' +)
     (
         cd "$home" || exit 1
         failed=0
@@ -186,10 +200,8 @@ recorded_by() {
 
 # How to read a red that names a runner's own files: printed after the differences.
 print_runner_note() {
-    echo "  A red that names only a runner's directory, or a runner's new bin.*, externals.* or"
-    echo "  update.finished, is that"
-    echo "  runner refreshing its own settings or updating itself; its _diag log says so. Re-run the"
-    echo "  job, and do not add an exclusion for it."
+    echo "  A red that names only a runner's new bin.*, externals.* or update.finished is that runner"
+    echo "  updating itself; its _diag log says so. Re-run the job, and do not add an exclusion for it."
 }
 
 # Reports a record an earlier job left: it was killed before its comparison ran.
