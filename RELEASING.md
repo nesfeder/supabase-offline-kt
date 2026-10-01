@@ -10,7 +10,9 @@ A release is one version number, `X.Y.Z`, published on every channel at once:
   `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing`, each a Kotlin Multiplatform
   artifact for Android, `iosArm64` and `iosSimulatorArm64`, signed, with sources and an HTML API
   reference.
-- **GitHub**: the tag `X.Y.Z` (no `v`) and a GitHub Release whose notes are the changelog's section.
+- **GitHub**: the tag `X.Y.Z` (no `v`) and a GitHub Release whose notes are the changelog's section,
+  followed by GitHub's list of the pull requests merged since the last release, grouped by label as
+  `.github/release.yml` says.
 - **Swift Package Manager**: not set up yet. The same workflow will publish the Swift package when
   its distribution exists; until then a release publishes the two channels above.
 
@@ -96,10 +98,11 @@ files runs, and nothing becomes public.
 4. **publish** uploads the signed artifacts, releases the deployment, and waits until Central
    says **PUBLISHED**, up to 45 minutes.
 5. **finish** pushes the tag `X.Y.Z` at the released commit, creates the GitHub Release from the
-   changelog's section, and pushes the post-release branch, `release/X.Y.Z-next-snapshot`, committed
-   as `github-actions[bot]`. Its summary has the link that opens that branch's pull request: GitHub
-   Actions may not open pull requests in this repository ("Allow GitHub Actions to create and
-   approve pull requests" is off, and stays off), so you open it.
+   changelog's section and the list of merged pull requests, and pushes the post-release branch,
+   `release/X.Y.Z-next-snapshot`, committed as `github-actions[bot]`. Its summary has the link that
+   opens that branch's pull request: GitHub Actions may not open pull requests in this repository
+   ("Allow GitHub Actions to create and approve pull requests" is off, and stays off), so you open
+   it.
 
 ## 4. After the release
 

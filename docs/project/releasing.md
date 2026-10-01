@@ -70,7 +70,7 @@ A release runs as a GitHub Actions workflow that a maintainer starts by hand on 
    Central reports them published. This goes first because it is the step that cannot be undone:
    until it succeeds nothing is public.
 3. **GitHub.** The tag `X.Y.Z` is pushed at the commit that was checked and published, and the
-   GitHub Release is created from the changelog.
+   GitHub Release is created from the changelog, with the merged pull requests listed beneath it.
 4. **The next version.** A branch moves the version on to the next `-SNAPSHOT` and opens a new
    `Unreleased` section in the changelog, and the maintainer opens its pull request.
 

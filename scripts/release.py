@@ -354,7 +354,8 @@ def gh(root: Path, *arguments: str, check: bool = True) -> subprocess.CompletedP
 
 
 def publish_github_release(root: Path, version: str) -> str:
-    """Creates the release for the tag from the changelog, unless it exists."""
+    """Creates the release for the tag, unless it exists: the changelog's section, then GitHub's
+    generated list of the merged pull requests, grouped as `.github/release.yml` says."""
     existing = gh(root, "release", "view", version, "--json", "url,isDraft", check=False)
     if existing.returncode == 0:
         details = json.loads(existing.stdout or "{}")
@@ -367,7 +368,7 @@ def publish_github_release(root: Path, version: str) -> str:
         notes.write_text(release_notes((root / CHANGELOG).read_text(encoding="utf-8"), version),
                          encoding="utf-8")
         created = gh(root, "release", "create", version, "--verify-tag", "--title", version,
-                     "--notes-file", str(notes))
+                     "--notes-file", str(notes), "--generate-notes")
     return f"Created the GitHub Release {version}: {created.stdout.strip()}"
 
 
@@ -659,6 +660,8 @@ def self_test() -> int:
         state = json.loads((work / "gh-state.json").read_text())
         expect("Offline reads" in state["releases"]["0.1.0"]["notes"] and "--verify-tag" in state["calls"][-1],
                "the release carries the changelog's section, for the existing tag")
+        expect("--generate-notes" in state["calls"][-1] and state["calls"][-1].count("--title") == 1,
+               "the release lists the merged pull requests beneath the section, under its own title")
         expect("already exists" in publish_github_release(finish, "0.1.0"), "publish-github-release again does nothing")
         summary = work / "summary.md"
         os.environ["GITHUB_STEP_SUMMARY"] = str(summary)
