@@ -25,13 +25,12 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
     private val files: MutableMap<String, ByteArray> = mutableMapOf()
 
     /** The rows [userId] may read, as a select of each whole table returns them. */
-    suspend fun rowsOf(userId: String): DeviceRows =
-        lock.withLock {
-            DeviceRows(
-                tasks = tasks.filterValues { it.userId == userId },
-                photos = photos.filterValues { it.userId == userId },
-            )
-        }
+    suspend fun rowsOf(userId: String): DeviceRows = lock.withLock {
+        DeviceRows(
+            tasks = tasks.filterValues { it.userId == userId },
+            photos = photos.filterValues { it.userId == userId },
+        )
+    }
 
     /** Runs [mutation] as [userId] would through PostgREST, with the schema's checks. */
     suspend fun apply(userId: String, mutation: QueuedMutation, now: Instant): ServerAnswer =
@@ -53,29 +52,28 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
                     ServerAnswer.Accepted(row = null)
                 }
                 is QueuedMutation.DeleteTaskPhotos -> {
-                    photos =
-                        photos.filterValues {
-                            !(it.taskId == mutation.taskId && it.userId == userId)
-                        }
+                    photos = photos.filterValues {
+                        !(it.taskId == mutation.taskId && it.userId == userId)
+                    }
                     ServerAnswer.Accepted(row = null)
                 }
             }
         }
 
     /** Stores a photo file; refused when the path is taken, since the bucket has no upsert. */
-    suspend fun upload(objectPath: String, bytes: ByteArray): Boolean =
-        lock.withLock {
-            if (objectPath in files) {
-                false
-            } else {
-                files[objectPath] = bytes.copyOf()
-                true
-            }
+    suspend fun upload(objectPath: String, bytes: ByteArray): Boolean = lock.withLock {
+        if (objectPath in files) {
+            false
+        } else {
+            files[objectPath] = bytes.copyOf()
+            true
         }
+    }
 
     /** The file at [objectPath], or null. */
-    suspend fun download(objectPath: String): ByteArray? =
-        lock.withLock { files[objectPath]?.copyOf() }
+    suspend fun download(objectPath: String): ByteArray? = lock.withLock {
+        files[objectPath]?.copyOf()
+    }
 
     /** Deletes the files at [objectPaths]; a missing one is not an error, as in Storage. */
     suspend fun deleteFiles(objectPaths: Collection<String>) {

@@ -27,8 +27,8 @@ sealed interface NewTaskUiState {
 }
 
 /**
- * The New-task form. The title must not be blank; the field lengths stop at the schema's limits,
- * so the form never queues a write the server would refuse.
+ * The New-task form. The title must not be blank; the field lengths stop at the schema's limits, so
+ * the form never queues a write the server would refuse.
  *
  * @param writeScope where the write runs; it outlives this screen, which closes at once.
  */
@@ -58,7 +58,10 @@ class NewTaskViewModel(
         if (!form.canAdd) return
         state.value = NewTaskUiState.Added(form.title, form.notes)
         writeScope.launch {
-            repository.addTask(title = form.title.trim(), notes = form.notes.trim().ifEmpty { null })
+            repository.addTask(
+                title = form.title.trim(),
+                notes = form.notes.trim().ifEmpty { null },
+            )
         }
     }
 

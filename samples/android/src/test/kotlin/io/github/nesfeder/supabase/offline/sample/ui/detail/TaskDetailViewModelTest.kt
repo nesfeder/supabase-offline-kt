@@ -38,10 +38,11 @@ class TaskDetailViewModelTest {
         // Then — not before the pause, and then on the device and the server
         advanceTimeBy(AUTOSAVE_DELAY / 2)
         assertEquals(task.title, repository.titleOf(task.id))
-        val saved = repository.tasks().first { snapshot ->
-            snapshot.value?.any { it.id == task.id && it.title == "Water the basil" } == true &&
-                !snapshot.hasPendingMutations
-        }
+        val saved =
+            repository.tasks().first { snapshot ->
+                snapshot.value?.any { it.id == task.id && it.title == "Water the basil" } == true &&
+                    !snapshot.hasPendingMutations
+            }
         assertTrue(saved.value.orEmpty().any { it.title == "Water the basil" })
     }
 
@@ -75,9 +76,11 @@ class TaskDetailViewModelTest {
         viewModel.onNotesChange("")
 
         // Then
-        val saved = repository.tasks().first { snapshot ->
-            snapshot.value?.single { it.id == task.id }?.notes == null && !snapshot.hasPendingMutations
-        }
+        val saved =
+            repository.tasks().first { snapshot ->
+                snapshot.value?.single { it.id == task.id }?.notes == null &&
+                    !snapshot.hasPendingMutations
+            }
         assertNull(saved.value.orEmpty().single { it.id == task.id }.notes)
     }
 
@@ -93,7 +96,10 @@ class TaskDetailViewModelTest {
         repository.deleteTask(task.id)
 
         // Then
-        assertEquals(TaskDetailUiState.Gone, viewModel.uiState.first { it == TaskDetailUiState.Gone })
+        assertEquals(
+            TaskDetailUiState.Gone,
+            viewModel.uiState.first { it == TaskDetailUiState.Gone },
+        )
     }
 
     @Test

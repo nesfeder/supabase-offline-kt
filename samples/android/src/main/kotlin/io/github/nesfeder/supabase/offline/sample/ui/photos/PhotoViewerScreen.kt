@@ -68,7 +68,9 @@ fun PhotoViewerRoute(
             when (message) {
                 PhotoViewerMessage.Deleted -> onClose()
                 PhotoViewerMessage.DeleteNeedsNetwork ->
-                    snackbarHostState.showSnackbar(resources.getString(R.string.photo_delete_offline))
+                    snackbarHostState.showSnackbar(
+                        resources.getString(R.string.photo_delete_offline)
+                    )
             }
         }
     }
@@ -141,7 +143,9 @@ fun PhotoViewerScreen(
                 modifier =
                     Modifier.fillMaxWidth()
                         .background(
-                            Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent))
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)
+                            )
                         ),
             )
         }
@@ -176,14 +180,12 @@ private fun ZoomablePhoto(photo: TaskPhoto, loadPhotoFile: suspend (TaskPhoto) -
             contentDescription = stringResource(R.string.photo_description),
             contentScale = ContentScale.Fit,
             modifier =
-                Modifier.fillMaxSize()
-                    .transformable(transformState)
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    },
+                Modifier.fillMaxSize().transformable(transformState).graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                },
         )
     }
 }

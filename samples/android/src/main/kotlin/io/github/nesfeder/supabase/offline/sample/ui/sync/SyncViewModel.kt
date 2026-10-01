@@ -55,8 +55,8 @@ sealed interface SyncUiState {
 }
 
 /**
- * The Sync screen: the network and the simulate-offline switch, the mutation queue per table,
- * the refresh state, refused writes with dismiss and retry, and the two ways to start again.
+ * The Sync screen: the network and the simulate-offline switch, the mutation queue per table, the
+ * refresh state, refused writes with dismiss and retry, and the two ways to start again.
  *
  * @param writeScope where clearing and starting over run, so leaving the screen cannot cut them
  *   short.

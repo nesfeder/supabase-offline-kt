@@ -58,10 +58,9 @@ class SyncViewModelTest {
 
         // Then — everything sent, and the screen says so
         // (each count is its own flow, so the screen settles on them one after another)
-        val state =
-            viewModel.ready {
-                it.lastReport != null && it.status.pendingMutationCount == 0 && it.pendingTasks == 0
-            }
+        val state = viewModel.ready {
+            it.lastReport != null && it.status.pendingMutationCount == 0 && it.pendingTasks == 0
+        }
         assertEquals(0, state.lastReport?.remainingCount)
     }
 

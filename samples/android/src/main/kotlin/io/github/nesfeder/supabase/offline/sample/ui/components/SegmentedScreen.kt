@@ -7,7 +7,7 @@ import androidx.compose.material3.TopAppBarColors
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 
-/** App bar colours for a screen of segmented rows, which sits on the surface container. */
+/** App bar colors for a screen of segmented rows, which sits on the surface container. */
 @Composable
 fun segmentedScreenAppBarColors(): TopAppBarColors =
     TopAppBarDefaults.topAppBarColors(

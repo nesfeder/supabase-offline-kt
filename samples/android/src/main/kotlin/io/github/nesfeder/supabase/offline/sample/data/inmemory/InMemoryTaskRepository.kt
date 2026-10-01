@@ -120,11 +120,13 @@ class InMemoryTaskRepository(
         }
     }
 
-    override fun tasks(): Flow<TaskListSnapshot> =
-        observe { it.taskSnapshot(rows = { true }, writes = { true }) }
+    override fun tasks(): Flow<TaskListSnapshot> = observe {
+        it.taskSnapshot(rows = { true }, writes = { true })
+    }
 
-    override fun task(id: String): Flow<TaskListSnapshot> =
-        observe { it.taskSnapshot(rows = { task -> task.id == id }, writes = { it.rowKey == id }) }
+    override fun task(id: String): Flow<TaskListSnapshot> = observe {
+        it.taskSnapshot(rows = { task -> task.id == id }, writes = { it.rowKey == id })
+    }
 
     override fun photos(taskId: String): Flow<PhotoListSnapshot> = observe { current ->
         current.photoSnapshot(
@@ -134,8 +136,9 @@ class InMemoryTaskRepository(
         )
     }
 
-    override fun allPhotos(): Flow<PhotoListSnapshot> =
-        observe { it.photoSnapshot(newestFirst = true, rows = { true }, writes = { true }) }
+    override fun allPhotos(): Flow<PhotoListSnapshot> = observe {
+        it.photoSnapshot(newestFirst = true, rows = { true }, writes = { true })
+    }
 
     override suspend fun addTask(title: String, notes: String?): MutationOutcome {
         val now = clock.now()
@@ -153,10 +156,13 @@ class InMemoryTaskRepository(
     }
 
     override suspend fun updateTask(id: String, title: String, notes: String?): MutationOutcome =
-        write { QueuedMutation.EditTask(it, id, title, notes) }
+        write {
+            QueuedMutation.EditTask(it, id, title, notes)
+        }
 
-    override suspend fun setTaskDone(id: String, isDone: Boolean): MutationOutcome =
-        write { QueuedMutation.SetTaskDone(it, id, isDone) }
+    override suspend fun setTaskDone(id: String, isDone: Boolean): MutationOutcome = write {
+        QueuedMutation.SetTaskDone(it, id, isDone)
+    }
 
     override suspend fun deleteTask(id: String): MutationOutcome = detached {
         val photosOfTask =
@@ -310,10 +316,9 @@ class InMemoryTaskRepository(
 
     /** A live query: [read] of every state, refreshed from the server when it is not fresh. */
     private fun <T> observe(read: (DeviceState) -> Snapshot<T>): Flow<Snapshot<T>> =
-        state
-            .map(read)
-            .distinctUntilChanged()
-            .onStart { scope.launch { refreshFromServer(force = false) } }
+        state.map(read).distinctUntilChanged().onStart {
+            scope.launch { refreshFromServer(force = false) }
+        }
 
     /** Queues a write and sends it now when it heads the queue and the server can be reached. */
     private suspend fun write(build: (mutationId: Long) -> QueuedMutation): MutationOutcome {
@@ -335,16 +340,18 @@ class InMemoryTaskRepository(
         lateinit var queued: QueuedMutation
         updateState { current ->
             queued = build(current.nextMutationId)
-            current.copy(queue = current.queue + queued, nextMutationId = current.nextMutationId + 1)
+            current.copy(
+                queue = current.queue + queued,
+                nextMutationId = current.nextMutationId + 1,
+            )
         }
         return queued
     }
 
-    private suspend fun joinOrStartReplay(): Deferred<SyncReport> =
-        replayStartLock.withLock {
-            runningReplay?.takeIf { it.isActive }
-                ?: scope.async { replayQueue() }.also { runningReplay = it }
-        }
+    private suspend fun joinOrStartReplay(): Deferred<SyncReport> = replayStartLock.withLock {
+        runningReplay?.takeIf { it.isActive }
+            ?: scope.async { replayQueue() }.also { runningReplay = it }
+    }
 
     /** One pass over the queue, head first, until it is empty or the server is out of reach. */
     private suspend fun replayQueue(): SyncReport {
@@ -382,36 +389,35 @@ class InMemoryTaskRepository(
         return SyncReport(synced, rejected, state.value.queue.size)
     }
 
-    private suspend fun sendHead(head: QueuedMutation): ReplayStep =
-        writeLock.withLock {
-            val current = state.value
-            // Cleared or replaced while this pass waited: look at the queue again.
-            if (current.queue.firstOrNull()?.id != head.id) return@withLock ReplayStep.Skipped
-            unreachableServerError()?.let {
-                return@withLock ReplayStep.Stopped(it)
+    private suspend fun sendHead(head: QueuedMutation): ReplayStep = writeLock.withLock {
+        val current = state.value
+        // Cleared or replaced while this pass waited: look at the queue again.
+        if (current.queue.firstOrNull()?.id != head.id) return@withLock ReplayStep.Skipped
+        unreachableServerError()?.let {
+            return@withLock ReplayStep.Stopped(it)
+        }
+        when (val answer = server.apply(current.userId, head, clock.now())) {
+            is ServerAnswer.Accepted -> {
+                updateState { it.accepted(head, answer.row) }
+                ReplayStep.Accepted
             }
-            when (val answer = server.apply(current.userId, head, clock.now())) {
-                is ServerAnswer.Accepted -> {
-                    updateState { it.accepted(head, answer.row) }
-                    ReplayStep.Accepted
-                }
-                is ServerAnswer.Refused -> {
-                    val rejection =
-                        RejectedMutation(
-                            id = head.id,
-                            table = head.table,
-                            operation = head.operation,
-                            rowKey = head.rowKey,
-                            taskTitle = head.taskTitle,
-                            serverError = answer.error,
-                            message = answer.error.message,
-                            rejectedAt = clock.now(),
-                        )
-                    updateState { it.refused(head, rejection) }
-                    ReplayStep.Refused(rejection)
-                }
+            is ServerAnswer.Refused -> {
+                val rejection =
+                    RejectedMutation(
+                        id = head.id,
+                        table = head.table,
+                        operation = head.operation,
+                        rowKey = head.rowKey,
+                        taskTitle = head.taskTitle,
+                        serverError = answer.error,
+                        message = answer.error.message,
+                        rejectedAt = clock.now(),
+                    )
+                updateState { it.refused(head, rejection) }
+                ReplayStep.Refused(rejection)
             }
         }
+    }
 
     /** Reads every row of the user from the server, unless [force] is false and they are fresh. */
     private suspend fun refreshFromServer(force: Boolean) {
@@ -538,7 +544,10 @@ private data class DeviceState(
     }
 
     /** The tasks [rows] selects, newest first; [writes] picks the queued writes that touch them. */
-    fun taskSnapshot(rows: (Task) -> Boolean, writes: (QueuedMutation) -> Boolean): TaskListSnapshot {
+    fun taskSnapshot(
+        rows: (Task) -> Boolean,
+        writes: (QueuedMutation) -> Boolean,
+    ): TaskListSnapshot {
         val pending = queue.filter { it.table == Tables.TASKS && writes(it) }
         val pendingIds = pending.mapNotNullTo(HashSet()) { it.rowKey }
         val tasks =

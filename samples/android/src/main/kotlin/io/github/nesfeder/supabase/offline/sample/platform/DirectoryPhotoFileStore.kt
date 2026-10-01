@@ -21,7 +21,9 @@ class DirectoryPhotoFileStore(private val directory: File) : PhotoFileStore {
         }
 
     override suspend fun find(fileName: String): PhotoFile? =
-        withContext(Dispatchers.IO) { File(directory, fileName).takeIf { it.isFile }?.toPhotoFile() }
+        withContext(Dispatchers.IO) {
+            File(directory, fileName).takeIf { it.isFile }?.toPhotoFile()
+        }
 
     override suspend fun delete(fileName: String) {
         withContext(Dispatchers.IO) { File(directory, fileName).delete() }

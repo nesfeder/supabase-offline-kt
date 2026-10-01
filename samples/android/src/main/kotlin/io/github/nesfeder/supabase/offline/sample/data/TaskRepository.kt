@@ -76,7 +76,9 @@ interface TaskRepository {
     /** Queues a refused write again, at the back of the queue. */
     suspend fun retryRejectedMutation(id: Long)
 
-    /** Replays the mutation queue now, in order; returns at once when the server is out of reach. */
+    /**
+     * Replays the mutation queue now, in order; returns at once when the server is out of reach.
+     */
     suspend fun syncPendingMutations(): SyncReport
 
     /** The network, the queue and the last replay, as one observable value. */

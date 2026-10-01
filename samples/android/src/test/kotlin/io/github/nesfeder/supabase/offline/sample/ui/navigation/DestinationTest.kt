@@ -25,7 +25,11 @@ class DestinationTest {
     fun selecting_tasks_returns_to_the_list() {
         // Given
         val backStack =
-            mutableListOf<NavKey>(Destination.Tasks, Destination.Photos, Destination.PhotoViewer("p"))
+            mutableListOf<NavKey>(
+                Destination.Tasks,
+                Destination.Photos,
+                Destination.PhotoViewer("p"),
+            )
 
         // When
         backStack.selectTopLevel(TopLevelDestination.Tasks)

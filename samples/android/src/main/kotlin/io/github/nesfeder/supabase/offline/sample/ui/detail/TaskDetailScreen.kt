@@ -97,7 +97,9 @@ fun TaskDetailRoute(
                 TaskDetailMessage.PhotoUnreadable ->
                     snackbarHostState.showSnackbar(resources.getString(R.string.photo_unreadable))
                 TaskDetailMessage.UploadFailed ->
-                    snackbarHostState.showSnackbar(resources.getString(R.string.photo_upload_failed))
+                    snackbarHostState.showSnackbar(
+                        resources.getString(R.string.photo_upload_failed)
+                    )
             }
         }
     }

@@ -47,8 +47,8 @@ import io.github.nesfeder.supabase.offline.sample.ui.navigation.SharedElement
 import io.github.nesfeder.supabase.offline.sample.ui.navigation.SharedKeys
 
 /**
- * One task in the list: a checkbox that springs, a title that strikes through and fades when
- * done, a mark while its change waits to sync, and a swipe from the end to delete it.
+ * One task in the list: a checkbox that springs, a title that strikes through and fades when done,
+ * a mark while its change waits to sync, and a swipe from the end to delete it.
  */
 @Composable
 fun TaskRow(
@@ -61,7 +61,9 @@ fun TaskRow(
 ) {
     val threshold = SwipeToDismissBoxDefaults.positionalThreshold
     // Remembered, not saved: a row that comes back from Undo must come back unswiped.
-    val dismissState = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, threshold) }
+    val dismissState = remember {
+        SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, threshold)
+    }
     val haptics = LocalHapticFeedback.current
     // The box re-runs its dismiss callback whenever the callback changes, so it must be stable.
     val latestTask by rememberUpdatedState(task)
@@ -104,7 +106,7 @@ fun TaskRow(
     }
 }
 
-/** The title, struck through and faded to the variant colour once the task is done. */
+/** The title, struck through and faded to the variant color once the task is done. */
 @Composable
 private fun TaskTitle(task: Task) {
     val color by
@@ -113,7 +115,7 @@ private fun TaskTitle(task: Task) {
                 if (task.isDone) MaterialTheme.colorScheme.onSurfaceVariant
                 else MaterialTheme.colorScheme.onSurface,
             animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-            label = "title colour",
+            label = "title color",
         )
     SharedElement(SharedKeys.taskTitle(task.id)) {
         Text(
@@ -143,7 +145,7 @@ private fun PendingMark(visible: Boolean) {
     }
 }
 
-/** Behind a row being swiped: the colour deepens and the bin grows as the swipe nears deletion. */
+/** Behind a row being swiped: the color deepens and the bin grows as the swipe nears deletion. */
 @Composable
 private fun DeleteBackground(state: SwipeToDismissBoxState, shapes: ListItemShapes) {
     val colors = MaterialTheme.colorScheme

@@ -15,9 +15,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * Material 3 Expressive with the expressive motion scheme: springs that may overshoot for
- * position and size, and none for colour and fade. The colours come from the wallpaper on Android
- * 12 and later, and from Material's baseline otherwise.
+ * Material 3 Expressive with the expressive motion scheme: springs that may overshoot for position
+ * and size, and none for color and fade. The colors come from the wallpaper on Android 12 and
+ * later, and from Material's baseline otherwise.
  */
 @Composable
 fun OfflineTasksTheme(

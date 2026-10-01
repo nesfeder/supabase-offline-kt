@@ -99,7 +99,7 @@ fun SyncScreen(state: SyncUiState, actions: SyncActions, modifier: Modifier = Mo
     var confirming by rememberSaveable { mutableStateOf<Confirmation?>(null) }
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        // Segmented rows are drawn in the surface colour, so they sit on a surface container.
+        // Segmented rows are drawn in the surface color, so they sit on a surface container.
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = {
             MediumFlexibleTopAppBar(
@@ -238,7 +238,8 @@ private fun LazyListScope.refreshGroup(state: SyncUiState.Ready) {
                 RefreshState.Idle -> R.drawable.ic_cloud_done to R.string.sync_refresh_idle
                 RefreshState.Refreshing -> R.drawable.ic_refresh to R.string.sync_refresh_running
                 RefreshState.Paused -> R.drawable.ic_cloud_off to R.string.sync_refresh_paused
-                is RefreshState.Stalled -> R.drawable.ic_sync_problem to R.string.sync_refresh_stalled
+                is RefreshState.Stalled ->
+                    R.drawable.ic_sync_problem to R.string.sync_refresh_stalled
             }
         InfoRow(
             index = 0,
@@ -451,7 +452,11 @@ private fun ConfirmationDialog(step: Confirmation, onConfirm: () -> Unit, onDism
     val (title, body, confirm) =
         when (step) {
             Confirmation.ClearLocalData ->
-                Triple(R.string.sync_clear_title, R.string.sync_clear_confirm_body, R.string.sync_clear)
+                Triple(
+                    R.string.sync_clear_title,
+                    R.string.sync_clear_confirm_body,
+                    R.string.sync_clear,
+                )
             Confirmation.StartOver ->
                 Triple(
                     R.string.sync_start_over_title,

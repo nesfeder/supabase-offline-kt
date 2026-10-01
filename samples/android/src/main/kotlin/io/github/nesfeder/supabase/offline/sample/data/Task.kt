@@ -55,6 +55,8 @@ data class TaskPhoto(
 fun photoObjectPath(userId: String, taskId: String, photoId: String): String =
     "$userId/$taskId/$photoId.jpg"
 
-/** Whether the server would refuse [title]: blank (spaces, tabs or line breaks only) or too long. */
+/**
+ * Whether the server would refuse [title]: blank (spaces, tabs or line breaks only) or too long.
+ */
 fun isTitleRefusedByServer(title: String): Boolean =
     title.trim(' ', '\t', '\r', '\n').isEmpty() || title.length > TASK_TITLE_MAX_LENGTH

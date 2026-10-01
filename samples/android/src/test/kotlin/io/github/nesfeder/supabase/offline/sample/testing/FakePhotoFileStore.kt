@@ -16,12 +16,20 @@ class FakePhotoFileStore(private val clock: Clock) : PhotoFileStore {
 
     override suspend fun write(fileName: String, bytes: ByteArray): PhotoFile {
         files[fileName] = bytes.copyOf()
-        return PhotoFile(path = "/photos/$fileName", fetchedAt = clock.now(), sizeBytes = bytes.size.toLong())
+        return PhotoFile(
+            path = "/photos/$fileName",
+            fetchedAt = clock.now(),
+            sizeBytes = bytes.size.toLong(),
+        )
     }
 
     override suspend fun find(fileName: String): PhotoFile? =
         files[fileName]?.let {
-            PhotoFile(path = "/photos/$fileName", fetchedAt = clock.now(), sizeBytes = it.size.toLong())
+            PhotoFile(
+                path = "/photos/$fileName",
+                fetchedAt = clock.now(),
+                sizeBytes = it.size.toLong(),
+            )
         }
 
     override suspend fun delete(fileName: String) {

@@ -75,7 +75,10 @@ class TasksScreenTest {
     fun the_filter_buttons_report_the_choice() {
         // Given
         var chosen: TaskFilter? = null
-        show(loaded(open = listOf(task("One")), done = emptyList()), onFilterChange = { chosen = it })
+        show(
+            loaded(open = listOf(task("One")), done = emptyList()),
+            onFilterChange = { chosen = it },
+        )
 
         // When
         compose.onNodeWithText(text(R.string.filter_done)).performClick()

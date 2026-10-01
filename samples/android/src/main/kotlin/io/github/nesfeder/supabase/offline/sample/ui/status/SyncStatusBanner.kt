@@ -48,9 +48,9 @@ import io.github.nesfeder.supabase.offline.sample.R
 const val SYNC_BANNER_TAG: String = "sync-banner"
 
 /**
- * The always-visible status element under the Tasks app bar: it expands in when there is
- * something to say, cross-fades its colour as the state moves from offline to syncing to synced,
- * and collapses when everything is on the server.
+ * The always-visible status element under the Tasks app bar: it expands in when there is something
+ * to say, cross-fades its color as the state moves from offline to syncing to synced, and collapses
+ * when everything is on the server.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -62,8 +62,7 @@ fun SyncStatusBanner(headline: SyncHeadline, modifier: Modifier = Modifier) {
     AnimatedVisibility(
         visible = headline != SyncHeadline.UpToDate,
         modifier = modifier,
-        enter =
-            expandVertically(motion.defaultSpatialSpec()) + fadeIn(motion.defaultEffectsSpec()),
+        enter = expandVertically(motion.defaultSpatialSpec()) + fadeIn(motion.defaultEffectsSpec()),
         exit = shrinkVertically(motion.defaultSpatialSpec()) + fadeOut(motion.fastEffectsSpec()),
     ) {
         val colors = MaterialTheme.colorScheme
@@ -102,8 +101,8 @@ fun SyncStatusBanner(headline: SyncHeadline, modifier: Modifier = Modifier) {
 }
 
 /**
- * [text] that rolls up when [count] grows and down when it shrinks, so a changing number reads as
- * a counter rather than a jump.
+ * [text] that rolls up when [count] grows and down when it shrinks, so a changing number reads as a
+ * counter rather than a jump.
  */
 @Composable
 fun RollingText(

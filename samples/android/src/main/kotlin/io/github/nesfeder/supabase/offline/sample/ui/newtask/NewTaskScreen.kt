@@ -64,8 +64,8 @@ fun NewTaskRoute(
 }
 
 /**
- * The New-task form, full screen. It is the far end of the New-task button's container
- * transform: the button grows into it, and it shrinks back into the button on back or Add.
+ * The New-task form, full screen. It is the far end of the New-task button's container transform:
+ * the button grows into it, and it shrinks back into the button on back or Add.
  */
 @Composable
 fun NewTaskScreen(

@@ -108,8 +108,7 @@ class InMemoryTaskRepositoryTest {
 
         // When — online again, a photo is attached
         fixture.goOnline()
-        val attached =
-            repository.attachPhoto(taskId, photo()).toList().last()
+        val attached = repository.attachPhoto(taskId, photo()).toList().last()
         repository.syncPendingMutations()
 
         // Then — both rows reached the server: the photo's foreign key found its task
@@ -221,7 +220,9 @@ class InMemoryTaskRepositoryTest {
         repository.awaitServerTasks()
         repository.addTask("Photographed", notes = null)
         val taskId = repository.tasks().first().value.orEmpty().single().id
-        val photo = assertIs<PhotoUpload.Attached>(repository.attachPhoto(taskId, photo()).toList().last()).photo
+        val photo =
+            assertIs<PhotoUpload.Attached>(repository.attachPhoto(taskId, photo()).toList().last())
+                .photo
         repository.downloadPhotoFile(photo)
         assertEquals(setOf("${photo.id}.jpg"), fixture.photoFiles.fileNames)
 

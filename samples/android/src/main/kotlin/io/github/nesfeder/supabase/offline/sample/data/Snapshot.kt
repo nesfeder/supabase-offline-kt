@@ -5,8 +5,8 @@ package io.github.nesfeder.supabase.offline.sample.data
 import kotlin.time.Instant
 
 /**
- * One emission of a live query: the rows the device knows and how fresh they are. A new one
- * arrives whenever the rows or any of these facts change.
+ * One emission of a live query: the rows the device knows and how fresh they are. A new one arrives
+ * whenever the rows or any of these facts change.
  *
  * @property value the rows, or null when nothing is known yet (first launch, nothing cached).
  * @property isFromCache true when the rows came from the device and the server has not confirmed

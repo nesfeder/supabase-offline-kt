@@ -13,5 +13,6 @@ class TestSchedulerClock(
     private val scheduler: TestCoroutineScheduler,
     private val start: Instant = Instant.parse("2026-10-01T09:00:00Z"),
 ) : Clock {
-    override fun now(): Instant = Instant.fromEpochMilliseconds(start.toEpochMilliseconds() + scheduler.currentTime)
+    override fun now(): Instant =
+        Instant.fromEpochMilliseconds(start.toEpochMilliseconds() + scheduler.currentTime)
 }

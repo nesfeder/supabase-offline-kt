@@ -68,8 +68,8 @@ import kotlinx.coroutines.launch
 const val TASK_LIST_TAG: String = "task-list"
 
 /**
- * The Tasks destination: the screen wired to its ViewModel, with snackbars for undo, refused
- * writes and an offline pull-to-refresh.
+ * The Tasks destination: the screen wired to its ViewModel, with snackbars for undo, refused writes
+ * and an offline pull-to-refresh.
  */
 @Composable
 fun TasksRoute(
@@ -167,7 +167,7 @@ fun TasksScreen(
     val listState = rememberLazyListState()
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        // Segmented rows are drawn in the surface colour, so they sit on a surface container.
+        // Segmented rows are drawn in the surface color, so they sit on a surface container.
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = {
             LargeFlexibleTopAppBar(
@@ -302,7 +302,7 @@ private fun TaskFilterButtons(selected: TaskFilter, onSelect: (TaskFilter) -> Un
                         filters.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
                         else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
                     },
-                // The default unchecked colour is the screen's own surface container.
+                // The default unchecked color is the screen's own surface container.
                 colors =
                     ToggleButtonDefaults.colors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHighest

@@ -46,12 +46,14 @@ import io.github.nesfeder.supabase.offline.sample.ui.tasks.TasksRoute
 
 /**
  * The whole app: a navigation bar (a rail on wider windows) for Tasks, Photos and Sync, around a
- * Navigation 3 display inside a shared-transition layout. On a tablet or an unfolded foldable,
- * the task list and one task sit side by side.
+ * Navigation 3 display inside a shared-transition layout. On a tablet or an unfolded foldable, the
+ * task list and one task sit side by side.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
-fun OfflineTasksApp(shellViewModel: AppShellViewModel = viewModel(factory = AppShellViewModel.Factory)) {
+fun OfflineTasksApp(
+    shellViewModel: AppShellViewModel = viewModel(factory = AppShellViewModel.Factory)
+) {
     val backStack = rememberNavBackStack(Destination.Tasks)
     val badges by shellViewModel.uiState.collectAsStateWithLifecycle()
     val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>()
@@ -83,7 +85,10 @@ fun OfflineTasksApp(shellViewModel: AppShellViewModel = viewModel(factory = AppS
                                 }
                             }
                         ) {
-                            Icon(painterResource(topLevel.icon(selected)), contentDescription = null)
+                            Icon(
+                                painterResource(topLevel.icon(selected)),
+                                contentDescription = null,
+                            )
                         }
                     },
                     label = { Text(stringResource(topLevel.label)) },
@@ -139,9 +144,13 @@ fun OfflineTasksApp(shellViewModel: AppShellViewModel = viewModel(factory = AppS
                                 )
                             }
                         }
-                        entry<Destination.NewTask>(metadata = ListDetailSceneStrategy.detailPane()) {
+                        entry<Destination.NewTask>(
+                            metadata = ListDetailSceneStrategy.detailPane()
+                        ) {
                             WithSharedElements {
-                                NewTaskRoute(onClose = { backStack.popIfOnTop(Destination.NewTask) })
+                                NewTaskRoute(
+                                    onClose = { backStack.popIfOnTop(Destination.NewTask) }
+                                )
                             }
                         }
                         entry<Destination.Photos> {
@@ -171,7 +180,10 @@ fun OfflineTasksApp(shellViewModel: AppShellViewModel = viewModel(factory = AppS
 private fun SharedTransitionScope.WithSharedElements(content: @Composable () -> Unit) {
     CompositionLocalProvider(
         LocalSharedElementScopes provides
-            SharedElementScopes(transition = this, visibility = LocalNavAnimatedContentScope.current),
+            SharedElementScopes(
+                transition = this,
+                visibility = LocalNavAnimatedContentScope.current,
+            ),
         content = content,
     )
 }

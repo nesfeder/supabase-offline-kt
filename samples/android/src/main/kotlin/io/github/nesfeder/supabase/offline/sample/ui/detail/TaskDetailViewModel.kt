@@ -98,11 +98,11 @@ sealed interface TaskDetailMessage {
 }
 
 /**
- * One task: its live row and photos, the title and notes saved as you type, the done switch,
- * photo uploads with progress, and deletion.
+ * One task: its live row and photos, the title and notes saved as you type, the done switch, photo
+ * uploads with progress, and deletion.
  *
- * @param writeScope where writes run; it outlives this screen, so an edit typed just before
- *   leaving is still saved.
+ * @param writeScope where writes run; it outlives this screen, so an edit typed just before leaving
+ *   is still saved.
  */
 @OptIn(FlowPreview::class)
 class TaskDetailViewModel(
@@ -137,7 +137,11 @@ class TaskDetailViewModel(
             ) { lookup, draft, photos, uploads, status ->
                 stateOf(lookup, draft, photos, uploads, status)
             }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TaskDetailUiState.Loading)
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                TaskDetailUiState.Loading,
+            )
 
     init {
         viewModelScope.launch {

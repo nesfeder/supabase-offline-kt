@@ -49,7 +49,8 @@ class NewTaskViewModelTest {
 
         // Then — the screen closes and the task is on the device, notes left out
         assertIs<NewTaskUiState.Added>(viewModel.uiState.value)
-        val task = repository.tasks().first { it.value?.isNotEmpty() == true }.value.orEmpty().single()
+        val task =
+            repository.tasks().first { it.value?.isNotEmpty() == true }.value.orEmpty().single()
         assertEquals("Buy stamps", task.title)
         assertNull(task.notes)
     }

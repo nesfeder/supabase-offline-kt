@@ -22,7 +22,8 @@ class TasksViewModelTest {
     @Test
     fun the_tasks_load_split_into_open_and_done() = runTest {
         // Given — the sample tasks on the server
-        val viewModel = TasksViewModel(repositoryFixture(seedSampleTasks = true).repository, backgroundScope)
+        val viewModel =
+            TasksViewModel(repositoryFixture(seedSampleTasks = true).repository, backgroundScope)
 
         // When
         val state = viewModel.loaded()
@@ -38,7 +39,8 @@ class TasksViewModelTest {
     @Test
     fun the_open_filter_hides_done_tasks_but_keeps_the_open_count() = runTest {
         // Given
-        val viewModel = TasksViewModel(repositoryFixture(seedSampleTasks = true).repository, backgroundScope)
+        val viewModel =
+            TasksViewModel(repositoryFixture(seedSampleTasks = true).repository, backgroundScope)
         viewModel.loaded()
 
         // When
@@ -54,7 +56,8 @@ class TasksViewModelTest {
     @Test
     fun the_first_launch_offline_has_no_data_yet_and_is_not_loading() = runTest {
         // Given — nothing cached and no network
-        val viewModel = TasksViewModel(repositoryFixture(online = false).repository, backgroundScope)
+        val viewModel =
+            TasksViewModel(repositoryFixture(online = false).repository, backgroundScope)
 
         // When
         val state = viewModel.uiState.first { it.headline is SyncHeadline.Offline }
