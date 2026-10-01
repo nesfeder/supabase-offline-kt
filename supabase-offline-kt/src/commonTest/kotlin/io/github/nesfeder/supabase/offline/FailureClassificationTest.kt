@@ -8,10 +8,13 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.httpResponse
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.ResponseException
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -95,6 +98,20 @@ class FailureClassificationTest {
         assertEquals(404, storageFailure?.httpStatusOrNull(), "$storageFailure")
         assertFalse(storageFailure?.isNetworkOrConnectivityFailure() ?: true)
         offline.close()
+    }
+
+    @Test
+    fun the_status_is_read_through_causes_and_from_a_ktor_response_failure() = runTest {
+        // Given — a Storage refusal the app wrapped, and a Ktor response failure, bare and wrapped
+        val wrappedRefusal = IllegalStateException("upload failed", forbiddenRestException())
+        val ktorFailure = ResponseException(httpResponse(HttpStatusCode.Conflict), "conflict")
+        val wrappedKtorFailure = IllegalStateException("sync failed", ktorFailure)
+
+        // Then
+        assertEquals(403, wrappedRefusal.httpStatusOrNull())
+        assertEquals(409, ktorFailure.httpStatusOrNull())
+        assertEquals(409, wrappedKtorFailure.httpStatusOrNull())
+        assertNull(IllegalStateException("no response").httpStatusOrNull())
     }
 
     private fun buildJsonArrayOfOne(): JsonArray = buildJsonArray {
