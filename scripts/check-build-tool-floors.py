@@ -11,7 +11,10 @@ The build applies them as dependency constraints to these configurations, which 
   * every module's ``androidLintTool``, ``swiftExportClasspathResolvable``,
     ``kotlinBouncyCastleConfiguration`` and ``dokkaHtmlGeneratorRuntimeResolver~internal``: the
     lint and Swift export tools, the Kotlin Gradle plugin's publishing validation and Dokka's
-    generator (``supabase-offline.build-tool-floors``, which every role plugin applies).
+    generator;
+  * every configuration of a module whose name starts with ``unified-test-platform-``: the Android
+    Gradle plugin's unified test platform, which an application module creates to run instrumented
+    tests (both ``supabase-offline.build-tool-floors``, which every role plugin applies).
 
 It takes the modules from Gradle's own ``projects`` report, asks Gradle for the resolved graphs (the
 ``buildEnvironment`` and ``dependencies`` reports) and fails when:
@@ -72,12 +75,17 @@ REQUIRED = [
 # must have each.
 PER_MODULE = ["androidLintTool", "swiftExportClasspathResolvable", "kotlinBouncyCastleConfiguration",
               "dokkaHtmlGeneratorRuntimeResolver~internal"]
+# Configurations checked by the start of their name, in every module that has them; at least one
+# module must have one for each prefix. A later release's new configuration of the same tool is
+# checked without a change here, as the convention plugin floors it without one.
+PER_MODULE_PREFIXES = ["unified-test-platform-"]
 
 TASK = re.compile(r"^> Task (?P<path>\S+)")
 # A project in the `projects` report's hierarchy; its "Project locations" lines are lower case, and
 # an included build is not a project of this build.
 PROJECT = re.compile(r"^[| +\\-]*Project '(?P<path>:[^']+)'")
-CONFIGURATION = re.compile(r"^(?P<name>[A-Za-z][A-Za-z0-9_~]*)( - .*| \(n\))?$")
+# A configuration's name may hold `-`, `.` or `~` (`unified-test-platform-core`, Dokka's `…~internal`).
+CONFIGURATION = re.compile(r"^(?P<name>[A-Za-z_][\w~.-]*)( - .*| \(n\))?$")
 NODE = re.compile(r"^[| ]*[+\\]--- (?P<body>.+)$")
 MARKERS = re.compile(r"( \([cn*]\)| FAILED)+$")
 LIBRARY = re.compile(r"^(?P<alias>[\w.-]+)\s*=\s*\{(?P<body>[^}]*)\}\s*(#.*)?$")
@@ -234,6 +242,12 @@ def checked_configurations(reports: dict[str, dict[str, Resolution]],
         checked.extend(found)
         if not found:
             missing.append(f"<every module>:dependencies {name}")
+    for prefix in PER_MODULE_PREFIXES:
+        found = sorted(key for module in modules for key in reports
+                       if key.startswith(f"{module}:dependencies {prefix}"))
+        checked.extend(found)
+        if not found:
+            missing.append(f"<every module>:dependencies {prefix}*")
     return checked, missing
 
 
@@ -336,11 +350,13 @@ MODULES = [":module-a", ":module-b"]
 def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True,
                      accessors: bool = True, swift: str | None = None, root: str | None = None,
                      second_lint: str | None = None, projects: list[str] | None = None,
-                     dokka: str | None = None) -> str:
+                     dokka: str | None = None, test_platform: bool = True,
+                     result_listener: str | None = None, test_platform_core: str | None = None) -> str:
     """A log of the two checked commands: every module listed, then every report.
 
     `lib` and `other` are the graphs of the two floored packages everywhere; the other arguments
-    replace one configuration's graph, drop a report, or change the module list.
+    replace one configuration's graph, drop a report, or change the module list. The second module
+    is an application's: it alone has two configurations of the unified test platform.
     """
     listed = MODULES if projects is None else projects
     hierarchy = "".join(f"+--- Project '{module}'\n" for module in listed)
@@ -362,7 +378,13 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
             + f"swiftExportClasspathResolvable\n{other if swift is None else swift}\n"
             + f"kotlinBouncyCastleConfiguration - Bouncy Castle.\n{lib}\n"
             + "dokkaHtmlGeneratorRuntimeResolver~internal - [Internal Dokka Configuration] Dokka.\n"
-            + f"{other if dokka is None else dokka}\n")
+            + f"{other if dokka is None else dokka}\n"
+            + ("" if index == 0 or not test_platform else
+               "unified-test-platform-core - A configuration to resolve the Unified Test Platform.\n"
+               "\\--- com.example:core:1.0\n     "
+               f"{other if test_platform_core is None else test_platform_core}\n"
+               "unified-test-platform-android-test-plugin-result-listener-gradle - The same.\n"
+               f"{lib if result_listener is None else result_listener}\n"))
     if accessors:
         sections.append("> Task :build-logic:dependencies\n\n"
                         "precompiledScriptPluginAccessorsGenerationClasspath - The plugins.\n"
@@ -383,6 +405,16 @@ SELF_TEST_CASES: list[tuple[str, str, str | None]] = [
      self_test_report(dokka="\\--- org.example:other:4.5.6\n"),
      ":module-a:dependencies dokkaHtmlGeneratorRuntimeResolver~internal: org.example:other resolves"
      " to 4.5.6"),
+    ("a package below its floor in one unified test platform configuration only",
+     self_test_report(result_listener="+--- org.example:lib:1.79\n"),
+     ":module-b:dependencies unified-test-platform-android-test-plugin-result-listener-gradle: "
+     "org.example:lib resolves to 1.79"),
+    ("a package below its floor in another unified test platform configuration only",
+     self_test_report(test_platform_core="\\--- org.example:other:4.5.6\n"),
+     ":module-b:dependencies unified-test-platform-core: org.example:other resolves to 4.5.6"),
+    ("no module with a unified test platform configuration",
+     self_test_report(test_platform=False),
+     "<every module>:dependencies unified-test-platform-*: not in the Gradle report"),
     ("a package below its floor in the root build script's classpath only",
      self_test_report(root="+--- org.example:lib:1.79\n" + OTHER_OK),
      ":buildEnvironment classpath: org.example:lib resolves to 1.79"),
