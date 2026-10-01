@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingCachedFileDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.random.Random
@@ -31,7 +31,7 @@ class StorageCacheWriteTest {
     private lateinit var dataDirectory: Path
     private lateinit var store: OfflineStore
     private lateinit var delegate: FakeBucketApi
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
 
     @BeforeTest
     fun setUp() {
@@ -74,7 +74,7 @@ class StorageCacheWriteTest {
         // path
         assertContentEquals(BYTES, downloaded)
         assertNull(store.getStorageByKey(BUCKET, PATH))
-        val warnings = logger.entriesAt(OfflineLogLevel.WARNING).map { it.message }
+        val warnings = logger.entriesAt(EngineLogLevel.WARNING).map { it.message }
         assertEquals(1, warnings.size, "expected one warning, got $warnings")
         assertTrue(
             warnings.none { PATH in it },

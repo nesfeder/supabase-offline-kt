@@ -46,10 +46,10 @@ public final class io/github/nesfeder/supabase/offline/MutationNotQueueableExcep
 }
 
 public final class io/github/nesfeder/supabase/offline/MutationOperation : java/lang/Enum {
-	public static final field Delete Lio/github/nesfeder/supabase/offline/MutationOperation;
-	public static final field Insert Lio/github/nesfeder/supabase/offline/MutationOperation;
-	public static final field Update Lio/github/nesfeder/supabase/offline/MutationOperation;
-	public static final field Upsert Lio/github/nesfeder/supabase/offline/MutationOperation;
+	public static final field DELETE Lio/github/nesfeder/supabase/offline/MutationOperation;
+	public static final field INSERT Lio/github/nesfeder/supabase/offline/MutationOperation;
+	public static final field UPDATE Lio/github/nesfeder/supabase/offline/MutationOperation;
+	public static final field UPSERT Lio/github/nesfeder/supabase/offline/MutationOperation;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/MutationOperation;
 	public static fun values ()[Lio/github/nesfeder/supabase/offline/MutationOperation;
@@ -132,22 +132,18 @@ public final class io/github/nesfeder/supabase/offline/Offline$Companion : io/gi
 }
 
 public final class io/github/nesfeder/supabase/offline/Offline$Config {
-	public final fun getAutoSync ()Z
 	public final fun getCacheSizeBytes ()J
 	public final fun getDataDirectory ()Ljava/lang/String;
 	public final fun getFileCacheSizeBytes ()J
-	public final fun getLogger ()Lio/github/nesfeder/supabase/offline/OfflineLogger;
-	public final fun getMinLogLevel ()Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
+	public final fun getLogLevel ()Lio/github/jan/supabase/logging/LogLevel;
 	public final fun getNetworkAvailability ()Lkotlinx/coroutines/flow/Flow;
 	public final fun getPrimaryKeys ()Ljava/util/Map;
 	public final fun getResponseTrust ()Lio/github/nesfeder/supabase/offline/ResponseTrust;
 	public final fun primaryKey (Ljava/lang/String;[Ljava/lang/String;)V
-	public final fun setAutoSync (Z)V
 	public final fun setCacheSizeBytes (J)V
 	public final fun setDataDirectory (Ljava/lang/String;)V
 	public final fun setFileCacheSizeBytes (J)V
-	public final fun setLogger (Lio/github/nesfeder/supabase/offline/OfflineLogger;)V
-	public final fun setMinLogLevel (Lio/github/nesfeder/supabase/offline/OfflineLogLevel;)V
+	public final fun setLogLevel (Lio/github/jan/supabase/logging/LogLevel;)V
 	public final fun setNetworkAvailability (Lkotlinx/coroutines/flow/Flow;)V
 	public final fun setResponseTrust (Lio/github/nesfeder/supabase/offline/ResponseTrust;)V
 }
@@ -179,20 +175,6 @@ public abstract interface annotation class io/github/nesfeder/supabase/offline/O
 
 public final class io/github/nesfeder/supabase/offline/OfflineKt {
 	public static final fun getOffline (Lio/github/jan/supabase/SupabaseClient;)Lio/github/nesfeder/supabase/offline/Offline;
-}
-
-public final class io/github/nesfeder/supabase/offline/OfflineLogLevel : java/lang/Enum {
-	public static final field DEBUG Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
-	public static final field ERROR Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
-	public static final field INFO Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
-	public static final field WARNING Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
-	public static fun values ()[Lio/github/nesfeder/supabase/offline/OfflineLogLevel;
-}
-
-public abstract interface class io/github/nesfeder/supabase/offline/OfflineLogger {
-	public abstract fun log (Lio/github/nesfeder/supabase/offline/OfflineLogLevel;Ljava/lang/String;)V
 }
 
 public final class io/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder {

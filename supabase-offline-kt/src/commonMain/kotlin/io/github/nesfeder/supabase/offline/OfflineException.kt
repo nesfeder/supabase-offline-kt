@@ -25,10 +25,16 @@ public class CacheMissException internal constructor(message: String) :
  * A [MutationStrategy.QueueIfOffline] write that the mutation queue cannot hold faithfully was sent
  * at once instead, and could not be sent for want of a connection. Nothing was queued.
  *
- * Such writes are a `dryRun()` write, an UPDATE or DELETE whose filter the queue cannot record
- * exactly, a write whose user cannot be read from the stored session, and a write to a schema other
- * than the client's default. The message says which; [cause] is the connectivity failure, so
- * [isNetworkOrConnectivityFailure] is `true` for it.
+ * Such writes are:
+ * - a `dryRun()` write, or one whose request could not be inspected to tell whether it is one;
+ * - an UPDATE or DELETE whose filter the queue cannot record exactly;
+ * - a write whose user cannot be read from the stored session;
+ * - a write to a schema other than the client's default;
+ * - a write that was on its way into the queue while local data was cleared.
+ *
+ * The message says which; [cause] is the connectivity failure, so [isNetworkOrConnectivityFailure]
+ * is `true` for it. While the client is closing, such a write fails with the client's closed error
+ * instead.
  */
 public class MutationNotQueueableException internal constructor(message: String, cause: Throwable) :
     OfflineException(message, cause)

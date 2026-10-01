@@ -7,12 +7,12 @@ import io.github.jan.supabase.auth.user.UserInfo
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
@@ -197,7 +197,7 @@ class ReplayTokenBindingTest {
     @Test
     fun a_token_naming_no_user_holds_its_users_queue_and_warns_once() = runTest {
         // Given — A's session, whose token names no user, and A's write queued
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         supabase.auth.importSession(
             UserSession(
@@ -226,7 +226,7 @@ class ReplayTokenBindingTest {
         assertEquals(1, store.allPendingMutations().size)
         assertEquals(
             1,
-            logger.entriesAt(OfflineLogLevel.WARNING).count { "token" in it.message },
+            logger.entriesAt(EngineLogLevel.WARNING).count { "token" in it.message },
         )
     }
 

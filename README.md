@@ -16,8 +16,8 @@ This README is the entry point. Deep dives live in [docs/](./docs).
   resolution, mutation overlay, sync orchestration, error classification, eviction.
 - [docs/api-reference.md](./docs/reference/supported-features.md) — Every public type with behavior tables and
   the full exception reference.
-- [docs/configuration.md](./docs/reference/configuration.md) — Configuration and the
-  `OfflineLogger` setup for both platforms.
+- [docs/configuration.md](./docs/reference/configuration.md) — Configuration and logging, for both
+  platforms.
 - [docs/storage.md](./docs/behaviours/storage.md) — Storage download cache, path helpers, client-driven
   staleness model.
 - [docs/persistence.md](./docs/reference/on-device-data.md) — Room schema for `object_cache`,

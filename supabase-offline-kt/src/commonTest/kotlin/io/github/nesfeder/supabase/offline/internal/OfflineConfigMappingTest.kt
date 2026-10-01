@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline.internal
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.Offline.Companion.CACHE_SIZE_UNLIMITED
 import io.github.nesfeder.supabase.offline.OfflineExperimental
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.ResponseTrust
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import kotlin.test.Test
@@ -30,8 +29,7 @@ class OfflineConfigMappingTest {
         assertTrue(config.autoSync)
         assertTrue(config.primaryKeys.isEmpty())
         assertEquals(ResponseTrust.SettledSession, config.responseTrust)
-        assertNull(config.logger)
-        assertEquals(OfflineLogLevel.INFO, config.minLogLevel)
+        assertNull(config.logLevel)
     }
 
     @Test

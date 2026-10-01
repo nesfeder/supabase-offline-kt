@@ -12,7 +12,6 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
@@ -23,6 +22,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayloa
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.ktor.http.HeadersBuilder
 import kotlin.time.Clock
@@ -105,7 +105,7 @@ private class NetworkAnswer(val result: PostgrestResult, val wasCached: Boolean)
 internal class QueryReader(
     private val delegate: RemoteTable,
     private val store: OfflineStore,
-    private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
     private val trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,

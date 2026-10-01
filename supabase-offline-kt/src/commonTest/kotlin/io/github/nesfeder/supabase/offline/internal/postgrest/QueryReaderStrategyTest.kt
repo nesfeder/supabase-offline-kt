@@ -9,13 +9,13 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.ReadStrategy
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
@@ -81,12 +81,12 @@ class QueryReaderStrategyTest {
 
     private fun resolver(
         scope: CoroutineScope,
-        logger: RecordingOfflineLogger? = null,
+        logger: RecordingLogSink? = null,
     ): QueryReader =
         QueryReader(
             delegate = remoteTable,
             store = store,
-            engineLogger = logger?.asEngineLogger() ?: EngineLogger(null, OfflineLogLevel.INFO),
+            engineLogger = logger?.asEngineLogger() ?: EngineLogger(null, EngineLogLevel.INFO),
             nowMillis = { currentTime },
             liveQueries = LiveQueries(scope),
         )
@@ -429,21 +429,21 @@ class QueryReaderStrategyTest {
     @Test
     fun networkFirst_success_logsDebugWithStrategy() = runTest {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         answerWith("""[{"id":1}]""")
 
         // When
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
         // Then
-        val debugEntries = recorder.entriesAt(OfflineLogLevel.DEBUG)
+        val debugEntries = recorder.entriesAt(EngineLogLevel.DEBUG)
         assertTrue(debugEntries.any { it.message.contains("SELECT items via NetworkFirst") })
     }
 
     @Test
     fun networkFirst_success_logsDebugWithResponseJson() = runTest {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         val networkData = """[{"id":1,"name":"test"}]"""
         answerWith(networkData)
 
@@ -451,7 +451,7 @@ class QueryReaderStrategyTest {
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
         // Then — response bodies are logged at DEBUG only
-        val debugEntries = recorder.entriesAt(OfflineLogLevel.DEBUG)
+        val debugEntries = recorder.entriesAt(EngineLogLevel.DEBUG)
         assertTrue(
             debugEntries.any {
                 it.message.contains("SELECT items network response:") &&
@@ -460,7 +460,7 @@ class QueryReaderStrategyTest {
         )
         assertTrue(
             recorder.entries
-                .filter { it.level != OfflineLogLevel.DEBUG }
+                .filter { it.level != EngineLogLevel.DEBUG }
                 .none { it.message.contains(networkData) },
             "a response body must never be logged above DEBUG",
         )
@@ -469,7 +469,7 @@ class QueryReaderStrategyTest {
     @Test
     fun networkFirst_networkFailure_cacheHit_logsWarning() = runTest {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         store.addPayload(TABLE, cacheKey(), """[{"id":1}]""")
         failNetwork()
 
@@ -477,7 +477,7 @@ class QueryReaderStrategyTest {
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
         // Then
-        val warnings = recorder.entriesAt(OfflineLogLevel.WARNING)
+        val warnings = recorder.entriesAt(EngineLogLevel.WARNING)
         assertEquals(1, warnings.size)
         assertTrue(
             warnings[0].message.contains("SELECT items network failed, falling back to cache")
@@ -487,7 +487,7 @@ class QueryReaderStrategyTest {
     @Test
     fun networkFirst_networkFailure_noCache_logsError() = runTest {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         failNetwork()
         val resolver = resolver(backgroundScope, recorder)
 
@@ -497,7 +497,7 @@ class QueryReaderStrategyTest {
         }
 
         // Then
-        val errors = recorder.entriesAt(OfflineLogLevel.ERROR)
+        val errors = recorder.entriesAt(EngineLogLevel.ERROR)
         assertEquals(1, errors.size)
         assertTrue(errors[0].message.contains("SELECT items network failed and no cache available"))
     }
@@ -505,14 +505,14 @@ class QueryReaderStrategyTest {
     @Test
     fun cacheFirst_cacheHit_logsInfo() = runTest {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         store.addPayload(TABLE, cacheKey(), """[{"id":1}]""")
 
         // When
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.CacheFirst()) {}
 
         // Then
-        val infos = recorder.entriesAt(OfflineLogLevel.INFO)
+        val infos = recorder.entriesAt(EngineLogLevel.INFO)
         assertEquals(1, infos.size)
         assertTrue(infos[0].message.contains("SELECT items served from cache"))
     }
@@ -520,14 +520,14 @@ class QueryReaderStrategyTest {
     @Test
     fun cacheOnly_cacheHit_logsInfo() = runTest {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         store.addPayload(TABLE, cacheKey(), """[{"id":1}]""")
 
         // When
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.CacheOnly()) {}
 
         // Then
-        val infos = recorder.entriesAt(OfflineLogLevel.INFO)
+        val infos = recorder.entriesAt(EngineLogLevel.INFO)
         assertEquals(1, infos.size)
         assertTrue(infos[0].message.contains("SELECT items served from cache"))
     }
@@ -535,7 +535,7 @@ class QueryReaderStrategyTest {
     @Test
     fun cacheOnly_noCache_logsError() = runTest {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         val resolver = resolver(backgroundScope, recorder)
 
         // When
@@ -544,7 +544,7 @@ class QueryReaderStrategyTest {
         }
 
         // Then
-        val errors = recorder.entriesAt(OfflineLogLevel.ERROR)
+        val errors = recorder.entriesAt(EngineLogLevel.ERROR)
         assertEquals(1, errors.size)
         assertTrue(errors[0].message.contains("SELECT items no cached data available"))
     }

@@ -71,11 +71,12 @@ Semantic versioning in the usual sense:
 
 ## What it does not cover
 
-- Anything in a package whose name contains `internal`, and anything that needs an opt-in at
-  error level, such as `@OfflineInternal`. These exist for the library's own testing
-  artifact and Swift package, and can change in any release.
-- API marked experimental, with an opt-in at warning level. It can change in any minor release; the
-  changelog still lists the change.
+- Anything in a package whose name contains `internal`, and anything marked `@OfflineInternal`.
+  These exist for the library's own testing artifact and Swift package, and can change in any
+  release.
+- API marked `@OfflineExperimental`. Using it needs an opt-in at error level, and it is left out of
+  the API records the compatibility checks compare, so it can change in any minor release without
+  a changelog line.
 - Implementing the library's interfaces yourself, unless their documentation says you may. A new
   member of an interface does not break code that calls it, only code that implements it. Use
   `supabase-offline-kt-testing` for test doubles.

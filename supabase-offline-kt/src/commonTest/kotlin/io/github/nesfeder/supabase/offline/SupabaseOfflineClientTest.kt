@@ -14,7 +14,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
@@ -43,24 +42,26 @@ class SupabaseOfflineClientTest {
     }
 
     /**
-     * The one-argument `from(table)` reads the default schema from the PostgREST plugin before the
-     * engine's own guard runs, so without the plugin it fails with supabase-kt's own error (which
-     * also names the missing plugin), as the previous standalone engine asserted, rather than the
-     * engine's install hint. A later change is expected to route it through the same guard as
-     * `from(schema, table)`.
+     * The one-argument `from(table)` checks for the PostgREST plugin before it reads the default
+     * schema from it, so it fails with the same install hint as `from(schema, table)`, and so does
+     * a sync.
      */
     @Test
-    fun from_table_whenPostgrestNotInstalled_throws_before_the_engine_guard() = runTest {
+    fun from_table_and_sync_whenPostgrestNotInstalled_throw_the_same_helpful_error() = runTest {
         // Given — a client with no plugins
         val client = newTestOfflineClient(supabase = newTestSupabaseClient(plugins = {}))
 
         // When
-        val error = assertFailsWith<IllegalStateException> { client.from("todos") }
+        val fromTable = assertFailsWith<IllegalStateException> { client.from("todos") }
+        val sync = assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
 
         // Then
-        val message = error.message.orEmpty()
-        assertTrue(message.contains("Plugin rest not installed or not of type Postgrest"), message)
-        assertFalse(message.contains("Postgrest plugin is not installed"))
+        listOf(fromTable, sync).forEach { error ->
+            assertTrue(
+                error.message.orEmpty().contains("Postgrest plugin is not installed"),
+                "$error",
+            )
+        }
     }
 
     @Test

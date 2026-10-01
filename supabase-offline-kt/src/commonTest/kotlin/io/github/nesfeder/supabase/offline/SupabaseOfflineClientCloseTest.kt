@@ -4,9 +4,10 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -704,7 +705,7 @@ class SupabaseOfflineClientCloseTest {
         runTest {
             // Given — a write on the wire that the server holds past close()'s wait
             val releases = AtomicInt(0)
-            val logger = RecordingOfflineLogger()
+            val logger = RecordingLogSink()
             val arrived = CompletableDeferred<Unit>()
             val held = CompletableDeferred<Unit>()
             val server =
@@ -719,7 +720,7 @@ class SupabaseOfflineClientCloseTest {
             val client =
                 newTestOfflineClient(
                     supabase = server.supabaseClient(),
-                    engineLogger = EngineLogger(logger, OfflineLogLevel.INFO),
+                    engineLogger = EngineLogger(logger, EngineLogLevel.INFO),
                     onClose = { releases.addAndFetch(1) },
                     coordinatorScope = callerScope,
                     closeWait = IDLE_CLOSE_WAIT,
@@ -760,7 +761,7 @@ class SupabaseOfflineClientCloseTest {
             )
             assertEquals(
                 1,
-                logger.entriesAt(OfflineLogLevel.WARNING).count { entry ->
+                logger.entriesAt(EngineLogLevel.WARNING).count { entry ->
                     entry.message.startsWith("close() waited")
                 },
             )

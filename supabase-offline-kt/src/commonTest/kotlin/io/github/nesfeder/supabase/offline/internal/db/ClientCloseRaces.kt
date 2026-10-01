@@ -8,10 +8,10 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.Offline
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import kotlin.concurrent.atomics.AtomicInt
@@ -78,8 +78,9 @@ internal object ClientCloseRaces {
             val databaseDirectory = directory / "race-$iteration"
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
-            val logger = RecordingOfflineLogger()
-            val client = openClient(server.supabaseClient(), configIn(databaseDirectory, logger))
+            val logger = RecordingLogSink()
+            val client =
+                openClient(server.supabaseClient(logs = logger), configIn(databaseDirectory))
             fill(client, server)
 
             // When — a clear and close() race; either may start first, by up to a few milliseconds,
@@ -149,8 +150,8 @@ internal object ClientCloseRaces {
             // Given — an online write on the wire, held at the server
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
-            val logger = RecordingOfflineLogger()
-            val client = openClient(server.supabaseClient(), configIn(directory, logger))
+            val logger = RecordingLogSink()
+            val client = openClient(server.supabaseClient(logs = logger), configIn(directory))
             val held = CompletableDeferred<Unit>()
             server.restHold.value = held
             val write = async {
@@ -241,8 +242,9 @@ internal object ClientCloseRaces {
             val databaseDirectory = directory / "readers-$iteration"
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
-            val logger = RecordingOfflineLogger()
-            val client = openClient(server.supabaseClient(), configIn(databaseDirectory, logger))
+            val logger = RecordingLogSink()
+            val client =
+                openClient(server.supabaseClient(logs = logger), configIn(databaseDirectory))
             fill(client, server)
             server.online.store(true)
             val app = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -319,8 +321,9 @@ internal object ClientCloseRaces {
             val databaseDirectory = directory / "logout-$iteration"
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
-            val logger = RecordingOfflineLogger()
-            val client = openClient(server.supabaseClient(), configIn(databaseDirectory, logger))
+            val logger = RecordingLogSink()
+            val client =
+                openClient(server.supabaseClient(logs = logger), configIn(databaseDirectory))
             fill(client, server)
             // A network-first read needs the network to start; once it has, nothing reaches the
             // server
@@ -383,17 +386,15 @@ internal object ClientCloseRaces {
         add(buildJsonObject { put("email", "$marker@example.com") })
     }
 
-    private fun configIn(directory: Path, logger: RecordingOfflineLogger? = null): Offline.Config =
-        Offline.createConfig {
-            dataDirectory = directory.toString()
-            this.logger = logger
-        }
+    private fun configIn(directory: Path): Offline.Config = Offline.createConfig {
+        dataDirectory = directory.toString()
+    }
 
     /**
      * What [logger] recorded at ERROR: a background failure the engine contained would show here.
      */
-    private fun errorsIn(logger: RecordingOfflineLogger): List<String> =
-        logger.entriesAt(OfflineLogLevel.ERROR).map { entry -> entry.message }
+    private fun errorsIn(logger: RecordingLogSink): List<String> =
+        logger.entriesAt(EngineLogLevel.ERROR).map { entry -> entry.message }
 
     /** Where [marker] can still be read: the database files and the cached files. */
     private fun markerLocations(directory: Path, marker: String): List<String> {

@@ -11,7 +11,9 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -21,17 +23,27 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.openInMemory
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -39,6 +51,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okio.FileSystem
+import okio.Path.Companion.toPath
+import okio.SYSTEM
 
 /**
  * The library as a supabase-kt plugin: `install(Offline) { … }` and `supabase.offline`, with its
@@ -294,6 +309,151 @@ class OfflinePluginTest {
 
         // Then
         assertEquals(listOf("avatars", "avatars"), listOf(byFrom, byIndex).map { it.bucketId })
+        supabase.close()
+    }
+
+    @Test
+    fun the_response_trust_install_sets_decides_whether_an_empty_answer_replaces_the_cache() =
+        runTest {
+            // When — rows read, then an empty answer to the same read, then the network goes
+            val underSettledSession = cachedAfterAnEmptyAnswer(ResponseTrust.SettledSession)
+            val underAuthenticatedOnly =
+                cachedAfterAnEmptyAnswer(ResponseTrust.AuthenticatedSessionOnly)
+
+            // Then — without Auth, only the earlier rule refuses to let the empty answer in
+            assertEquals("[]", underSettledSession)
+            assertEquals("""[{"id":1}]""", underAuthenticatedOnly)
+        }
+
+    /** What the cache answers offline, after rows and then an empty answer, under [trust]. */
+    private suspend fun cachedAfterAnEmptyAnswer(trust: ResponseTrust): String {
+        var rows = """[{"id":1}]"""
+        val server = RecordingPostgrestServer(answer = { okJson(rows) })
+        val supabase = pluginClient(server) { responseTrust = trust }
+        supabase.offline.from("todos").select()
+        rows = "[]"
+        supabase.offline.from("todos").select()
+        server.answer = { connectivityFailure() }
+        val cached = supabase.offline.from("todos").select().data
+        supabase.close()
+        return cached
+    }
+
+    @Test
+    fun the_cache_size_install_sets_bounds_what_the_cache_keeps() = runTest {
+        // When — one read larger than the smallest bound there is, under it and under the default
+        val keptUnderDefault = servedOfflineAfterOneLargeRead(cacheSizeBytes = null)
+        val keptUnderTheBound = servedOfflineAfterOneLargeRead(cacheSizeBytes = 4_096L)
+
+        // Then — the bound evicted it
+        assertTrue(keptUnderDefault)
+        assertFalse(keptUnderTheBound)
+    }
+
+    /** Whether a read of more than 4 KiB is served from the cache once the network goes. */
+    private suspend fun servedOfflineAfterOneLargeRead(cacheSizeBytes: Long?): Boolean {
+        val server =
+            RecordingPostgrestServer(
+                answer = { okJson("""[{"id":1,"pad":"${"x".repeat(5_000)}"}]""") }
+            )
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest) { maxRetries = 0 }
+                install(Offline) {
+                    openInMemory()
+                    if (cacheSizeBytes != null) this.cacheSizeBytes = cacheSizeBytes
+                }
+            }
+        supabase.offline.from("todos").select()
+        server.answer = { connectivityFailure() }
+        val served = runCatching {
+            supabase.offline.from("todos").select(readStrategy = ReadStrategy.CacheOnly())
+        }
+            .isSuccess
+        supabase.close()
+        return served
+    }
+
+    @Test
+    fun the_file_cache_size_install_sets_bounds_the_downloaded_files() = runTest {
+        // When — a file used long ago, then another, past a bound that holds one
+        val keptUnderDefault = olderFileKeptAfterAnotherDownload(fileCacheSizeBytes = null)
+        val keptUnderTheBound = olderFileKeptAfterAnotherDownload(fileCacheSizeBytes = 40L)
+
+        // Then — the bound evicted the older file
+        assertTrue(keptUnderDefault)
+        assertFalse(keptUnderTheBound)
+    }
+
+    /**
+     * Whether a file downloaded and last used long ago is still cached once a second one is
+     * downloaded; each file is about 30 bytes.
+     */
+    private suspend fun olderFileKeptAfterAnotherDownload(fileCacheSizeBytes: Long?): Boolean {
+        val directory =
+            FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+                "offline-plugin-file-cache-${Random.nextLong().toULong()}"
+        val server = RecordingBackendServer(marker = "file-cache")
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest) { maxRetries = 0 }
+                install(Storage) { resumable { cache = FakeResumableCache() } }
+                install(Offline) {
+                    openInMemory(dataDirectory = directory)
+                    if (fileCacheSizeBytes != null) this.fileCacheSizeBytes = fileCacheSizeBytes
+                }
+            }
+        try {
+            val bucket = supabase.offline.storage.from("avatars")
+            bucket.downloadAuthenticated("a.png")
+            val older = checkNotNull(bucket.cachedFile("a.png")) { "the first file was not cached" }
+            markFileUsed(older.path.toPath(), epochMillis = 0L)
+            bucket.downloadAuthenticated("b.png")
+            return bucket.cachedFile("a.png") != null
+        } finally {
+            supabase.close()
+            FileSystem.SYSTEM.deleteRecursively(directory, mustExist = false)
+        }
+    }
+
+    @Test
+    fun the_connectivity_signal_install_sets_wakes_a_waiting_refresh() = runTest {
+        // Given — a live read whose first refresh failed, everything on this test's clock
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = CoroutineScope(SupervisorJob() + dispatcher)
+        var online = false
+        val server =
+            RecordingPostgrestServer(
+                answer = { if (online) okJson("""[{"id":1}]""") else connectivityFailure() },
+                engineDispatcher = dispatcher,
+            )
+        val signal = MutableStateFlow(false)
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest) { maxRetries = 0 }
+                install(Offline) {
+                    openInMemory(coordinatorScope = scope)
+                    networkAvailability = signal
+                }
+            }
+        val shown = mutableListOf<String?>()
+        scope.launch {
+            supabase.offline.from("todos").selectAsFlow().collect { read ->
+                shown += read.result?.data
+            }
+        }
+        runCurrent()
+        val readsBefore = server.requests.size
+
+        // When — the device is back online, well within the refresh's backoff
+        online = true
+        signal.value = true
+        runCurrent()
+
+        // Then — the read was refreshed at once
+        assertEquals(readsBefore + 1, server.requests.size)
+        assertEquals("""[{"id":1}]""", shown.last())
+        scope.cancel()
         supabase.close()
     }
 }

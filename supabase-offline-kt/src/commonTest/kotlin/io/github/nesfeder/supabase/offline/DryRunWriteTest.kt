@@ -84,7 +84,7 @@ class DryRunWriteTest {
         // Given
         server.answer = { connectivityFailure() }
 
-        // When / Then — the connectivity failure surfaces, as it would under OnlineOnly
+        // When / Then — not queueable, with the connectivity failure as its cause
         assertNotQueueable<HttpRequestException> {
             builder.update(patch(), MutationStrategy.QueueIfOffline) {
                 filter { eq("id", 1) }

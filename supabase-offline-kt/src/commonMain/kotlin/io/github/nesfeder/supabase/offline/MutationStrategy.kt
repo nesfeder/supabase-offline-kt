@@ -26,11 +26,12 @@ public sealed interface MutationStrategy {
      * and does not stay queued. Cached reads show a queued write at once.
      *
      * Some writes cannot be queued faithfully and are sent at once instead, as with [OnlineOnly]: a
-     * `dryRun()` write, an UPDATE or DELETE whose filter the queue cannot record exactly, a write
-     * whose user cannot be read from the stored session, and a write to a schema other than the
-     * client's default (the queue replays to the default schema only). When one of them cannot be
-     * sent for want of a connection, it throws [MutationNotQueueableException] with that failure as
-     * its cause.
+     * `dryRun()` write or one whose request could not be inspected to tell whether it is one, an
+     * UPDATE or DELETE whose filter the queue cannot record exactly, a write whose user cannot be
+     * read from the stored session, a write to a schema other than the client's default (the queue
+     * replays to the default schema only), and a write that was on its way into the queue while
+     * local data was cleared. When one of them cannot be sent for want of a connection, it throws
+     * [MutationNotQueueableException] with that failure as its cause.
      */
     public data object QueueIfOffline : MutationStrategy
 }

@@ -18,12 +18,12 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.EngineJson
+import io.github.nesfeder.supabase.offline.internal.TransportClosedException
 import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
@@ -31,6 +31,7 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -53,7 +54,7 @@ import kotlinx.serialization.json.JsonElement
 internal class OfflineTable(
     private val delegate: RemoteTable,
     private val store: OfflineStore,
-    private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     /**
      * The session a read's request goes out under; built directly, a client without the Auth
      * plugin.
@@ -113,7 +114,7 @@ internal class OfflineTable(
     constructor(
         delegate: PostgrestQueryBuilder,
         store: OfflineStore,
-        engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+        engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
         requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
         trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
         liveQueries: LiveQueries = defaultLiveQueries(),
@@ -540,13 +541,13 @@ internal class OfflineTable(
                             "Offline $operationLabel for $table would not be queued: $detail"
                         }
                     }
-                    return direct.send(OfflineLogLevel.ERROR) {
+                    return direct.send(EngineLogLevel.ERROR) {
                         "Refusing to queue offline $operationLabel for $table: ${capture.reason}"
                     }
                 }
             }
         if (identity == null) {
-            return direct.send(OfflineLogLevel.WARNING) {
+            return direct.send(EngineLogLevel.WARNING) {
                 "Not queueing offline $operationLabel for $table: the session's identity cannot be told"
             }
         }
@@ -555,17 +556,17 @@ internal class OfflineTable(
         when (val verdict = delegate.classifyTokenFree(perform)) {
             DryRunVerdict.NotDryRun -> Unit
             DryRunVerdict.DryRun ->
-                return direct.send(OfflineLogLevel.INFO) {
+                return direct.send(EngineLogLevel.INFO) {
                     "Not queueing offline $operationLabel for $table: a dry run is never queued"
                 }
             // The write's own failure, before any request: sending it directly reports it as it is.
             is DryRunVerdict.NotBuilt ->
-                return direct.send(OfflineLogLevel.INFO) {
+                return direct.send(EngineLogLevel.INFO) {
                     "Not queueing offline $operationLabel for $table: its request could not be built"
                 }
             DryRunVerdict.Unavailable -> {
                 reportUnclassifiableWriteOnce()
-                return direct.send(OfflineLogLevel.WARNING) {
+                return direct.send(EngineLogLevel.WARNING) {
                     "Not queueing offline $operationLabel for $table: it may be a dry run"
                 }
             }
@@ -584,7 +585,7 @@ internal class OfflineTable(
             ) {
                 is EnqueueOutcome.Queued -> enqueued
                 EnqueueOutcome.LocalDataCleared ->
-                    return direct.send(OfflineLogLevel.INFO) {
+                    return direct.send(EngineLogLevel.INFO) {
                         "Not queueing offline $operationLabel for $table: local data was cleared while it was in flight"
                     }
             }
@@ -667,6 +668,8 @@ internal class OfflineTable(
             try {
                 performOnline()
             } catch (failure: Exception) {
+                // The client is closing, not offline: the caller gets the closed error
+                if (failure is TransportClosedException) throw failure
                 if (!failure.isNetworkOrConnectivityFailure()) throw failure
                 throw MutationNotQueueableException(
                     "$operationLabel $table in the \"$schema\" schema could not be sent, and a write to a schema " +
@@ -718,11 +721,13 @@ internal class OfflineTable(
          * @param whyNotQueued Why the write was not queued, for the log line.
          * @return [MutationOutcome.Applied].
          */
-        suspend fun send(level: OfflineLogLevel, whyNotQueued: () -> String): MutationOutcome {
+        suspend fun send(level: EngineLogLevel, whyNotQueued: () -> String): MutationOutcome {
             val result =
                 try {
                     performOnline()
                 } catch (failure: Exception) {
+                    // The client is closing, not offline: the caller gets the closed error
+                    if (failure is TransportClosedException) throw failure
                     if (!failure.isNetworkOrConnectivityFailure()) throw failure
                     engineLogger.log(level, whyNotQueued)
                     throw MutationNotQueueableException(

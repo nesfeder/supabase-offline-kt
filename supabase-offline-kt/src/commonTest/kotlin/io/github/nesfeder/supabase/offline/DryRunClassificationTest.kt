@@ -4,11 +4,12 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -46,7 +47,7 @@ class DryRunClassificationTest {
     fun a_write_whose_dry_run_status_cannot_be_told_is_never_queued_and_the_engine_says_so_once() =
         runTest {
             // Given — a handle that cannot classify writes, offline
-            val logger = RecordingOfflineLogger()
+            val logger = RecordingLogSink()
             val client = newTestSupabaseClient()
             val remoteTable =
                 FakeRemoteTable(
@@ -75,7 +76,7 @@ class DryRunClassificationTest {
             assertTrue(mutationDao.inserted.isEmpty())
             assertEquals(
                 1,
-                logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
+                logger.entriesAt(EngineLogLevel.ERROR).count { it.message.contains("dry run") },
             )
         }
 
@@ -153,7 +154,7 @@ class DryRunClassificationTest {
     fun a_write_whose_session_token_cannot_be_refreshed_is_classified_and_queued() = runTest {
         // Given — an expired session, and no network to refresh it: supabase-kt fails the write
         // while building its request, but the check reads it on a handle that needs no token
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
@@ -174,7 +175,7 @@ class DryRunClassificationTest {
         assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(
             0,
-            logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
+            logger.entriesAt(EngineLogLevel.ERROR).count { it.message.contains("dry run") },
         )
     }
 
@@ -182,7 +183,7 @@ class DryRunClassificationTest {
     fun a_write_whose_request_cannot_be_built_fails_to_its_caller_and_is_never_queued() = runTest {
         // Given — a request lambda that throws from its second run, the dry-run check's; the first
         // built the request the queue would capture
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         val server = RecordingPostgrestServer(answer = { okJson("[]") })
         val builder =
             OfflineTable(
@@ -208,7 +209,7 @@ class DryRunClassificationTest {
         assertTrue(server.requests.isEmpty(), "${server.requests}")
         assertEquals(
             0,
-            logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },
+            logger.entriesAt(EngineLogLevel.ERROR).count { it.message.contains("dry run") },
         )
     }
 

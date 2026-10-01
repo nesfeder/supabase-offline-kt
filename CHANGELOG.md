@@ -20,8 +20,15 @@ release.
   `createSupabaseClient` and reach it as `supabase.offline`, where `createSupabaseOfflineClient(…)`
   returned a client; the settings of `SupabaseOfflineConfig` are the plugin's `Offline.Config`
   (`offlineStoragePath` is `dataDirectory`, a `String`). The old names are gone; see Removed.
-  supabase-kt closes the plugin with the client, after it has closed its HTTP client:
-  call `supabase.offline.close()` first to let requests already on the wire answer.
+  supabase-kt closes the plugin with the client, after it has closed its HTTP client: a call made
+  in between, or one whose request had not gone out, ends as it would offline (a read the cache
+  can answer is answered from it, a write the mutation queue holds is `Queued`) or with the closed
+  error, never with a cancellation; a request already on the wire still answers. Call
+  `supabase.offline.close()` first to let the calls not yet sent go out.
+- Logging goes through supabase-kt's own: the plugin logs to the client's logging processor
+  (`defaultLoggingFactory`) with the tag `Supabase-Offline`, at `Offline.Config.logLevel` or the
+  client's `defaultLogLevel`. `OfflineLogger`, `OfflineLogLevel` and the `logger` and `minLogLevel`
+  settings are gone: configure logging once, in `createSupabaseClient`.
 - `MutationOutcome.Queued` is a class that carries the queued write as a `PendingMutation`: match it
   with `is MutationOutcome.Queued`, not `MutationOutcome.Queued ->`. `MutationOutcome.Applied` and
   `Queued` have internal constructors.
@@ -34,10 +41,12 @@ release.
   are no longer data classes. `FlowReadStrategy` and `MutationStrategy` are sealed interfaces: their
   cases are written as before, but `entries`, `values()` and `valueOf` are gone.
 - A `CacheOnly` read that finds nothing it may serve throws `CacheMissException`, not
-  `NoSuchElementException`. A `QueueIfOffline` write the queue cannot hold (a dry run, a filter it
-  cannot record, an unknown user, another schema) that cannot be sent for want of a connection
-  throws `MutationNotQueueableException`, with that failure as its cause, instead of the failure
-  itself or an `IOException`. `isNetworkOrConnectivityFailure()` is still `true` for it.
+  `NoSuchElementException`. A `QueueIfOffline` write the queue cannot hold (a dry run, or one whose
+  request could not be inspected to tell; a filter it cannot record; an unknown user; another
+  schema; a write on its way into the queue while local data was cleared) that cannot be sent for
+  want of a connection throws `MutationNotQueueableException`, with that failure as its cause,
+  instead of the failure itself or an `IOException`. `isNetworkOrConnectivityFailure()` is still
+  `true` for it.
 - The testing hook's opt-in marker `InternalOfflineTestingApi` is `OfflineInternal`.
 - On Android, an interface member with a body compiles to a JVM default method only, so the
   `$DefaultImpls` classes are gone (`-jvm-default=no-compatibility`).
@@ -47,9 +56,11 @@ release.
 - The `Offline` plugin for supabase-kt: `install(Offline) { … }` and `supabase.offline`, with its
   settings in `Offline.Config`: the two cache sizes, `dataDirectory`, `primaryKeys` (each table's
   key, `id` unless set; `primaryKey(table, columns)`), `responseTrust` (`ResponseTrust`, with the
-  earlier rule as `AuthenticatedSessionOnly`), and the logger. `networkAvailability` and `autoSync`
-  are declared, experimental (`@OfflineExperimental`) until the library watches connectivity
-  itself. On Android the plugin needs no `Context`: androidx.startup gives it the application's.
+  earlier rule as `AuthenticatedSessionOnly`), `logLevel`, and `networkAvailability`, the app's own
+  connectivity signal, which wakes a reactive read's waiting refresh. `autoSync` is declared and
+  experimental (`@OfflineExperimental`): in this release it changes nothing. On Android the plugin
+  needs no `Context`: androidx.startup gives it the application's. The configuration is read once,
+  when the client is created.
 - Offline-first PostgREST reads through supabase-kt. `supabase.offline.from(table).select { }`
   takes supabase-kt's own request builder and a `ReadStrategy` (`NetworkFirst`, `CacheFirst`,
   `CacheOnly` or `NetworkOnly`). `selectAsFlow` emits an `OfflineReadResult` each time the cache or
@@ -65,15 +76,18 @@ release.
   `io.github.nesfeder.supabase.offline.rpc` in place of supabase-kt's); and realtime's
   `selectAsFlow` and bucket management, which stay on `supabase.from` and `supabase.storage`.
   Typed writes encode through `postgrest.serializer`, as supabase-kt's do.
-- `MutationOutcome.Queued.pendingMutation` (`PendingMutation`: id, table, `MutationOperation`,
-  createdAt, row keys, body) and `MutationOutcome.isQueued`.
+- `MutationOutcome.Queued.pendingMutation` (`PendingMutation`: id, table, `MutationOperation`
+  `INSERT`, `UPSERT`, `UPDATE` or `DELETE`, createdAt, row keys, body) and
+  `MutationOutcome.isQueued`.
 - `rpc` on the plugin, network only, with a typed overload; `offline.storage.from(bucket)` and
   `offline.storage[bucket]`; a typed `applyServerRecord`, whose `primaryKeys` default to the table's
   configured key.
 - `OfflineException`, open for new subclasses, with `CacheMissException`,
   `MutationNotQueueableException` and `NetworkDisabledException`; `httpStatusOrNull()`, which reads
   supabase-kt's and Ktor's errors, Storage's included.
-- The opt-in markers `OfflineExperimental` (warning) and `OfflineInternal` (error).
+- The opt-in markers `OfflineExperimental` and `OfflineInternal`, both at error level. API under
+  either is left out of the API records and the compatibility checks: experimental API may change
+  in a minor release with no changelog line.
 - Writes that work offline. `insert`, `update`, `upsert` and `delete`, and their JSON forms, return
   a `MutationOutcome`: `Applied` with the server's response, or `Queued` when the write was recorded
   in the mutation queue to be sent later (`MutationStrategy.QueueIfOffline`, the default). Queued
@@ -157,7 +171,9 @@ release.
   `upsertJson` and `updateJson` (`insert`, `upsert` and `update`); `insertWith`, `upsertWith` and
   `updateWith`, and the reified `insert`, `upsert` and `update` extensions (the typed members,
   which encode through `postgrest.serializer`); `storage(bucket)` (`storage.from(bucket)`);
-  `clearAllCache()` (`clearLocalData()`); and `supabase` (`supabaseClient`).
+  `clearAllCache()` (`clearLocalData()`); `supabase` (`supabaseClient`); and `OfflineLogger` and
+  `OfflineLogLevel`, with the iOS factory's `logger` and `minLogLevel` (supabase-kt's logging, at
+  `logLevel`).
 - `NumericDeltaColumn`, and the `deltaColumns` parameter of the update verbs. A queued write
   replays exactly what was sent; a value that several devices change concurrently, such as a
   counter or a running total, is computed on the server from the facts clients write.

@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.logging
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -14,7 +13,7 @@ class EngineLoggerTest {
     @Test
     fun nullLogger_doesNotCrash() {
         // Given
-        val logger = EngineLogger(null, OfflineLogLevel.DEBUG)
+        val logger = EngineLogger(null, EngineLogLevel.DEBUG)
 
         // When
         logger.debug { "test" }
@@ -28,8 +27,8 @@ class EngineLoggerTest {
     @Test
     fun allLevelsForwarded_whenMinLevelIsDebug() {
         // Given
-        val recorder = RecordingOfflineLogger()
-        val logger = recorder.asEngineLogger(OfflineLogLevel.DEBUG)
+        val recorder = RecordingLogSink()
+        val logger = recorder.asEngineLogger(EngineLogLevel.DEBUG)
 
         // When
         logger.debug { "d" }
@@ -39,20 +38,20 @@ class EngineLoggerTest {
 
         // Then
         assertEquals(4, recorder.entries.size)
-        assertEquals(RecordingOfflineLogger.Entry(OfflineLogLevel.DEBUG, "d"), recorder.entries[0])
-        assertEquals(RecordingOfflineLogger.Entry(OfflineLogLevel.INFO, "i"), recorder.entries[1])
+        assertEquals(RecordingLogSink.Entry(EngineLogLevel.DEBUG, "d"), recorder.entries[0])
+        assertEquals(RecordingLogSink.Entry(EngineLogLevel.INFO, "i"), recorder.entries[1])
         assertEquals(
-            RecordingOfflineLogger.Entry(OfflineLogLevel.WARNING, "w"),
+            RecordingLogSink.Entry(EngineLogLevel.WARNING, "w"),
             recorder.entries[2],
         )
-        assertEquals(RecordingOfflineLogger.Entry(OfflineLogLevel.ERROR, "e"), recorder.entries[3])
+        assertEquals(RecordingLogSink.Entry(EngineLogLevel.ERROR, "e"), recorder.entries[3])
     }
 
     @Test
     fun levelFiltering_minWarning_suppressesDebugAndInfo() {
         // Given
-        val recorder = RecordingOfflineLogger()
-        val logger = recorder.asEngineLogger(OfflineLogLevel.WARNING)
+        val recorder = RecordingLogSink()
+        val logger = recorder.asEngineLogger(EngineLogLevel.WARNING)
 
         // When
         logger.debug { "d" }
@@ -62,15 +61,15 @@ class EngineLoggerTest {
 
         // Then
         assertEquals(2, recorder.entries.size)
-        assertEquals(OfflineLogLevel.WARNING, recorder.entries[0].level)
-        assertEquals(OfflineLogLevel.ERROR, recorder.entries[1].level)
+        assertEquals(EngineLogLevel.WARNING, recorder.entries[0].level)
+        assertEquals(EngineLogLevel.ERROR, recorder.entries[1].level)
     }
 
     @Test
     fun levelFiltering_minError_suppressesAllButError() {
         // Given
-        val recorder = RecordingOfflineLogger()
-        val logger = recorder.asEngineLogger(OfflineLogLevel.ERROR)
+        val recorder = RecordingLogSink()
+        val logger = recorder.asEngineLogger(EngineLogLevel.ERROR)
 
         // When
         logger.debug { "d" }
@@ -80,14 +79,14 @@ class EngineLoggerTest {
 
         // Then
         assertEquals(1, recorder.entries.size)
-        assertEquals(OfflineLogLevel.ERROR, recorder.entries[0].level)
+        assertEquals(EngineLogLevel.ERROR, recorder.entries[0].level)
     }
 
     @Test
     fun levelFiltering_minInfo_suppressesDebug() {
         // Given
-        val recorder = RecordingOfflineLogger()
-        val logger = recorder.asEngineLogger(OfflineLogLevel.INFO)
+        val recorder = RecordingLogSink()
+        val logger = recorder.asEngineLogger(EngineLogLevel.INFO)
 
         // When
         logger.debug { "d" }
@@ -97,14 +96,14 @@ class EngineLoggerTest {
 
         // Then
         assertEquals(3, recorder.entries.size)
-        assertEquals(OfflineLogLevel.INFO, recorder.entries[0].level)
+        assertEquals(EngineLogLevel.INFO, recorder.entries[0].level)
     }
 
     @Test
     fun lazyEvaluation_messageLambdaNotCalled_whenFiltered() {
         // Given
-        val recorder = RecordingOfflineLogger()
-        val logger = recorder.asEngineLogger(OfflineLogLevel.ERROR)
+        val recorder = RecordingLogSink()
+        val logger = recorder.asEngineLogger(EngineLogLevel.ERROR)
         var debugEvaluated = false
         var infoEvaluated = false
         var warningEvaluated = false
@@ -133,8 +132,8 @@ class EngineLoggerTest {
     @Test
     fun lazyEvaluation_messageLambdaCalled_whenNotFiltered() {
         // Given
-        val recorder = RecordingOfflineLogger()
-        val logger = recorder.asEngineLogger(OfflineLogLevel.DEBUG)
+        val recorder = RecordingLogSink()
+        val logger = recorder.asEngineLogger(EngineLogLevel.DEBUG)
         var called = false
 
         // When
@@ -151,7 +150,7 @@ class EngineLoggerTest {
     @Test
     fun lazyEvaluation_nullLogger_messageLambdaNotCalled() {
         // Given
-        val logger = EngineLogger(null, OfflineLogLevel.DEBUG)
+        val logger = EngineLogger(null, EngineLogLevel.DEBUG)
         var called = false
 
         // When
@@ -167,7 +166,7 @@ class EngineLoggerTest {
     @Test
     fun convenienceMethods_mapToCorrectLevel() {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         val logger = recorder.asEngineLogger()
 
         // When
@@ -177,25 +176,25 @@ class EngineLoggerTest {
         logger.error { "d" }
 
         // Then
-        assertEquals(OfflineLogLevel.DEBUG, recorder.entries[0].level)
-        assertEquals(OfflineLogLevel.INFO, recorder.entries[1].level)
-        assertEquals(OfflineLogLevel.WARNING, recorder.entries[2].level)
-        assertEquals(OfflineLogLevel.ERROR, recorder.entries[3].level)
+        assertEquals(EngineLogLevel.DEBUG, recorder.entries[0].level)
+        assertEquals(EngineLogLevel.INFO, recorder.entries[1].level)
+        assertEquals(EngineLogLevel.WARNING, recorder.entries[2].level)
+        assertEquals(EngineLogLevel.ERROR, recorder.entries[3].level)
     }
 
     @Test
     fun logMethod_usesExplicitLevel() {
         // Given
-        val recorder = RecordingOfflineLogger()
+        val recorder = RecordingLogSink()
         val logger = recorder.asEngineLogger()
 
         // When
-        logger.log(OfflineLogLevel.WARNING) { "explicit" }
+        logger.log(EngineLogLevel.WARNING) { "explicit" }
 
         // Then
         assertEquals(1, recorder.entries.size)
         assertEquals(
-            RecordingOfflineLogger.Entry(OfflineLogLevel.WARNING, "explicit"),
+            RecordingLogSink.Entry(EngineLogLevel.WARNING, "explicit"),
             recorder.entries[0],
         )
     }

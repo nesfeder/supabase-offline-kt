@@ -7,9 +7,10 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.openAndroidClient
 import io.github.nesfeder.supabase.offline.internal.openOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
@@ -60,11 +61,9 @@ class OfflineClientPlacementAndroidTest {
         FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)
     }
 
-    private fun configIn(directory: Path, logger: OfflineLogger? = null): Offline.Config =
-        Offline.createConfig {
-            dataDirectory = directory.toString()
-            this.logger = logger
-        }
+    private fun configIn(directory: Path): Offline.Config = Offline.createConfig {
+        dataDirectory = directory.toString()
+    }
 
     /** Opens a client with [config] and queues one write in it while offline, then closes it. */
     private suspend fun queueOneWriteOffline(config: Offline.Config = Offline.createConfig {}) {
@@ -112,14 +111,14 @@ class OfflineClientPlacementAndroidTest {
                 }
             assertTrue(FileSystem.SYSTEM.exists(configured / "supabase_offline.db"))
             queueOneWriteOffline()
-            val logger = RecordingOfflineLogger()
+            val logger = RecordingLogSink()
 
             // When
             val client =
                 openAndroidClient(
                     context,
-                    newTestSupabaseClient(),
-                    configIn(configured, logger),
+                    newTestSupabaseClient(logs = logger),
+                    configIn(configured),
                 )
 
             // Then — the configured database is used, the default one is untouched, and the app is
@@ -128,7 +127,7 @@ class OfflineClientPlacementAndroidTest {
                 assertEquals(0, client.pendingMutationCount())
                 assertTrue(defaultDatabase.exists())
                 assertTrue(
-                    logger.entriesAt(OfflineLogLevel.WARNING).isNotEmpty(),
+                    logger.entriesAt(EngineLogLevel.WARNING).isNotEmpty(),
                     "the left-behind database was not reported",
                 )
             } finally {

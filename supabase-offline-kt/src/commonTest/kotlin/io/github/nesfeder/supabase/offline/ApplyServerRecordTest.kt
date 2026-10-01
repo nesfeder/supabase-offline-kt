@@ -6,6 +6,8 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogSink
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -211,11 +213,11 @@ class ApplyServerRecordTest {
             payload = """[{"user_id":"u-1","period_id":"2026-P25"}]""",
         )
         val warnings = mutableListOf<String>()
-        val logger = OfflineLogger { level, message ->
-            if (level == OfflineLogLevel.WARNING) warnings += message
+        val logger = EngineLogSink { level, message ->
+            if (level == EngineLogLevel.WARNING) warnings += message
         }
         val client =
-            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, OfflineLogLevel.DEBUG))
+            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, EngineLogLevel.DEBUG))
 
         // When — the record lacks period_id
         client.applyServerRecord(
@@ -315,11 +317,11 @@ class ApplyServerRecordTest {
             payload = """[{"user_id":"u-1","period_id":"2026-P25"}]""",
         )
         val warnings = mutableListOf<String>()
-        val logger = OfflineLogger { level, message ->
-            if (level == OfflineLogLevel.WARNING) warnings += message
+        val logger = EngineLogSink { level, message ->
+            if (level == EngineLogLevel.WARNING) warnings += message
         }
         val client =
-            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, OfflineLogLevel.DEBUG))
+            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, EngineLogLevel.DEBUG))
 
         // When — the old record lacks period_id
         client.applyServerDelete(
@@ -360,7 +362,7 @@ class ApplyServerRecordTest {
 
     private fun buildClient(
         queryCacheDao: FakeQueryCacheDao,
-        engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+        engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     ): OfflineClient =
         newTestOfflineClient(
             store = newTestOfflineStore(queryCacheDao = queryCacheDao),

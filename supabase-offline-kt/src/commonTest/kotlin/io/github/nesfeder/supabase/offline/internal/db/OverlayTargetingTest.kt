@@ -4,7 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -22,7 +22,7 @@ import kotlinx.serialization.json.put
  */
 class OverlayTargetingTest {
 
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
     private val store =
         newTestOfflineStore(mutationDao = FakeMutationDao()).also {
             it.engineLogger = logger.asEngineLogger()

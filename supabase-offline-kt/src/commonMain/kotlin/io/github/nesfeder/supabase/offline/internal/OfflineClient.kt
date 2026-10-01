@@ -15,13 +15,13 @@ import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.OfflineInternal
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
@@ -86,7 +86,7 @@ internal class OfflineClient(
     override val supabaseClient: SupabaseClient,
     private val store: OfflineStore,
     private val baseDirectoryProvider: () -> Path,
-    private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     /**
      * Optional platform-agnostic connectivity hint (`true` = online). Its false→true edges (plus
      * the SDK-internal auth-session edges) accelerate a stalled `CacheFirstThenNetwork` refresh — a
@@ -142,7 +142,7 @@ internal class OfflineClient(
     private val parentScope: CoroutineScope = coordinatorScope
 
     /** Every call's pass through the client, so [close] never closes the database under one. */
-    private val operationGate = ClientOperationGate()
+    private val operationGate = ClientOperationGate(supabaseClient::isTransportClosed)
 
     /** Completed once the database is released: what every [close] waits for. */
     private val released = CompletableDeferred<Unit>()
@@ -333,8 +333,11 @@ internal class OfflineClient(
         }
     }
 
-    override fun from(table: String): OfflinePostgrestQueryBuilder =
-        from(supabaseClient.postgrest.config.defaultSchema, table)
+    override fun from(table: String): OfflinePostgrestQueryBuilder {
+        ensureOpen()
+        ensurePostgrestInstalled()
+        return from(supabaseClient.postgrest.config.defaultSchema, table)
+    }
 
     override fun from(schema: String, table: String): OfflinePostgrestQueryBuilder {
         ensureOpen()
@@ -370,7 +373,7 @@ internal class OfflineClient(
         request: RpcRequestBuilder.() -> Unit,
     ): PostgrestResult = operationGate.call {
         ensurePostgrestInstalled()
-        supabaseClient.postgrest.rpc(function, request)
+        supabaseClient.sendUnlessClosing { supabaseClient.postgrest.rpc(function, request) }
     }
 
     override suspend fun rpc(
@@ -379,7 +382,9 @@ internal class OfflineClient(
         request: RpcRequestBuilder.() -> Unit,
     ): PostgrestResult = operationGate.call {
         ensurePostgrestInstalled()
-        supabaseClient.postgrest.rpc(function, parameters, request)
+        supabaseClient.sendUnlessClosing {
+            supabaseClient.postgrest.rpc(function, parameters, request)
+        }
     }
 
     /** The session a read sent now goes out under; the identity is the mutation queue's own. */
@@ -405,10 +410,14 @@ internal class OfflineClient(
     /* ───────────────────────────── Sync APIs ───────────────────────────── */
 
     override suspend fun syncAllPendingMutations(): Int =
-        operationGate.cancellableCall(clientScope) { mutationQueueReplayer.syncAllTables() }
+        operationGate.cancellableCall(clientScope) {
+            ensurePostgrestInstalled()
+            mutationQueueReplayer.syncAllTables()
+        }
 
     override suspend fun syncPendingMutations(table: String): Int =
         operationGate.cancellableCall(clientScope) {
+            ensurePostgrestInstalled()
             mutationQueueReplayer.syncTable(table = table)
         }
 

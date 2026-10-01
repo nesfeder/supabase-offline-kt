@@ -44,7 +44,7 @@ class QueuedOutcomeTest {
         val queued = assertIs<MutationOutcome.Queued>(outcome).pendingMutation
         assertEquals(listOf(queued), offline.pendingMutations().first())
         assertEquals("todos", queued.table)
-        assertEquals(MutationOperation.Update, queued.operation)
+        assertEquals(MutationOperation.UPDATE, queued.operation)
         assertEquals(listOf(buildJsonObject { put("id", "t1") }), queued.rowKeys)
         assertEquals(buildJsonObject { put("done", true) }, queued.body)
         assertTrue(outcome.isQueued)
@@ -70,7 +70,7 @@ class QueuedOutcomeTest {
 
         // Then — one key for the row that carries it; none for the one that does not
         val queued = assertIs<MutationOutcome.Queued>(outcome).pendingMutation
-        assertEquals(MutationOperation.Insert, queued.operation)
+        assertEquals(MutationOperation.INSERT, queued.operation)
         assertEquals(listOf(buildJsonObject { put("id", "a") }), queued.rowKeys)
         assertEquals(listOf(queued), offline.pendingMutations().first())
     }

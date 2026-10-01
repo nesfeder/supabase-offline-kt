@@ -84,9 +84,13 @@ internal class RecordingBackendServer(val marker: String) {
         }
     }
 
-    /** A supabase-kt client with PostgREST and Storage whose requests reach this server. */
-    fun supabaseClient(): SupabaseClient =
-        newTestSupabaseClient(engine = engine) {
+    /**
+     * A supabase-kt client with PostgREST and Storage whose requests reach this server.
+     *
+     * @param logs records what the offline plugin logs through the client, from INFO up.
+     */
+    fun supabaseClient(logs: RecordingLogSink? = null): SupabaseClient =
+        newTestSupabaseClient(engine = engine, logs = logs) {
             install(Postgrest) { maxRetries = 0 }
             install(Storage) { resumable { cache = FakeResumableCache() } }
         }

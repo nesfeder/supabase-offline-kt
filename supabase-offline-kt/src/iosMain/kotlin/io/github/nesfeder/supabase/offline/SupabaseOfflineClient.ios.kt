@@ -6,6 +6,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.AccessTokenProvider
 import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Count
@@ -53,6 +54,11 @@ public object SupabaseFactory {
      * @param supabaseUrl Your Supabase URL (e.g. "https://abc.supabase.co")
      * @param supabaseAnonKey Anon/API key
      * @param accessTokenProvider Optional provider for access tokens
+     * @param offlineStoragePath Where the database and the cached files go; the platform's default
+     *   when `null`.
+     * @param cacheSizeBytes The query cache's bound; 100 MiB when `null`.
+     * @param logLevel The least severe level the library logs at, through supabase-kt's logging;
+     *   supabase-kt's default when `null`.
      * @throws IllegalStateException when another open client already uses the same database or data
      *   directory; other failures to open it (a full disk, an unreadable file) are thrown too.
      *   Swift receives each as a thrown error.
@@ -64,8 +70,7 @@ public object SupabaseFactory {
         accessTokenProvider: AccessTokenProvider? = null,
         offlineStoragePath: Path? = null,
         cacheSizeBytes: Long? = null,
-        logger: OfflineLogger? = null,
-        minLogLevel: OfflineLogLevel = OfflineLogLevel.INFO,
+        logLevel: LogLevel? = null,
     ): Offline {
         val supabase =
             createSupabaseClient(
@@ -79,8 +84,7 @@ public object SupabaseFactory {
         val config = Offline.createConfig {
             cacheSizeBytes?.let { this.cacheSizeBytes = it }
             dataDirectory = offlineStoragePath?.toString()
-            this.logger = logger
-            this.minLogLevel = minLogLevel
+            this.logLevel = logLevel
         }
         return openPlatformClient(supabase, config)
     }

@@ -10,14 +10,14 @@ package io.github.nesfeder.supabase.offline
  */
 public enum class MutationOperation {
     /** Adds rows (`POST`). */
-    Insert,
+    INSERT,
 
     /** Adds rows, or merges them into the rows they conflict with (`POST` with a resolution). */
-    Upsert,
+    UPSERT,
 
     /** Changes the rows a filter selects (`PATCH`). */
-    Update,
+    UPDATE,
 
     /** Removes the rows a filter selects (`DELETE`). */
-    Delete,
+    DELETE,
 }

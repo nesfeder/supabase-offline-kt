@@ -98,7 +98,7 @@ class MutationIdAndSyncReportTest {
                 PendingMutation(
                     id = insertId,
                     table = TABLE,
-                    operation = MutationQueueOperation.Insert,
+                    operation = MutationQueueOperation.INSERT,
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("a")),
                     body = rows("""[{"id":"a","title":"x"},{"title":"no key"}]"""),
@@ -106,7 +106,7 @@ class MutationIdAndSyncReportTest {
                 PendingMutation(
                     id = updateId,
                     table = TABLE,
-                    operation = MutationQueueOperation.Update,
+                    operation = MutationQueueOperation.UPDATE,
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("b")),
                     body = Json.parseToJsonElement("""{"done":true}"""),

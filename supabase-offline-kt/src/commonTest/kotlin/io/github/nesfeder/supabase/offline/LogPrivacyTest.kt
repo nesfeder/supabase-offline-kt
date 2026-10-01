@@ -4,7 +4,8 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
@@ -65,7 +66,7 @@ class LogPrivacyTest {
     private suspend fun visibleLogsOf(
         scenario: suspend (Offline, RecordingPostgrestServer) -> Unit
     ): List<String> {
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val client =
             newTestOfflineClient(
@@ -73,7 +74,7 @@ class LogPrivacyTest {
                 engineLogger = logger.asEngineLogger(),
             )
         scenario(client, server)
-        return logger.entries.filter { it.level != OfflineLogLevel.DEBUG }.map { it.message }
+        return logger.entries.filter { it.level != EngineLogLevel.DEBUG }.map { it.message }
     }
 
     /** Queues an INSERT carrying [EMAIL] offline, then replays it against [serverAnswer]. */

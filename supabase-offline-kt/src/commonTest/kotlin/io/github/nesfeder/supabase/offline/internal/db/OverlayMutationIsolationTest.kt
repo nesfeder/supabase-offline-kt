@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -94,7 +94,7 @@ class OverlayMutationIsolationTest {
     @Test
     fun the_store_logs_a_skipped_mutation_without_its_payload() = runTest {
         // Given — a store whose overlay meets a pending write it cannot apply
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
         store.engineLogger = logger.asEngineLogger()
@@ -106,7 +106,7 @@ class OverlayMutationIsolationTest {
         store.overlayCachedPayload("todos", "[]")
 
         // Then
-        val warning = logger.entriesAt(OfflineLogLevel.WARNING).single().message
+        val warning = logger.entriesAt(EngineLogLevel.WARNING).single().message
         assertTrue(warning.contains("todos"), warning)
         assertTrue(logger.entries.none { it.message.contains(PRIVATE_VALUE) })
     }
@@ -114,7 +114,7 @@ class OverlayMutationIsolationTest {
     @Test
     fun a_mutation_that_keeps_failing_is_logged_once_not_on_every_emission() = runTest {
         // Given
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
         store.engineLogger = logger.asEngineLogger()
@@ -126,7 +126,7 @@ class OverlayMutationIsolationTest {
         repeat(3) { store.overlayCachedPayload("todos", "[]") }
 
         // Then
-        assertEquals(1, logger.entriesAt(OfflineLogLevel.WARNING).size)
+        assertEquals(1, logger.entriesAt(EngineLogLevel.WARNING).size)
     }
 
     private fun overlayOf(

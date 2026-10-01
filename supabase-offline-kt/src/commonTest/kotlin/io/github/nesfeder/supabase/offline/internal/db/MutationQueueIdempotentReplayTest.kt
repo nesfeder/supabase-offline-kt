@@ -5,13 +5,13 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -211,7 +211,7 @@ class MutationQueueIdempotentReplayTest {
     @Test
     fun a_replay_whose_rows_were_already_on_the_server_is_synced_and_says_so() = runTest {
         // Given — the insert committed and its response was lost
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         builderOn(server).insert(rows("""[{"id":"t1","title":"Buy milk"}]"""))
@@ -228,7 +228,7 @@ class MutationQueueIdempotentReplayTest {
         // Then — synced once, and the count the server returned is logged without the row's values
         assertEquals(1, report.syncedCount)
         assertEquals(1, server.rows(TABLE).size)
-        val info = logger.entriesAt(OfflineLogLevel.INFO).map { it.message }
+        val info = logger.entriesAt(EngineLogLevel.INFO).map { it.message }
         assertTrue(info.any { "1 of 1 rows were already on the server" in it }, "got $info")
         assertTrue(info.none { "Buy milk" in it })
     }

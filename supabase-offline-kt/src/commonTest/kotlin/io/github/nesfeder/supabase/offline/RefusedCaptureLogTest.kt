@@ -4,8 +4,9 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -22,7 +23,7 @@ import kotlinx.serialization.json.Json
  */
 class RefusedCaptureLogTest {
 
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
     private val server = RecordingPostgrestServer(answer = { connectivityFailure() })
     private val builder =
         OfflineTable(
@@ -41,10 +42,10 @@ class RefusedCaptureLogTest {
         }
 
         // Then
-        val visible = logger.entries.filter { it.level >= OfflineLogLevel.INFO }.map { it.message }
+        val visible = logger.entries.filter { it.level >= EngineLogLevel.INFO }.map { it.message }
         assertTrue(visible.any { "cannot be captured exactly" in it }, "got $visible")
         assertTrue(visible.none { EMAIL in it }, "a filter value reached a visible log: $visible")
-        assertTrue(logger.entriesAt(OfflineLogLevel.DEBUG).any { EMAIL in it.message })
+        assertTrue(logger.entriesAt(EngineLogLevel.DEBUG).any { EMAIL in it.message })
     }
 
     @Test
@@ -55,7 +56,7 @@ class RefusedCaptureLogTest {
         }
 
         // Then
-        val visible = logger.entries.filter { it.level >= OfflineLogLevel.INFO }.map { it.message }
+        val visible = logger.entries.filter { it.level >= EngineLogLevel.INFO }.map { it.message }
         assertTrue(visible.none { EMAIL in it }, "a filter value reached a visible log: $visible")
     }
 

@@ -234,10 +234,11 @@ class MutationOutcomeTest {
     }
 
     @Test
-    fun update_connectivity_failure_with_uncapturable_filter_refuses_and_rethrows() = runTest {
+    fun update_connectivity_failure_with_uncapturable_filter_is_not_queued() = runTest {
         // Given — a queued UPDATE whose filter is a logical OR group, which the offline descriptor
-        // cannot capture faithfully. The strict-capture path must refuse to enqueue and rethrow the
-        // original transport failure instead of queuing an over-broad replay.
+        // cannot capture faithfully. The strict-capture path must refuse to enqueue, and report the
+        // transport failure as the cause of a not-queueable write, instead of queuing an
+        // over-broad replay.
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
         val builder =
@@ -251,7 +252,7 @@ class MutationOutcomeTest {
                 mutationDao = mutationDao,
             )
 
-        // When / Then — the original failure is rethrown and nothing is queued
+        // When / Then — not queueable, with the transport failure as its cause, and nothing queued
         assertNotQueueable<IOException> {
             builder.update(
                 body = buildJsonObject { put("retired_at", "2026-07-12T00:00:00Z") },

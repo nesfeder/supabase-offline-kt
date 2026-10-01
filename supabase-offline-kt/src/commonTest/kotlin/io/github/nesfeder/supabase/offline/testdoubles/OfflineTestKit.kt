@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.testdoubles
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.SupabaseClientBuilder
 import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.postgrest
@@ -13,7 +14,6 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.Offline
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
@@ -21,6 +21,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -119,11 +120,16 @@ internal fun newTestOfflineStore(
  * Builds a real supabase-kt client whose HTTP goes to [engine] instead of the network.
  *
  * @param engine the Ktor engine answering every request; by default one that answers `200 []`.
+ * @param logs records what the offline plugin logs through the client's logging, at [logLevel];
+ *   `null` leaves supabase-kt's default logging in place.
+ * @param logLevel the client's default log level while [logs] records.
  * @param plugins plugin installation; PostgREST by default. Pass `{}` for a client with none.
  * @return the client.
  */
 internal fun newTestSupabaseClient(
     engine: HttpClientEngine = MockEngine { respondOk("[]") },
+    logs: RecordingLogSink? = null,
+    logLevel: LogLevel = LogLevel.INFO,
     plugins: SupabaseClientBuilder.() -> Unit = { install(Postgrest) },
 ): SupabaseClient =
     createSupabaseClient(
@@ -131,6 +137,10 @@ internal fun newTestSupabaseClient(
         supabaseKey = TEST_SUPABASE_KEY,
     ) {
         httpEngine = engine
+        if (logs != null) {
+            defaultLogLevel = logLevel
+            defaultLoggingFactory = logs.supabaseLoggingFactory
+        }
         plugins()
     }
 
@@ -172,7 +182,7 @@ internal suspend fun OfflineStore.recordQueryShape(
  *   background work (refresh loops, replay passes it starts itself); pass `runTest`'s
  *   `backgroundScope` to drive it from the test scheduler. The default's handler logs a background
  *   failure to [engineLogger] instead of failing the test; build that logger from a
- *   [RecordingOfflineLogger] to see one.
+ *   [RecordingLogSink] to see one.
  * @param scrubDatabase what `clearLocalData` runs after the store's wipe, as the platforms' open
  *   paths wire the database's scrub.
  * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose
@@ -187,7 +197,7 @@ internal fun newTestOfflineClient(
     supabase: SupabaseClient = newTestSupabaseClient(),
     store: OfflineStore = newTestOfflineStore(),
     baseDirectoryProvider: () -> Path = { "/tmp".toPath() },
-    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     onClose: () -> Unit = {},
     coordinatorScope: CoroutineScope = newEngineScope(engineLogger),
     scrubDatabase: suspend () -> Unit = {},
@@ -225,7 +235,7 @@ internal fun newTestOfflineClient(
 internal fun newTestFileCache(
     baseDirectory: Path,
     store: OfflineStore = newTestOfflineStore(),
-    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     fileSystem: FileSystem = FileSystem.SYSTEM,
     maxSizeBytes: Long? = null,
     nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
@@ -259,7 +269,7 @@ internal fun newTestBucketApi(
     delegate: BucketApi,
     baseDirectory: Path,
     store: OfflineStore = newTestOfflineStore(),
-    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     cache: StorageFileCache =
         newTestFileCache(baseDirectory = baseDirectory, store = store, engineLogger = engineLogger),
     backgroundScope: CoroutineScope = newEngineScope(engineLogger),

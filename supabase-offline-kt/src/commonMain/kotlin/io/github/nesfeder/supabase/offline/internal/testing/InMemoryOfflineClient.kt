@@ -7,10 +7,10 @@ package io.github.nesfeder.supabase.offline.internal.testing
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
@@ -61,6 +61,6 @@ public fun createInMemorySupabaseOfflineClient(
                 nowMillis = nowMillis,
             ),
         baseDirectoryProvider = { IN_MEMORY_BASE_DIRECTORY.toPath() },
-        engineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+        engineLogger = EngineLogger(null, EngineLogLevel.INFO),
         coordinatorScope = coordinatorScope,
     )

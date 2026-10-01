@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.encodeToJsonElement
+import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.plugins.SupabasePlugin
 import io.github.jan.supabase.plugins.SupabasePluginProvider
 import io.github.jan.supabase.postgrest.Postgrest
@@ -47,6 +48,12 @@ import kotlinx.serialization.json.jsonObject
  * time: creating a second client with the plugin over the same data directory throws until the
  * first is closed. It is closed with the client ([SupabaseClient.close]), or on its own with
  * [close].
+ *
+ * Opening it touches the file system on the thread that calls `createSupabaseClient`: it claims the
+ * database, creates its directory, and may move a database left at the default location into
+ * [Config.dataDirectory]. Build the client off the main thread when that matters. Install the
+ * plugin last, as the examples do: when a plugin installed after it fails to set up, the client is
+ * never returned and the database stays claimed until the process ends.
  *
  * ### Android backups
  *
@@ -127,6 +134,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param function the function's name.
      * @param request the request: the HTTP method, a count, filters on the result.
      * @return the server's response.
+     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
     public suspend fun rpc(
         function: String,
@@ -141,6 +149,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param parameters the function's arguments, by name.
      * @param request the request: the HTTP method, a count, filters on the result.
      * @return the server's response.
+     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
     public suspend fun rpc(
         function: String,
@@ -165,6 +174,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * queue and kept on a rejected list, and the pass goes on.
      *
      * @return how many writes the server accepted.
+     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
     @Throws(Exception::class) public suspend fun syncAllPendingMutations(): Int
 
@@ -178,6 +188,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * @param table the table.
      * @return how many writes the server accepted.
+     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
     @Throws(Exception::class) public suspend fun syncPendingMutations(table: String): Int
 
@@ -185,6 +196,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * How many of the current user's writes wait in the mutation queue, in every table.
      *
      * @return the count.
+     * @throws IllegalStateException when the client is closed.
      */
     @Throws(Exception::class) public suspend fun pendingMutationCount(): Int
 
@@ -201,6 +213,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * @param table the table.
      * @return the count.
+     * @throws IllegalStateException when the client is closed.
      */
     @Throws(Exception::class) public suspend fun pendingMutationCount(table: String): Int
 
@@ -232,6 +245,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param record the row as the server sent it.
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
      *   as [Config.primaryKeys] gives it (`id` unless configured).
+     * @throws IllegalStateException when the client is closed.
      */
     public suspend fun applyServerRecord(
         table: String,
@@ -250,6 +264,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param oldRecord the deleted row's values, carrying at least its key.
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
      *   as [Config.primaryKeys] gives it (`id` unless configured).
+     * @throws IllegalStateException when the client is closed.
      */
     public suspend fun applyServerDelete(
         table: String,
@@ -274,13 +289,20 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * database is rewritten without them.
      *
      * The client stays usable afterwards.
+     *
+     * @throws IllegalStateException when the client is closed.
      */
     public suspend fun clearLocalData()
 
     /**
      * Closes the plugin and frees its database for another client. Nothing is deleted.
-     * [SupabaseClient.close] calls it, after supabase-kt has closed its HTTP client; call this
-     * first to let requests already on the wire answer.
+     *
+     * [SupabaseClient.close] calls it after supabase-kt has closed its HTTP client, and no request
+     * can be sent from then on. A call made in between, or one already running whose request had
+     * not gone out, ends as it would offline: a read the cache can answer is answered from it, a
+     * write the mutation queue holds returns [MutationOutcome.Queued], and anything else fails with
+     * the closed error below, never with a cancellation. A request already on the wire still
+     * answers. Call this before [SupabaseClient.close] to let the calls not yet sent go out.
      *
      * What ends, and when:
      * - At once, every new call fails with [IllegalStateException]: on the plugin, and on a
@@ -310,7 +332,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
     /**
      * How the plugin is set up, in `install(Offline) { … }`.
      *
-     * Every setting has a default that suits most apps; set only what you need.
+     * Every setting has a default that suits most apps; set only what you need. The plugin reads
+     * the configuration once, when the client is created: changing `supabase.offline.config`
+     * afterwards has no effect.
      */
     public class Config internal constructor() {
 
@@ -347,14 +371,14 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         public var dataDirectory: String? = null
 
         /**
-         * The app's own connectivity signal, `true` while the device is online.
+         * The app's own connectivity signal, `true` while the device is online, or `null` (the
+         * default) for none.
          *
-         * Today the plugin uses it only to retry the refresh of a reactive read at once when the
-         * signal turns online, instead of waiting out its backoff. A later release watches
-         * connectivity itself, uses this signal in place of its own when set, and sends queued
-         * writes when the network comes back; until then it is experimental. `null` by default.
+         * When it turns `true`, a reactive read whose refresh is waiting out its backoff tries
+         * again at once. It is a hint, never a gate: a request is tried whenever the app makes one,
+         * whatever the signal says.
          */
-        @OfflineExperimental public var networkAvailability: Flow<Boolean>? = null
+        public var networkAvailability: Flow<Boolean>? = null
 
         /**
          * Whether the plugin sends queued writes by itself, without the app calling
@@ -396,13 +420,13 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         public var responseTrust: ResponseTrust = ResponseTrust.SettledSession
 
         /**
-         * Where the plugin's log messages go, or `null` (the default) for nowhere. Messages at
-         * [OfflineLogLevel.INFO] and above never carry rows, filter values or tokens.
+         * The least severe level the plugin logs at. Its messages go through supabase-kt's own
+         * logging: to the logging processor the client was built with (`defaultLoggingFactory` in
+         * `createSupabaseClient`), tagged `Supabase-Offline`. `null`, the default, uses the
+         * client's `defaultLogLevel`, as supabase-kt's own plugins do. Messages at [LogLevel.INFO]
+         * and above never carry rows, filter values or tokens; [LogLevel.DEBUG] may.
          */
-        public var logger: OfflineLogger? = null
-
-        /** The least severe level [logger] receives; [OfflineLogLevel.INFO] by default. */
-        public var minLogLevel: OfflineLogLevel = OfflineLogLevel.INFO
+        public var logLevel: LogLevel? = null
 
         /** Opens the plugin's local data: the platform's database, unless a test replaces it. */
         internal var openLocalData: (SupabaseClient, Config) -> OfflineClient = ::openPlatformClient
@@ -464,6 +488,7 @@ public val SupabaseClient.offline: Offline
  * @param parameters the function's arguments, an object that encodes to a JSON object.
  * @param request the request: the HTTP method, a count, filters on the result.
  * @return the server's response.
+ * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
  */
 public suspend inline fun <reified T : Any> Offline.rpc(
     function: String,
@@ -483,6 +508,7 @@ public suspend inline fun <reified T : Any> Offline.rpc(
  * @param table the table, in the client's default schema.
  * @param record the row, an object that encodes to a JSON object.
  * @param primaryKeys the columns that identify the row, or `null` for the table's primary key.
+ * @throws IllegalStateException when the client is closed.
  */
 public suspend inline fun <reified T : Any> Offline.applyServerRecord(
     table: String,

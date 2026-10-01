@@ -6,9 +6,10 @@ import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
@@ -41,7 +42,7 @@ class OfflineMutationQueueDecisionTest {
 
     private val server = RecordingPostgrestServer()
     private val mutationDao = FakeMutationDao()
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
     private val builder =
         OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -308,11 +309,11 @@ class OfflineMutationQueueDecisionTest {
     /**
      * Inverted: an UPDATE with no filter used to be queued and then refused and dropped at replay,
      * so the caller was told "queued" for a write that would never be sent. It is now refused at
-     * enqueue, like any other write the queue cannot replay faithfully, and the original failure is
-     * rethrown.
+     * enqueue, like any other write the queue cannot replay faithfully: sent at once, and a
+     * connectivity failure throws `MutationNotQueueableException` with that failure as its cause.
      */
     @Test
-    fun an_unfiltered_update_is_refused_for_queueing_and_rethrows() = runTest {
+    fun an_unfiltered_update_is_not_queued_and_reports_why() = runTest {
         // Given
         failWithConnectivity()
 
@@ -328,7 +329,7 @@ class OfflineMutationQueueDecisionTest {
      * enqueue instead of being queued and dropped at replay.
      */
     @Test
-    fun an_unfiltered_delete_is_refused_for_queueing_and_rethrows() = runTest {
+    fun an_unfiltered_delete_is_not_queued_and_reports_why() = runTest {
         // Given
         failWithConnectivity()
 
@@ -338,7 +339,7 @@ class OfflineMutationQueueDecisionTest {
     }
 
     @Test
-    fun a_filter_the_queue_cannot_capture_refuses_to_queue_and_rethrows_the_failure() = runTest {
+    fun a_filter_the_queue_cannot_capture_is_not_queued_and_reports_why() = runTest {
         // Given — a connectivity failure, and a logical group the stored filter cannot represent
         failWithConnectivity()
 
@@ -366,13 +367,13 @@ class OfflineMutationQueueDecisionTest {
 
         // Then — the queue is reported at INFO, the row data only at DEBUG
         assertTrue(
-            logger.entriesAt(OfflineLogLevel.INFO).any {
+            logger.entriesAt(EngineLogLevel.INFO).any {
                 it.message == "INSERT $TABLE queued offline (network unavailable)"
             }
         )
         assertTrue(
             logger.entries
-                .filter { it.level != OfflineLogLevel.DEBUG }
+                .filter { it.level != EngineLogLevel.DEBUG }
                 .none { it.message.contains(SECRET_VALUE) },
             "row data must never be logged above DEBUG",
         )

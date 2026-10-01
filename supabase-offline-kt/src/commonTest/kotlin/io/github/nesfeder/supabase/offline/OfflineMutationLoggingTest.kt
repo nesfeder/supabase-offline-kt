@@ -3,8 +3,9 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -23,7 +24,7 @@ import kotlinx.serialization.json.JsonArray
 class OfflineMutationLoggingTest {
 
     private val server = RecordingPostgrestServer(answer = { okJson(RESPONSE) })
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
     private val builder =
         OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -31,7 +32,7 @@ class OfflineMutationLoggingTest {
             engineLogger = logger.asEngineLogger(),
         )
 
-    private fun messagesAt(level: OfflineLogLevel): List<String> =
+    private fun messagesAt(level: EngineLogLevel): List<String> =
         logger.entriesAt(level).map { it.message }
 
     // ─────────────────────────── Success ───────────────────────────
@@ -46,9 +47,9 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("INSERT $TABLE request body: $ROWS", "INSERT $TABLE response: $RESPONSE"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.INFO))
     }
 
     @Test
@@ -61,9 +62,9 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("UPSERT $TABLE request body: $ROWS", "UPSERT $TABLE response: $RESPONSE"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.INFO))
     }
 
     @Test
@@ -76,9 +77,9 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("UPDATE $TABLE request body: $PATCH", "UPDATE $TABLE response: $RESPONSE"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.INFO))
     }
 
     @Test
@@ -91,9 +92,9 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("DELETE $TABLE attempting network", "DELETE $TABLE response: $RESPONSE"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.INFO))
     }
 
     // ─────────────────────────── Queued offline ───────────────────────────
@@ -109,7 +110,7 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("INSERT $TABLE queued offline (network unavailable)"),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 
@@ -124,7 +125,7 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("UPSERT $TABLE queued offline (network unavailable)"),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 
@@ -139,7 +140,7 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("UPDATE $TABLE queued offline (network unavailable)"),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 
@@ -154,7 +155,7 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("DELETE $TABLE queued offline (network unavailable)"),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 

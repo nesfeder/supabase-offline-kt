@@ -4,7 +4,6 @@
 
 package io.github.nesfeder.supabase.offline.internal.cache
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
@@ -21,6 +20,7 @@ import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.db.staleStampOf
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -242,7 +242,7 @@ internal class OfflineStore(
      * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
      * cannot apply). Wired by the client, like [liveCacheKeysOf]; silent when built directly.
      */
-    internal var engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO)
+    internal var engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO)
 
     /** The mutation queue's record kept beside the rows: the rejected list. */
     internal val rejectedList: RejectedMutationList =
