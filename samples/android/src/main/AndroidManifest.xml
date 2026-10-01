@@ -5,10 +5,13 @@
     <!-- To know when the network comes and goes. The photo picker needs no media permission. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Nothing to back up: the server holds every task, and the cache rebuilds from it. -->
+    <!-- Nothing to back up: the server holds every task, and the cache rebuilds from it.
+         The extraction rules cover Android 12 and later, the backup rules the versions before. -->
     <application
         android:name=".OfflineTasksApplication"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"

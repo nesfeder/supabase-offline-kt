@@ -11,6 +11,9 @@ import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
+import androidx.core.net.toUri
 import androidx.exifinterface.media.ExifInterface
 import io.github.nesfeder.supabase.offline.sample.data.EncodedPhoto
 import io.github.nesfeder.supabase.offline.sample.data.PHOTO_MAX_BYTES
@@ -37,7 +40,7 @@ private const val SHRINK_FACTOR = 0.75f
  */
 class JpegPhotoEncoder(private val contentResolver: ContentResolver) : PhotoEncoder {
 
-    override suspend fun encode(contentUri: String): EncodedPhoto = encode(Uri.parse(contentUri))
+    override suspend fun encode(contentUri: String): EncodedPhoto = encode(contentUri.toUri())
 
     /**
      * Reads and re-encodes the image at [uri], off the main thread.
@@ -104,7 +107,7 @@ class JpegPhotoEncoder(private val contentResolver: ContentResolver) : PhotoEnco
     /** A JPEG has no transparency, so a transparent image is laid on white, not black. */
     private fun Bitmap.onWhite(): Bitmap {
         if (!hasAlpha()) return this
-        val opaque = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val opaque = createBitmap(width, height)
         Canvas(opaque).apply {
             drawColor(Color.WHITE)
             drawBitmap(this@onWhite, 0f, 0f, null)
@@ -119,10 +122,8 @@ class JpegPhotoEncoder(private val contentResolver: ContentResolver) : PhotoEnco
         }
 
     private fun Bitmap.scaledBy(factor: Float): Bitmap =
-        Bitmap.createScaledBitmap(
-            this,
+        scale(
             (width * factor).roundToInt().coerceAtLeast(1),
             (height * factor).roundToInt().coerceAtLeast(1),
-            true,
         )
 }

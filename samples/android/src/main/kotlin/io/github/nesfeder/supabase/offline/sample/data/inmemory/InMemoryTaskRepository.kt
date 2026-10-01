@@ -35,13 +35,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -102,24 +101,24 @@ class InMemoryTaskRepository(
                     if (seedSampleTasks) sampleTasks(firstUserId, clock.now(), newId)
                     else emptyList()
             )
+    }
+
+    private val publishedSyncStatus = MutableStateFlow(state.value.toSyncStatus())
+    private val publishedServerOutage = MutableStateFlow(state.value.serverOutage)
+
+    // Published as each change is made, so `value` is current the moment a write returns.
+    override val syncStatus: StateFlow<SyncStatus> = publishedSyncStatus.asStateFlow()
+
+    override val isServerOutage: StateFlow<Boolean> = publishedServerOutage.asStateFlow()
+
+    init {
+        // Last: the watcher may run at once, on another thread, and needs every field above.
         scope.launch {
             networkAvailability.distinctUntilChanged().collect { online ->
                 changeNetwork { it.copy(deviceOnline = online) }
             }
         }
     }
-
-    override val syncStatus: StateFlow<SyncStatus> =
-        state
-            .map { it.toSyncStatus() }
-            .distinctUntilChanged()
-            .stateIn(scope, SharingStarted.Eagerly, state.value.toSyncStatus())
-
-    override val isServerOutage: StateFlow<Boolean> =
-        state
-            .map { it.serverOutage }
-            .distinctUntilChanged()
-            .stateIn(scope, SharingStarted.Eagerly, state.value.serverOutage)
 
     override fun tasks(): Flow<TaskListSnapshot> =
         observe { it.taskSnapshot(rows = { true }, writes = { true }) }
@@ -238,7 +237,7 @@ class InMemoryTaskRepository(
         state.map { it.rejected }.distinctUntilChanged()
 
     override suspend fun dismissRejectedMutation(id: Long) {
-        state.update { it.withoutRejection(id) }
+        updateState { it.withoutRejection(id) }
     }
 
     override suspend fun retryRejectedMutation(id: Long) {
@@ -277,7 +276,7 @@ class InMemoryTaskRepository(
     override suspend fun clearLocalData() {
         detached {
             writeLock.withLock {
-                state.update { it.cleared(userId = it.userId) }
+                updateState { it.cleared(userId = it.userId) }
                 photoFiles.deleteAll()
             }
             refreshFromServer(force = true)
@@ -287,10 +286,22 @@ class InMemoryTaskRepository(
     override suspend fun startOver() {
         detached {
             writeLock.withLock {
-                state.update { it.cleared(userId = newId()) }
+                updateState { it.cleared(userId = newId()) }
                 photoFiles.deleteAll()
             }
             refreshFromServer(force = true)
+        }
+    }
+
+    /** Applies [change] to the device state, then publishes the values derived from it. */
+    private fun updateState(change: (DeviceState) -> DeviceState) {
+        state.update(change)
+        // Until the state stops moving under it, so the last publisher always leaves it current.
+        while (true) {
+            val current = state.value
+            publishedSyncStatus.value = current.toSyncStatus()
+            publishedServerOutage.value = current.serverOutage
+            if (state.value === current) return
         }
     }
 
@@ -322,7 +333,7 @@ class InMemoryTaskRepository(
 
     private fun enqueue(build: (mutationId: Long) -> QueuedMutation): QueuedMutation {
         lateinit var queued: QueuedMutation
-        state.update { current ->
+        updateState { current ->
             queued = build(current.nextMutationId)
             current.copy(queue = current.queue + queued, nextMutationId = current.nextMutationId + 1)
         }
@@ -340,7 +351,7 @@ class InMemoryTaskRepository(
         if (state.value.queue.isEmpty() || !state.value.canReachServer) {
             return SyncReport(0, emptyList(), state.value.queue.size)
         }
-        state.update { it.copy(isSyncing = true) }
+        updateState { it.copy(isSyncing = true) }
         var synced = 0
         val rejected = mutableListOf<RejectedMutation>()
         var stoppedBy: Throwable? = null
@@ -359,7 +370,7 @@ class InMemoryTaskRepository(
                 }
             }
         } finally {
-            state.update { current ->
+            updateState { current ->
                 val finishedClean = stoppedBy == null && current.queue.isEmpty()
                 current.copy(
                     isSyncing = false,
@@ -381,7 +392,7 @@ class InMemoryTaskRepository(
             }
             when (val answer = server.apply(current.userId, head, clock.now())) {
                 is ServerAnswer.Accepted -> {
-                    state.update { it.accepted(head, answer.row) }
+                    updateState { it.accepted(head, answer.row) }
                     ReplayStep.Accepted
                 }
                 is ServerAnswer.Refused -> {
@@ -396,7 +407,7 @@ class InMemoryTaskRepository(
                             message = answer.error.message,
                             rejectedAt = clock.now(),
                         )
-                    state.update { it.refused(head, rejection) }
+                    updateState { it.refused(head, rejection) }
                     ReplayStep.Refused(rejection)
                 }
             }
@@ -409,16 +420,16 @@ class InMemoryTaskRepository(
             val start = state.value
             if (!force && start.confirmedByServer && start.cache != null) return
             if (start.network != NetworkStatus.Online) return
-            state.update { it.copy(refresh = RefreshState.Refreshing) }
+            updateState { it.copy(refresh = RefreshState.Refreshing) }
             delay(latency)
             writeLock.withLock {
                 val current = state.value
                 when {
                     current.userId != start.userId -> Unit
                     current.network != NetworkStatus.Online ->
-                        state.update { it.copy(refresh = RefreshState.Paused) }
+                        updateState { it.copy(refresh = RefreshState.Paused) }
                     current.serverOutage ->
-                        state.update {
+                        updateState {
                             it.copy(
                                 refresh = RefreshState.Stalled(ServerUnreachableException()),
                                 confirmedByServer = false,
@@ -426,7 +437,7 @@ class InMemoryTaskRepository(
                         }
                     else -> {
                         val rows = server.rowsOf(current.userId)
-                        state.update {
+                        updateState {
                             it.copy(
                                 cache = rows,
                                 fetchedAt = clock.now(),
@@ -445,7 +456,7 @@ class InMemoryTaskRepository(
     /** Applies a change to the network facts, then catches up if the server just came in reach. */
     private fun changeNetwork(change: (DeviceState) -> DeviceState) {
         var reachedServer = false
-        state.update { current ->
+        updateState { current ->
             val next = change(current).withRefreshForNetwork()
             reachedServer = !current.canReachServer && next.canReachServer
             next

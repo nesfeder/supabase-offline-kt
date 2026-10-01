@@ -179,9 +179,11 @@ fun TasksScreen(
         },
         floatingActionButton = {
             SharedBounds(SharedKeys.NEW_TASK) {
+                val label = stringResource(R.string.new_task)
                 MediumExtendedFloatingActionButton(
-                    text = { Text(stringResource(R.string.new_task)) },
-                    icon = { Icon(painterResource(R.drawable.ic_add), contentDescription = null) },
+                    text = { Text(label) },
+                    // The label leaves the accessibility tree with the text, so the icon names it.
+                    icon = { Icon(painterResource(R.drawable.ic_add), contentDescription = label) },
                     onClick = onNewTask,
                     expanded = listState.isScrollingUp(),
                 )
