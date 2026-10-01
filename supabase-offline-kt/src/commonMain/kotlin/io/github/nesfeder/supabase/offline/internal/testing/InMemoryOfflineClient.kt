@@ -5,9 +5,9 @@
 package io.github.nesfeder.supabase.offline.internal.testing
 
 import io.github.jan.supabase.SupabaseClient
+import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
@@ -18,9 +18,9 @@ import kotlinx.coroutines.CoroutineScope
 import okio.Path.Companion.toPath
 
 /**
- * Builds a fully in-memory [SupabaseOfflineClient] backed by non-persistent DAOs — no Room, no
- * platform database driver, no filesystem — so it runs deterministically in `commonTest` across
- * every target.
+ * Builds a fully in-memory [Offline] client backed by non-persistent DAOs — no Room, no platform
+ * database driver, no filesystem — so it runs deterministically in `commonTest` across every
+ * target.
  *
  * The client is wired exactly like the production one (real [OfflineClient] over a real
  * [OfflineStore]); only the storage substrate is swapped for in-memory maps that mirror Room's
@@ -44,9 +44,9 @@ public fun createInMemorySupabaseOfflineClient(
     supabase: SupabaseClient,
     coordinatorScope: CoroutineScope,
     nowMillis: () -> Long = { 0L },
-): SupabaseOfflineClient =
+): Offline =
     OfflineClient(
-        supabase = supabase,
+        supabaseClient = supabase,
         store =
             OfflineStore(
                 queryCacheDao = InMemoryQueryCacheDao(),

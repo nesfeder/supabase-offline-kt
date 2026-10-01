@@ -1,5 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:Suppress("DEPRECATION", "TYPEALIAS_EXPANSION_DEPRECATION")
 @file:OptIn(ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
@@ -7,8 +8,8 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
+import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
@@ -48,8 +49,7 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /** The platform factory, as the scenarios call it. */
-internal typealias OpenOfflineClient =
-    (SupabaseClient, SupabaseOfflineConfig) -> SupabaseOfflineClient
+internal typealias OpenOfflineClient = (SupabaseClient, SupabaseOfflineConfig) -> Offline
 
 /**
  * `close()` racing the calls it must not close the database under, over a real database opened by a
@@ -90,7 +90,7 @@ internal object ClientCloseRaces {
             val clearStartsFirst = iteration % 2 == 0
             val clear = async {
                 if (!clearStartsFirst) delay(lead)
-                runCatching { client.clearAllCache() }
+                runCatching { client.clearLocalData() }
             }
             val close = async {
                 if (clearStartsFirst) delay(lead)
@@ -195,7 +195,7 @@ internal object ClientCloseRaces {
         val client = openClient(server.supabaseClient(), configIn(directory))
         fill(client, server)
         server.online.store(true)
-        val bucket = client.storage(BUCKET)
+        val bucket = client.storage.from(BUCKET)
         val pendingCount = client.pendingMutationCountFlow()
         val downloadsBefore = server.storageArrived.value
 
@@ -306,7 +306,7 @@ internal object ClientCloseRaces {
 
     /**
      * The logout sequence an app runs, [iterations] times across every read strategy: a screen
-     * still observing a read, then `clearAllCache()` and `close()` back to back. The clear re-runs
+     * still observing a read, then `clearLocalData()` and `close()` back to back. The clear re-runs
      * the live read; the read ends with the closed error, nothing of the user is left, and the
      * database reopens at once.
      */
@@ -341,7 +341,7 @@ internal object ClientCloseRaces {
             server.online.store(false)
 
             // When — the app logs out
-            client.clearAllCache()
+            client.clearLocalData()
             client.close()
 
             // Then
@@ -364,16 +364,16 @@ internal object ClientCloseRaces {
     /**
      * Cached rows, a downloaded file and a write queued offline, each carrying the server's marker.
      */
-    private suspend fun fill(client: SupabaseOfflineClient, server: RecordingBackendServer) {
+    private suspend fun fill(client: Offline, server: RecordingBackendServer) {
         server.online.store(true)
         repeat(10) { index -> client.from(TABLE).select { filter { eq("id", index) } } }
-        client.storage(BUCKET).downloadAuthenticated("u-1/me.png") {}
+        client.storage.from(BUCKET).downloadAuthenticated("u-1/me.png") {}
         server.online.store(false)
         client.from(TABLE).insert(keylessRow(server.marker))
     }
 
     /** Waits, bounded, until [client] refuses new calls: `close()` has begun. */
-    private suspend fun awaitRefusingCalls(client: SupabaseOfflineClient) {
+    private suspend fun awaitRefusingCalls(client: Offline) {
         withTimeout(5.seconds) {
             while (runCatching { client.from(TABLE) }.isSuccess) delay(1)
         }

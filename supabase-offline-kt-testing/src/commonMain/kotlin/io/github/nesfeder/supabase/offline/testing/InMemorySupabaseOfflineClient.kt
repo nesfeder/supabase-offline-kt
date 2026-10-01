@@ -3,15 +3,15 @@
 package io.github.nesfeder.supabase.offline.testing
 
 import io.github.jan.supabase.SupabaseClient
+import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.internal.testing.createInMemorySupabaseOfflineClient
 import kotlinx.coroutines.CoroutineScope
 
 /**
- * Builds a fully in-memory [SupabaseOfflineClient] backed by non-persistent storage — no Room, no
- * platform database driver, no filesystem — so it runs deterministically in `commonTest` across
- * every target.
+ * Builds a fully in-memory [Offline] client backed by non-persistent storage — no Room, no platform
+ * database driver, no filesystem — so it runs deterministically in `commonTest` across every
+ * target.
  *
  * The client is wired exactly like the production one; only the storage substrate is swapped for
  * in-memory maps that mirror Room's per-table invalidation semantics. Size-based eviction is
@@ -32,7 +32,7 @@ public fun buildInMemorySupabaseOfflineClient(
     supabase: SupabaseClient,
     coordinatorScope: CoroutineScope,
     nowMillis: () -> Long = { 0L },
-): SupabaseOfflineClient =
+): Offline =
     createInMemorySupabaseOfflineClient(
         supabase = supabase,
         coordinatorScope = coordinatorScope,

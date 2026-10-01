@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:Suppress("DEPRECATION")
+
 package io.github.nesfeder.supabase.offline.internal.db
 
 import android.content.Context
@@ -9,9 +11,9 @@ import com.sun.management.OperatingSystemMXBean
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
+import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.ReadStrategy
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.createSupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -445,7 +447,7 @@ class ReadPathCostAndroidTest {
 
     private suspend fun withClient(
         storage: File = directory,
-        block: suspend (SupabaseOfflineClient) -> Unit,
+        block: suspend (Offline) -> Unit,
     ) {
         val client =
             createSupabaseOfflineClient(

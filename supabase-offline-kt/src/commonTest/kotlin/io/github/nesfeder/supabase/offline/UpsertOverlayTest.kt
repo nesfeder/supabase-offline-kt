@@ -31,9 +31,9 @@ class UpsertOverlayTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
 
-    private var client: SupabaseOfflineClient = newClient()
+    private var client: Offline = newClient()
 
-    private fun newClient(primaryKeys: PrimaryKeys = DefaultPrimaryKeys): SupabaseOfflineClient =
+    private fun newClient(primaryKeys: PrimaryKeys = DefaultPrimaryKeys): Offline =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
             store = newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao),

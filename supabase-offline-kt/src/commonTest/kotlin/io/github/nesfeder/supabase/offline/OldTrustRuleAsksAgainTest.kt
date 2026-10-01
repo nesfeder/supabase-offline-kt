@@ -141,7 +141,7 @@ class OldTrustRuleAsksAgainTest {
         // Given — A signed in, and A's read held on the wire
         val sessions = MemorySessionManager()
         val client = launchClient(newServer(), sessions, restoresStoredSession = false)
-        client.supabase.signInForTest("A")
+        client.supabaseClient.signInForTest("A")
         runCurrent()
         val held = CompletableDeferred<Unit>()
         heldRead = held
@@ -151,7 +151,7 @@ class OldTrustRuleAsksAgainTest {
         runCurrent()
 
         // When — B signs in, then A's answer arrives
-        client.supabase.signInForTest("B")
+        client.supabaseClient.signInForTest("B")
         runCurrent()
         held.complete(Unit)
         advanceTimeBy(5.seconds)

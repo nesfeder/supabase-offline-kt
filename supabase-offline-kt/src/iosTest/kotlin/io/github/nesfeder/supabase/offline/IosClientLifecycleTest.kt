@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:Suppress("DEPRECATION")
+
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
@@ -121,7 +123,7 @@ class IosClientLifecycleTest {
         // Given
         createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { client ->
             // When — the clear deletes and re-creates the cache directories
-            client.clearAllCache()
+            client.clearLocalData()
 
             // Then
             assertTrue(

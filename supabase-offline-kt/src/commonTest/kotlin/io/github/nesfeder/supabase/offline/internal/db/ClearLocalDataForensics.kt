@@ -1,10 +1,12 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:Suppress("DEPRECATION")
+
 package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.sqlite.execSQL
 import io.github.jan.supabase.SupabaseClient
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
+import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -67,7 +69,7 @@ internal data class ClearLocalDataForensics(
  */
 internal suspend fun runClearLocalDataForensics(
     directory: Path,
-    openClient: (SupabaseClient, SupabaseOfflineConfig) -> SupabaseOfflineClient,
+    openClient: (SupabaseClient, SupabaseOfflineConfig) -> Offline,
 ): ClearLocalDataForensics {
     val marker = "MARKER${Random.nextLong().toULong().toString(16)}"
     val padding = "lorem ".repeat(60)
@@ -131,7 +133,7 @@ internal suspend fun runClearLocalDataForensics(
         coroutineScope {
             val observer =
                 launch(Dispatchers.Default) { runCatching { profiles.selectAsFlow().collect {} } }
-            client.clearAllCache()
+            client.clearLocalData()
             observer.cancelAndJoin()
         }
 

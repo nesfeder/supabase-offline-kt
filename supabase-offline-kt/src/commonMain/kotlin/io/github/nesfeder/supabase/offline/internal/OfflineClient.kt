@@ -9,13 +9,16 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder
+import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.storage
+import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
+import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
+import io.github.nesfeder.supabase.offline.OfflineStorage
 import io.github.nesfeder.supabase.offline.PendingMutation
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
@@ -74,12 +77,13 @@ import kotlinx.serialization.json.JsonPrimitive
 import okio.Path
 
 /**
- * Internal implementation of [SupabaseOfflineClient]. Handles wiring of [OfflineStore] and
- * [OfflinePostgrestQueryBuilder].
+ * The client behind [Offline]: one database's cache, mutation queue and Storage file cache, serving
+ * one [SupabaseClient]. It wires the store, the table engines, the replayer and the file cache, and
+ * owns their lifecycle through its operation gate.
  */
-@OptIn(SupabaseInternal::class)
+@OptIn(SupabaseInternal::class, OfflineInternal::class)
 internal class OfflineClient(
-    override val supabase: SupabaseClient,
+    override val supabaseClient: SupabaseClient,
     private val store: OfflineStore,
     private val baseDirectoryProvider: () -> Path,
     private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
@@ -97,7 +101,7 @@ internal class OfflineClient(
      */
     coordinatorScope: CoroutineScope = newEngineScope(engineLogger),
     /** Size bound of the Storage file cache in bytes, or `null` for none. */
-    fileCacheMaxBytes: Long? = SupabaseOfflineConfig.DEFAULT_FILE_CACHE_SIZE_BYTES,
+    fileCacheMaxBytes: Long? = Offline.DEFAULT_FILE_CACHE_SIZE_BYTES,
     /**
      * Whether to create the file cache's directories now and exclude them from backups. The
      * platform factories do; tests and the in-memory client, whose data directory is not theirs to
@@ -105,8 +109,8 @@ internal class OfflineClient(
      */
     prepareFileCacheDirectories: Boolean = false,
     /**
-     * Rewrites the database without the rows [clearAllCache] deleted, so none can be read back from
-     * its files. The factories pass the database's own; the in-memory store has no files.
+     * Rewrites the database without the rows [clearLocalData] deleted, so none can be read back
+     * from its files. The factories pass the database's own; the in-memory store has no files.
      */
     private val scrubDatabase: suspend () -> Unit = {},
     /** Releases what the factory opened — the database and its registration — on [close]. */
@@ -121,7 +125,9 @@ internal class OfflineClient(
     private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
     /** Which read responses may replace what the cache holds; see [ResponseTrustPolicy]. */
     private val responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
-) : SupabaseOfflineClient {
+    /** The configuration the client was opened with, as [Offline.config] reports it. */
+    override val config: Offline.Config = Offline.Config(),
+) : Offline {
 
     /**
      * Where everything the client starts runs: a child of the injected scope, on its dispatcher.
@@ -154,7 +160,7 @@ internal class OfflineClient(
     private val readShapePostgrest = MutableStateFlow<Postgrest?>(null)
 
     /** Where [storage]'s buckets see an image transform's requests go; resolved on first use. */
-    private val renderImagePath: String by lazy { renderImagePathOf(supabase) }
+    private val renderImagePath: String by lazy { renderImagePathOf(supabaseClient) }
 
     /** The Storage file cache every bucket of this client shares. */
     private val fileCache =
@@ -168,7 +174,7 @@ internal class OfflineClient(
     private val mutationQueueReplayer =
         MutationQueueReplayer(
             store,
-            supabase,
+            supabaseClient,
             engineLogger = engineLogger,
             primaryKeys = primaryKeys,
         )
@@ -196,7 +202,8 @@ internal class OfflineClient(
      * SDK-internal recovery accelerator merging auth-session-restored and connectivity-regained
      * edges. Forwarded to every builder to short-circuit a stalled refresh's backoff.
      */
-    private val wakeUps: Flow<Unit> = refreshWakeUps(supabase, networkAvailability, responseTrust)
+    private val wakeUps: Flow<Unit> =
+        refreshWakeUps(supabaseClient, networkAvailability, responseTrust)
 
     /** The identity the overlay and counts are for, read once per session status. */
     private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
@@ -230,14 +237,14 @@ internal class OfflineClient(
         store.onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) }
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
         // and not added while requests may be walking it.
-        supabase.installDryRunCheck()
-        supabase.installReadShapeCheck()
-        supabase.installTransportFailureCapture()
+        supabaseClient.installDryRunCheck()
+        supabaseClient.installReadShapeCheck()
+        supabaseClient.installTransportFailureCapture()
         replayWhenTheSessionSettles()
         keepCacheWithTheSession()
     }
 
-    private fun authPluginOrNull(): Auth? = supabase.pluginManager.getPluginOrNull(Auth)
+    private fun authPluginOrNull(): Auth? = supabaseClient.pluginManager.getPluginOrNull(Auth)
 
     /** Emits whenever the session status changes; once, without the Auth plugin. */
     private fun sessionChanges(): Flow<Any?> = authPluginOrNull()?.sessionStatus ?: flowOf(Unit)
@@ -251,7 +258,7 @@ internal class OfflineClient(
         overlayIdentity.value?.let { (cachedStatus, identity) ->
             if (cachedStatus == status) return identity
         }
-        val identity = supabase.currentQueueIdentity()?.storedValue
+        val identity = supabaseClient.currentQueueIdentity()?.storedValue
         overlayIdentity.value = status to identity
         return identity
     }
@@ -300,10 +307,10 @@ internal class OfflineClient(
     /**
      * Makes the cache [identity]'s. A cache no identity owns is adopted by a user, and by nobody
      * signed in while it holds nothing; anything else another identity cached is dropped — the
-     * cached queries and the Storage file cache, never the mutation queue — under [clearAllCache]'s
-     * locks in its order, and live queries fetch again. A crash after the rows are dropped and
-     * before the files are deleted leaves those files on disk with no row: no call reaches them,
-     * and the next clear or drop deletes them.
+     * cached queries and the Storage file cache, never the mutation queue — under
+     * [clearLocalData]'s locks in its order, and live queries fetch again. A crash after the rows
+     * are dropped and before the files are deleted leaves those files on disk with no row: no call
+     * reaches them, and the next clear or drop deletes them.
      */
     private suspend fun settleCacheOwner(identity: QueueIdentity) {
         if (
@@ -327,16 +334,16 @@ internal class OfflineClient(
     }
 
     override fun from(table: String): OfflinePostgrestQueryBuilder =
-        from(supabase.postgrest.config.defaultSchema, table)
+        from(supabaseClient.postgrest.config.defaultSchema, table)
 
     override fun from(schema: String, table: String): OfflinePostgrestQueryBuilder {
         ensureOpen()
         ensurePostgrestInstalled()
         require(!isReservedTable(table)) { "The table name is reserved by the offline engine" }
-        val delegate = supabase.postgrest.from(schema, table)
+        val delegate = supabaseClient.postgrest.from(schema, table)
         val readShape =
             readShapePostgrest.value
-                ?: readShapePostgrestOf(supabase.postgrest).let { created ->
+                ?: readShapePostgrestOf(supabaseClient.postgrest).let { created ->
                     if (readShapePostgrest.compareAndSet(null, created)) created
                     else readShapePostgrest.value ?: created
                 }
@@ -349,7 +356,7 @@ internal class OfflineClient(
                 trustPolicy = responseTrust,
                 liveQueries = liveQueries,
                 wakeUps = wakeUps,
-                queueIdentity = { supabase.currentQueueIdentity() },
+                queueIdentity = { supabaseClient.currentQueueIdentity() },
                 requestSync = automaticReplay::requestPass,
                 headSender = mutationQueueReplayer,
                 operationGate = operationGate,
@@ -358,15 +365,35 @@ internal class OfflineClient(
         return OfflinePostgrestQueryBuilder(engine)
     }
 
+    override suspend fun rpc(
+        function: String,
+        request: RpcRequestBuilder.() -> Unit,
+    ): PostgrestResult = operationGate.call {
+        ensurePostgrestInstalled()
+        supabaseClient.postgrest.rpc(function, request)
+    }
+
+    override suspend fun rpc(
+        function: String,
+        parameters: JsonObject,
+        request: RpcRequestBuilder.() -> Unit,
+    ): PostgrestResult = operationGate.call {
+        ensurePostgrestInstalled()
+        supabaseClient.postgrest.rpc(function, parameters, request)
+    }
+
     /** The session a read sent now goes out under; the identity is the mutation queue's own. */
     private fun requestSession(): RequestSession =
         requestSessionFor(authPluginOrNull()?.sessionStatus?.value)
 
-    override fun storage(bucket: String): OfflineBucketApi {
+    override val storage: OfflineStorage = OfflineStorage(::bucket)
+
+    /** The bucket [bucketId], caching through the client's file cache. */
+    private fun bucket(bucketId: String): OfflineBucketApi {
         ensureOpen()
         ensureStorageInstalled()
         return CachingBucketApi(
-            delegate = supabase.storage.from(bucket),
+            delegate = supabaseClient.storage.from(bucketId),
             cache = fileCache,
             engineLogger = engineLogger,
             backgroundScope = clientScope,
@@ -402,12 +429,13 @@ internal class OfflineClient(
     override suspend fun applyServerRecord(
         table: String,
         record: JsonObject,
-        primaryKeys: List<String>,
+        primaryKeys: List<String>?,
     ): Unit = operationGate.call {
-        val filterJson = primaryKeyFilterJson(record, primaryKeys)
+        val keyColumns = primaryKeys ?: this.primaryKeys.of(table)
+        val filterJson = primaryKeyFilterJson(record, keyColumns)
         if (filterJson == null) {
             engineLogger.warning {
-                "applyServerRecord($table): dropping record — primary key(s) $primaryKeys " +
+                "applyServerRecord($table): dropping record — primary key(s) $keyColumns " +
                     "absent or non-primitive"
             }
             return@call
@@ -417,19 +445,20 @@ internal class OfflineClient(
             operation = MutationOperation.UPSERT,
             bodyJson = JsonArray(listOf(record)).toString(),
             filterJson = filterJson,
-            onConflict = primaryKeys.joinToString(separator = ","),
+            onConflict = keyColumns.joinToString(separator = ","),
         )
     }
 
     override suspend fun applyServerDelete(
         table: String,
         oldRecord: JsonObject,
-        primaryKeys: List<String>,
+        primaryKeys: List<String>?,
     ): Unit = operationGate.call {
-        val filterJson = primaryKeyFilterJson(oldRecord, primaryKeys)
+        val keyColumns = primaryKeys ?: this.primaryKeys.of(table)
+        val filterJson = primaryKeyFilterJson(oldRecord, keyColumns)
         if (filterJson == null) {
             engineLogger.warning {
-                "applyServerDelete($table): dropping record — primary key(s) $primaryKeys " +
+                "applyServerDelete($table): dropping record — primary key(s) $keyColumns " +
                     "absent or non-primitive"
             }
             return@call
@@ -475,11 +504,11 @@ internal class OfflineClient(
      * emptied cache as nobody's; a user's first use claims it, so no user id is written back by the
      * clear. The scrub runs after that transaction, and the cache files go last.
      */
-    override suspend fun clearAllCache(): Unit = operationGate.call {
+    override suspend fun clearLocalData(): Unit = operationGate.call {
         val owner =
             QueueIdentity.Anonymous.storedValue.takeIf {
                 authPluginOrNull() != null &&
-                    supabase.currentReplayIdentity() == QueueIdentity.Anonymous
+                    supabaseClient.currentReplayIdentity() == QueueIdentity.Anonymous
             }
         mutationQueueReplayer.clearLocalData {
             fileCache.clear {
@@ -607,7 +636,7 @@ internal class OfflineClient(
      *   the pending queue — belongs to another identity than the current session's.
      */
     internal suspend fun retryRejectedMutation(id: Long): Long? = operationGate.call {
-        val identity = supabase.currentQueueIdentity() ?: return@call null
+        val identity = supabaseClient.currentQueueIdentity() ?: return@call null
         val newId = store.retryRejectedMutation(id, identity.storedValue) ?: return@call null
         automaticReplay.requestPass()
         newId
@@ -622,7 +651,7 @@ internal class OfflineClient(
      * @return `true` when it was pending, the current session's, and not being sent right now.
      */
     internal suspend fun discardPendingMutation(id: Long): Boolean = operationGate.call {
-        val identity = supabase.currentQueueIdentity() ?: return@call false
+        val identity = supabaseClient.currentQueueIdentity() ?: return@call false
         mutationQueueReplayer.discardPendingMutation(id, identity)
     }
 
@@ -637,7 +666,7 @@ internal class OfflineClient(
     }
 
     private fun ensurePostgrestInstalled() {
-        runCatching { supabase.postgrest }
+        runCatching { supabaseClient.postgrest }
             .getOrElse {
                 error(
                     "Postgrest plugin is not installed. Install with createSupabaseClient { install(Postgrest) }"
@@ -646,7 +675,7 @@ internal class OfflineClient(
     }
 
     private fun ensureStorageInstalled() {
-        runCatching { supabase.storage }
+        runCatching { supabaseClient.storage }
             .getOrElse {
                 error(
                     "Storage plugin is not installed. Install with createSupabaseClient { install(Storage) }"

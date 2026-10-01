@@ -64,7 +64,7 @@ class ClearLocalDataDuringWritesTest {
         parked.await()
 
         // When — the user signs out while the first replay is in flight
-        client.clearAllCache()
+        client.clearLocalData()
         release.complete(Unit)
         sweep.join()
 
@@ -86,7 +86,7 @@ class ClearLocalDataDuringWritesTest {
         parked.await()
 
         // When — local data is cleared while the replay is in flight, then the refusal comes back
-        client.clearAllCache()
+        client.clearLocalData()
         release.complete(Unit)
         sweep.join()
 
@@ -110,7 +110,7 @@ class ClearLocalDataDuringWritesTest {
             parked.await()
 
             // When — the cache is cleared, the next user's first read lands, then the old response
-            client.clearAllCache()
+            client.clearLocalData()
             store.addPayload(
                 table = TABLE,
                 cacheKey = CACHE_KEY,
@@ -141,7 +141,7 @@ class ClearLocalDataDuringWritesTest {
         parked.await()
 
         // When — the cache is cleared before the failure comes back
-        client.clearAllCache()
+        client.clearLocalData()
         release.complete(Unit)
         val outcome = write.await()
 
@@ -153,7 +153,7 @@ class ClearLocalDataDuringWritesTest {
     @Test
     fun an_offline_write_made_after_clearing_is_queued_normally() = runTest {
         // Given — the cache was cleared earlier
-        client.clearAllCache()
+        client.clearLocalData()
         server.answer = { connectivityFailure() }
 
         // When

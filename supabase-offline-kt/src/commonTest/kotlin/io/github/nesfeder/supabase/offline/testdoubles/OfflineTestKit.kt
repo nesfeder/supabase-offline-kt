@@ -11,8 +11,8 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
+import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
@@ -194,7 +194,7 @@ internal fun newTestOfflineClient(
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
 ): OfflineClient =
     OfflineClient(
-        supabase = supabase,
+        supabaseClient = supabase,
         store = store,
         baseDirectoryProvider = baseDirectoryProvider,
         engineLogger = engineLogger,
@@ -277,9 +277,7 @@ internal fun newTestBucketApi(
  * @param block what to do with the client.
  * @return what [block] returns.
  */
-internal suspend fun <T> SupabaseOfflineClient.closingAfter(
-    block: suspend (SupabaseOfflineClient) -> T
-): T =
+internal suspend fun <T> Offline.closingAfter(block: suspend (Offline) -> T): T =
     try {
         block(this)
     } finally {

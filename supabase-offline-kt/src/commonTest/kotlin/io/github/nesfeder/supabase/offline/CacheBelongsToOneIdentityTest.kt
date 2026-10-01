@@ -208,7 +208,7 @@ class CacheBelongsToOneIdentityTest {
         assertEquals("[]", items.select(readStrategy = ReadStrategy.CacheFirst()).data)
 
         // When — B signs in
-        client.supabase.signInForTest("B")
+        client.supabaseClient.signInForTest("B")
 
         // Then — at once, and once the session has settled, B never gets the anonymous answer
         assertFailsWith<NoSuchElementException> {
@@ -233,7 +233,7 @@ class CacheBelongsToOneIdentityTest {
 
         // When — the session ends without the app clearing local data (a revoked refresh token),
         // and a reactive read refreshes while signed out
-        client.supabase.auth.clearSession()
+        client.supabaseClient.auth.clearSession()
         runCurrent()
         val shown = mutableListOf<String?>()
         val job = backgroundScope.launch {
@@ -247,7 +247,7 @@ class CacheBelongsToOneIdentityTest {
         assertFalse(rowsOf("A") in shown, "$shown")
 
         // When — A signs back in, offline
-        client.supabase.signInForTest("A")
+        client.supabaseClient.signInForTest("A")
         online = false
 
         // Then — A is never served the anonymous answer
@@ -286,7 +286,7 @@ class CacheBelongsToOneIdentityTest {
         // nobody signed in only
         assertFalse(rowsOf("A") in shown, "$shown")
         assertEquals("[]", shown.last())
-        client.supabase.signInForTest("A")
+        client.supabaseClient.signInForTest("A")
         online = false
         assertNotEquals(
             "[]",
@@ -395,7 +395,7 @@ class CacheBelongsToOneIdentityTest {
         assertEquals(1, client.pendingMutationCount())
 
         // When — B signs in, with no sign-out between
-        client.supabase.signInForTest("B")
+        client.supabaseClient.signInForTest("B")
 
         // Then — B is never served A's rows; once settled, A's rows are gone and A's write is not
         assertFailsWith<NoSuchElementException> {
@@ -412,7 +412,7 @@ class CacheBelongsToOneIdentityTest {
 
         // When — A signs back in, offline
         online = false
-        client.supabase.signInForTest("A")
+        client.supabaseClient.signInForTest("A")
 
         // Then — A's write still waits for A, and A is not served B's rows
         assertFailsWith<NoSuchElementException> {
@@ -563,7 +563,7 @@ class CacheBelongsToOneIdentityTest {
         val shownBefore = shown.size
 
         // When — B signs in over A; the drop and the fetch after it finish partly on real threads
-        client.supabase.signInForTest("B")
+        client.supabaseClient.signInForTest("B")
         awaitCacheOwner("user:B")
         advanceTimeBy(1.minutes)
         awaitUntil { shown.lastOrNull() == rowsOf("B") }
@@ -580,12 +580,12 @@ class CacheBelongsToOneIdentityTest {
         // Given — A's copy of an object cached
         val server = newServer()
         val client = launchClient(server, signedInAs = "A")
-        val bucket = client.storage(BUCKET)
+        val bucket = client.storage.from(BUCKET)
         val cached = bucket.ensureCachedFile(OBJECT_PATH)
         assertEquals("bytes of A", FileSystem.SYSTEM.read(cached.path.toPath()) { readUtf8() })
 
         // When — B signs in
-        client.supabase.signInForTest("B")
+        client.supabaseClient.signInForTest("B")
 
         // Then — B never gets A's copy; once settled, the file and its row are gone
         assertNull(bucket.cachedFile(OBJECT_PATH))
@@ -615,7 +615,7 @@ class CacheBelongsToOneIdentityTest {
             runCurrent()
 
             // When — B signs in, then A's answer arrives
-            client.supabase.signInForTest("B")
+            client.supabaseClient.signInForTest("B")
             runCurrent()
             held.complete(Unit)
             read.await()

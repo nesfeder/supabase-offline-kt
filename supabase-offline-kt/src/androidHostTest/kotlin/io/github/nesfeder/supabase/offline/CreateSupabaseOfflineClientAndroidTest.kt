@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:Suppress("DEPRECATION")
+
 package io.github.nesfeder.supabase.offline
 
 import android.content.Context
@@ -60,7 +62,7 @@ class CreateSupabaseOfflineClientAndroidTest {
         createSupabaseOfflineClient(context, supabase).closingAfter { client ->
             // Then
             assertNotNull(client)
-            assertSame(supabase, client.supabase)
+            assertSame(supabase, client.supabaseClient)
         }
     }
 

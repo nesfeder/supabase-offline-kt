@@ -69,7 +69,7 @@ class SupabaseOfflineClientTest {
         val client = newTestOfflineClient(supabase = newTestSupabaseClient())
 
         // When
-        val error = assertFailsWith<IllegalStateException> { client.storage("avatars") }
+        val error = assertFailsWith<IllegalStateException> { client.storage.from("avatars") }
 
         // Then
         assertTrue(error.message.orEmpty().contains("Storage plugin is not installed"))
@@ -90,7 +90,7 @@ class SupabaseOfflineClientTest {
             )
 
         // When
-        val bucket = client.storage("avatars")
+        val bucket = client.storage.from("avatars")
 
         // Then
         assertIs<OfflineBucketApi>(bucket)

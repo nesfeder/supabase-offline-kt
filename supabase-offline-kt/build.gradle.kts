@@ -62,6 +62,8 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(project.dependencies.platform(libs.supabase.bom))
+            // auth-kt's Android variant also brings androidx.startup, as an api dependency: the
+            // plugin records the application context with it, as supabase-kt's Storage does.
             api(libs.supabase.auth.kt)
             api(libs.supabase.postgrest.kt)
             api(libs.supabase.storage.kt)

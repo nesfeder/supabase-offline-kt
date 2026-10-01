@@ -29,9 +29,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Tests for [SupabaseOfflineClient.applyServerRecord] / [SupabaseOfflineClient.applyServerDelete] —
- * the realtime primitives that merge a server-authored row into every cached SELECT payload for a
- * table by primary key, without a caller-visible cache signature.
+ * Tests for [Offline.applyServerRecord] / [Offline.applyServerDelete] — the realtime primitives
+ * that merge a server-authored row into every cached SELECT payload for a table by primary key,
+ * without a caller-visible cache signature.
  *
  * These run the real [OfflineClient] over a real [OfflineStore] backed by in-memory fake DAOs; the
  * [SupabaseClient][io.github.jan.supabase.SupabaseClient] is a mock-engine stub that these methods

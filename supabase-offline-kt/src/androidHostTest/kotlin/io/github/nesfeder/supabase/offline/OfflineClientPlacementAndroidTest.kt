@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:Suppress("DEPRECATION")
+
 package io.github.nesfeder.supabase.offline
 
 import android.content.Context
@@ -169,7 +171,7 @@ class OfflineClientPlacementAndroidTest {
         val first =
             openOfflineClient(
                 newTestSupabaseClient(),
-                SupabaseOfflineConfig(),
+                Offline.Config(),
                 root / "a" / "supabase_offline.db",
                 data,
                 open,
@@ -179,7 +181,7 @@ class OfflineClientPlacementAndroidTest {
         val second = runCatching {
             openOfflineClient(
                 newTestSupabaseClient(),
-                SupabaseOfflineConfig(),
+                Offline.Config(),
                 root / "b" / "supabase_offline.db",
                 data,
                 open,

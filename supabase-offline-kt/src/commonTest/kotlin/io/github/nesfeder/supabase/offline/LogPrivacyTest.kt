@@ -63,7 +63,7 @@ class LogPrivacyTest {
      * messages.
      */
     private suspend fun visibleLogsOf(
-        scenario: suspend (SupabaseOfflineClient, RecordingPostgrestServer) -> Unit
+        scenario: suspend (Offline, RecordingPostgrestServer) -> Unit
     ): List<String> {
         val logger = RecordingOfflineLogger()
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })

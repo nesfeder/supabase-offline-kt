@@ -58,7 +58,7 @@ class SupabaseOfflineClientClearCacheTest {
         assertTrue(FileSystem.SYSTEM.exists(storageFile), "precondition: storage file on disk")
 
         // When the entire local cache is cleared (logout / account switch / account deletion)
-        client.clearAllCache()
+        client.clearLocalData()
 
         // Then the on-disk storage tree is gone
         assertFalse(
@@ -82,7 +82,7 @@ class SupabaseOfflineClientClearCacheTest {
             )
 
         // When
-        client.clearAllCache()
+        client.clearLocalData()
 
         // Then — one clear, not one per lock holder, and the scrub ran after its deletes
         assertEquals(1, cachedFileDao.clears)

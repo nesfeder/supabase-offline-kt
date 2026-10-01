@@ -171,8 +171,8 @@ class SupabaseOfflineClientCloseTest {
 
     @Test
     fun close_called_inside_a_collector_returns_at_once_and_ends_the_collection() = runTest {
-        val flows: List<Pair<String, (SupabaseOfflineClient) -> Flow<*>>> =
-            listOf<Pair<String, (SupabaseOfflineClient) -> Flow<*>>>(
+        val flows: List<Pair<String, (Offline) -> Flow<*>>> =
+            listOf<Pair<String, (Offline) -> Flow<*>>>(
                 "pendingMutationCountFlow()" to { client -> client.pendingMutationCountFlow() },
                 "pendingMutationCountFlow(table)" to
                     { client ->
@@ -181,7 +181,7 @@ class SupabaseOfflineClientCloseTest {
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
-                        { client: SupabaseOfflineClient ->
+                        { client: Offline ->
                             client.from("todos").selectAsFlow(readStrategy = strategy)
                         }
                 }
@@ -350,8 +350,8 @@ class SupabaseOfflineClientCloseTest {
 
     @Test
     fun a_flow_the_app_stopped_reading_through_produceIn_ends_quietly_at_close() = runTest {
-        val flows: List<Pair<String, (SupabaseOfflineClient) -> Flow<*>>> =
-            listOf<Pair<String, (SupabaseOfflineClient) -> Flow<*>>>(
+        val flows: List<Pair<String, (Offline) -> Flow<*>>> =
+            listOf<Pair<String, (Offline) -> Flow<*>>>(
                 "pendingMutationCountFlow()" to { client -> client.pendingMutationCountFlow() },
                 "pendingMutationCountFlow(table)" to
                     { client ->
@@ -360,7 +360,7 @@ class SupabaseOfflineClientCloseTest {
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
-                        { client: SupabaseOfflineClient ->
+                        { client: Offline ->
                             client.from("todos").selectAsFlow(readStrategy = strategy)
                         }
                 }
@@ -529,7 +529,7 @@ class SupabaseOfflineClientCloseTest {
                     coordinatorScope = callerScope,
                     onStillClosing = { gaveUp.addAndFetch(1) },
                 )
-            val bucket = client.storage("avatars")
+            val bucket = client.storage.from("avatars")
             val outcome = callerScope.async { runCatching { call(bucket) } }
             withContext(Dispatchers.Default) {
                 withTimeout(5.seconds) { server.requestArrived.await() }
@@ -880,7 +880,7 @@ class SupabaseOfflineClientCloseTest {
 
         // Then
         assertFailsWith<IllegalStateException> { client.from("todos") }
-        assertFailsWith<IllegalStateException> { client.storage("avatars") }
+        assertFailsWith<IllegalStateException> { client.storage.from("avatars") }
         assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
         assertFailsWith<IllegalStateException> { client.syncPendingMutations("todos") }
         assertFailsWith<IllegalStateException> { client.pendingMutationCount() }
@@ -893,7 +893,7 @@ class SupabaseOfflineClientCloseTest {
         assertFailsWith<IllegalStateException> {
             client.applyServerDelete("todos", buildJsonObject { put("id", 1) })
         }
-        assertFailsWith<IllegalStateException> { client.clearAllCache() }
+        assertFailsWith<IllegalStateException> { client.clearLocalData() }
     }
 
     private companion object {

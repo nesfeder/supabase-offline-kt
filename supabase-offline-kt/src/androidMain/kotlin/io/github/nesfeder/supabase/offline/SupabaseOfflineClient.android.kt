@@ -4,22 +4,21 @@ package io.github.nesfeder.supabase.offline
 
 import android.content.Context
 import io.github.jan.supabase.SupabaseClient
-import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
-import io.github.nesfeder.supabase.offline.internal.db.defaultDatabasePath
-import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
-import io.github.nesfeder.supabase.offline.internal.openOfflineClient
-import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
+import io.github.nesfeder.supabase.offline.internal.openAndroidClient
+import io.github.nesfeder.supabase.offline.internal.toOfflineConfig
 
 /**
- * Creates the offline client for Android over [supabase]. Its database is in the app's database
- * directory (`supabase_offline.db`) and downloaded files under `<filesDir>/supabase_offline`, or
- * both in [SupabaseOfflineConfig.offlineStoragePath] when that is set. Earlier versions kept the
- * database in the default directory whatever the configuration said; the first client created with
- * a configured directory moves it there, unsent writes and all.
+ * Creates the offline client for Android over [supabase], outside its plugins.
  *
- * Create one client per database and keep it: while it is open, creating another on the same
- * database throws. [SupabaseOfflineClient.close] releases it.
+ * Install the plugin instead: `install(Offline) { … }` in `createSupabaseClient`, then
+ * `supabase.offline`. The plugin needs no [Context], takes the same settings in [Offline.Config],
+ * and closes with the client. This factory opens the same database in the same place, so an app
+ * moving to the plugin keeps its cache and its unsent writes.
+ *
+ * The database is in the app's database directory (`supabase_offline.db`) and downloaded files
+ * under `<filesDir>/supabase_offline`, or both in [SupabaseOfflineConfig.offlineStoragePath] when
+ * that is set. One client per database: while it is open, creating another on the same database
+ * throws. [Offline.close] releases it.
  *
  * ### Backups
  *
@@ -45,8 +44,7 @@ import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirector
  * ```
  *
  * and the same four `<exclude>` lines in a `<full-backup-content>` file for Android 11 and earlier
- * (`android:fullBackupContent`). With [SupabaseOfflineConfig.offlineStoragePath] set, exclude that
- * directory instead.
+ * (`android:fullBackupContent`). With a data directory set, exclude that directory instead.
  *
  * @param context Any context; its application context is used.
  * @param supabase The supabase-kt client to wrap. Install PostgREST, and Storage if you use it.
@@ -55,21 +53,14 @@ import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirector
  * @throws IllegalStateException when another open client already uses the same database or data
  *   directory.
  */
+@Deprecated(
+    "Install the plugin instead: createSupabaseClient { install(Offline) { … } }, then use " +
+        "supabase.offline. The settings move into install(Offline) { … }.",
+    ReplaceWith("supabase.offline", "io.github.nesfeder.supabase.offline.offline"),
+)
+@Suppress("DEPRECATION")
 public fun createSupabaseOfflineClient(
     context: Context,
     supabase: SupabaseClient,
     config: SupabaseOfflineConfig = SupabaseOfflineConfig(),
-): SupabaseOfflineClient {
-    val configuredDirectory = config.offlineStoragePath
-    val defaultPath = defaultDatabasePath(context)
-    return openOfflineClient(
-        supabase = supabase,
-        config = config,
-        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultPath,
-        dataDirectory = configuredDirectory ?: PlatformBaseDirectory(context).path,
-        openDatabase = { databasePath ->
-            buildOfflineDatabase(offlineDatabaseBuilder(context, databasePath.toString()))
-        },
-        defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
-    )
-}
+): Offline = openAndroidClient(context, supabase, config.toOfflineConfig())

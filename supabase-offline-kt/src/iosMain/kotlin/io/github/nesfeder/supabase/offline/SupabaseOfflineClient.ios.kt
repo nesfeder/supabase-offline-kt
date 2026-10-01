@@ -18,15 +18,8 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.Storage
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.DEFAULT_CACHE_SIZE_BYTES
-import io.github.nesfeder.supabase.offline.internal.db.BackupExclusionCallback
-import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
-import io.github.nesfeder.supabase.offline.internal.db.defaultDatabasePath
-import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
-import io.github.nesfeder.supabase.offline.internal.openOfflineClient
-import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
-import io.github.nesfeder.supabase.offline.internal.storage.excludeFromBackup
+import io.github.nesfeder.supabase.offline.internal.openPlatformClient
+import io.github.nesfeder.supabase.offline.internal.toOfflineConfig
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -35,10 +28,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.serializer
-import okio.FileSystem
-import okio.IOException
 import okio.Path
-import okio.SYSTEM
 
 /**
  * Factory for creating a Supabase client preconfigured with PostgREST and wrapped in an
@@ -78,7 +68,7 @@ public object SupabaseFactory {
         cacheSizeBytes: Long? = null,
         logger: OfflineLogger? = null,
         minLogLevel: OfflineLogLevel = OfflineLogLevel.INFO,
-    ): SupabaseOfflineClient {
+    ): Offline {
         val supabase =
             createSupabaseClient(
                 supabaseUrl = supabaseUrl,
@@ -88,98 +78,44 @@ public object SupabaseFactory {
                 install(Postgrest)
                 install(Storage)
             }
-        return createSupabaseOfflineClient(
-            supabase = supabase,
-            config =
-                SupabaseOfflineConfig(
-                    cacheSizeBytes ?: DEFAULT_CACHE_SIZE_BYTES,
-                    offlineStoragePath = offlineStoragePath,
-                    logger = logger,
-                    minLogLevel = minLogLevel,
-                ),
-        )
+        val config = Offline.createConfig {
+            cacheSizeBytes?.let { this.cacheSizeBytes = it }
+            dataDirectory = offlineStoragePath?.toString()
+            this.logger = logger
+            this.minLogLevel = minLogLevel
+        }
+        return openPlatformClient(supabase, config)
     }
 }
 
 /**
- * Construct an offline-aware Supabase client reusing an **existing** [SupabaseClient].
+ * Creates the offline client over an existing [SupabaseClient], outside its plugins.
+ *
+ * Install the plugin instead: `install(Offline) { … }` in `createSupabaseClient`, then
+ * `supabase.offline`. It takes the same settings in [Offline.Config] and closes with the client.
+ * This factory opens the same database in the same place, so an app moving to the plugin keeps its
+ * cache and its unsent writes.
  *
  * The database is `Documents/supabase_offline.db` and downloaded files live under
  * `Documents/supabase_offline`, or both in [SupabaseOfflineConfig.offlineStoragePath] when that is
- * set. Earlier versions kept the database in `Documents` whatever the configuration said; the first
- * client created with a configured directory moves it there, unsent writes and all. The database
- * and the file cache are excluded from iCloud and device backups: they are re-creatable, and one
- * user's.
- *
- * Create one client per database and keep it: while it is open, creating another on the same
- * database throws. [SupabaseOfflineClient.close] releases it.
- *
- * This wraps your client with:
- * - PostgREST passthrough for writes (insert/upsert/update/delete)
- * - SELECT that caches server payloads under stable signatures & falls back when offline
- *
- * ### Swift usage (pull assets)
- *
- * ```swift
- * // Build once (e.g. in App start)
- * let offline = SupabaseFactory.shared.offlineClient(
- *   supabaseUrl: AppSecrets.supabaseURL,
- *   supabaseAnonKey: AppSecrets.supabaseAnonKey
- * )
- *
- * // Later in a ViewModel
- * let qb = offline.get(table: "assets")
- * let res = try await qb.selectAll(
- *   orderBy: "updated_at",
- *   ascending: false,
- *   limit: 50,
- *   offset: 0
- * ) { f in
- *   // Optional filters:
- *   // f.ilike(column: "name", pattern: "%pump%")
- *   // f.neq(column: "status", value: "archived")
- * }
- *
- * // Decode JSON -> Swift models
- * let data = Data(res.data.utf8)
- * let items = try JSONDecoder().decode([Asset].self, from: data)
- * ```
+ * set; a database at the default location moves there. The database and the file cache are excluded
+ * from iCloud and device backups: they are re-creatable, and one user's. One client per database:
+ * while it is open, creating another on the same database throws. [Offline.close] releases it.
  *
  * @throws IllegalStateException when another open client already uses the same database or data
- *   directory; other failures to open it (a full disk, an unreadable file) are thrown too. Swift
- *   receives each as a thrown error.
+ *   directory; other failures to open it (a full disk, an unreadable file) are thrown too.
  */
+@Deprecated(
+    "Install the plugin instead: createSupabaseClient { install(Offline) { … } }, then use " +
+        "supabase.offline. The settings move into install(Offline) { … }.",
+    ReplaceWith("supabase.offline", "io.github.nesfeder.supabase.offline.offline"),
+)
 @Throws(Exception::class)
+@Suppress("DEPRECATION")
 public fun createSupabaseOfflineClient(
     supabase: SupabaseClient,
     config: SupabaseOfflineConfig,
-): SupabaseOfflineClient {
-    val configuredDirectory = config.offlineStoragePath
-    val dataDirectory = configuredDirectory ?: PlatformBaseDirectory().path
-    if (configuredDirectory == null) {
-        // The default data directory is the SDK's own; exclude all of it, whatever it later holds.
-        try {
-            FileSystem.SYSTEM.createDirectories(dataDirectory)
-            excludeFromBackup(dataDirectory)
-        } catch (_: IOException) {
-            // Best effort: the cache directories inside it are excluded on their own as well.
-        }
-    }
-    val defaultPath = defaultDatabasePath()
-    return openOfflineClient(
-        supabase = supabase,
-        config = config,
-        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultPath,
-        dataDirectory = dataDirectory,
-        openDatabase = { databasePath ->
-            buildOfflineDatabase(
-                offlineDatabaseBuilder(databasePath.toString())
-                    .addCallback(BackupExclusionCallback(databasePath))
-            )
-        },
-        defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
-    )
-}
+): Offline = openPlatformClient(supabase, config.toOfflineConfig())
 
 /* ────────────────────────────────────────────────────────────────────────────── */
 /*  Swift-friendly JSON helpers (Swift struct → JSON string / JsonArray / JsonEl) */

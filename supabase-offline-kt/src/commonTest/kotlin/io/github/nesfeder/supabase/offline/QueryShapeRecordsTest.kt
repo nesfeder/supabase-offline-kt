@@ -54,7 +54,7 @@ class QueryShapeRecordsTest {
     private lateinit var store: OfflineStore
 
     /** A client over the same database, as each launch of the app builds one. */
-    private fun launch(queryCacheLimits: QueryCacheLimits? = null): SupabaseOfflineClient {
+    private fun launch(queryCacheLimits: QueryCacheLimits? = null): Offline {
         store =
             if (queryCacheLimits == null) {
                 newTestOfflineStore(
@@ -196,7 +196,7 @@ class QueryShapeRecordsTest {
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = list("A"))
 
         // When
-        client.clearAllCache()
+        client.clearLocalData()
 
         // Then
         assertTrue(

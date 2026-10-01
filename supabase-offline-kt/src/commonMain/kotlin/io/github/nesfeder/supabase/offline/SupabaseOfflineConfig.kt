@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:Suppress("DEPRECATION")
+
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig.Companion.CACHE_SIZE_UNLIMITED
@@ -8,12 +10,16 @@ import kotlinx.coroutines.flow.Flow
 import okio.Path
 
 /**
- * Public configuration for the Supabase offline client.
+ * The configuration the deprecated `createSupabaseOfflineClient` factories take.
  *
- * Mirrors Firebase Firestore's cache size configuration in spirit by allowing callers to bound how
- * much cached data the offline client retains. The bound is applied to the logical size of cached
- * SELECT payloads, not the on-disk size of the Room database file (see [cacheSizeBytes]).
+ * Configure the plugin instead, in `install(Offline) { … }`: each property here has a setting of
+ * the same name in [Offline.Config], but [offlineStoragePath], which is
+ * [Offline.Config.dataDirectory] as a string.
  */
+@Deprecated(
+    "Configure the plugin instead: install(Offline) { cacheSizeBytes = …; dataDirectory = …; " +
+        "logger = … }. offlineStoragePath is dataDirectory, as a String."
+)
 public data class SupabaseOfflineConfig(
     /**
      * Maximum size, in bytes, of the cached SELECT payloads the offline client retains.
@@ -39,12 +45,11 @@ public data class SupabaseOfflineConfig(
      * app's database directory on Android and in Documents on iOS, and the files under
      * `<filesDir>/supabase_offline` on Android and `Documents/supabase_offline` on iOS.
      *
-     * Setting it moves the database as well as the files. Earlier versions kept the database at the
-     * default location whatever this said, so when the directory has no database yet and the
-     * default location has one, the first client created moves it here, unsent writes and all. When
-     * it cannot be moved, or another open client holds it, the default database stays in use and a
-     * warning is logged. When both locations hold a database, this one is used and a warning says
-     * the other was left where it is.
+     * Setting it moves the database as well as the files: when the directory has no database yet
+     * and the default location has one, the first client created moves it here, unsent writes and
+     * all. When it cannot be moved, or another open client holds it, the default database stays in
+     * use and a warning is logged. When both locations hold a database, this one is used and a
+     * warning says the other was left where it is.
      */
     val offlineStoragePath: Path? = null,
 
