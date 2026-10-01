@@ -132,6 +132,7 @@ updates:
         patterns:
           - "org.robolectric:*"
           - "androidx.test*"
+          - "junit:junit"
         update-types: ["minor", "patch"]
       # ktfmt, through the never-used catalog entry that .kempt.toml reads. It arrives alone
       # because the update also needs CI's jar checksum and a `kempt format` run; see
@@ -139,6 +140,20 @@ updates:
       formatter:
         patterns:
           - "com.facebook:ktfmt"
+      # The Android sample's own libraries (samples/android). Nothing published uses them, so they
+      # arrive apart from the library's updates and a change that breaks the sample holds up
+      # nothing else. material3 is an alpha, pinned over the Compose BOM; its alphas arrive here.
+      sample-android:
+        patterns:
+          - "androidx.activity*"
+          - "androidx.compose*"
+          - "androidx.core*"
+          - "androidx.exifinterface*"
+          - "androidx.lifecycle*"
+          - "androidx.navigation3*"
+          - "androidx.navigationevent*"
+          - "io.coil-kt*"
+        update-types: ["minor", "patch"]
       # Everything else. A major version matches no group and arrives as its own pull request.
       other-gradle:
         patterns:

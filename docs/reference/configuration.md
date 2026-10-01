@@ -139,9 +139,6 @@ val offline = createSupabaseOfflineClient(
 )
 ```
 
-The Android demo wires this in
-[MainActivity.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/composeApp/src/androidMain/kotlin/io/github/nesfeder/supabase/demo/MainActivity.kt).
-
 ### Setup (iOS)
 
 The Swift wrapper takes a closure of `(OfflineLogLevel, String) -> Void` directly. Bridge it to

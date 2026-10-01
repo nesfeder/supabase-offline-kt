@@ -1,7 +1,8 @@
-## Copy this file to `local.properties` and fill in your values.
+## Copy this file to `local.properties` and fill in your values: the Android sample's keys
+## (docs/samples/android.md).
 ## `local.properties` is gitignored.
 
 sdk.dir=/Users/YOUR_USER/Library/Android/sdk
 
 SUPABASE_URL=https://YOUR-PROJECT.supabase.co
-SUPABASE_ANON_KEY=YOUR-ANON-KEY
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR-KEY

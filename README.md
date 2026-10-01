@@ -24,142 +24,43 @@ This README is the entry point. Deep dives live in [docs/](./docs).
   `mutation_cache`, `storage_objects` and DB locations per platform.
 - [docs/project/releasing.md](./docs/project/releasing.md) — Where releases are published and what
   each one carries.
-- [docs/test-apps.md](./docs/samples/index.md) — Walkthrough of the Android (Compose) and iOS
-  (SwiftUI + TCA) TODO demo apps with cited code.
+- [docs/samples/index.md](./docs/samples/index.md) — Offline Tasks, the sample app, on Android and
+  iOS, and the Supabase project it needs.
 
 ## Project layout
 
 ```
 shared/                KMP SDK (commonMain + androidMain + iosMain)
-composeApp/            Android Compose TODO demo
+samples/android/       Offline Tasks, the Android sample (Jetpack Compose, Material 3 Expressive)
 iosApp/                iOS SwiftUI + TCA TODO demo
 ios/                   Swift wrapper (SupabaseOfflineSupport) + distribution XCFrameworks
 scripts/               CI + release helper scripts
 .github/               GitHub Actions workflows
 docs/                  Feature documentation (this set of files)
-demo/supabase/         SQL schema + RLS policies for the demos' tasks/task_photos tables
-                       and `task-photos` storage bucket
+samples/supabase/      The samples' Supabase schema (tables, row-level security, the photo bucket)
 Package.swift          SwiftPM manifest pointing at ios/distribution/
 ```
 
 ## Prerequisites
 
 - JDK 17
-- Android Studio (Hedgehog/Koala or newer) — for the Android demo
+- Android Studio with Android SDK 37 — for the Android sample
 - Xcode 15+ — for the iOS demo
-- A Supabase project (URL + anonymous API key)
+- A Supabase project of your own, for its URL and publishable key (see [Sample apps](#sample-apps))
 
-## Quick start
+## Sample apps
 
-The TODO demo apps connect to a real Supabase project — there is no mock backend. If you
-already have a Supabase account, skim Steps 1 and 2; otherwise follow them top-to-bottom.
-
-### 1. Create a Supabase project
-
-1. Sign up / sign in at [supabase.com](https://supabase.com).
-2. From the dashboard click **New project**.
-3. Pick an organization (create one if you don't have any), give the project a name
-   (e.g. `supabase-offline-demo`), and set a strong database password (you won't need it for
-   the demo — but save it).
-4. Pick the region nearest you, choose the free plan, and click **Create new project**.
-5. Wait ~2 minutes for Supabase to finish provisioning.
-
-### 2. Apply the demo schema
-
-The schema lives at [demo/supabase/schema.sql](./demo/supabase/schema.sql) and creates the
-`tasks` + `task_photos` tables (with a `moddatetime` trigger on `tasks.updated_at`),
-permissive RLS policies for `anon`, and a **public** Storage bucket named `task-photos`.
-
-1. In your new project's left sidebar, click **SQL Editor → New query**.
-2. Paste the entire contents of [demo/supabase/schema.sql](./demo/supabase/schema.sql) into the
-   editor.
-3. Click **Run**. The script is idempotent — re-running it is safe.
-4. Verify:
-   - **Table Editor** should now list `tasks` and `task_photos`.
-   - **Storage → Buckets** should list `task-photos` and show **Public bucket: Yes**.
-
-> The demo RLS policies allow anonymous full access to both tables and to the bucket. That is
-> intentional so the apps can run with just the anon key. **Do not copy these policies into a
-> production project.**
-
-### 3. Grab the project URL and anon key
-
-1. In the project sidebar, click **Project Settings (the gear icon) → Data API**.
-2. Copy **Project URL** — it looks like `https://abcdefghijklmno.supabase.co`.
-3. Copy the **`anon` `public` API key** — a long string starting with `eyJ…`. (Do **not** use
-   the `service_role` key.)
-
-Keep these two values handy for the next step.
-
-### 4. Configure secrets for the demo apps
-
-Both demos read their secrets from gitignored files; example templates are checked in.
-
-**Android** — copy [local.properties.example](./local.properties.example) to `local.properties`
-at the repo root, set `sdk.dir` to your local Android SDK path, and fill in:
-
-```properties
-SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
-SUPABASE_ANON_KEY=YOUR-ANON-KEY
-```
-
-`composeApp` reads these at build time and exposes them as `BuildConfig.SUPABASE_URL` /
-`BuildConfig.SUPABASE_ANON_KEY` to `MainActivity`.
-
-**iOS** — copy [iosApp/Configuration/Secrets.xcconfig.example](./iosApp/Configuration/Secrets.xcconfig.example)
-to `iosApp/Configuration/Secrets.xcconfig` and fill in:
-
-```properties
-SUPABASE_URL=YOUR-PROJECT-REF.supabase.co
-SUPABASE_ANON_KEY=YOUR-ANON-KEY
-```
-
-> The iOS URL has **no** `https://` prefix. The xcconfig stripper treats `//` as a comment
-> delimiter, so including it would silently truncate the value at build time. The Swift
-> wrapper prepends `https://` automatically.
-
-Both files are listed in [`.gitignore`](./.gitignore); they will never be committed.
-
-Details: [docs/test-apps.md → Secrets setup](./docs/samples/index.md#secrets-setup).
-
-### 5. Build & run
-
-```bash
-# Android demo (installs to a connected device or running emulator)
-./gradlew :composeApp:installDebug
-
-# iOS demo (build the KMP framework, then open Xcode)
-./gradlew :shared:assembleSupabaseOfflineReleaseXCFramework
-open iosApp/iosApp.xcodeproj
-```
-
-For iOS, set your Apple Developer **Team ID** in
-[iosApp/Configuration/Config.xcconfig](./iosApp/Configuration/Config.xcconfig) before building
-to a physical device (the simulator works without it).
-
-> The iOS demo embeds the KMP framework directly via the Gradle task above — it does **not**
-> consume the SDK through `Package.swift`.
-
-### 6. Try the offline behavior
-
-Once the app is running and connected to your Supabase project:
-
-1. Add a few tasks. They appear immediately and the row count in the table editor updates.
-2. Turn airplane mode on (or kill the device's network).
-3. Add another task, toggle one done, or delete one. The UI updates instantly and the banner
-   shows pending mutations.
-4. Turn the network back on. The banner switches to "Syncing…" and the queued mutations push
-   to Supabase in order. Refresh the Supabase Table Editor — the changes are now persisted.
-5. Force-stop and relaunch the app while offline. The previously fetched tasks still appear
-   (served from the local Room cache); newly added photos that were uploaded once will still
-   render from disk.
+The sample app, Offline Tasks, runs against a Supabase project of your own. Creating that project,
+loading the schema and running each sample are on the documentation site:
+[Set up Supabase](./docs/samples/supabase-setup.md),
+[Run the Android sample](./docs/samples/android.md) and
+[Run the iOS sample](./docs/samples/ios.md).
 
 ## Using the SDK in your own app
 
 The two snippets below are the smallest end-to-end examples.
 For the full API surface (read strategies, mutation strategies, flow observation, storage cache
-helpers), see [docs/api-reference.md](./docs/reference/supported-features.md) and
-[docs/test-apps.md](./docs/samples/index.md).
+helpers), see [docs/api-reference.md](./docs/reference/supported-features.md).
 
 ### Minimal Kotlin usage
 
@@ -238,8 +139,7 @@ _ = try await offline.syncAllPendingMutations()
 - **`MutationStrategy`** — `QueueIfOffline` (default) queues writes locally on connectivity
   failure; `OnlineOnly` rethrows. Server-side 4xx/5xx are **never** queued.
 - **Sync is manual.** Call `syncAllPendingMutations()` / `syncPendingMutations(table)` yourself —
-  typically when connectivity returns. See
-  [docs/test-apps.md → Connectivity-driven sync](./docs/samples/index.md#connectivity-driven-sync).
+  typically when connectivity returns.
 - **Storage downloads** are cached to disk and served from there when offline. Use
   `bucket.ensureLocalFile` / `ensureLocalPath` to skip the bytes-in-memory step.
 
