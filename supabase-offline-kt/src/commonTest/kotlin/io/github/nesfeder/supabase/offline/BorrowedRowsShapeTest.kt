@@ -98,7 +98,7 @@ class BorrowedRowsShapeTest {
         val before = readsOf(columns.value, key)
         items.select(
             columns = columns,
-            readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours),
+            readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours),
         ) {
             filter { eq(condition.first, condition.second) }
         }

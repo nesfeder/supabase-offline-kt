@@ -138,8 +138,9 @@ internal sealed interface EnqueueOutcome {
      * The write is in the queue.
      *
      * @property id Its mutation id.
+     * @property row The mutation row as stored, with its [id].
      */
-    data class Queued(val id: Long) : EnqueueOutcome
+    data class Queued(val id: Long, val row: MutationRow) : EnqueueOutcome
 
     /** Local data was cleared after the write started; it was not queued. */
     data object LocalDataCleared : EnqueueOutcome
@@ -930,6 +931,10 @@ internal class OfflineStore(
      */
     internal inner class MutationWriter(private val owner: String?) {
 
+        /** The last row this writer stored, with its id; `null` until it stores one. */
+        var lastStored: MutationRow? = null
+            private set
+
         /**
          * Queues an INSERT.
          *
@@ -1013,21 +1018,21 @@ internal class OfflineStore(
             ignoreDuplicates: Boolean? = null,
         ): Long {
             requireUserTable(table)
-            val id =
-                mutationDao.insert(
-                    MutationRow(
-                        table = table,
-                        operation = operation,
-                        bodyJson = bodyJson,
-                        filterJson = filter?.let { encodeFilter(it, json) },
-                        createdAtMs = nowMillis(),
-                        syncedAtMs = null,
-                        defaultToNull = defaultToNull,
-                        onConflict = onConflict,
-                        ignoreDuplicates = ignoreDuplicates,
-                        owner = owner,
-                    )
+            val row =
+                MutationRow(
+                    table = table,
+                    operation = operation,
+                    bodyJson = bodyJson,
+                    filterJson = filter?.let { encodeFilter(it, json) },
+                    createdAtMs = nowMillis(),
+                    syncedAtMs = null,
+                    defaultToNull = defaultToNull,
+                    onConflict = onConflict,
+                    ignoreDuplicates = ignoreDuplicates,
+                    owner = owner,
                 )
+            val id = mutationDao.insert(row)
+            lastStored = row.copy(id = id)
             noteMutationsChanged(table)
             return id
         }
@@ -1056,7 +1061,10 @@ internal class OfflineStore(
         enqueue: suspend MutationWriter.() -> Long,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
         if (predatesQueueClear(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
-        EnqueueOutcome.Queued(MutationWriter(owner = identity).enqueue())
+        val writer = MutationWriter(owner = identity)
+        val id = writer.enqueue()
+        val row = checkNotNull(writer.lastStored) { "enqueue stored no mutation" }
+        EnqueueOutcome.Queued(id, row)
     }
 
     /**

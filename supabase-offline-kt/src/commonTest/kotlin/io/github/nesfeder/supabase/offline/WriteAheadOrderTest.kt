@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -96,7 +97,7 @@ class WriteAheadOrderTest {
 
         // Then — no error reached the caller, and both rows arrived, parent first
         assertTrue(outcome.isSuccess, "child write failed with ${outcome.exceptionOrNull()}")
-        assertEquals(MutationOutcome.Queued, outcome.getOrNull())
+        assertIs<MutationOutcome.Queued>(outcome.getOrNull())
         assertEquals(1, server.rows(PHOTOS).size)
     }
 

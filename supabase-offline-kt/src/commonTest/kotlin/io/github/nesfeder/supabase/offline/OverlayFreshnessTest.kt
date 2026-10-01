@@ -71,7 +71,7 @@ class OverlayFreshnessTest {
         items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", 1) } }
         val readsBefore = readsSent()
         items.select(
-            readStrategy = ReadStrategy.CacheFirst(cacheDuration = 5.minutes),
+            readStrategy = ReadStrategy.CacheFirst(maxAge = 5.minutes),
             request = list("A"),
         )
 
@@ -99,7 +99,7 @@ class OverlayFreshnessTest {
         }
         val readsBefore = readsSent()
         items.select(
-            readStrategy = ReadStrategy.CacheFirst(cacheDuration = 5.minutes),
+            readStrategy = ReadStrategy.CacheFirst(maxAge = 5.minutes),
             request = list("B"),
         )
 

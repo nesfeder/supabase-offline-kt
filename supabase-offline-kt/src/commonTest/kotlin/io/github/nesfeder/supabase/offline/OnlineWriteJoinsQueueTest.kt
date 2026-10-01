@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -70,7 +71,7 @@ class OnlineWriteJoinsQueueTest {
         val outcome = rename("B")
 
         // Then — the edit is queued behind A without reaching the server, and the overlay shows B
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(
             requestsBefore,
             server.requests.size,
@@ -114,7 +115,7 @@ class OnlineWriteJoinsQueueTest {
         val outcome = rename("B")
 
         // Then — it waits its turn: the other table's write may be the row this one depends on
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(requestsBefore, server.requests.size)
     }
 
@@ -154,7 +155,7 @@ class OnlineWriteJoinsQueueTest {
         store.pendingMutationCountFlow().first { pending -> pending == 0 }
 
         // Then — the engine replayed both, in order
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(
             listOf("""{"title":"A"}""", """{"title":"B"}"""),
             server.requests.filter { it.method == "PATCH" }.map { it.body }.takeLast(2),

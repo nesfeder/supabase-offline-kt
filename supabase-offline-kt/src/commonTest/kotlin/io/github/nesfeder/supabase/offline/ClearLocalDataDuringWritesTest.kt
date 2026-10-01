@@ -17,6 +17,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
@@ -159,7 +160,7 @@ class ClearLocalDataDuringWritesTest {
         val outcome = client.from(TABLE).insertJson(rows("""[{"id":1,"title":"new user's row"}]"""))
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, mutationDao.countAll())
     }
 

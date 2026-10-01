@@ -91,7 +91,7 @@ class OfflineMutationQueueDecisionTest {
         val outcome = insert(MutationStrategy.QueueIfOffline)
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(MutationOperation.INSERT, mutationDao.inserted.single().operation)
     }
 
@@ -148,7 +148,7 @@ class OfflineMutationQueueDecisionTest {
         val outcome = upsert(MutationStrategy.QueueIfOffline)
 
         // Then — queued with its onConflict
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
         assertEquals(MutationOperation.UPSERT, queued.operation)
         assertEquals("id", queued.onConflict)
@@ -207,7 +207,7 @@ class OfflineMutationQueueDecisionTest {
         val outcome = update(MutationStrategy.QueueIfOffline)
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
         assertEquals(MutationOperation.UPDATE, queued.operation)
         assertEquals(ID_FILTER_JSON, queued.filterJson)
@@ -266,7 +266,7 @@ class OfflineMutationQueueDecisionTest {
         val outcome = delete(MutationStrategy.QueueIfOffline)
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
         assertEquals(MutationOperation.DELETE, queued.operation)
         assertEquals(ID_FILTER_JSON, queued.filterJson)

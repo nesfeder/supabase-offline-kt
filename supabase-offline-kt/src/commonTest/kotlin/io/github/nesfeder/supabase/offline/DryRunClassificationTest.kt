@@ -20,6 +20,7 @@ import io.ktor.client.network.sockets.ConnectTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -169,7 +170,7 @@ class DryRunClassificationTest {
             }
 
         // Then — queued, without a false "cannot tell" ERROR
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(
             0,
             logger.entriesAt(OfflineLogLevel.ERROR).count { it.message.contains("dry run") },

@@ -135,7 +135,7 @@ class LiveQueriesTest {
                                         emit(
                                             OfflineReadResult(
                                                 result = null,
-                                                refresh = RefreshState.InFlight,
+                                                refresh = RefreshState.Refreshing,
                                             )
                                         )
                                         emit(

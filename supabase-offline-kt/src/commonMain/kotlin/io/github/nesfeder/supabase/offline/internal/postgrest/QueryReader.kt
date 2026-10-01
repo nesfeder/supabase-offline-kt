@@ -138,14 +138,13 @@ internal class QueryReader(
                 // The cache answers a transport failure, so upstream's waits before one would only
                 // delay it
                 val retries =
-                    if (hasFreshCache(slot, readStrategy.cacheDuration))
-                        Retries.TRANSPORT_FAILS_FAST
+                    if (hasFreshCache(slot, readStrategy.maxAge)) Retries.TRANSPORT_FAILS_FAST
                     else Retries.UPSTREAM
                 try {
                     fetchWaitingOutRestore(slot, columns, request, retries)
                 } catch (exception: Exception) {
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
-                    val cached = readCached(slot, readStrategy.cacheDuration, servesStale = true)
+                    val cached = readCached(slot, readStrategy.maxAge, servesStale = true)
                     if (cached != null) {
                         engineLogger.warning {
                             "SELECT $table network failed, falling back to cache"
@@ -161,16 +160,16 @@ internal class QueryReader(
                 fetchWaitingOutRestore(slot, columns, request, Retries.UPSTREAM)
             }
             is ReadStrategy.CacheFirst -> {
-                val cached = readCached(slot, readStrategy.cacheDuration, servesStale = false)
+                val cached = readCached(slot, readStrategy.maxAge, servesStale = false)
                 if (cached != null) {
                     engineLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
-                    cacheFirstFromNetwork(slot, columns, request, readStrategy.cacheDuration)
+                    cacheFirstFromNetwork(slot, columns, request, readStrategy.maxAge)
                 }
             }
             is ReadStrategy.CacheOnly -> {
-                val cached = readCached(slot, readStrategy.cacheDuration, servesStale = true)
+                val cached = readCached(slot, readStrategy.maxAge, servesStale = true)
                 if (cached != null) {
                     engineLogger.info { "SELECT $table served from cache" }
                     cached
@@ -369,7 +368,7 @@ internal class QueryReader(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> {
-        val refreshState = MutableStateFlow<RefreshState>(RefreshState.InFlight)
+        val refreshState = MutableStateFlow<RefreshState>(RefreshState.Refreshing)
         val payloads =
             cacheFirstWithParallelRefresh(
                 cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape),
@@ -470,7 +469,7 @@ internal class QueryReader(
                 wakeUps = wakeUps,
                 // Not confirmed until a refresh succeeds: an attempt in flight changes nothing
                 onRefreshState = { state ->
-                    if (state !is RefreshState.InFlight) refreshState.value = state
+                    if (state !is RefreshState.Refreshing) refreshState.value = state
                 },
             )
         return combine(payloads.distinctUntilChanged().map(::resultOf), refreshState) {

@@ -57,7 +57,7 @@ class RequestLambdaRunsTest {
         val sent = server.requests.size
 
         // When
-        items.select(readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours)) {
+        items.select(readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours)) {
             runs++
             filter { eq("id", 1) }
         }

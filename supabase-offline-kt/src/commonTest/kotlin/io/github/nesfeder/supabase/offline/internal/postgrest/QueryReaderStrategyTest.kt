@@ -182,7 +182,7 @@ class QueryReaderStrategyTest {
 
         // When / Then
         assertFailsWith<HttpRequestTimeoutException> {
-            resolver.select(Columns.ALL, ReadStrategy.NetworkFirst(cacheDuration = 1.hours)) {}
+            resolver.select(Columns.ALL, ReadStrategy.NetworkFirst(maxAge = 1.hours)) {}
         }
     }
 
@@ -261,7 +261,7 @@ class QueryReaderStrategyTest {
         val result =
             resolver(backgroundScope).select(
                 Columns.ALL,
-                ReadStrategy.CacheFirst(cacheDuration = 1.hours),
+                ReadStrategy.CacheFirst(maxAge = 1.hours),
             ) {}
 
         // Then
@@ -280,7 +280,7 @@ class QueryReaderStrategyTest {
 
         // When / Then — no stale fallback
         assertFailsWith<HttpRequestTimeoutException> {
-            resolver.select(Columns.ALL, ReadStrategy.CacheFirst(cacheDuration = 1.hours)) {}
+            resolver.select(Columns.ALL, ReadStrategy.CacheFirst(maxAge = 1.hours)) {}
         }
     }
 
@@ -319,7 +319,7 @@ class QueryReaderStrategyTest {
 
         // When / Then
         assertFailsWith<NoSuchElementException> {
-            resolver.select(Columns.ALL, ReadStrategy.CacheOnly(cacheDuration = 1.hours)) {}
+            resolver.select(Columns.ALL, ReadStrategy.CacheOnly(maxAge = 1.hours)) {}
         }
     }
 

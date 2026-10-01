@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.MutationOperation
+import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation as StoredOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor

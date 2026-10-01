@@ -110,7 +110,7 @@ class WritesToAnotherSchemaTest {
         list.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
             filter { eq("id", 1) }
         }
-        list.select(readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours))
+        list.select(readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours))
 
         // Then — the list was asked for again
         assertEquals(readsBefore + 1, server.requests.count { request -> request.method == "GET" })

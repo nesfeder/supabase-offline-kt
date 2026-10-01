@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -111,7 +112,7 @@ class ListMembershipTest {
         val outcome = items.insertJson(JsonArray(listOf(row("new-b", list = "B", position = 5))))
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(listOf("a1", "a2"), cachedIds("A"))
         assertEquals(listOf("b1", "new-b"), cachedIds("B"))
         assertEquals(listOf("a1", "a2"), liveIds("A"))

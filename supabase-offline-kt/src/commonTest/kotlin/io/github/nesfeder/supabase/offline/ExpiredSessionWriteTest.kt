@@ -57,8 +57,8 @@ class ExpiredSessionWriteTest {
         val updated = builder.updateJson(patch()) { filter { eq("id", "k1") } }
 
         // Then — both queued, as A's, and no request went out with a token it could not refresh
-        assertEquals(MutationOutcome.Queued, inserted)
-        assertEquals(MutationOutcome.Queued, updated)
+        assertIs<MutationOutcome.Queued>(inserted)
+        assertIs<MutationOutcome.Queued>(updated)
         assertEquals(listOf("user:user-a", "user:user-a"), mutationDao.inserted.map { it.owner })
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
     }
@@ -105,7 +105,7 @@ class ExpiredSessionWriteTest {
         val inserted = builder.insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // Then — queued, unsent, and not recorded as possibly on the server
-        assertEquals(MutationOutcome.Queued, inserted)
+        assertIs<MutationOutcome.Queued>(inserted)
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
         val queued = store.allPendingMutations().single()
         assertFalse(store.hasUnconfirmedSend(queued.id))

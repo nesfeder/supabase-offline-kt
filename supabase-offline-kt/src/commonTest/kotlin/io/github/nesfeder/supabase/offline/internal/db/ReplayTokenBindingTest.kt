@@ -21,6 +21,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -161,7 +162,7 @@ class ReplayTokenBindingTest {
 
         // Then — the write stays queued as A's, nothing went out under B's token, and the send
         // this attempt recorded is cleared
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(emptyList(), postsCarrying("user-b"))
         assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.owner })
         assertFalse(store.hasUnconfirmedSend(store.allPendingMutations().single().id))

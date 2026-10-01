@@ -14,6 +14,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.serialization.json.JsonArray
@@ -57,7 +58,7 @@ class InMemorySupabaseOfflineClientTest {
                 .insertJson(JsonArray(listOf(buildJsonObject { put("title", "Buy milk") })))
 
         // Then — the write is queued rather than lost
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, client.pendingMutationCount())
     }
 

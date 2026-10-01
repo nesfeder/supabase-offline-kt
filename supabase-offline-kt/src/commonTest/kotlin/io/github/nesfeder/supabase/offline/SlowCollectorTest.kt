@@ -8,6 +8,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -69,7 +70,7 @@ class SlowCollectorTest {
     @Test
     fun each_collector_ends_on_the_latest_list_and_the_slow_one_does_not_hold_back_the_other() =
         runTest {
-            FlowReadStrategy.entries.forEach { strategy ->
+            everyFlowReadStrategy.forEach { strategy ->
                 // Given — a fast and a slow collector of one query
                 val client = newClient()
                 client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly)

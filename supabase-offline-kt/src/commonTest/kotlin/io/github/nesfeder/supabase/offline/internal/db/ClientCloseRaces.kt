@@ -14,6 +14,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESS
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
+import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
@@ -316,7 +317,7 @@ internal object ClientCloseRaces {
     ) = onRealThreads {
         repeat(iterations) { iteration ->
             // Given — a screen observing a read of one strategy
-            val strategy = FlowReadStrategy.entries[iteration % FlowReadStrategy.entries.size]
+            val strategy = everyFlowReadStrategy[iteration % everyFlowReadStrategy.size]
             val databaseDirectory = directory / "logout-$iteration"
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")

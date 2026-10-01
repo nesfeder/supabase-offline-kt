@@ -2,52 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import kotlin.time.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-
-/*
- * The mutation queue's own vocabulary, named after the offline API sheet so a later change can
- * expose these types publicly under the same names. They stay internal until then.
- */
-
-/** The PostgREST write a queued mutation performs. */
-internal enum class MutationOperation {
-    /** `POST` of new rows. */
-    Insert,
-
-    /** `POST` with a conflict resolution. */
-    Upsert,
-
-    /** `PATCH` of the rows a filter selects. */
-    Update,
-
-    /** `DELETE` of the rows a filter selects. */
-    Delete,
-}
-
-/**
- * One write waiting in the queue.
- *
- * @property id The mutation's stable id: the mutation row's autoincrement id. It survives process
- *   death and is carried by a [RejectedMutation] when the server refuses the write.
- * @property table The table the write targets.
- * @property operation What the write does.
- * @property createdAt When the write was queued, by the device clock. Replay order is [id], not
- *   this.
- * @property rowKeys The primary-key values the engine can determine for the rows the write touches:
- *   one object per body row that carries the key, or the key's `eq` conditions of the filter. Empty
- *   when they cannot be determined.
- * @property body The write's body, or `null` for a DELETE or a body that no longer parses.
- */
-internal data class PendingMutation(
-    val id: Long,
-    val table: String,
-    val operation: MutationOperation,
-    val createdAt: Instant,
-    val rowKeys: List<JsonObject>,
-    val body: JsonElement?,
-)
 
 /**
  * What the server said when it refused a write, as data rather than an exception so it survives a

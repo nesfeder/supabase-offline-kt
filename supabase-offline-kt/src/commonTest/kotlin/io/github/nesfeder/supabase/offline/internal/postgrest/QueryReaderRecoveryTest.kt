@@ -96,7 +96,7 @@ class QueryReaderRecoveryTest {
                 reads.first().result,
                 "fresh cache-less subscription starts at no-data, not empty []",
             )
-            assertIs<RefreshState.InFlight>(reads.first().refresh)
+            assertIs<RefreshState.Refreshing>(reads.first().refresh)
             assertTrue(
                 reads.any { it.result == null && it.refresh is RefreshState.Stalled },
                 "fast-ladder exhaustion surfaces Stalled while still no-data",

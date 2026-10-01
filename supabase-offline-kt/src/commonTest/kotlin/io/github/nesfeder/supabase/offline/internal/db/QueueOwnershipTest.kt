@@ -17,6 +17,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -99,7 +100,7 @@ class QueueOwnershipTest {
         val outcome = writeOffline("B's note")
 
         // Then — B's write is queued as B's, and A's stays A's
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         val pending = store.allPendingMutations()
         assertEquals(listOf(USER_A.storedValue, USER_B.storedValue), pending.map { it.owner })
     }

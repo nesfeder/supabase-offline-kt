@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingUncaughtExceptions
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
+import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -79,7 +80,7 @@ class SupabaseOfflineClientCloseTest {
 
     @Test
     fun close_stops_the_clients_background_work_and_ends_a_live_read_of_every_strategy() = runTest {
-        for (strategy in FlowReadStrategy.entries) {
+        for (strategy in everyFlowReadStrategy) {
             // Given — a live reactive read of this strategy, which has emitted
             val releases = AtomicInt(0)
             val server = RecordingPostgrestServer()
@@ -136,7 +137,7 @@ class SupabaseOfflineClientCloseTest {
     @Test
     fun a_read_of_any_strategy_made_after_close_fails_with_the_closed_error_and_sends_nothing() =
         runTest {
-            for (strategy in FlowReadStrategy.entries) {
+            for (strategy in everyFlowReadStrategy) {
                 // Given — a builder obtained before close()
                 val server = RecordingPostgrestServer()
                 val client =
@@ -178,7 +179,7 @@ class SupabaseOfflineClientCloseTest {
                         client.pendingMutationCountFlow("todos")
                     },
             ) +
-                FlowReadStrategy.entries.map { strategy ->
+                everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
                         { client: SupabaseOfflineClient ->
                             client.from("todos").selectAsFlow(readStrategy = strategy)
@@ -236,7 +237,7 @@ class SupabaseOfflineClientCloseTest {
     @Test
     fun a_collection_that_stops_reading_does_not_hold_close() = runTest {
         for (variant in listOf(STUCK_IN_ITS_BODY, NEVER_READ_AGAIN, NEVER_READ_AGAIN_RENDEZVOUS)) {
-            for (strategy in FlowReadStrategy.entries) {
+            for (strategy in everyFlowReadStrategy) {
                 // Given — reads the server answers and writes that queue, so every read keeps
                 // wanting to emit, and a collection that stops reading after its first value
                 val releases = AtomicInt(0)
@@ -357,7 +358,7 @@ class SupabaseOfflineClientCloseTest {
                         client.pendingMutationCountFlow("todos")
                     },
             ) +
-                FlowReadStrategy.entries.map { strategy ->
+                everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
                         { client: SupabaseOfflineClient ->
                             client.from("todos").selectAsFlow(readStrategy = strategy)
@@ -847,7 +848,7 @@ class SupabaseOfflineClientCloseTest {
                 "pendingMutationCountFlow()" to { client.pendingMutationCountFlow() },
                 "pendingMutationCountFlow(table)" to { client.pendingMutationCountFlow("todos") },
             ) +
-                FlowReadStrategy.entries.map { strategy ->
+                everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to { builder.selectAsFlow(readStrategy = strategy) }
                 }
 

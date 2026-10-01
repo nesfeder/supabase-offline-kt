@@ -20,6 +20,7 @@ import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -89,7 +90,7 @@ class HeadSendTest {
         val outcome = rename("A")
 
         // Then — queued, and nothing asked for a pass while offline
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, store.allPendingMutations().size)
         assertEquals(0, syncRequests)
     }
@@ -137,7 +138,7 @@ class HeadSendTest {
         first.await()
 
         // Then — one pass asked for by the queued write, one by the head once it landed
-        assertEquals(MutationOutcome.Queued, second)
+        assertIs<MutationOutcome.Queued>(second)
         assertEquals(2, syncRequests)
         assertEquals(1, store.allPendingMutations().size)
     }
@@ -160,7 +161,7 @@ class HeadSendTest {
         val outcome = asUserA.updateJson(patch("A")) { filter { eq("id", 1) } }
 
         // Then — it waits for A, unsent
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(0, server.requests.size)
         session = USER_A
         assertEquals(1, replayer.sync().syncedCount)
@@ -279,7 +280,7 @@ class HeadSendTest {
         val outcome = rename("A")
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, store.allPendingMutations().size)
     }
 
@@ -292,7 +293,7 @@ class HeadSendTest {
         val outcome = rename("A")
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, store.allPendingMutations().size)
     }
 

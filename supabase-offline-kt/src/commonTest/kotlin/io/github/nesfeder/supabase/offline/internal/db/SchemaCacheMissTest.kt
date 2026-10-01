@@ -78,7 +78,7 @@ class SchemaCacheMissTest {
         val outcome = builder.insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // Then — the caller is told it is queued, and it waits for the cache
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, store.allPendingMutations().size)
         assertEquals(1, mutationDao.inserted.single().schemaCacheMisses)
     }

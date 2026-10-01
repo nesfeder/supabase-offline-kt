@@ -21,6 +21,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -132,7 +133,7 @@ class IsDistinctOperatorTest {
             MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — it was queued, and the replay carries the caller's own filter
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, synced)
         val replay = server.requests.last()
         assertEquals("PATCH", replay.method)

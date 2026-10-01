@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -48,7 +49,7 @@ class ReactiveReadFailuresTest {
     @Test
     fun a_read_that_fails_after_a_value_delivers_the_value_then_the_failure_on_every_strategy() =
         runTest {
-            for (strategy in FlowReadStrategy.entries) {
+            for (strategy in everyFlowReadStrategy) {
                 // Given, When — a read that fails as it runs again after its first value
                 val (values, failure) = aReadThatFailsAfterItsFirstValue(strategy, ReadFailed())
 
@@ -64,7 +65,7 @@ class ReactiveReadFailuresTest {
 
     @Test
     fun a_read_whose_upstream_cancels_ends_with_that_cancellation_on_every_strategy() = runTest {
-        for (strategy in FlowReadStrategy.entries) {
+        for (strategy in everyFlowReadStrategy) {
             // Given, When — a read that gives up with a cancellation of its own as it runs again
             val (values, failure) =
                 aReadThatFailsAfterItsFirstValue(strategy, CancellationException(READ_GAVE_UP))

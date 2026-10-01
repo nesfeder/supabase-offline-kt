@@ -20,6 +20,7 @@ import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineReadResult
+import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.EngineJson
@@ -27,6 +28,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
@@ -34,6 +36,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -612,14 +615,14 @@ internal class OfflineTable(
             }
         }
 
-        val mutationId =
+        val queued =
             when (
                 val enqueued =
                     store.enqueueOwnedBy(identity.storedValue, startedAtTick) {
                         queueable.enqueue(this)
                     }
             ) {
-                is EnqueueOutcome.Queued -> enqueued.id
+                is EnqueueOutcome.Queued -> enqueued
                 EnqueueOutcome.LocalDataCleared ->
                     return direct.send(OfflineLogLevel.INFO) {
                         "Not queueing offline $operationLabel for $table: local data was cleared while it was in flight"
@@ -628,7 +631,7 @@ internal class OfflineTable(
 
         val sent =
             try {
-                headSender.sendAtHead(mutationId, identity, performOnline) { result ->
+                headSender.sendAtHead(queued.id, identity, performOnline) { result ->
                     direct.overlay(result)
                 }
             } catch (cancellation: CancellationException) {
@@ -642,7 +645,7 @@ internal class OfflineTable(
             MutationQueueReplayer.HeadSendOutcome.NotAtHead -> {
                 engineLogger.info { "$operationLabel $table queued behind pending mutations" }
                 requestSync()
-                MutationOutcome.Queued
+                MutationOutcome.Queued(pendingMutationOf(queued.row))
             }
 
             is MutationQueueReplayer.HeadSendOutcome.Sent -> {
@@ -665,7 +668,7 @@ internal class OfflineTable(
                                 "it may not have run)"
                     }
                 }
-                MutationOutcome.Queued
+                MutationOutcome.Queued(pendingMutationOf(queued.row))
             }
 
             is MutationQueueReplayer.HeadSendOutcome.Refused -> {
@@ -793,6 +796,12 @@ internal class OfflineTable(
             }
         }
     }
+
+    /** The queued write [row] as the caller sees it in [MutationOutcome.Queued]. */
+    private fun pendingMutationOf(row: MutationRow): PendingMutation =
+        checkNotNull(row.toPendingMutation(json, store.primaryKeys)) {
+            "the queue stored an operation it cannot name"
+        }
 
     private fun preferResponseForCache(
         requestBody: JsonArray,

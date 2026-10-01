@@ -87,7 +87,7 @@ class MutationOutcomeTest {
         val outcome = builder.insertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
 
         // Then — the outcome is honest about being queued, and the mutation was enqueued
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, mutationDao.inserted.size)
         assertEquals("attachments", mutationDao.inserted.single().table)
     }
@@ -233,7 +233,7 @@ class MutationOutcomeTest {
             }
 
         // Then — queued and enqueued
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, mutationDao.inserted.size)
     }
 
@@ -300,7 +300,7 @@ class MutationOutcomeTest {
             }
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, mutationDao.inserted.size)
     }
 

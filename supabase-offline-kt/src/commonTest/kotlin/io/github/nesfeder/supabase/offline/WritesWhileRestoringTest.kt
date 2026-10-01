@@ -18,6 +18,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -85,7 +86,7 @@ class WritesWhileRestoringTest {
         runCurrent()
 
         // Then — queued, and nothing sent on the anon key
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(0, server.writes())
 
         // When — the session settles as the user
@@ -108,7 +109,7 @@ class WritesWhileRestoringTest {
         val outcome = items.insertJson(ROW)
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
     }
 
     @Test

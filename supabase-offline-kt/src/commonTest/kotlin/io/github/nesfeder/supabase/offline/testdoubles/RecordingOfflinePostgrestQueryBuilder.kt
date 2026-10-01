@@ -9,11 +9,14 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineReadResult
+import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.ReadStrategy
+import kotlin.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
@@ -115,6 +118,15 @@ internal class RecordingOfflinePostgrestQueryBuilder : OfflinePostgrestQueryBuil
 
     private fun record(call: Call): MutationOutcome {
         calls += call
-        return MutationOutcome.Queued
+        return MutationOutcome.Queued(
+            PendingMutation(
+                id = calls.size.toLong(),
+                table = "",
+                operation = MutationOperation.Insert,
+                createdAt = Instant.fromEpochMilliseconds(0),
+                rowKeys = emptyList(),
+                body = null,
+            )
+        )
     }
 }

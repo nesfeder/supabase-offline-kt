@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflinePostgrestQueryBuilder
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
 
@@ -31,7 +32,7 @@ class OfflinePostgrestExtensionsTest {
         assertEquals(rows, call.values)
         assertEquals(rowSerialName, call.serializer.descriptor.serialName)
         assertEquals(MutationStrategy.QueueIfOffline, call.mutationStrategy)
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
     }
 
     @Test

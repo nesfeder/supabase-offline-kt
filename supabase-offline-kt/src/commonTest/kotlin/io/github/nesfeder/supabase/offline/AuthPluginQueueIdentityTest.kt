@@ -21,6 +21,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -65,7 +66,7 @@ class AuthPluginQueueIdentityTest {
             val signedOut = replayer.sync()
 
             // Then — the anonymous write went out
-            assertEquals(MutationOutcome.Queued, anonymousOutcome)
+            assertIs<MutationOutcome.Queued>(anonymousOutcome)
             assertEquals(1, signedOut.syncedCount)
             assertEquals(
                 listOf("""[{"id":"n0","title":"anonymous"}]"""),
@@ -88,7 +89,7 @@ class AuthPluginQueueIdentityTest {
             val signedIn = replayer.sync()
 
             // Then — A's write queued and went out under A
-            assertEquals(MutationOutcome.Queued, userAOutcome)
+            assertIs<MutationOutcome.Queued>(userAOutcome)
             assertEquals(1, signedIn.syncedCount)
             assertEquals(0, store.allPendingMutations().size)
         }
