@@ -30,11 +30,11 @@ fun javaStringLiteral(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 android {
-    namespace = "io.github.nesfeder.supabase.offline.sample"
+    namespace = "io.github.nesfeder.offlinetasks"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "io.github.nesfeder.supabase.offline.sample"
+        applicationId = "io.github.nesfeder.offlinetasks"
         minSdk = libs.versions.android.sample.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1

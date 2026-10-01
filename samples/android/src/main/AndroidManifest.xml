@@ -5,8 +5,10 @@
     <!-- To know when the network comes and goes. The photo picker needs no media permission. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Nothing to back up: the server holds every task, and the cache rebuilds from it.
-         The extraction rules cover Android 12 and later, the backup rules the versions before. -->
+    <!-- Nothing is backed up: the anonymous session and the queue of unsynced writes belong to
+         this install, and restored elsewhere they would replay writes under a session that is not
+         there. The extraction rules cover Android 12 and later, the backup rules the versions
+         before. -->
     <application
         android:name=".OfflineTasksApplication"
         android:allowBackup="false"

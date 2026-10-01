@@ -59,6 +59,7 @@
         <item quantity="other">Done · %d</item>
     </plurals>
     <string name="task_untitled">(no title)</string>
+    <string name="task_done_checkbox">Done: %1$s</string>
     <string name="task_not_synced">Not synced yet</string>
     <string name="tasks_loading_title">Loading your tasks</string>
     <string name="tasks_loading_body">Nothing is saved on this device yet, so the list comes from the server this once.</string>
@@ -119,10 +120,10 @@
     <string name="photo_on_device">Available offline</string>
     <string name="photo_not_on_device">Not on this device yet; it loads when you’re online</string>
     <string name="photo_missing">This photo’s file is missing</string>
+    <string name="photo_unavailable">This photo couldn’t be loaded</string>
     <string name="photo_delete">Delete photo</string>
     <string name="photo_delete_offline">Photos can be deleted only while you’re online.</string>
     <string name="photo_unreadable">That image couldn’t be read.</string>
-    <string name="photo_upload_failed">The photo didn’t upload. Try again when you’re online.</string>
 
     <!-- Sync -->
     <string name="sync_title">Sync</string>
@@ -161,20 +162,27 @@
     <string name="refused_notes">The server refused it: notes can’t be longer than 2,000 characters.</string>
     <string name="refused_missing_task">The server refused it: its task isn’t on the server.</string>
     <string name="refused_other">The server refused it (%1$d): %2$s</string>
+    <string name="failure_refused">Couldn’t save “%1$s”. %2$s</string>
+    <string name="failure_needs_network">That needs the network, and you’re offline.</string>
+    <string name="failure_server_unreachable">The server couldn’t be reached. Try again in a moment.</string>
+    <string name="failure_storage">Storage refused it (%1$d): %2$s</string>
+    <string name="failure_other">Something went wrong. Try again.</string>
     <string name="sync_developer">Try it</string>
     <string name="sync_queue_invalid">Queue an invalid title</string>
-    <string name="sync_queue_invalid_body">Adds a task with a blank title. The server refuses it when it syncs.</string>
+    <string name="sync_queue_invalid_body">Adds a task with a blank title. Online, the server refuses it at once; offline, when it syncs.</string>
     <string name="sync_server_outage">Make the server unreachable</string>
     <string name="sync_server_outage_body">Every request fails while the network stays up, so refreshes stall.</string>
+    <string name="sync_storage_failing">Make Storage refuse</string>
+    <string name="sync_storage_failing_body">Photo uploads, downloads and deletes fail, as when Storage refuses a request.</string>
     <string name="sync_local_data">Local data</string>
     <string name="sync_clear">Clear local cache</string>
     <string name="sync_clear_body">Deletes what this device holds. The server’s copy stays.</string>
     <string name="sync_clear_title">Clear the local cache?</string>
     <string name="sync_clear_confirm_body">Saved tasks, photos and changes not yet synced are deleted from this device. Anything already on the server comes back when you’re online.</string>
     <string name="sync_start_over">Start over</string>
-    <string name="sync_start_over_body">Clears this device and continues as a new anonymous user.</string>
+    <string name="sync_start_over_body">Deletes this user’s tasks and photos, then continues as a new anonymous user.</string>
     <string name="sync_start_over_title">Start over as a new user?</string>
-    <string name="sync_start_over_confirm_body">You get an empty list. This user’s tasks stay on the server, but an anonymous user can’t sign back in, so they can’t be reached again.</string>
+    <string name="sync_start_over_confirm_body">You get an empty list. Online, this user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them. Offline, they stay there.</string>
     <string name="sync_about">About this build</string>
     <string name="sync_session">Supabase</string>
     <string name="sync_session_not_configured">Not configured: add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to local.properties</string>

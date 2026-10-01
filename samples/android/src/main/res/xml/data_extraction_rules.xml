@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Nothing leaves the device in a backup or a device transfer: the server holds every task, the
-     cache rebuilds from it, and the anonymous session must not move to another device. -->
+<!-- Nothing leaves the device in a backup or a device transfer: the anonymous session and the
+     queue of unsynced writes are this install's identity, and must not move to another device. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="root" />
