@@ -179,6 +179,9 @@ class SupabaseOfflineClientCloseTest {
                     { client ->
                         client.pendingMutationCountFlow("todos")
                     },
+                "pendingMutations()" to { client -> client.pendingMutations() },
+                "pendingMutations(table)" to { client -> client.pendingMutations("todos") },
+                "rejectedMutations()" to { client -> client.rejectedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
@@ -358,6 +361,9 @@ class SupabaseOfflineClientCloseTest {
                     { client ->
                         client.pendingMutationCountFlow("todos")
                     },
+                "pendingMutations()" to { client -> client.pendingMutations() },
+                "pendingMutations(table)" to { client -> client.pendingMutations("todos") },
+                "rejectedMutations()" to { client -> client.rejectedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
@@ -850,6 +856,9 @@ class SupabaseOfflineClientCloseTest {
             listOf<Pair<String, () -> Flow<*>>>(
                 "pendingMutationCountFlow()" to { client.pendingMutationCountFlow() },
                 "pendingMutationCountFlow(table)" to { client.pendingMutationCountFlow("todos") },
+                "pendingMutations()" to { client.pendingMutations() },
+                "pendingMutations(table)" to { client.pendingMutations("todos") },
+                "rejectedMutations()" to { client.rejectedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to { builder.selectAsFlow(readStrategy = strategy) }
@@ -884,12 +893,20 @@ class SupabaseOfflineClientCloseTest {
         // Then
         assertFailsWith<IllegalStateException> { client.from("todos") }
         assertFailsWith<IllegalStateException> { client.storage.from("avatars") }
-        assertFailsWith<IllegalStateException> { client.syncPendingMutations().syncedCount }
+        assertFailsWith<IllegalStateException> { client.syncPendingMutations() }
         assertFailsWith<IllegalStateException> { client.syncPendingMutations("todos") }
         assertFailsWith<IllegalStateException> { client.pendingMutationCount() }
         assertFailsWith<IllegalStateException> { client.pendingMutationCount("todos") }
         assertFailsWith<IllegalStateException> { client.pendingMutationCountFlow().first() }
         assertFailsWith<IllegalStateException> { client.pendingMutationCountFlow("todos").first() }
+        assertFailsWith<IllegalStateException> { client.pendingMutations().first() }
+        assertFailsWith<IllegalStateException> { client.discardPendingMutation(1L) }
+        assertFailsWith<IllegalStateException> { client.rejectedMutations().first() }
+        assertFailsWith<IllegalStateException> { client.dismissRejectedMutation(1L) }
+        assertFailsWith<IllegalStateException> { client.retryRejectedMutation(1L) }
+        assertFailsWith<IllegalStateException> { client.syncStatus }
+        assertFailsWith<IllegalStateException> { client.disableNetwork() }
+        assertFailsWith<IllegalStateException> { client.enableNetwork() }
         assertFailsWith<IllegalStateException> {
             client.applyServerRecord("todos", buildJsonObject { put("id", 1) })
         }

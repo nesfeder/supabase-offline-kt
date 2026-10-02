@@ -25,6 +25,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
@@ -43,6 +44,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import okio.FileSystem
@@ -191,6 +193,8 @@ internal suspend fun OfflineStore.recordQueryShape(
  *   factories tell the registry; it is handed the count of calls still in flight.
  * @param primaryKeys each table's primary-key columns; `id` for every table by default.
  * @param responseTrust which read responses may replace what the cache holds.
+ * @param config the plugin configuration the client reports, and reads `autoSync` from.
+ * @param networkAvailability the connectivity signal the client watches; `null` for none.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -205,6 +209,8 @@ internal fun newTestOfflineClient(
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
+    config: Offline.Config = Offline.Config(),
+    networkAvailability: Flow<Boolean>? = null,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
@@ -218,6 +224,8 @@ internal fun newTestOfflineClient(
         onStillClosing = onStillClosing,
         primaryKeys = primaryKeys,
         responseTrust = responseTrust,
+        config = config,
+        networkAvailability = networkAvailability,
     )
 
 /**
@@ -263,6 +271,7 @@ internal fun newTestFileCache(
  *   engine scope of its own, as the client's is.
  * @param operationGate the gate every member passes; pass one to close it as the client's close
  *   does.
+ * @param networkAccess the network switch the bucket honours; on by default.
  * @return the offline bucket.
  */
 internal fun newTestBucketApi(
@@ -274,6 +283,7 @@ internal fun newTestBucketApi(
         newTestFileCache(baseDirectory = baseDirectory, store = store, engineLogger = engineLogger),
     backgroundScope: CoroutineScope = newEngineScope(engineLogger),
     operationGate: ClientOperationGate = ClientOperationGate(),
+    networkAccess: NetworkAccess = NetworkAccess(),
 ): CachingBucketApi =
     CachingBucketApi(
         delegate = delegate,
@@ -281,6 +291,7 @@ internal fun newTestBucketApi(
         engineLogger = engineLogger,
         backgroundScope = backgroundScope,
         operationGate = operationGate,
+        networkAccess = networkAccess,
     )
 
 /**
