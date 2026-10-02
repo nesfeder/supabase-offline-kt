@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.testing
 
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.MutationOutcome
+import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.offline
 import kotlin.test.Test
@@ -55,6 +56,29 @@ class InMemoryTest {
         // Then — the write is queued rather than lost
         assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, supabase.offline.pendingMutationCount())
+        supabase.close()
+    }
+
+    @Test
+    fun the_network_reads_as_unknown_until_the_test_switches_it_off() = runTest {
+        // Given — a row cached while the network is on
+        val supabase = server.supabaseClient { inMemory() }
+        supabase.offline.from(TABLE).select()
+        val before = supabase.offline.syncStatus.value.network
+
+        // When — the test switches the library's network access off
+        supabase.offline.disableNetwork()
+        val read = supabase.offline.from(TABLE).select()
+        val write =
+            supabase.offline
+                .from(TABLE)
+                .insert(JsonArray(listOf(buildJsonObject { put("title", "Tea") })))
+
+        // Then — the read is the cached row, the write waits, and the status says why
+        assertEquals(NetworkStatus.UNKNOWN, before)
+        assertEquals(NetworkStatus.DISABLED, supabase.offline.syncStatus.value.network)
+        assertEquals(SERVER_ROWS, read.data)
+        assertIs<MutationOutcome.Queued>(write)
         supabase.close()
     }
 
