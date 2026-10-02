@@ -242,7 +242,7 @@ internal class OfflineClient(
      * them.
      */
     private val automaticReplay =
-        AutomaticReplay(scope = clientScope, engineLogger = engineLogger) {
+        AutomaticReplay(scope = clientScope, engineLogger = engineLogger, clock = clock) {
             mutationQueueReplayer.sync()
         }
 
@@ -686,7 +686,7 @@ internal class OfflineClient(
     /** Records that sending left the session's queue empty: now, and no error since. */
     private fun recordQueueEmptiedBySending() {
         syncStatusState.update { status ->
-            status.copy(lastSyncedAt = Clock.System.now(), lastSyncError = null)
+            status.copy(lastSyncedAt = clock.now(), lastSyncError = null)
         }
     }
 
