@@ -14,7 +14,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
-import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.test.assertEquals
@@ -249,24 +248,27 @@ internal object ClientCloseRaces {
             fill(client, server)
             server.online.store(true)
             val app = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            val emitted = AtomicInt(0)
-            val readers =
+            val strategies =
                 listOf(FlowReadStrategy.CacheOnly, FlowReadStrategy.NetworkFirstThenCache)
-                    .flatMap { strategy ->
-                        (0 until READERS_PER_STRATEGY).map { index ->
-                            app.async {
-                                val outcome = runCatching {
-                                    client
-                                        .from(TABLE)
-                                        .selectAsFlow(readStrategy = strategy) {
-                                            filter { eq("id", index) }
-                                        }
-                                        .collect { emitted.addAndFetch(1) }
+            // Each reader's own first value, so every one is live, not still starting, at close()
+            val firstValues =
+                List(strategies.size * READERS_PER_STRATEGY) { CompletableDeferred<Unit>() }
+            val readers = strategies.flatMapIndexed { strategyIndex, strategy ->
+                (0 until READERS_PER_STRATEGY).map { index ->
+                    val firstValue = firstValues[strategyIndex * READERS_PER_STRATEGY + index]
+                    app.async {
+                        val outcome = runCatching {
+                            client
+                                .from(TABLE)
+                                .selectAsFlow(readStrategy = strategy) {
+                                    filter { eq("id", index) }
                                 }
-                                outcome.exceptionOrNull()
-                            }
+                                .collect { firstValue.complete(Unit) }
                         }
+                        outcome.exceptionOrNull()
                     }
+                }
+            }
             val writer = app.async {
                 val outcome = runCatching {
                     var index = 0
@@ -277,7 +279,7 @@ internal object ClientCloseRaces {
                 }
                 outcome.exceptionOrNull()
             }
-            withTimeout(5.seconds) { while (emitted.load() < readers.size) delay(1) }
+            withTimeout(5.seconds) { firstValues.awaitAll() }
 
             // When — close() at a random moment
             delay(Random.nextLong(0, 8))
