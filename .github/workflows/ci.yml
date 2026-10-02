@@ -347,6 +347,14 @@ jobs:
           bash scripts/check-api-visibility.sh --self-test
           bash scripts/check-api-visibility.sh
 
+      # Nothing in the shipped code writes to a console: the library reports through its log sink,
+      # supabase-kt's logging, only. The self-test runs first, as above.
+      - name: Check that nothing writes to a console
+        if: needs.changes.outputs.kotlin == 'true'
+        run: |
+          python3 scripts/check-no-console.py --self-test
+          python3 scripts/check-no-console.py
+
       # What this change does to the public contract: none, patch, additive or breaking, from the
       # committed API records, Room schemas, stored-format pins and version catalog. A change that
       # needs one must add a matching line under `## Unreleased` in CHANGELOG.md. The rating goes to
