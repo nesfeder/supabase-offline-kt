@@ -9,11 +9,11 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
-import io.github.nesfeder.supabase.offline.internal.logging.engineLogger
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.RejectedMutation
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
+import io.github.nesfeder.supabase.offline.internal.logging.engineLogger
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.coroutines.flow.Flow

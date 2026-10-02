@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
-import io.github.nesfeder.supabase.offline.QuerySnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
