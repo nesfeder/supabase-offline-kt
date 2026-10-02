@@ -3,7 +3,9 @@
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.retryAfterOrNull
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -25,17 +27,19 @@ import kotlinx.coroutines.launch
  * - **Backed off:** after a pass that stopped on a failure that may pass (a transient failure, or a
  *   write held behind an earlier one), the next pass waits — [initialBackoff], doubling up to
  *   [maxBackoff] — and a pass that ends any other way resets the wait. So a write the server keeps
- *   failing is not hammered by every write queued behind it.
+ *   failing is not hammered by every write queued behind it. A `Retry-After` the server sent with
+ *   the failure makes the wait at least that long, up to [maxRetryAfter].
  *
- * A switch that turns automatic replay off, when one is added, must stop the session-settle trigger
- * (and any connectivity trigger added with it), and must not stop the two write-path triggers: with
- * write-ahead an online write returns `Queued` whenever anything of its identity is pending ahead
- * of it, and only those passes send it. So the switch goes at each trigger, not in this class.
+ * The app's `autoSync` switch stops the session-settle and connectivity triggers, never the
+ * write-path ones: with write-ahead an online write returns `Queued` whenever anything of its
+ * identity is pending ahead of it, and only those passes send it. So the switch is at each trigger,
+ * not in this class.
  *
  * @property scope Hosts the worker; cancelling it stops the trigger.
  * @property engineLogger Where a pass that throws is logged.
  * @property initialBackoff The wait after the first failed pass.
  * @property maxBackoff The longest wait.
+ * @property maxRetryAfter The longest wait a server's `Retry-After` can ask for.
  * @property pass Runs one replay pass.
  */
 internal class AutomaticReplay(
@@ -43,6 +47,7 @@ internal class AutomaticReplay(
     private val engineLogger: EngineLogger,
     private val initialBackoff: Duration = 1.seconds,
     private val maxBackoff: Duration = 60.seconds,
+    private val maxRetryAfter: Duration = 1.hours,
     private val pass: suspend () -> SyncReport,
 ) {
 
@@ -77,7 +82,12 @@ internal class AutomaticReplay(
                 } else {
                     Duration.ZERO
                 }
-            if (backoff > Duration.ZERO) delay(backoff)
+            val serverAskedFor =
+                (report?.stop as? SyncStop.TransientFailure)?.cause?.retryAfterOrNull()
+            val wait =
+                if (serverAskedFor == null) backoff
+                else maxOf(backoff, minOf(serverAskedFor, maxRetryAfter))
+            if (wait > Duration.ZERO) delay(wait)
         }
     }
 

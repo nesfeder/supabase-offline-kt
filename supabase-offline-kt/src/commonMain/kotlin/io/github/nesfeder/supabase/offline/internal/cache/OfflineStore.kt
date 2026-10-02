@@ -51,6 +51,7 @@ import kotlin.time.TimeSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -1397,8 +1398,8 @@ internal class OfflineStore(
             val entry =
                 rejectedList.rejections().firstOrNull { rejection -> rejection.id == id }
                     ?: return@withLock null
-            if (identity != null && entry.owner != null && entry.owner != identity)
-                return@withLock null
+            // An ownerless entry is only for an identity that may adopt ownerless mutations
+            if (identity != null && !belongsTo(entry.owner, identity)) return@withLock null
             val row =
                 entry.toRequeuedRow(createdAtMs = nowMillis(), owner = identity)
                     ?: return@withLock null
@@ -1460,6 +1461,94 @@ internal class OfflineStore(
     /** Flow of the current identity's pending mutations for a specific [table]. */
     fun pendingMutationCountForTableFlow(table: String): Flow<Int> =
         pendingMutationsFlow(table).map { rows -> rows.size }
+
+    /*
+     * What the app is shown of the queue: the current identity's mutations and the ownerless ones
+     * it may adopt, and nothing at all while the identity cannot be told. The overlay, by contrast,
+     * shows every identity's then, so a write is never hidden from its maker.
+     */
+
+    /**
+     * The pending mutations the app is shown, of [table] or of every table, in insertion order, as
+     * they change.
+     */
+    fun shownPendingMutationsFlow(table: String?): Flow<List<MutationRow>> =
+        combine(mutationDao.pendingAllFlow(), identityChanges) { rows, _ ->
+                shownTo(identityProvider(), rows).filter { row ->
+                    table == null || row.table == table
+                }
+            }
+            .distinctUntilChanged()
+
+    /** How many pending mutations the app is shown, of [table] or of every table. */
+    suspend fun shownPendingMutationCount(table: String?): Int {
+        val identity = identityProvider() ?: return 0
+        val adopts = mayAdoptOwnerlessMutations(identity)
+        return if (table == null) mutationDao.countPendingOwnedBy(identity, adopts)
+        else mutationDao.countPendingOwnedByInTable(identity, adopts, table)
+    }
+
+    /**
+     * How many pending mutations and rejected entries the app is shown, read together under the
+     * queue's lock. A refusal and a retry move a mutation between the two under that lock, so it is
+     * in exactly one of them, never both and never neither.
+     */
+    suspend fun shownQueueCounts(): ShownQueueCounts {
+        val identity = identityProvider() ?: return ShownQueueCounts(pending = 0, rejected = 0)
+        val adopts = mayAdoptOwnerlessMutations(identity)
+        return mutationQueueMutex.withLock {
+            ShownQueueCounts(
+                pending = mutationDao.countPendingOwnedBy(identity, adopts),
+                rejected =
+                    shownTo(identity, rejectedList.rejections()) { entry -> entry.owner }.size,
+            )
+        }
+    }
+
+    /**
+     * Emits once at once, and once for each committed change to any mutation row or a change of
+     * session: when a count of the queue may have moved.
+     */
+    fun queueChanges(): Flow<Unit> =
+        combine(mutationChanges, identityChanges) { _, _ -> }.conflate()
+
+    /** The rejected mutations the app is shown, oldest first, as they change. */
+    fun shownRejectionsFlow(): Flow<List<StoredRejection>> =
+        combine(rejectedList.rejectionsFlow(), identityChanges) { entries, _ ->
+                shownTo(identityProvider(), entries) { entry -> entry.owner }
+            }
+            .distinctUntilChanged()
+
+    /**
+     * The rejected mutation [id] when the app is shown it: [identity]'s, or ownerless and
+     * [identity] may adopt it.
+     */
+    suspend fun shownRejection(id: Long, identity: String): StoredRejection? =
+        rejectedList.rejections().firstOrNull { entry ->
+            entry.id == id && belongsTo(entry.owner, identity)
+        }
+
+    /**
+     * Removes the rejected mutation [id] from the list when it is [identity]'s to remove, as
+     * [shownRejection] decides.
+     *
+     * @return `true` when an entry was removed.
+     */
+    suspend fun dismissRejectedMutationOf(id: Long, identity: String): Boolean =
+        mutationQueueMutex.withLock {
+            if (shownRejection(id, identity) == null) return@withLock false
+            rejectedList.removeRejection(id) != null
+        }
+
+    /** [rows] the app may be shown under [identity]; none while it cannot be told. */
+    private fun shownTo(identity: String?, rows: List<MutationRow>): List<MutationRow> =
+        shownTo(identity, rows) { row -> row.owner }
+
+    /** [entries] the app may be shown under [identity], by [ownerOf]; none without an identity. */
+    private fun <T> shownTo(identity: String?, entries: List<T>, ownerOf: (T) -> String?): List<T> {
+        if (identity == null) return emptyList()
+        return entries.filter { entry -> belongsTo(ownerOf(entry), identity) }
+    }
 
     /**
      * Deletes the mutation row [id] and what the records hold for it.
@@ -1534,18 +1623,27 @@ internal class OfflineStore(
         cacheKey: String,
         serverJson: String,
         shape: QueryShape? = null,
-    ): String {
-        if (isReservedTable(table)) return serverJson
+    ): String = overlayPendingOnResponseReporting(table, cacheKey, serverJson, shape).payload
+
+    /** [overlayPendingOnResponse], saying whether a pending mutation changed a row it shows. */
+    suspend fun overlayPendingOnResponseReporting(
+        table: String,
+        cacheKey: String,
+        serverJson: String,
+        shape: QueryShape? = null,
+    ): ServedOverlay {
+        if (isReservedTable(table)) return ServedOverlay(serverJson, hasPendingMutations = false)
         val pending = visibleTo(identityProvider(), mutationDao.pendingForTable(table))
-        if (pending.isEmpty()) return serverJson
+        if (pending.isEmpty()) return ServedOverlay(serverJson, hasPendingMutations = false)
 
         return overlayMutations(
-            serverJson,
-            pending,
-            admissionOf(table, cacheKey, shape),
-            unconfirmedSends(),
-            sameSelectRowsFor(table, cacheKey, shape, pending, ownJson = serverJson),
-        )
+                serverJson,
+                pending,
+                admissionOf(table, cacheKey, shape),
+                unconfirmedSends(),
+                sameSelectRowsFor(table, cacheKey, shape, pending, ownJson = serverJson),
+            )
+            .served(pending)
     }
 
     /**
@@ -1560,8 +1658,16 @@ internal class OfflineStore(
         cacheKey: String?,
         cachedJson: String,
         shape: QueryShape? = null,
-    ): String {
-        if (isReservedTable(table)) return cachedJson
+    ): String = overlayCachedPayloadReporting(table, cacheKey, cachedJson, shape).payload
+
+    /** [overlayCachedPayload], saying whether a pending mutation changed a row it shows. */
+    suspend fun overlayCachedPayloadReporting(
+        table: String,
+        cacheKey: String?,
+        cachedJson: String,
+        shape: QueryShape? = null,
+    ): ServedOverlay {
+        if (isReservedTable(table)) return ServedOverlay(cachedJson, hasPendingMutations = false)
         if (cacheKey != null && shape != null)
             queryShapes.remember(table, cacheKey, shape, persist = true)
         val visible = visibleTo(identityProvider(), mutationDao.allForTable(table))
@@ -1570,15 +1676,28 @@ internal class OfflineStore(
             if (cacheKey == null || visible.all { mutation -> mutation.syncedAtMs == null }) 0L
             else queryCacheDao.get(table, cacheKey)?.syncedThrough ?: 0L
         val all = visible.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
-        if (all.isEmpty()) return cachedJson
+        if (all.isEmpty()) return ServedOverlay(cachedJson, hasPendingMutations = false)
 
         val admission = cacheKey?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
         return overlayFor(admission, unconfirmedSends())
-            .overlay(
+            .overlayReportingChanges(
                 cachedJson,
                 all,
                 sameSelectRowsFor(table, cacheKey, shape, all, ownJson = cachedJson),
             )
+            .served(all)
+    }
+
+    /**
+     * This overlay as served: whether one of [mutations] that is still pending, not synced, changed
+     * a row it shows.
+     */
+    private fun OverlaidPayload.served(mutations: List<MutationRow>): ServedOverlay {
+        val pendingIds =
+            mutations.mapNotNullTo(HashSet()) { mutation ->
+                mutation.id.takeIf { mutation.syncedAtMs == null }
+            }
+        return ServedOverlay(payload, shownChangedBy.any { id -> id in pendingIds })
     }
 
     /** [overlayCachedPayload] for a payload whose signature is not known. */
@@ -1597,18 +1716,32 @@ internal class OfflineStore(
         table: String,
         cacheKey: String,
         shape: QueryShape? = null,
-    ): Flow<String?> {
+    ): Flow<String?> =
+        servedPayloadFlow(table, cacheKey, shape)
+            .map { served -> served?.payload }
+            .distinctUntilChanged()
+
+    /**
+     * [overlaidPayloadFlow], each payload with what a reader reports of it: when the cached payload
+     * under it was fetched, whether it is stale, and whether a pending mutation changed a row it
+     * shows. A change to any of these emits, a refresh that fetched the same rows included.
+     */
+    fun servedPayloadFlow(
+        table: String,
+        cacheKey: String,
+        shape: QueryShape? = null,
+    ): Flow<ServedPayload?> {
         if (isReservedTable(table)) return flowOf(null)
         return flow {
             // A payload received before the cache was emptied may reach this reader after the new
             // owner does: until what it receives matches the database, the database is read
             var trustedEmptiedCount = cacheOwner.emptiedCount()
             var last: OverlaidInputs? = null
-            var lastOverlaid: String? = null
+            var lastOverlaid: ServedOverlay? = null
             combine(
                     queryCacheDao
                         .observe(table, cacheKey)
-                        .map { row -> row?.let(::StoredPayload) }
+                        .map { row -> row?.let(::StoredRow) }
                         .distinctUntilChanged(),
                     mutationsOfTableFlow(table),
                     identityChanges,
@@ -1620,13 +1753,14 @@ internal class OfflineStore(
                         if (emptiedCount == trustedEmptiedCount) {
                             stored
                         } else {
-                            queryCacheDao.get(table, cacheKey)?.let(::StoredPayload).also { read ->
+                            queryCacheDao.get(table, cacheKey)?.let(::StoredRow).also { read ->
                                 if (read == stored) trustedEmptiedCount = emptiedCount
                             }
                         }
+                    val servedRow = current.takeIf { served }
                     val inputs =
                         OverlaidInputs(
-                            current.takeIf { served },
+                            servedRow?.content,
                             visibleTo(identityProvider(), tableMutations.rows),
                         )
                     if (inputs != last) {
@@ -1641,11 +1775,23 @@ internal class OfflineStore(
                             )
                         last = inputs
                     }
-                    lastOverlaid
+                    lastOverlaid?.let { overlay ->
+                        ServedPayload(
+                            payload = overlay.payload,
+                            fetchedAtMillis = servedRow?.let { row -> fetchedAtOf(row.updatedAt) },
+                            isStale = servedRow == null || isStaleStamp(servedRow.updatedAt),
+                            hasPendingMutations = overlay.hasPendingMutations,
+                        )
+                    }
                 }
                 .distinctUntilChanged()
                 .collect { payload -> emit(payload) }
         }
+    }
+
+    /** A cached payload as stored: its [content] and its fetch stamp. */
+    private data class StoredRow(val content: StoredPayload, val updatedAt: Long) {
+        constructor(row: CachedQueryRow) : this(StoredPayload(row), row.updatedAt)
     }
 
     /** A cached payload's text and what it holds of the synced mutations. */
@@ -1673,24 +1819,27 @@ internal class OfflineStore(
         stored: StoredPayload?,
         mutations: List<MutationRow>,
         bodyOf: (MutationRow) -> JsonElement,
-    ): String? {
+    ): ServedOverlay? {
         // A live query's shape is known for as long as it is read; it is written once a payload
         // exists
         if (shape != null) queryShapes.remember(table, cacheKey, shape, persist = stored != null)
         val cachedJson = stored?.payload
         val syncedThrough = stored?.syncedThrough ?: 0L
         val applicable = mutations.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
-        if (applicable.isEmpty()) return cachedJson
+        if (applicable.isEmpty())
+            return cachedJson?.let { json -> ServedOverlay(json, hasPendingMutations = false) }
         val overlaid =
             overlayMutations(
-                cachedJson ?: EMPTY_JSON_ARRAY,
-                applicable,
-                admissionOf(table, cacheKey, shape),
-                unconfirmedSends(),
-                sameSelectRowsFor(table, cacheKey, shape, applicable, ownJson = cachedJson),
-                bodyOf,
-            )
-        return if (cachedJson == null && isEmptyJsonArrayPayload(overlaid)) null else overlaid
+                    cachedJson ?: EMPTY_JSON_ARRAY,
+                    applicable,
+                    admissionOf(table, cacheKey, shape),
+                    unconfirmedSends(),
+                    sameSelectRowsFor(table, cacheKey, shape, applicable, ownJson = cachedJson),
+                    bodyOf,
+                )
+                .served(applicable)
+        return if (cachedJson == null && isEmptyJsonArrayPayload(overlaid.payload)) null
+        else overlaid
     }
 
     /**
@@ -1712,8 +1861,9 @@ internal class OfflineStore(
         bodyOf: (MutationRow) -> JsonElement = { mutation ->
             json.parseToJsonElement(mutation.bodyJson)
         },
-    ): String =
-        overlayFor(admission, unconfirmedSends, bodyOf).overlay(serverJson, mutations, knownRows)
+    ): OverlaidPayload =
+        overlayFor(admission, unconfirmedSends, bodyOf)
+            .overlayReportingChanges(serverJson, mutations, knownRows)
 
     /**
      * The rows the table's other cached queries hold, read with the same [Projection] as the query

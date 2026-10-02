@@ -85,7 +85,7 @@ class LogPrivacyTest {
             .from("profiles")
             .insert(buildJsonArray { add(buildJsonObject { put("email", EMAIL) }) })
         server.answer = { serverAnswer() }
-        client.syncAllPendingMutations()
+        client.syncPendingMutations().syncedCount
     }
 
     @Test

@@ -107,7 +107,7 @@ internal suspend fun runClearLocalDataForensics(
             buildJsonArray { add(buildJsonObject { put("email", "$marker-rejected@example.com") }) }
         )
         phase = Phase.REJECTING
-        client.syncAllPendingMutations()
+        client.syncPendingMutations().syncedCount
         phase = Phase.OFFLINE
         profiles.insert(
             buildJsonArray {

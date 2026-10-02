@@ -73,7 +73,7 @@ class NetworkFirstThenCacheUnconfirmedTest {
             // Given — the list cached, and no network
             val server = newServer()
             val items = items(server)
-            val shown = mutableListOf<OfflineReadResult>()
+            val shown = mutableListOf<QuerySnapshot>()
             backgroundScope.launch {
                 items.selectAsFlow(readStrategy = FlowReadStrategy.NetworkFirstThenCache).collect {
                     read ->
@@ -128,7 +128,7 @@ class NetworkFirstThenCacheUnconfirmedTest {
                 )
                 .from(TABLE)
         runCurrent()
-        val shown = mutableListOf<OfflineReadResult>()
+        val shown = mutableListOf<QuerySnapshot>()
 
         // When
         backgroundScope.launch {

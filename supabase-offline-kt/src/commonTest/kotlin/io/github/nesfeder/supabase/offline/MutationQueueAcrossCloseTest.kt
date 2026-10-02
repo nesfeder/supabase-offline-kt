@@ -154,7 +154,7 @@ class MutationQueueAcrossCloseTest {
         // When — A's pass commits the first on the server, and A closes before the answer
         // arrives; the pass finishes that request once it does
         online.store(true)
-        val pass = callerScope.async { runCatching { first.syncAllPendingMutations() } }
+        val pass = callerScope.async { runCatching { first.syncPendingMutations().syncedCount } }
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) { while (server.rows(TABLE).isEmpty()) delay(5) }
         }
@@ -174,7 +174,7 @@ class MutationQueueAcrossCloseTest {
                 coordinatorScope = idleCoroutineScope(),
                 closeWait = IDLE_CLOSE_WAIT,
             )
-        reopened.syncAllPendingMutations()
+        reopened.syncPendingMutations().syncedCount
 
         // Then — A's pass stopped after the first; the reopened client sent the rest; each row is
         // on the server once, and nothing was refused as a duplicate of itself
@@ -228,7 +228,7 @@ class MutationQueueAcrossCloseTest {
             // When — a pass has it on the wire when the client closes, and the answer arrives while
             // close() waits
             online.store(true)
-            callerScope.async { runCatching { first.syncAllPendingMutations() } }
+            callerScope.async { runCatching { first.syncPendingMutations().syncedCount } }
             withContext(Dispatchers.Default) {
                 withTimeout(5.seconds) { while (committed.load() == 0) delay(5) }
             }
@@ -247,7 +247,7 @@ class MutationQueueAcrossCloseTest {
                     coordinatorScope = idleCoroutineScope(),
                     closeWait = IDLE_CLOSE_WAIT,
                 )
-            reopened.syncAllPendingMutations()
+            reopened.syncPendingMutations().syncedCount
 
             // Then — the pass recorded the answer before it stopped, so nothing is sent again
             assertEquals(1, committed.load())

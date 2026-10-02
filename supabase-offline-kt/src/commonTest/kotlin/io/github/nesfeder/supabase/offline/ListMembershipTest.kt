@@ -163,7 +163,7 @@ class ListMembershipTest {
 
         // When — back online, the queue replays
         server.recorder.answer = online
-        val synced = client.syncAllPendingMutations()
+        val synced = client.syncPendingMutations().syncedCount
 
         // Then
         assertEquals(1, synced)

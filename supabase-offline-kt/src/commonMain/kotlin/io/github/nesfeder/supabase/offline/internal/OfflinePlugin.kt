@@ -9,9 +9,14 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
+import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.RejectedMutation
+import io.github.nesfeder.supabase.offline.SyncReport
+import io.github.nesfeder.supabase.offline.SyncStatus
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -60,32 +65,47 @@ internal class OfflinePlugin(
     override val storage: OfflineStorage
         get() = client.storage
 
-    override suspend fun syncAllPendingMutations(): Int = client.syncAllPendingMutations()
+    override fun pendingMutations(table: String?): Flow<List<PendingMutation>> =
+        client.pendingMutations(table)
 
-    override suspend fun syncPendingMutations(table: String): Int =
-        client.syncPendingMutations(table)
-
-    override suspend fun pendingMutationCount(): Int = client.pendingMutationCount()
-
-    override fun pendingMutationCountFlow(): Flow<Int> = client.pendingMutationCountFlow()
-
-    override suspend fun pendingMutationCount(table: String): Int =
+    override suspend fun pendingMutationCount(table: String?): Int =
         client.pendingMutationCount(table)
 
-    override fun pendingMutationCountFlow(table: String): Flow<Int> =
+    override fun pendingMutationCountFlow(table: String?): Flow<Int> =
         client.pendingMutationCountFlow(table)
+
+    override suspend fun discardPendingMutation(id: Long): Unit = client.discardPendingMutation(id)
+
+    override fun rejectedMutations(): Flow<List<RejectedMutation>> = client.rejectedMutations()
+
+    override suspend fun dismissRejectedMutation(id: Long): Unit =
+        client.dismissRejectedMutation(id)
+
+    override suspend fun retryRejectedMutation(id: Long): Unit = client.retryRejectedMutation(id)
+
+    override suspend fun syncPendingMutations(table: String?): SyncReport =
+        client.syncPendingMutations(table)
+
+    override val syncStatus: StateFlow<SyncStatus>
+        get() = client.syncStatus
+
+    override suspend fun disableNetwork(): Unit = client.disableNetwork()
+
+    override suspend fun enableNetwork(): Unit = client.enableNetwork()
 
     override suspend fun applyServerRecord(
         table: String,
         record: JsonObject,
         primaryKeys: List<String>?,
-    ): Unit = client.applyServerRecord(table, record, primaryKeys)
+        schema: String?,
+    ): Unit = client.applyServerRecord(table, record, primaryKeys, schema)
 
     override suspend fun applyServerDelete(
         table: String,
         oldRecord: JsonObject,
         primaryKeys: List<String>?,
-    ): Unit = client.applyServerDelete(table, oldRecord, primaryKeys)
+        schema: String?,
+    ): Unit = client.applyServerDelete(table, oldRecord, primaryKeys, schema)
 
     override suspend fun clearLocalData(): Unit = client.clearLocalData()
 

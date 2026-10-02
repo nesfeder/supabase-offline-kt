@@ -14,11 +14,11 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
-import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -174,7 +174,7 @@ internal object ClientCloseRaces {
             assertTrue(closed.isSuccess, "close() failed: ${closed.exceptionOrNull()}")
             val reopened = openClient(server.supabaseClient(), configIn(directory))
             assertEquals(0, reopened.pendingMutationCount(), "the accepted write stayed queued")
-            reopened.syncAllPendingMutations()
+            reopened.syncPendingMutations().syncedCount
             reopened.close()
             assertEquals(1, server.restWrites.load(), "the accepted write was sent again")
             assertEquals(emptyList(), errorsIn(logger), "errors were logged")
@@ -228,9 +228,9 @@ internal object ClientCloseRaces {
     /**
      * Three reactive reads of each strategy that reads the cache in its collector's coroutine
      * (`CacheOnly`, `NetworkFirstThenCache`) and a writer re-running them, with `close()` at a
-     * random moment, [iterations] times. Every read and the writer end with the closed error,
-     * nothing reaches the server once `close()` has returned, the database reopens at once, and
-     * nothing is logged at ERROR.
+     * random moment, [iterations] times. Every read completes and the writer ends with the closed
+     * error, never a cancellation; nothing reaches the server once `close()` has returned, the
+     * database reopens at once, and nothing is logged at ERROR.
      */
     suspend fun readersRacingClose(
         directory: Path,
@@ -248,24 +248,27 @@ internal object ClientCloseRaces {
             fill(client, server)
             server.online.store(true)
             val app = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            val emitted = AtomicInt(0)
-            val readers =
+            val strategies =
                 listOf(FlowReadStrategy.CacheOnly, FlowReadStrategy.NetworkFirstThenCache)
-                    .flatMap { strategy ->
-                        (0 until READERS_PER_STRATEGY).map { index ->
-                            app.async {
-                                val outcome = runCatching {
-                                    client
-                                        .from(TABLE)
-                                        .selectAsFlow(readStrategy = strategy) {
-                                            filter { eq("id", index) }
-                                        }
-                                        .collect { emitted.addAndFetch(1) }
+            // Each reader's own first value, so every one is live, not still starting, at close()
+            val firstValues =
+                List(strategies.size * READERS_PER_STRATEGY) { CompletableDeferred<Unit>() }
+            val readers = strategies.flatMapIndexed { strategyIndex, strategy ->
+                (0 until READERS_PER_STRATEGY).map { index ->
+                    val firstValue = firstValues[strategyIndex * READERS_PER_STRATEGY + index]
+                    app.async {
+                        val outcome = runCatching {
+                            client
+                                .from(TABLE)
+                                .selectAsFlow(readStrategy = strategy) {
+                                    filter { eq("id", index) }
                                 }
-                                outcome.exceptionOrNull()
-                            }
+                                .collect { firstValue.complete(Unit) }
                         }
+                        outcome.exceptionOrNull()
                     }
+                }
+            }
             val writer = app.async {
                 val outcome = runCatching {
                     var index = 0
@@ -276,7 +279,7 @@ internal object ClientCloseRaces {
                 }
                 outcome.exceptionOrNull()
             }
-            withTimeout(5.seconds) { while (emitted.load() < readers.size) delay(1) }
+            withTimeout(5.seconds) { firstValues.awaitAll() }
 
             // When — close() at a random moment
             delay(Random.nextLong(0, 8))
@@ -288,10 +291,14 @@ internal object ClientCloseRaces {
                 closed.isSuccess,
                 "iteration $iteration: close() failed: ${closed.exceptionOrNull()}",
             )
-            val ends = withTimeout(5.seconds) { readers.awaitAll() + writer.await() }
-            ends.forEachIndexed { index, failure ->
-                assertClientClosedError(failure, "iteration $iteration: reader or writer $index")
+            val readerEnds = withTimeout(5.seconds) { readers.awaitAll() }
+            readerEnds.forEachIndexed { index, failure ->
+                assertNull(failure, "iteration $iteration: reader $index ended with $failure")
             }
+            assertClientClosedError(
+                withTimeout(5.seconds) { writer.await() },
+                "iteration $iteration: the writer",
+            )
             assertEquals(
                 requestsAtClose,
                 server.requestsArrived(),
@@ -307,8 +314,8 @@ internal object ClientCloseRaces {
     /**
      * The logout sequence an app runs, [iterations] times across every read strategy: a screen
      * still observing a read, then `clearLocalData()` and `close()` back to back. The clear re-runs
-     * the live read; the read ends with the closed error, nothing of the user is left, and the
-     * database reopens at once.
+     * the live read; the read completes, nothing of the user is left, and the database reopens at
+     * once.
      */
     suspend fun logoutWithALiveRead(
         directory: Path,
@@ -346,9 +353,10 @@ internal object ClientCloseRaces {
             client.close()
 
             // Then
-            assertClientClosedError(
-                withTimeout(5.seconds) { reader.await() },
-                "iteration $iteration: the $strategy read live at logout",
+            val readerEnd = withTimeout(5.seconds) { reader.await() }
+            assertNull(
+                readerEnd,
+                "iteration $iteration: the $strategy read live at logout ended with $readerEnd",
             )
             assertEquals(
                 emptyList(),

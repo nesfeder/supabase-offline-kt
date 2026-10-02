@@ -26,6 +26,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
@@ -108,11 +109,9 @@ class SupabaseOfflineClientCloseTest {
             client.close()
             val requestsAtClose = server.requests.size
 
-            // Then — the read fails in band rather than ending as if the table were done,
-            // everything
-            // the client started is gone, nothing more reaches the server, the caller's own scope
-            // is
-            // untouched, and the factory's release ran exactly once
+            // Then — the read completed, with no error, so a screen torn down with the client sees
+            // its flow end; everything the client started is gone, nothing more reaches the server,
+            // the caller's own scope is untouched, and the factory's release ran exactly once
             withContext(Dispatchers.Default) {
                 withTimeout(5.seconds) {
                     observer.join()
@@ -120,7 +119,7 @@ class SupabaseOfflineClientCloseTest {
                 }
                 delay(SETTLE_MILLIS)
             }
-            assertClientClosedError(ended.await(), "the $strategy read live at close()")
+            assertNull(ended.await(), "the $strategy read live at close() ended with an error")
             assertEquals(
                 requestsAtClose,
                 server.requests.size,
@@ -179,6 +178,9 @@ class SupabaseOfflineClientCloseTest {
                     { client ->
                         client.pendingMutationCountFlow("todos")
                     },
+                "pendingMutations()" to { client -> client.pendingMutations() },
+                "pendingMutations(table)" to { client -> client.pendingMutations("todos") },
+                "rejectedMutations()" to { client -> client.rejectedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
@@ -215,17 +217,16 @@ class SupabaseOfflineClientCloseTest {
                 }
 
             // Then — close() did not wait on the collection it was called from: it never gave up,
-            // and the database was released by the time it returned. The collection ended with the
-            // closed error
+            // and the database was released by the time it returned. The collection completed
             assertEquals(0, gaveUp.load(), "$name: close() inside the collector gave up waiting")
             assertEquals(
                 1,
                 releasedWhenCloseReturned.await(),
                 "$name: the database was not released when close() returned",
             )
-            assertClientClosedError(
+            assertNull(
                 outcome.exceptionOrNull(),
-                "$name after close() inside its collector",
+                "$name ended with an error after close() inside its collector",
             )
             assertEquals(
                 1,
@@ -358,6 +359,9 @@ class SupabaseOfflineClientCloseTest {
                     { client ->
                         client.pendingMutationCountFlow("todos")
                     },
+                "pendingMutations()" to { client -> client.pendingMutations() },
+                "pendingMutations(table)" to { client -> client.pendingMutations("todos") },
+                "rejectedMutations()" to { client -> client.rejectedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
@@ -408,7 +412,7 @@ class SupabaseOfflineClientCloseTest {
 
             // Then — close() neither waited on the channel nor failed the app: its launch ended as
             // it would have, its scope and the job beside it are untouched, nothing reached its
-            // handler, and reading again gives the closed error
+            // handler, and reading again finds the channel completed
             assertEquals(0, gaveUp.load(), "$name: close() gave up waiting")
             assertEquals(
                 1,
@@ -425,7 +429,7 @@ class SupabaseOfflineClientCloseTest {
             )
             var ending = values.receiveCatching()
             while (!ending.isClosed) ending = values.receiveCatching()
-            assertClientClosedError(ending.exceptionOrNull(), "$name: reading again after close()")
+            assertNull(ending.exceptionOrNull(), "$name: reading again after close() gave an error")
             appScope.cancel()
         }
     }
@@ -586,7 +590,9 @@ class SupabaseOfflineClientCloseTest {
         // When — back online, a replay and an online write are in flight, held at the server, when
         // the client closes; the server answers while close() waits for them
         online.store(1)
-        val replay = callerScope.launch { runCatching { client.syncAllPendingMutations() } }
+        val replay = callerScope.launch {
+            runCatching { client.syncPendingMutations().syncedCount }
+        }
         val write = callerScope.launch {
             runCatching {
                 builder.insert(buildJsonArray { add(buildJsonObject { put("id", 3) }) })
@@ -612,7 +618,7 @@ class SupabaseOfflineClientCloseTest {
         // began, and the client refuses another replay
         assertEquals(0, gaveUp.load())
         assertEquals(sentAtClose, sent.load(), "a request was sent after close()")
-        assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
+        assertFailsWith<IllegalStateException> { client.syncPendingMutations().syncedCount }
     }
 
     @Test
@@ -642,7 +648,7 @@ class SupabaseOfflineClientCloseTest {
 
         // When — its first request is held at the server when the client closes
         online.store(1)
-        val replay = callerScope.async { runCatching { client.syncAllPendingMutations() } }
+        val replay = callerScope.async { runCatching { client.syncPendingMutations().syncedCount } }
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) { while (sent.load() == 0) delay(5) }
         }
@@ -848,6 +854,9 @@ class SupabaseOfflineClientCloseTest {
             listOf<Pair<String, () -> Flow<*>>>(
                 "pendingMutationCountFlow()" to { client.pendingMutationCountFlow() },
                 "pendingMutationCountFlow(table)" to { client.pendingMutationCountFlow("todos") },
+                "pendingMutations()" to { client.pendingMutations() },
+                "pendingMutations(table)" to { client.pendingMutations("todos") },
+                "rejectedMutations()" to { client.rejectedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to { builder.selectAsFlow(readStrategy = strategy) }
@@ -882,12 +891,19 @@ class SupabaseOfflineClientCloseTest {
         // Then
         assertFailsWith<IllegalStateException> { client.from("todos") }
         assertFailsWith<IllegalStateException> { client.storage.from("avatars") }
-        assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
+        assertFailsWith<IllegalStateException> { client.syncPendingMutations() }
         assertFailsWith<IllegalStateException> { client.syncPendingMutations("todos") }
         assertFailsWith<IllegalStateException> { client.pendingMutationCount() }
         assertFailsWith<IllegalStateException> { client.pendingMutationCount("todos") }
         assertFailsWith<IllegalStateException> { client.pendingMutationCountFlow().first() }
         assertFailsWith<IllegalStateException> { client.pendingMutationCountFlow("todos").first() }
+        assertFailsWith<IllegalStateException> { client.pendingMutations().first() }
+        assertFailsWith<IllegalStateException> { client.discardPendingMutation(1L) }
+        assertFailsWith<IllegalStateException> { client.rejectedMutations().first() }
+        assertFailsWith<IllegalStateException> { client.dismissRejectedMutation(1L) }
+        assertFailsWith<IllegalStateException> { client.retryRejectedMutation(1L) }
+        assertFailsWith<IllegalStateException> { client.disableNetwork() }
+        assertFailsWith<IllegalStateException> { client.enableNetwork() }
         assertFailsWith<IllegalStateException> {
             client.applyServerRecord("todos", buildJsonObject { put("id", 1) })
         }

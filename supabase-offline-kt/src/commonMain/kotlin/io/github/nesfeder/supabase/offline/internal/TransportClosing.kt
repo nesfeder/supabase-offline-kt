@@ -43,6 +43,23 @@ internal suspend inline fun <T> SupabaseClient.sendUnlessClosing(request: () -> 
     }
 
 /**
+ * Whether [failure] is the client's closing ending a call rather than a failure of the call's own:
+ * the closed transport, a cancellation the closing caused while the caller still runs, or the
+ * client's closed error itself, once the client or its HTTP client is closed.
+ */
+internal suspend fun isEndedByClosing(
+    failure: Throwable,
+    isClosed: Boolean,
+    isTransportClosed: Boolean,
+): Boolean =
+    when {
+        failure is TransportClosedException -> true
+        !isClosed && !isTransportClosed -> false
+        failure is CancellationException -> currentCoroutineContext().isActive
+        else -> failure is IllegalStateException && failure.message == CLIENT_CLOSED_MESSAGE
+    }
+
+/**
  * The client's closed error, [IllegalStateException] with [CLIENT_CLOSED_MESSAGE], for a call that
  * [failure] stopped because the client is closing; [failure] itself otherwise. A cancellation is
  * the client's when its caller is still running and the client is closed, or its HTTP client is.

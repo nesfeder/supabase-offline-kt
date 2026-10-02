@@ -74,9 +74,16 @@ internal class MutationOverlay(
         payload: String,
         mutations: List<MutationRow>,
         knownRows: List<JsonObject> = emptyList(),
-    ): String {
-        if (mutations.isEmpty()) return payload
-        val rows = payloadRowsOf(json, payload) ?: return payload
+    ): String = overlayReportingChanges(payload, mutations, knownRows).payload
+
+    /** [overlay], with the mutations that changed a row the query shows. */
+    fun overlayReportingChanges(
+        payload: String,
+        mutations: List<MutationRow>,
+        knownRows: List<JsonObject> = emptyList(),
+    ): OverlaidPayload {
+        if (mutations.isEmpty()) return OverlaidPayload(payload, emptySet())
+        val rows = payloadRowsOf(json, payload) ?: return OverlaidPayload(payload, emptySet())
         val keyColumns = primaryKeys.of(mutations.first().table)
         val elsewhere =
             if (knownRows.isEmpty()) {
@@ -88,7 +95,8 @@ internal class MutationOverlay(
                     }
                 knownRows.filter { known -> keyOf(known, keyColumns) !in shown }
             }
-        return encode(overlayRows(rows, mutations, elsewhere).visible)
+        val overlaid = overlayRows(rows, mutations, elsewhere)
+        return OverlaidPayload(encode(overlaid.visible), overlaid.shownChangedBy)
     }
 
     /**
@@ -108,7 +116,7 @@ internal class MutationOverlay(
         mutations.forEach { mutation ->
             try {
                 working.overlay(mutation)
-                working.keep()
+                working.keep(mutation.id)
             } catch (failure: Exception) {
                 working.undo()
                 onMutationFailure(mutation, failure)
@@ -141,11 +149,24 @@ internal class MutationOverlay(
         /** Key columns → each shown row's [keyOf] under them → its slots, lowest first. */
         private val keyIndexes = HashMap<List<String>, HashMap<List<String>, MutableList<Int>>>()
 
-        fun snapshot(): OverlaidRows =
-            OverlaidRows(visible = slots.filterNotNull(), held = held, written = written)
+        /** Whether the current mutation changed a shown slot. */
+        private var currentChangedShown = false
 
-        /** Keeps the current mutation's changes. */
-        fun keep() {
+        /** The kept mutations that changed a shown slot. */
+        private val shownChangedBy = HashSet<Long>()
+
+        fun snapshot(): OverlaidRows =
+            OverlaidRows(
+                visible = slots.filterNotNull(),
+                held = held,
+                written = written,
+                shownChangedBy = shownChangedBy,
+            )
+
+        /** Keeps the current mutation's changes, the mutation [mutationId]. */
+        fun keep(mutationId: Long) {
+            if (currentChangedShown) shownChangedBy += mutationId
+            currentChangedShown = false
             journal.clear()
         }
 
@@ -154,6 +175,7 @@ internal class MutationOverlay(
             journal.asReversed().forEach { change -> change() }
             journal.clear()
             keyIndexes.clear()
+            currentChangedShown = false
         }
 
         /**
@@ -202,6 +224,7 @@ internal class MutationOverlay(
 
         /** Shows [element] after every row, to be removed on [undo]. */
         private fun show(element: JsonElement) {
+            currentChangedShown = true
             slots.add(null)
             val slot = slots.lastIndex
             journal += { slots.removeAt(slot) }
@@ -210,6 +233,7 @@ internal class MutationOverlay(
 
         /** Shows [element] in [slot] instead, to be put back on [undo]. */
         private fun replaceSlot(slot: Int, element: JsonElement?) {
+            currentChangedShown = true
             val old = slots[slot]
             journal += { slots[slot] = old }
             setSlot(slot, element)
@@ -402,12 +426,22 @@ internal class MutationOverlay(
  * @property visible the rows the query shows, in order.
  * @property held the rows the overlay knows that the query does not show.
  * @property written every row the mutations inserted or changed, as they left it, shown or not.
+ * @property shownChangedBy the ids of the mutations that changed a row the query shows.
  */
 internal data class OverlaidRows(
     val visible: List<JsonElement>,
     val held: List<JsonObject>,
     val written: List<JsonObject>,
+    val shownChangedBy: Set<Long> = emptySet(),
 )
+
+/**
+ * A payload with mutations overlaid.
+ *
+ * @property payload the rows the query shows, encoded.
+ * @property shownChangedBy the ids of the mutations that changed one of them.
+ */
+internal data class OverlaidPayload(val payload: String, val shownChangedBy: Set<Long>)
 
 /**
  * The columns an UPSERT matches existing rows on: its conflict columns, or its table's primary key

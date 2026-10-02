@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- The connectivity monitor: when the network comes back, queued writes are sent and waiting
+         refreshes retry. It merges into every app that uses the library. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Records the application context at startup, so install(Offline) needs none. -->
     <application>
         <provider

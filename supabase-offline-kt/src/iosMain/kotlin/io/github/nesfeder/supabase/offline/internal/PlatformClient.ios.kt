@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAM
 import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.defaultDatabasePath
 import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
+import io.github.nesfeder.supabase.offline.internal.network.pathMonitorNetworkAvailability
 import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
 import io.github.nesfeder.supabase.offline.internal.storage.excludeFromBackup
 import okio.FileSystem
@@ -50,5 +51,6 @@ internal actual fun openPlatformClient(
             )
         },
         defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
+        platformNetworkAvailability = pathMonitorNetworkAvailability(),
     )
 }

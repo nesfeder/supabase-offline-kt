@@ -18,7 +18,12 @@ import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.RejectedMutation
+import io.github.nesfeder.supabase.offline.ServerError
+import io.github.nesfeder.supabase.offline.SyncReport
+import io.github.nesfeder.supabase.offline.SyncStatus
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
@@ -28,13 +33,16 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimary
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation as EngineRejectedMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
@@ -50,6 +58,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -61,13 +72,20 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
@@ -81,19 +99,18 @@ import okio.Path
  * one [SupabaseClient]. It wires the store, the table engines, the replayer and the file cache, and
  * owns their lifecycle through its operation gate.
  */
-@OptIn(SupabaseInternal::class, OfflineInternal::class)
+@OptIn(SupabaseInternal::class, OfflineInternal::class, ExperimentalAtomicApi::class)
 internal class OfflineClient(
     override val supabaseClient: SupabaseClient,
     private val store: OfflineStore,
     private val baseDirectoryProvider: () -> Path,
     private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     /**
-     * Optional platform-agnostic connectivity hint (`true` = online). Its false→true edges (plus
-     * the SDK-internal auth-session edges) accelerate a stalled `CacheFirstThenNetwork` refresh — a
-     * hint only, since the refresh self-heals on its capped schedule regardless. The caller maps
-     * its own connectivity monitor into it, so the SDK takes no dependency on a connectivity type.
+     * The connectivity signal (`true` = online): the platform's monitor or the app's own, `null`
+     * for none. A hint, never a gate: it decides when the client tries by itself, what a waiting
+     * refresh reports, and [syncStatus]'s network.
      */
-    private val networkAvailability: Flow<Boolean>? = null,
+    networkAvailability: Flow<Boolean>? = null,
     /**
      * Scope the client's own scope is made a child of. Defaults to a process-lifetime supervised
      * scope; injectable so tests can supply a controlled scope. [close] cancels only the client's
@@ -144,6 +161,39 @@ internal class OfflineClient(
     /** Every call's pass through the client, so [close] never closes the database under one. */
     private val operationGate = ClientOperationGate(supabaseClient::isTransportClosed)
 
+    /**
+     * The app's network switch and the connectivity signal: what may be sent, and what may work.
+     */
+    private val networkAccess = NetworkAccess(networkAvailability)
+
+    /**
+     * [Offline.Config.autoSync], read once when the client opens, as every other setting is: both
+     * triggers it governs follow the value the client was opened with.
+     */
+    private val autoSync: Boolean = config.autoSync
+
+    /** What [syncStatus] reports; its network is set at once, its counts as the queue changes. */
+    private val syncStatusState =
+        MutableStateFlow(
+            SyncStatus(
+                network = networkAccess.status,
+                pendingMutationCount = 0,
+                rejectedMutationCount = 0,
+                isSyncing = false,
+                lastSyncedAt = null,
+                lastSyncError = null,
+            )
+        )
+
+    /** Taken by the first read of [syncStatus], which starts the work that keeps it current. */
+    private val statusTracked = AtomicBoolean(false)
+
+    /** Held by every change to [syncStatusState], so [close] can publish the last one. */
+    private val statusLock = Mutex()
+
+    /** Set, under [statusLock], by [close]: the status changes no more. */
+    private var statusFinal = false
+
     /** Completed once the database is released: what every [close] waits for. */
     private val released = CompletableDeferred<Unit>()
 
@@ -176,7 +226,9 @@ internal class OfflineClient(
             store,
             supabaseClient,
             engineLogger = engineLogger,
+            networkAccess = networkAccess,
             primaryKeys = primaryKeys,
+            passEnded = { _, report -> recordPassEnded(report) },
         )
 
     /**
@@ -203,7 +255,7 @@ internal class OfflineClient(
      * edges. Forwarded to every builder to short-circuit a stalled refresh's backoff.
      */
     private val wakeUps: Flow<Unit> =
-        refreshWakeUps(supabaseClient, networkAvailability, responseTrust)
+        refreshWakeUps(supabaseClient, networkAccess.reconnections, responseTrust)
 
     /** The identity the overlay and counts are for, read once per session status. */
     private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
@@ -240,7 +292,8 @@ internal class OfflineClient(
         supabaseClient.installDryRunCheck()
         supabaseClient.installReadShapeCheck()
         supabaseClient.installTransportFailureCapture()
-        replayWhenTheSessionSettles()
+        networkAccess.watchIn(clientScope, onReconnected = ::replayAsTheNetworkReturns)
+        if (autoSync) replayWhenTheSessionSettles()
         keepCacheWithTheSession()
     }
 
@@ -266,7 +319,7 @@ internal class OfflineClient(
     /**
      * Starts a pass when the session settles into an identity with mutations queued, in the
      * client's scope so [close] stops it. Every new status counts, as a sign-out and sign-in it
-     * never saw arrive as a new session of the same identity. A replay switch must stop it; see
+     * never saw arrive as a new session of the same identity. Not started with `autoSync` off; see
      * [AutomaticReplay].
      */
     private fun replayWhenTheSessionSettles() {
@@ -275,6 +328,26 @@ internal class OfflineClient(
             auth.sessionStatus.collect { status ->
                 val identity = replayIdentityFor(status) ?: return@collect
                 if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
+            }
+        }
+    }
+
+    /**
+     * Starts a pass, as the network becomes reachable again (the monitor, the app's signal, or
+     * [enableNetwork]), when the settled identity has mutations queued. An identity still settling
+     * is left to the session trigger. Does nothing with `autoSync` off; see [AutomaticReplay].
+     */
+    private suspend fun replayAsTheNetworkReturns() {
+        if (!autoSync) return
+        val identity = supabaseClient.currentReplayIdentity() ?: return
+        try {
+            if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not tell whether queued writes wait for the network " +
+                    "(${failure::class.simpleName}); they go with the next pass"
             }
         }
     }
@@ -364,6 +437,8 @@ internal class OfflineClient(
                 headSender = mutationQueueReplayer,
                 operationGate = operationGate,
                 readShapePostgrest = readShape,
+                queueEmptied = ::recordQueueEmptiedBySending,
+                networkAccess = networkAccess,
             )
         return OfflinePostgrestQueryBuilder(engine)
     }
@@ -373,6 +448,7 @@ internal class OfflineClient(
         request: RpcRequestBuilder.() -> Unit,
     ): PostgrestResult = operationGate.call {
         ensurePostgrestInstalled()
+        networkAccess.ensureEnabled()
         supabaseClient.sendUnlessClosing { supabaseClient.postgrest.rpc(function, request) }
     }
 
@@ -382,6 +458,7 @@ internal class OfflineClient(
         request: RpcRequestBuilder.() -> Unit,
     ): PostgrestResult = operationGate.call {
         ensurePostgrestInstalled()
+        networkAccess.ensureEnabled()
         supabaseClient.sendUnlessClosing {
             supabaseClient.postgrest.rpc(function, parameters, request)
         }
@@ -404,43 +481,273 @@ internal class OfflineClient(
             backgroundScope = clientScope,
             operationGate = operationGate,
             renderImagePath = renderImagePath,
+            networkAccess = networkAccess,
         )
     }
 
-    /* ───────────────────────────── Sync APIs ───────────────────────────── */
+    /* ─────────────────────────── The mutation queue ─────────────────────────── */
 
-    override suspend fun syncAllPendingMutations(): Int =
-        operationGate.cancellableCall(clientScope) {
-            ensurePostgrestInstalled()
-            mutationQueueReplayer.syncAllTables()
-        }
+    override fun pendingMutations(table: String?): Flow<List<PendingMutation>> =
+        operationGate.callCollecting(
+            store.shownPendingMutationsFlow(table).map { rows ->
+                rows.mapNotNull { row -> row.toPendingMutation(store.json, primaryKeys) }
+            }
+        )
 
-    override suspend fun syncPendingMutations(table: String): Int =
-        operationGate.cancellableCall(clientScope) {
-            ensurePostgrestInstalled()
-            mutationQueueReplayer.syncTable(table = table)
-        }
-
-    override suspend fun pendingMutationCount(): Int = operationGate.call {
-        store.pendingMutationCount()
+    override suspend fun pendingMutationCount(table: String?): Int = operationGate.call {
+        store.shownPendingMutationCount(table)
     }
 
-    override fun pendingMutationCountFlow(): Flow<Int> =
-        operationGate.callCollecting(store.pendingMutationCountFlow())
+    override fun pendingMutationCountFlow(table: String?): Flow<Int> =
+        operationGate.callCollecting(
+            store.shownPendingMutationsFlow(table).map { rows -> rows.size }.distinctUntilChanged()
+        )
 
-    override suspend fun pendingMutationCount(table: String): Int = operationGate.call {
-        store.pendingMutationCountForTable(table)
+    /**
+     * Waits for a sender that has the mutation on the wire, then discards it. What it held back is
+     * sent by a pass asked for here, with `autoSync` off too: it is a write-path pass.
+     */
+    override suspend fun discardPendingMutation(id: Long): Unit = operationGate.call {
+        val identity = supabaseClient.currentQueueIdentity() ?: return@call
+        if (!mutationQueueReplayer.discardPendingMutationOnceUnsent(id, identity)) return@call
+        if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
     }
 
-    override fun pendingMutationCountFlow(table: String): Flow<Int> =
-        operationGate.callCollecting(store.pendingMutationCountForTableFlow(table))
+    override fun rejectedMutations(): Flow<List<RejectedMutation>> =
+        operationGate.callCollecting(
+            store.shownRejectionsFlow().map { entries ->
+                entries.map { entry -> entry.toRejectedMutation(store.json, primaryKeys).shown() }
+            }
+        )
+
+    override suspend fun dismissRejectedMutation(id: Long): Unit = operationGate.call {
+        val identity = supabaseClient.currentQueueIdentity() ?: return@call
+        store.dismissRejectedMutationOf(id, identity.storedValue)
+    }
+
+    override suspend fun retryRejectedMutation(id: Long): Unit = operationGate.call {
+        val identity = supabaseClient.currentQueueIdentity() ?: return@call
+        val entry = store.shownRejection(id, identity.storedValue) ?: return@call
+        require(entry.bodyOmittedChars == null) {
+            "This rejected mutation cannot be retried: its body was too large to keep " +
+                "(RejectedMutation.isRetryable is false)"
+        }
+        store.retryRejectedMutation(id, identity.storedValue) ?: return@call
+        automaticReplay.requestPass()
+    }
+
+    override suspend fun syncPendingMutations(table: String?): SyncReport =
+        operationGate.cancellableCall(clientScope) {
+            ensurePostgrestInstalled()
+            val report = mutationQueueReplayer.syncWaitingOutOtherSenders(table)
+            // A pass that could not tell whose queue it was counted every user's: count the shown
+            val remaining =
+                when (report.stop) {
+                    SyncStop.SessionNotReady,
+                    SyncStop.IdentityUnknown,
+                    SyncStop.NetworkDisabled -> store.shownPendingMutationCount(table)
+                    else -> report.remainingCount
+                }
+            report.copy(remainingCount = remaining).shown()
+        }
+
+    /* ─────────────────────────── Sync status and the network ─────────────────────────── */
+
+    /** [syncStatusState], read only. */
+    private val syncStatusView: StateFlow<SyncStatus> = syncStatusState.asStateFlow()
+
+    /** The same flow whether or not the client is open; after [close] it keeps its last value. */
+    override val syncStatus: StateFlow<SyncStatus>
+        get() {
+            if (!operationGate.isClosed) trackStatusOnce()
+            return syncStatusView
+        }
+
+    override suspend fun disableNetwork(): Unit = operationGate.call {
+        networkAccess.disable()
+        publishStatus { status -> status.copy(network = networkAccess.status) }
+    }
+
+    override suspend fun enableNetwork(): Unit = operationGate.call {
+        val reconnected = networkAccess.enable()
+        publishStatus { status -> status.copy(network = networkAccess.status) }
+        if (reconnected) replayAsTheNetworkReturns()
+    }
+
+    /** Applies [change] to the status, unless [close] has published its last value. */
+    private suspend fun publishStatus(change: (SyncStatus) -> SyncStatus) {
+        statusLock.withLock { if (!statusFinal) syncStatusState.update(change) }
+    }
+
+    /**
+     * Publishes the status's last value, with no pass running, after which it changes no more: the
+     * work that kept it current is cancelled with the client's scope, and a pass running at [close]
+     * would otherwise leave it syncing for good.
+     */
+    private suspend fun publishFinalStatus() {
+        statusLock.withLock {
+            statusFinal = true
+            syncStatusState.update { status -> status.copy(isSyncing = false) }
+        }
+    }
+
+    /**
+     * Starts, once, the work that keeps [syncStatus] current, in the client's scope so [close]
+     * stops it: the network, whether a pass runs, and the two counts as the queue and the rejected
+     * list change. A client nobody asks the status of does none of it.
+     */
+    private fun trackStatusOnce() {
+        if (!statusTracked.compareAndSet(expectedValue = false, newValue = true)) return
+        // Current from the first read when the lock is free at once; the collection below
+        // publishes it first thing either way, then keeps it current
+        if (statusLock.tryLock()) {
+            try {
+                if (!statusFinal) {
+                    syncStatusState.update { status -> status.copy(network = networkAccess.status) }
+                }
+            } finally {
+                statusLock.unlock()
+            }
+        }
+        clientScope.launch {
+            publishStatus { status -> status.copy(network = networkAccess.status) }
+            networkAccess.statusChanges.collect {
+                publishStatus { status -> status.copy(network = networkAccess.status) }
+            }
+        }
+        clientScope.launch {
+            mutationQueueReplayer.passRunning.collect { running ->
+                publishStatus { status -> status.copy(isSyncing = running) }
+            }
+        }
+        clientScope.launch {
+            // The two flows only say when to count; both counts are read in one snapshot under the
+            // queue's lock, so a write moving between the queue and the rejected list is counted
+            // once, and an older snapshot never lands after a newer one
+            merge(store.queueChanges(), store.shownRejectionsFlow().map {})
+                .conflate()
+                .catch { failure ->
+                    engineLogger.warning {
+                        "The sync status stopped following the queue (${failure::class.simpleName})"
+                    }
+                }
+                .collect {
+                    val counts = queueCountsOrNull() ?: return@collect
+                    publishStatus { status ->
+                        status.copy(
+                            pendingMutationCount = counts.pending,
+                            rejectedMutationCount = counts.rejected,
+                        )
+                    }
+                }
+        }
+    }
+
+    /**
+     * The current user's pending and rejected counts, or `null` when counting fails; the status
+     * keeps its last counts then, and says so.
+     */
+    private suspend fun queueCountsOrNull(): ShownQueueCounts? =
+        try {
+            store.shownQueueCounts()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not count the queued and rejected mutations for the sync status " +
+                    "(${failure::class.simpleName})"
+            }
+            null
+        }
+
+    /**
+     * Records what a pass that ended with [report] tells the status: a failure that stopped it as
+     * [SyncStatus.lastSyncError], built without the failure's message; a pass that ran to the end
+     * clears it, and records [SyncStatus.lastSyncedAt] when it left the session's queue empty.
+     */
+    private suspend fun recordPassEnded(report: EngineSyncReport) {
+        when (val stop = report.stop) {
+            null ->
+                if (report.remainingCount == 0 && sessionQueueIsEmpty()) {
+                    recordQueueEmptiedBySending()
+                } else {
+                    publishStatus { status -> status.copy(lastSyncError = null) }
+                }
+            is SyncStop.TransientFailure ->
+                publishStatus { status -> status.copy(lastSyncError = syncFailureOf(stop.cause)) }
+            is SyncStop.HeldBehindEarlierMutations ->
+                publishStatus { status ->
+                    status.copy(lastSyncError = syncFailureOf(stop.cause))
+                }
+            // The session, a clear, the switch or another sender: nothing failed
+            else -> Unit
+        }
+    }
+
+    /** Whether the settled session has nothing queued; `false` when that cannot be told. */
+    private suspend fun sessionQueueIsEmpty(): Boolean {
+        val identity = supabaseClient.currentReplayIdentity() ?: return false
+        return try {
+            !store.hasPendingMutationsOf(identity.storedValue)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not tell whether the queue is empty for the sync status " +
+                    "(${failure::class.simpleName})"
+            }
+            false
+        }
+    }
+
+    /** Records that sending left the session's queue empty: now, and no error since. */
+    private suspend fun recordQueueEmptiedBySending() {
+        publishStatus { status ->
+            status.copy(lastSyncedAt = Clock.System.now(), lastSyncError = null)
+        }
+    }
+
+    /** This engine rejection as the app sees it. */
+    private fun EngineRejectedMutation.shown(): RejectedMutation =
+        RejectedMutation(
+            id = id,
+            table = table,
+            operation = operation,
+            createdAt = createdAt,
+            rowKeys = rowKeys,
+            body = body,
+            serverError =
+                serverError?.let { error ->
+                    ServerError(
+                        status = error.status,
+                        code = error.code,
+                        message = error.message,
+                        details = error.details,
+                        hint = error.hint,
+                    )
+                },
+            message = message,
+            rejectedAt = rejectedAt,
+            isRetryable = bodyOmittedChars == null,
+        )
+
+    /** This engine report as the app sees it. */
+    private fun EngineSyncReport.shown(): SyncReport =
+        SyncReport(
+            syncedCount = syncedCount,
+            rejected = rejected.map { rejection -> rejection.shown() },
+            remainingCount = remainingCount,
+            alreadyOnServerCount = alreadyOnServerCount,
+        )
 
     override suspend fun applyServerRecord(
         table: String,
         record: JsonObject,
         primaryKeys: List<String>?,
+        schema: String?,
     ): Unit = operationGate.call {
-        val keyColumns = primaryKeys ?: this.primaryKeys.of(table)
+        val cachedTable = cachedTableOf(table, schema)
+        val keyColumns = primaryKeys ?: this.primaryKeys.of(cachedTable)
         val filterJson = primaryKeyFilterJson(record, keyColumns)
         if (filterJson == null) {
             engineLogger.warning {
@@ -450,7 +757,7 @@ internal class OfflineClient(
             return@call
         }
         store.patchCachedQueries(
-            table = table,
+            table = cachedTable,
             operation = MutationOperation.UPSERT,
             bodyJson = JsonArray(listOf(record)).toString(),
             filterJson = filterJson,
@@ -462,8 +769,10 @@ internal class OfflineClient(
         table: String,
         oldRecord: JsonObject,
         primaryKeys: List<String>?,
+        schema: String?,
     ): Unit = operationGate.call {
-        val keyColumns = primaryKeys ?: this.primaryKeys.of(table)
+        val cachedTable = cachedTableOf(table, schema)
+        val keyColumns = primaryKeys ?: this.primaryKeys.of(cachedTable)
         val filterJson = primaryKeyFilterJson(oldRecord, keyColumns)
         if (filterJson == null) {
             engineLogger.warning {
@@ -473,11 +782,21 @@ internal class OfflineClient(
             return@call
         }
         store.patchCachedQueries(
-            table = table,
+            table = cachedTable,
             operation = MutationOperation.DELETE,
             bodyJson = "{}",
             filterJson = filterJson,
         )
+    }
+
+    /**
+     * The name [table] of [schema] is cached under: its own in the default schema, `schema.table`
+     * in another, as a read of it caches it.
+     */
+    private fun cachedTableOf(table: String, schema: String?): String {
+        val defaultSchema =
+            supabaseClient.pluginManager.getPluginOrNull(Postgrest)?.config?.defaultSchema
+        return if (schema.isNullOrBlank() || schema == defaultSchema) table else "$schema.$table"
     }
 
     /**
@@ -525,14 +844,18 @@ internal class OfflineClient(
                 scrubDatabase()
             }
         }
+        // The writes an earlier failure held back are gone with it
+        publishStatus { status -> status.copy(lastSyncError = null) }
     }
 
     /**
-     * The first call shuts the gate, which ends every collection, and cancels the client's work and
-     * the calls it may stop. Every call then waits, up to [closeWait], for the release.
+     * The first call shuts the gate, which ends every collection, cancels the client's work and the
+     * calls it may stop, and publishes the status's last value. Every call then waits, up to
+     * [closeWait], for the release.
      */
     override suspend fun close() {
         if (operationGate.close()) clientScope.coroutineContext.job.cancel()
+        publishFinalStatus()
         readShapePostgrest.value = null
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
         val releasedInTime =
@@ -571,97 +894,25 @@ internal class OfflineClient(
         operationGate.ensureOpen()
     }
 
-    /* ──────────────────────── Mutation queue (internal) ──────────────────────── */
-
-    /*
-     * The mutation queue's ids, rejected list, identity and sync report, for the change that
-     * exposes them publicly under the offline API sheet's names. Internal until then.
-     */
+    /* ──────────────────────── For the engine's own tests ──────────────────────── */
 
     /**
-     * Runs one replay pass and reports what it did; returns promptly when offline.
+     * One replay pass and the engine's own report of it, why it stopped included; for tests that
+     * look past [syncPendingMutations]. Returns promptly when offline.
      *
      * @param table The table to replay, or `null` for the whole queue.
-     * @return What the pass synced, rejected and left pending.
      */
-    internal suspend fun syncPendingMutationsReport(table: String? = null): SyncReport =
+    internal suspend fun syncPendingMutationsReport(table: String? = null): EngineSyncReport =
         operationGate.cancellableCall(clientScope) { mutationQueueReplayer.sync(table = table) }
 
     /**
-     * The current session's pending mutations — of [table], or of every table — in replay order, as
-     * they change.
-     *
-     * @param table The table to observe, or `null` for the whole queue.
-     * @return A flow of pending mutations.
+     * Every identity's persisted rejected mutations, oldest first; for tests that look past
+     * [rejectedMutations]. Throws if the persisted list cannot be decoded.
      */
-    internal fun pendingMutations(table: String? = null): Flow<List<PendingMutation>> {
-        return operationGate.callCollecting(
-            store.pendingMutationsFlow(table).map { rows ->
-                rows.mapNotNull { row -> row.toPendingMutation(store.json, primaryKeys) }
-            }
-        )
-    }
-
-    /**
-     * The persisted rejected mutations, oldest first, as they change. The list keeps the
-     * newest 100.
-     *
-     * @return A flow of rejected mutations; it fails if the persisted list cannot be decoded.
-     */
-    internal fun rejectedMutations(): Flow<List<RejectedMutation>> {
-        return operationGate.callCollecting(
-            store.rejectedList.rejectionsFlow().map { entries ->
-                entries.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) }
-            }
-        )
-    }
-
-    /**
-     * The persisted rejected mutations, oldest first.
-     *
-     * @return The list; it throws if the persisted list cannot be decoded.
-     */
-    internal suspend fun rejectedMutationList(): List<RejectedMutation> = operationGate.call {
+    internal suspend fun rejectedMutationList(): List<EngineRejectedMutation> = operationGate.call {
         store.rejectedList.rejections().map { entry ->
             entry.toRejectedMutation(store.json, primaryKeys)
         }
-    }
-
-    /**
-     * Removes a rejected mutation from the list.
-     *
-     * @param id The rejected mutation's id.
-     * @return `true` when it was on the list.
-     */
-    internal suspend fun dismissRejectedMutation(id: Long): Boolean = operationGate.call {
-        store.dismissRejectedMutation(id)
-    }
-
-    /**
-     * Puts a rejected mutation back at the tail of the queue and requests a replay pass.
-     *
-     * @param id The rejected mutation's id.
-     * @return The new pending mutation's id, or `null` when there is no such rejection, or it — or
-     *   the pending queue — belongs to another identity than the current session's.
-     */
-    internal suspend fun retryRejectedMutation(id: Long): Long? = operationGate.call {
-        val identity = supabaseClient.currentQueueIdentity() ?: return@call null
-        val newId = store.retryRejectedMutation(id, identity.storedValue) ?: return@call null
-        automaticReplay.requestPass()
-        newId
-    }
-
-    /**
-     * Discards one of the current session's pending mutations without sending it: it leaves the
-     * queue, and the cache overlay stops showing it. The way out of a write the server keeps
-     * failing with a `5xx`, which otherwise blocks every later write of the same identity.
-     *
-     * @param id The pending mutation's id.
-     * @return `true` when it was pending, the current session's, and not being sent right now.
-     */
-    internal suspend fun discardPendingMutation(id: Long): Boolean = operationGate.call {
-        val identity = supabaseClient.currentQueueIdentity() ?: return@call false
-        mutationQueueReplayer.discardPendingMutation(id, identity)
     }
 
     /* ───────────────────────────── Guards ───────────────────────────── */

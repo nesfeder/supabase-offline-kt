@@ -298,7 +298,7 @@ class StaleQueriesTest {
             // When — a live read of it
             val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
             val items = launchApp(scope)
-            var last: OfflineReadResult? = null
+            var last: QuerySnapshot? = null
             scope.launch { items.selectAsFlow(request = list("A")).collect { read -> last = read } }
             advanceTimeBy(1.minutes)
             runCurrent()

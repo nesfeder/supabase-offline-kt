@@ -260,6 +260,15 @@ internal open class InMemoryMutationDao : MutationDao {
             .filter { it.table == table && it.isPendingOf(owner, includeOwnerless) }
             .sortedBy { it.id }
 
+    override suspend fun countPendingOwnedBy(owner: String, includeOwnerless: Boolean): Int =
+        mutations.value.count { it.isPendingOf(owner, includeOwnerless) }
+
+    override suspend fun countPendingOwnedByInTable(
+        owner: String,
+        includeOwnerless: Boolean,
+        table: String,
+    ): Int = mutations.value.count { it.table == table && it.isPendingOf(owner, includeOwnerless) }
+
     override suspend fun hasPendingOwnedBy(
         owner: String,
         includeOwnerless: Boolean,

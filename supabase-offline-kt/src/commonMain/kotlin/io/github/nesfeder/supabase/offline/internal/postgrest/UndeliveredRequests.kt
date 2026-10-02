@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.ktor.client.network.sockets.ConnectTimeoutException
 
 /**
  * Whether this failure, as the HTTP engine raised it, proves the request never reached the server.
- * It does when the connection or the host name lookup failed, here or in a cause; an engine that
- * retried inside itself carries its earlier attempts as suppressed exceptions, and each of those
- * must prove it too. Any other failure may have been delivered.
+ * It does when the connection or the host name lookup failed, or the library's network access was
+ * off, here or in a cause; an engine that retried inside itself carries its earlier attempts as
+ * suppressed exceptions, and each of those must prove it too. Any other failure may have been
+ * delivered.
  */
 internal fun Throwable.provesRequestNeverSent(): Boolean =
     provesNeverSentWithin(MAX_EXCEPTIONS_WALKED)
@@ -30,7 +32,11 @@ private fun Throwable.provesNeverSentWithin(budget: Int): Boolean {
             }
         )
             return false
-        if (current is ConnectTimeoutException || isConnectFailureOnThisPlatform(current))
+        if (
+            current is ConnectTimeoutException ||
+                current is NetworkDisabledException ||
+                isConnectFailureOnThisPlatform(current)
+        )
             connectFailure = true
         current = current.cause
     }

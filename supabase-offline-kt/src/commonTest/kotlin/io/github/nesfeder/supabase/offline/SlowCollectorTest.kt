@@ -38,7 +38,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class SlowCollectorTest {
 
     /** The `n` of the one row each shown list holds, in the order a collector was handed them. */
-    private fun List<OfflineReadResult>.counts(): List<Int> = mapNotNull { read ->
+    private fun List<QuerySnapshot>.counts(): List<Int> = mapNotNull { read ->
         read.result
             ?.data
             ?.let { data -> Json.parseToJsonElement(data).jsonArray.firstOrNull() }
@@ -74,8 +74,8 @@ class SlowCollectorTest {
                 // Given — a fast and a slow collector of one query
                 val client = newClient()
                 client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly)
-                val fast = mutableListOf<OfflineReadResult>()
-                val slow = mutableListOf<OfflineReadResult>()
+                val fast = mutableListOf<QuerySnapshot>()
+                val slow = mutableListOf<QuerySnapshot>()
                 val fastCollection = launch {
                     client.from(TABLE).selectAsFlow(readStrategy = strategy).collect { read ->
                         fast += read

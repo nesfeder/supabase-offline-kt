@@ -8,7 +8,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
-import io.github.nesfeder.supabase.offline.OfflineReadResult
+import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
@@ -52,7 +52,7 @@ import kotlinx.serialization.json.put
  * Integration tests across the real read stack: [QueryReader], [cacheFirstWithParallelRefresh], a
  * real [OfflineStore] over in-memory DAOs and a real [LiveQueries], with only the network SELECT
  * scripted. They pin what unit tests cannot: the wiring of the accelerator and the coordinator into
- * the refresh, the per-query [OfflineReadResult], single-flight sharing, and that nothing seeds an
+ * the refresh, the per-query [QuerySnapshot], single-flight sharing, and that nothing seeds an
  * empty cache with `[]`. They run under the non-default
  * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], whose rules their expectations assume.
  */
@@ -81,7 +81,7 @@ class QueryReaderRecoveryTest {
 
             // When: a CacheFirstThenNetwork subscription with state starts and the fast retries run
             // out
-            val reads = mutableListOf<OfflineReadResult>()
+            val reads = mutableListOf<QuerySnapshot>()
             val collector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
@@ -1057,7 +1057,7 @@ class QueryReaderRecoveryTest {
                 )
 
             // When: the subscription runs long enough to exhaust the fast ladder
-            val reads = mutableListOf<OfflineReadResult>()
+            val reads = mutableListOf<QuerySnapshot>()
             val collector = launch {
                 resolver
                     .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
