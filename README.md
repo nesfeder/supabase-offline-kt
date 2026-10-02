@@ -89,8 +89,8 @@ when (val outcome = supabase.offline.from("tasks").insert(Task(title = "Buy milk
     is MutationOutcome.Queued -> outcome.pendingMutation
 }
 
-// Send what is queued, for example when the device is online again
-supabase.offline.syncAllPendingMutations()
+// Queued writes go by themselves when the network is back; to send them now and see what happened:
+val report = supabase.offline.syncPendingMutations() // report.remainingCount, report.rejected
 
 // On sign-out: the cache, the downloaded files and every unsent write
 supabase.offline.clearLocalData()
@@ -122,8 +122,8 @@ _ = try await offline.get(table: "tasks").insertOne(
     value: Task(id: nil, title: "Buy milk", notes: "Whole, not skim")
 )
 
-// Trigger a sync when the device is online again
-_ = try await offline.syncAllPendingMutations()
+// Queued writes go by themselves when the network is back; this sends them now
+_ = try await offline.syncPendingMutations(table: nil)
 ```
 
 > `selectAsFlow` (reactive observation) is Kotlin-only today. On iOS, reload after mutations or
@@ -138,8 +138,9 @@ _ = try await offline.syncAllPendingMutations()
   reactive `selectAsFlow`.
 - **`MutationStrategy`** — `QueueIfOffline` (default) queues writes locally on connectivity
   failure; `OnlineOnly` rethrows. Server-side 4xx/5xx are **never** queued.
-- **Sync is manual.** Call `syncAllPendingMutations()` / `syncPendingMutations(table)` yourself —
-  typically when connectivity returns.
+- **Sync is automatic.** Queued writes are sent when the network comes back and when the session
+  settles; `syncPendingMutations()` sends them now, and `syncStatus` says where things stand.
+  `install(Offline) { autoSync = false }` leaves those passes to the app.
 - **Storage downloads** are cached to disk and served from there when offline. Use
   `bucket.ensureLocalFile` / `ensureLocalPath` to skip the bytes-in-memory step.
 
