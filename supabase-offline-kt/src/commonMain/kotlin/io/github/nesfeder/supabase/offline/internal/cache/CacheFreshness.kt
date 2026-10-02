@@ -15,8 +15,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * The default tick source of [CacheFreshness]: nanoseconds since the store was built, on the
- * monotonic clock, so a tick never steps back the way a wall clock can.
+ * The default tick source of [CacheFreshness]: nanoseconds since it was made, on the monotonic
+ * clock, so a tick never steps back the way a wall clock can.
  */
 internal fun monotonicTickSource(): () -> Long {
     val origin = TimeSource.Monotonic.markNow()

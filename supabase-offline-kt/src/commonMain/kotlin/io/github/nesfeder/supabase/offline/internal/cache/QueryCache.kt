@@ -85,7 +85,8 @@ internal class ParsedPayload(val text: String, val rows: List<JsonElement>?) {
  * The cached queries' rows: a response written behind its admission guards, a payload read,
  * observed, deleted or a table emptied, size eviction, each query's shape record, and the parsed
  * rows kept for reuse. Owns the per-table write locks ([TableWriteLocks]), each held across a whole
- * read-modify-write, and the eviction lock, which is taken with no other held.
+ * read-modify-write and never taken under the queue or clear lock; and the eviction lock, taken
+ * with no other held.
  *
  * @param mutationQueue whose lock and sync sequence a written response is stamped under.
  * @param allLiveCacheKeys the queries with a live reader, which eviction keeps.

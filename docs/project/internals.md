@@ -441,7 +441,7 @@ See [storage.md](../behaviours/storage.md) for the user-facing API around `ensur
 `SupabaseOfflineConfig.cacheSizeBytes` (default 100 MB) bounds the summed length of the cached
 query payloads, not the size of the database file: SQLite keeps the pages a `DELETE` frees, so the
 file never shrinks and could never tell an eviction pass to stop. Eviction is
-`OfflineStore.evictOverBudget()`, with the settings in `QueryCacheLimits`:
+`QueryCache.evictOverBudget()`, with the settings in `QueryCacheLimits`:
 
 - `maxPayloadBytes`: the bound; `null` (when `cacheSizeBytes == CACHE_SIZE_UNLIMITED`) turns
   size-based eviction off. Any other value is at least `MIN_CACHE_SIZE_BYTES`.

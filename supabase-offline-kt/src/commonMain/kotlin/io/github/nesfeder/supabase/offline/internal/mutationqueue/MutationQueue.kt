@@ -79,7 +79,7 @@ internal class MutationQueue(
 
     /**
      * The ids of the mutations whose send started and whose outcome is unknown
-     * ([MutationRow.sendUnconfirmed]). Read once, then kept in step with every change this store
+     * ([MutationRow.sendUnconfirmed]). Read once, then kept in step with every change this queue
      * makes to them; `null` until first read. See [unconfirmedSends].
      */
     private val unconfirmedSendIds = AtomicReference<Set<Long>?>(null)

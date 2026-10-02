@@ -56,16 +56,12 @@ internal class CachePatcher(
     private fun nextPatchId(): Long = patchIds.decrementAndFetch()
 
     /**
-     * Patches a write the server accepted, or a row it sent, into every cached query of [table],
-     * and creates a payload for each live query of the table that has none and admits one of its
-     * rows. Each query shows only the rows it admits. Rows cached for the table's other queries,
-     * read with the same [Projection], stand in for rows the write changes but the query does not
-     * hold yet, so a row an UPDATE makes match joins. A patched payload keeps its fetch time and a
-     * created one is stale: local rows are not fresh data. A query the patch may leave wrong is
-     * marked stale, and its live readers fetch again.
-     *
-     * Serialized with every other writer of [table]'s cached payloads, and it moves the table's
-     * stale-refresh watermark first, so a response already in flight cannot roll the patch back.
+     * Patches a write the server accepted, or a row it sent, into every cached query of [table]
+     * that admits its rows, and gives each live query without a payload one, stale. Rows other
+     * queries hold with the same [Projection] stand in for rows the write brings in; a patched
+     * payload keeps its fetch time; a query the patch may leave wrong is marked stale and fetched
+     * again. Runs under the table's write lock, after moving its watermark, so a response already
+     * in flight cannot roll the patch back.
      *
      * @param operation one of the [MutationOperation] values.
      * @param bodyJson rows for INSERT and UPSERT, the changed columns for UPDATE, `"{}"` for
@@ -91,7 +87,7 @@ internal class CachePatcher(
         startedAtTick: Long? = null,
     ) {
         requireUserTable(table)
-        // A clear after this point voids the patch: each write below checks it under the teardown
+        // A clear after this point voids the patch: each write below checks it under the clear
         // lock
         val guardTick = startedAtTick ?: freshness.tickNow()
         val write =

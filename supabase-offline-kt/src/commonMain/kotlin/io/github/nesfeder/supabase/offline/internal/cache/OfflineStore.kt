@@ -33,14 +33,11 @@ import kotlinx.serialization.json.JsonElement
 import okio.Path
 
 /**
- * The store as one object over the components it was split into: a facade, retired in C3b, that
- * keeps every member the engine and its tests call, each delegating in one line. The components are
- * [CacheFreshness], [CacheOwnership], [MutationQueue], [QueryCache], [QueryOverlay], [CachePatcher]
- * and [LocalData], whose KDoc states the lock order.
- *
- * Its wiring stays assignable `var`s for the client and the tests: each component takes, as a
- * constructor parameter, a function that reads the current value when it is used, so a value may be
- * assigned before or after the first call, as before.
+ * A facade over the store's components, retired in C3b: every member the engine and its tests call,
+ * each delegating in one line, to [CacheFreshness], [CacheOwnership], [MutationQueue],
+ * [QueryCache], [QueryOverlay], [CachePatcher] or [LocalData], whose KDoc states the lock order.
+ * The wiring stays assignable `var`s; each component takes a function that reads the current value
+ * when used, so a value may be assigned before or after the first call.
  */
 internal class OfflineStore(
     queryCacheDao: QueryCacheDao,
