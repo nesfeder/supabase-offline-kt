@@ -116,9 +116,7 @@ Defined in
 | Function | Returns | Behavior |
 |----------|---------|----------|
 | `ensureLocalPath(objectPath, isPublic)` | `String?` | Returns the cached absolute POSIX path; downloads if missing. |
-| `ensureLocalFileUrl(objectPath, isPublic)` | `String?` | `ensureLocalPath` wrapped as `"file://" + path`. |
 | `localPathIfCached(objectPath)` | `String?` | Cached path or `null`. No network. |
-| `localFileUrlIfCached(objectPath)` | `String?` | Same wrapped as `file://`. |
 | `storageCacheMetadata(objectPath)` | `StorageCacheMetadata?` | Same semantics as Android. |
 
 ## Mutating ops (`delete`, `move`, `copy`)

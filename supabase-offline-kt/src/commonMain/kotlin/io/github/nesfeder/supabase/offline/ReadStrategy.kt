@@ -3,7 +3,6 @@
 package io.github.nesfeder.supabase.offline
 
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Where a one-shot `select` takes its rows from: the server, the device's cache, or one and then
@@ -30,14 +29,6 @@ public sealed interface ReadStrategy {
      */
     public class NetworkFirst(public val maxAge: Duration? = null) : ReadStrategy {
 
-        /**
-         * A [NetworkFirst] whose [maxAge] is given in milliseconds.
-         *
-         * @param cacheDurationMillis the oldest cached rows to serve, in milliseconds, or `null`
-         *   for any age.
-         */
-        public constructor(cacheDurationMillis: Long?) : this(cacheDurationMillis?.milliseconds)
-
         override fun equals(other: Any?): Boolean = other is NetworkFirst && other.maxAge == maxAge
 
         override fun hashCode(): Int = maxAge.hashCode()
@@ -56,14 +47,6 @@ public sealed interface ReadStrategy {
      */
     public class CacheFirst(public val maxAge: Duration? = null) : ReadStrategy {
 
-        /**
-         * A [CacheFirst] whose [maxAge] is given in milliseconds.
-         *
-         * @param cacheDurationMillis the oldest cached rows to serve, in milliseconds, or `null`
-         *   for any age.
-         */
-        public constructor(cacheDurationMillis: Long?) : this(cacheDurationMillis?.milliseconds)
-
         override fun equals(other: Any?): Boolean = other is CacheFirst && other.maxAge == maxAge
 
         override fun hashCode(): Int = maxAge.hashCode()
@@ -79,14 +62,6 @@ public sealed interface ReadStrategy {
      *   none.
      */
     public class CacheOnly(public val maxAge: Duration? = null) : ReadStrategy {
-
-        /**
-         * A [CacheOnly] whose [maxAge] is given in milliseconds.
-         *
-         * @param cacheDurationMillis the oldest cached rows to serve, in milliseconds, or `null`
-         *   for any age.
-         */
-        public constructor(cacheDurationMillis: Long?) : this(cacheDurationMillis?.milliseconds)
 
         override fun equals(other: Any?): Boolean = other is CacheOnly && other.maxAge == maxAge
 

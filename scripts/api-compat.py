@@ -4,7 +4,8 @@
 What it reads, all from git, so nothing is built:
 
   * the committed Kotlin ABI records (``.api`` for Android, ``.klib.api`` for iOS) under each
-    published module's ``api/``,
+    published module's ``api/``, and beside them the record of public signatures with parameter
+    names (``.signatures``, from scripts/check-public-signatures.py),
   * the committed Swift interfaces under ``swift/api/`` (once the Swift package exists),
   * the Room schema directory, the files that pin stored formats, and the version catalog,
   * ``CHANGELOG.md``.
@@ -419,6 +420,31 @@ def classify_dump(
         report.add(Finding("additive", "kotlin-added", f"{path}: {describe(entry)}"))
 
 
+def classify_signatures(path: str, base: Optional[str], head: Optional[str], report: Report) -> None:
+    """A record of public signatures with parameter names (scripts/check-public-signatures.py).
+
+    A line that goes is a declaration removed, or a parameter renamed or reordered: a caller passing
+    arguments by name no longer compiles, though neither ABI record shows it. A line that comes is
+    a declaration added. A record that appears is a new view of what exists, not new API.
+    """
+    if head is None:
+        if base is not None:
+            report.add(Finding("breaking", "kotlin-signatures-removed", path))
+        return
+    if base is None:
+        report.notes.append(f"{path} is new: a record of what exists, rated nothing")
+        return
+
+    def lines(content: str) -> Set[str]:
+        return {line for line in content.splitlines() if line.strip() and not line.startswith("//")}
+
+    before, after = lines(base), lines(head)
+    for line in sorted(before - after):
+        report.add(Finding("breaking", "kotlin-signature-changed", f"{path}: {line}"))
+    for line in sorted(after - before):
+        report.add(Finding("additive", "kotlin-signature-added", f"{path}: {line}"))
+
+
 def entry_path(entry: DumpEntry) -> Tuple[str, ...]:
     """The declaration texts from the outermost enclosing declaration down to this one."""
     return entry.parents + (entry.text,)
@@ -770,6 +796,11 @@ def classify(git: Git, base: str, head: str, swift_report: Optional[str] = None)
                     sealed_everywhere |= parse_klib_dump(content).sealed
     for path in dump_paths:
         classify_dump(path, git.show(base, path), git.show(head, path), policy, report, sealed_everywhere)
+    signature_paths = sorted(
+        {path for path in base_files + head_files if match_any(path, kotlin_patterns) and path.endswith(".signatures")}
+    )
+    for path in signature_paths:
+        classify_signatures(path, git.show(base, path), git.show(head, path), report)
 
     swift_patterns = policy.get("swiftInterfaces", [])
     for path in sorted({path for path in base_files + head_files if match_any(path, swift_patterns)}):
@@ -1245,6 +1276,52 @@ def self_test() -> int:
         )
 
     scenario("nothing", lambda repository: None, "none", [])
+    signatures = "// header\nio.example: fun Client.from(schema: String, table: String)\n"
+    scenario(
+        "a new signatures record",
+        lambda repository: repository.write("lib/api/lib.signatures", signatures),
+        "none",
+        [],
+    )
+
+    def signatures_then(new: str):
+        def change(repository: Fixture) -> None:
+            repository.write("lib/api/lib.signatures", signatures)
+            repository.commit("the record")
+            repository.write("lib/api/lib.signatures", new)
+
+        return change
+
+    def scenario_from_record(name: str, new: str, expected_level: str, expected_categories: Sequence[str]) -> None:
+        with fixture() as (repository, _):
+            signatures_then(new)(repository)
+            base = repository.git.run("rev-parse", "HEAD").strip()
+            head = repository.commit(name)
+            report, problems = classify(repository.git, base, head)
+        categories = {finding.category for finding in report.effective()}
+        expect(report.level() == expected_level, f"{name}: level {report.level()} == {expected_level}", failures)
+        for category in expected_categories:
+            expect(category in categories, f"{name}: reports {category}", failures)
+        expect(not problems, f"{name}: no problems ({problems})", failures)
+
+    scenario_from_record(
+        "a parameter renamed",
+        signatures.replace("table: String", "name: String"),
+        "breaking",
+        ["kotlin-signature-changed"],
+    )
+    scenario_from_record(
+        "parameters reordered",
+        signatures.replace("schema: String, table: String", "table: String, schema: String"),
+        "breaking",
+        ["kotlin-signature-changed"],
+    )
+    scenario_from_record(
+        "a signature added",
+        signatures + "io.example: fun Client.from(table: String)\n",
+        "additive",
+        ["kotlin-signature-added"],
+    )
     scenario(
         "a new top-level function",
         lambda repository: repository.write(

@@ -41,6 +41,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
+import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -111,6 +112,8 @@ internal class OfflineTable(
         ),
     /** The client's gate: every read and write passes it, so the client's close waits for them. */
     private val operationGate: ClientOperationGate = ClientOperationGate(),
+    /** The time a read compares a cached row's age with; see [QueryReader]. */
+    private val clock: Clock = Clock.System,
     /** Told when a write sent at once left its identity's queue empty. */
     private val queueEmptied: suspend () -> Unit = {},
     /** Whether the network is known down, for a reactive read's refresh; see [QueryReader]. */
@@ -138,6 +141,7 @@ internal class OfflineTable(
             ),
         operationGate: ClientOperationGate = ClientOperationGate(),
         readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
+        clock: Clock = Clock.System,
         queueEmptied: suspend () -> Unit = {},
         networkAccess: NetworkAccess = NetworkAccess(),
     ) : this(
@@ -152,6 +156,7 @@ internal class OfflineTable(
         requestSync = requestSync,
         headSender = headSender,
         operationGate = operationGate,
+        clock = clock,
         queueEmptied = queueEmptied,
         networkAccess = networkAccess,
     )
@@ -174,6 +179,7 @@ internal class OfflineTable(
             delegate = delegate,
             store = store,
             engineLogger = engineLogger,
+            nowMillis = { clock.now().toEpochMilliseconds() },
             requestSession = requestSession,
             trustPolicy = trustPolicy,
             liveQueries = liveQueries,

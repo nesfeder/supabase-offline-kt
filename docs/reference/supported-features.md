@@ -184,8 +184,7 @@ and
 | `ensureLocalPath(objectPath, isPublic)` (iOS) / `ensureLocalFile(objectPath, isPublic)` (Android) | Returns cached path if present. Otherwise downloads (download errors caught, returns `null`). | Yes | `IOException`, database errors |
 | `localPathIfCached(objectPath)` (iOS) / `localUriIfCached(objectPath)` (Android) | Returns cached path or `null`. Reads from local database directly. | Yes | Database errors |
 | `storageCacheMetadata(objectPath)` | Returns [`StorageCacheMetadata`](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt) when a cache row exists **and the file exists on disk**, otherwise returns `null`. Includes `lastFetchedEpochMs`. | Yes | Database errors |
-| `ensureLocalFileUrl(objectPath, isPublic)` (iOS) / `ensureLocalUri(objectPath, isPublic)` (Android) | Delegates to `ensureLocalPath` / `ensureLocalFile`, returns a `file://` URL / `Uri` | Yes | Same as `ensureLocalPath` |
-| `localFileUrlIfCached(objectPath)` (iOS) | Delegates to `localPathIfCached`, prepends `file://` | Yes | Same as `localPathIfCached` |
+| `ensureLocalUri(objectPath, isPublic)` (Android) | Delegates to `ensureLocalFile`, returns a `file:` `Uri` | Yes | Same as `ensureLocalPath` |
 
 **Client-driven staleness:** The SDK does not enforce a max age for storage files. Compare
 `StorageCacheMetadata.lastFetchedEpochMs` to your own cutoff to decide whether to use the cache

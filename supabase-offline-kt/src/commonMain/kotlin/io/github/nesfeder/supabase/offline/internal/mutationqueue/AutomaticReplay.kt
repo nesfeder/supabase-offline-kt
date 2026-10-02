@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.retryAfterOrNull
+import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
@@ -40,6 +41,7 @@ import kotlinx.coroutines.launch
  * @property initialBackoff The wait after the first failed pass.
  * @property maxBackoff The longest wait.
  * @property maxRetryAfter The longest wait a server's `Retry-After` can ask for.
+ * @property clock The time a `Retry-After` date is read against.
  * @property pass Runs one replay pass.
  */
 internal class AutomaticReplay(
@@ -48,6 +50,7 @@ internal class AutomaticReplay(
     private val initialBackoff: Duration = 1.seconds,
     private val maxBackoff: Duration = 60.seconds,
     private val maxRetryAfter: Duration = 1.hours,
+    private val clock: Clock = Clock.System,
     private val pass: suspend () -> SyncReport,
 ) {
 
@@ -83,7 +86,9 @@ internal class AutomaticReplay(
                     Duration.ZERO
                 }
             val serverAskedFor =
-                (report?.stop as? SyncStop.TransientFailure)?.cause?.retryAfterOrNull()
+                (report?.stop as? SyncStop.TransientFailure)?.cause?.retryAfterOrNull {
+                    clock.now().toEpochMilliseconds()
+                }
             val wait =
                 if (serverAskedFor == null) backoff
                 else maxOf(backoff, minOf(serverAskedFor, maxRetryAfter))

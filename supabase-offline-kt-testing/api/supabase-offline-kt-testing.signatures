@@ -1,0 +1,17 @@
+// Public functions and constructors of supabase-offline-kt-testing, with their parameter names.
+// Written by scripts/check-public-signatures.py --update; checked in CI.
+io.github.nesfeder.supabase.offline.testing: fun (Offline.Config).inMemory(clock: Clock = …)
+io.github.nesfeder.supabase.offline.testing: fun appliedOutcome(result: PostgrestResult)
+io.github.nesfeder.supabase.offline.testing: fun cacheMissException(message: String = …)
+io.github.nesfeder.supabase.offline.testing: fun cachedFile(path: String, fetchedAt: Instant, sizeBytes: Long)
+io.github.nesfeder.supabase.offline.testing: fun mutationNotQueueableException(cause: Throwable, message: String = …)
+io.github.nesfeder.supabase.offline.testing: fun networkDisabledException(message: String = …)
+io.github.nesfeder.supabase.offline.testing: fun pendingMutation(id: Long, table: String, operation: MutationOperation, createdAt: Instant, rowKeys: List<JsonObject> = …, body: JsonElement? = …)
+io.github.nesfeder.supabase.offline.testing: fun querySnapshot(result: PostgrestResult?, isFromCache: Boolean, fetchedAt: Instant?, hasPendingMutations: Boolean = …, refresh: RefreshState = …)
+io.github.nesfeder.supabase.offline.testing: fun queuedOutcome(pendingMutation: PendingMutation)
+io.github.nesfeder.supabase.offline.testing: fun rejectedMutation(id: Long, table: String, operation: MutationOperation, createdAt: Instant, rowKeys: List<JsonObject> = …, body: JsonElement? = …, serverError: ServerError? = …, message: String, rejectedAt: Instant, isRetryable: Boolean = …)
+io.github.nesfeder.supabase.offline.testing: fun serverError(status: Int, code: String? = …, message: String, details: String? = …, hint: String? = …)
+io.github.nesfeder.supabase.offline.testing: fun stalledRefresh(cause: Throwable)
+io.github.nesfeder.supabase.offline.testing: fun syncFailedException(message: String = …, httpStatus: Int? = …, code: String? = …, isConnectivityFailure: Boolean = …)
+io.github.nesfeder.supabase.offline.testing: fun syncReport(syncedCount: Int, rejected: List<RejectedMutation> = …, remainingCount: Int = …, alreadyOnServerCount: Int = …)
+io.github.nesfeder.supabase.offline.testing: fun syncStatus(network: NetworkStatus = …, pendingMutationCount: Int = …, rejectedMutationCount: Int = …, isSyncing: Boolean = …, lastSyncedAt: Instant? = …, lastSyncError: Throwable? = …)

@@ -12,7 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
@@ -25,12 +24,10 @@ import kotlinx.io.IOException
 import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
-import platform.Foundation.NSURL
 
 /**
- * The iOS storage helpers (`ensureLocalPath`, `localPathIfCached`, `ensureLocalFileUrl`) over the
- * offline bucket: they hand back the cached file, as a file URL Swift can parse whatever the name,
- * and they no longer turn a cancellation or a failure into "not available".
+ * The iOS storage helpers (`ensureLocalPath`, `localPathIfCached`) over the offline bucket: they
+ * hand back the cached file, and they never turn a cancellation or a failure into "not available".
  */
 class BucketApiIosExtensionsTest {
 
@@ -55,28 +52,7 @@ class BucketApiIosExtensionsTest {
 
         // Then
         assertEquals((directory / "storage" / "test-bucket" / "a b" / "test.txt").toString(), path)
-        assertEquals(
-            NSURL.fileURLWithPath(assertNotNull(path)).absoluteString,
-            offlineApi.localFileUrlIfCached("a b/test.txt"),
-        )
-    }
-
-    @Test
-    fun a_file_url_leads_back_to_the_file_for_any_name() = runTest {
-        // Given — names with characters a URL must escape
-        fakeBucket.onDownload = { "content".encodeToByteArray() }
-        listOf("a b/test.txt", "100%.txt", "what?.txt", "c#.txt").forEach { name ->
-            // When
-            val path = offlineApi.ensureLocalPath(name)
-            val url = assertNotNull(offlineApi.ensureLocalFileUrl(name, isPublic = false))
-
-            // Then — Swift's URL(string:) accepts it, and it names the cached file
-            assertEquals(
-                path,
-                NSURL.URLWithString(url)?.path,
-                "the URL for $name does not lead back to its file: $url",
-            )
-        }
+        assertEquals(path, offlineApi.localPathIfCached("a b/test.txt"))
     }
 
     @Test
@@ -96,14 +72,12 @@ class BucketApiIosExtensionsTest {
     }
 
     @Test
-    fun ensureLocalFileUrl_throws_an_auth_failure() = runTest {
+    fun ensureLocalPath_throws_an_auth_failure() = runTest {
         // Given
         fakeBucket.onDownload = { throw forbiddenRestException() }
 
         // When / Then
-        assertFailsWith<UnauthorizedRestException> {
-            offlineApi.ensureLocalFileUrl("missing.txt", isPublic = false)
-        }
+        assertFailsWith<UnauthorizedRestException> { offlineApi.ensureLocalPath("missing.txt") }
     }
 
     @Test

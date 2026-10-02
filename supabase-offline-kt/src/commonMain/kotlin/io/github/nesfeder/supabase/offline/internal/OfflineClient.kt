@@ -57,6 +57,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.refreshWakeUps
 import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -65,8 +66,10 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
@@ -92,7 +95,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import okio.FileSystem
 import okio.Path
+import okio.SYSTEM
 
 /**
  * The client behind [Offline]: one database's cache, mutation queue and Storage file cache, serving
@@ -144,13 +149,24 @@ internal class OfflineClient(
     private val responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     /** The configuration the client was opened with, as [Offline.config] reports it. */
     override val config: Offline.Config = Offline.Config(),
+    /** Where the Storage file cache keeps its files: the device's disk unless a test says not. */
+    fileSystem: FileSystem = FileSystem.SYSTEM,
+    /** Records a use time on one of [fileSystem]'s files. */
+    markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
+    /** The time the client's reads and file cache see; the store keeps its own. */
+    private val clock: Clock = Clock.System,
+    /** Where file work runs. */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** Where [close] waits out its bound, which is real time unless a test injects otherwise. */
+    private val closeWaitDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : Offline {
 
     /**
      * Where everything the client starts runs: a child of the injected scope, on its dispatcher.
      * [close] cancels it without touching the caller's scope.
      */
-    private val clientScope: CoroutineScope = childEngineScope(coordinatorScope, engineLogger)
+    private val clientScope: CoroutineScope =
+        newEngineScope(engineLogger, parent = coordinatorScope)
 
     /**
      * The scope a close that outlived its wait finishes in; the injected one, which close leaves
@@ -219,6 +235,10 @@ internal class OfflineClient(
             dataDirectoryProvider = baseDirectoryProvider,
             maxSizeBytes = fileCacheMaxBytes,
             engineLogger = engineLogger,
+            fileSystem = fileSystem,
+            nowMillis = { clock.now().toEpochMilliseconds() },
+            markUsed = markFileUsed,
+            ioDispatcher = ioDispatcher,
         )
 
     private val mutationQueueReplayer =
@@ -236,7 +256,7 @@ internal class OfflineClient(
      * them.
      */
     private val automaticReplay =
-        AutomaticReplay(scope = clientScope, engineLogger = engineLogger) {
+        AutomaticReplay(scope = clientScope, engineLogger = engineLogger, clock = clock) {
             mutationQueueReplayer.sync()
         }
 
@@ -248,7 +268,7 @@ internal class OfflineClient(
      * sharing per `(table, cacheKey)` plus the live-signature registry that backs
      * materialize-on-write in [OfflineStore.patchCachedQueries].
      */
-    private val liveQueries = LiveQueries(clientScope)
+    private val liveQueries = LiveQueries(clientScope, engineLogger)
 
     /**
      * SDK-internal recovery accelerator merging auth-session-restored and connectivity-regained
@@ -437,6 +457,7 @@ internal class OfflineClient(
                 headSender = mutationQueueReplayer,
                 operationGate = operationGate,
                 readShapePostgrest = readShape,
+                clock = clock,
                 queueEmptied = ::recordQueueEmptiedBySending,
                 networkAccess = networkAccess,
             )
@@ -481,6 +502,7 @@ internal class OfflineClient(
             backgroundScope = clientScope,
             operationGate = operationGate,
             renderImagePath = renderImagePath,
+            ioDispatcher = ioDispatcher,
             networkAccess = networkAccess,
         )
     }
@@ -703,7 +725,7 @@ internal class OfflineClient(
     /** Records that sending left the session's queue empty: now, and no error since. */
     private suspend fun recordQueueEmptiedBySending() {
         publishStatus { status ->
-            status.copy(lastSyncedAt = Clock.System.now(), lastSyncError = null)
+            status.copy(lastSyncedAt = clock.now(), lastSyncError = null)
         }
     }
 
@@ -859,7 +881,7 @@ internal class OfflineClient(
         readShapePostgrest.value = null
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
         val releasedInTime =
-            withContext(NonCancellable + Dispatchers.Default) {
+            withContext(NonCancellable + closeWaitDispatcher) {
                 withTimeoutOrNull(closeWait) { releaseOnceIdle() } != null
             }
         if (releasedInTime || released.isCompleted) return

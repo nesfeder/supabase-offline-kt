@@ -33,6 +33,7 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -70,6 +71,8 @@ internal class CachingBucketApi(
     private val backgroundScope: CoroutineScope,
     private val operationGate: ClientOperationGate = ClientOperationGate(),
     private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH,
+    /** Where a streamed download writes its file. */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val networkAccess: NetworkAccess = NetworkAccess(),
 ) : OfflineBucketApi, BucketApi by delegate {
 
@@ -81,6 +84,7 @@ internal class CachingBucketApi(
             backgroundScope,
             operationGate,
             renderImagePath,
+            ioDispatcher,
             networkAccess,
         )
 
@@ -375,7 +379,7 @@ internal class CachingBucketApi(
                         uncacheable = entryProvider() == null,
                     )
             try {
-                withContext(Dispatchers.IO) { target.sink.write(buffer, 0, read) }
+                withContext(ioDispatcher) { target.sink.write(buffer, 0, read) }
             } catch (failure: IOException) {
                 engineLogger.warning {
                     "Storage cache could not write a download (${failure::class.simpleName}); not caching"
@@ -398,7 +402,7 @@ internal class CachingBucketApi(
         // The sink buffers; a full disk can surface only here. Past this point the temporary
         // file holds every byte, so it can be served even if the rename that follows fails.
         try {
-            withContext(Dispatchers.IO) { target.sink.flush() }
+            withContext(ioDispatcher) { target.sink.flush() }
         } catch (failure: IOException) {
             engineLogger.warning {
                 "Storage cache could not write a download (${failure::class.simpleName}); not caching"

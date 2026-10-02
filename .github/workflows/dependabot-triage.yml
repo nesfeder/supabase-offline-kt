@@ -64,7 +64,7 @@ jobs:
               io.ktor:*|com.squareup.okio:*|org.jetbrains.kotlinx:kotlinx-coroutines*|org.jetbrains.kotlinx:kotlinx-serialization*)
                 upstream_pin=true
                 security_update=true ;;
-              org.jetbrains.kotlin:*|org.jetbrains.kotlin.*|com.android.*|co.touchlab.skie*)
+              org.jetbrains.kotlin:*|org.jetbrains.kotlin.*|com.android.*)
                 toolchain=true ;;
               androidx.room:*|androidx.room|androidx.sqlite:*)
                 persistence=true ;;
@@ -127,7 +127,6 @@ jobs:
 
           - [ ] The new Kotlin version does not force consumers onto a newer Kotlin than the pinned supabase-kt release needs, or that is deliberate. A Kotlin `x.y.20` release is a tooling release, not a bug fix, although semver calls it a patch.
           - [ ] The Android Gradle plugin version is inside the Kotlin Gradle plugin's supported range.
-          - [ ] SKIE supports the new Kotlin version. The iOS framework link fails if it does not; it runs in the full CI run described above.
           MARKDOWN
             fi
             if [[ "$persistence" == true ]]; then
