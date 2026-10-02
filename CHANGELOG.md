@@ -168,16 +168,24 @@ release.
   without a reviewer seeing it.
 - `supabase-offline-kt-testing`: `Offline.Config.inMemory(clock)` keeps the plugin's cache,
   mutation queue and Storage file cache in memory, writing nothing to disk, with every other setting
-  applied as in an app; the clock is the time the client sees. Factories build the value types whose
+  applied as in an app; the clock is the time the client sees. It watches no connectivity monitor,
+  so its network status is `UNKNOWN` until a test sets `networkAvailability` or calls
+  `disableNetwork()`, which is how a test takes it offline. Factories build the value types whose
   constructors are internal, for an app's own test doubles: `appliedOutcome`, `queuedOutcome`,
-  `cachedFile`, `cacheMissException`, `mutationNotQueueableException` and
-  `networkDisabledException`.
+  `cachedFile`, `pendingMutation`, `stalledRefresh`, `querySnapshot`, `syncReport`, `syncStatus`,
+  `rejectedMutation`, `serverError`, and the exceptions `cacheMissException`,
+  `mutationNotQueueableException`, `networkDisabledException` and `syncFailedException`.
 - Published on Maven Central as `io.github.nesfeder.supabase-offline:supabase-offline-kt` and
   `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing`, for Android, `iosArm64` and
   `iosSimulatorArm64`, each with its sources, an HTML API reference and a signature on every file.
 
 ### Changed
 
+- Every public `suspend` function declares `@Throws(Throwable::class)`, so a framework that exports
+  the library hands Swift a failure as an error instead of ending the process. `close()`, which
+  overrides supabase-kt's, and the `syncStatus` property cannot declare it.
+- A reactive read's refresh that fails for a reason other than the network is logged at WARNING,
+  by type, each time it is tried again; it was retried silently.
 - okio is no longer an `api` dependency of the library: no public declaration names one of its
   types. It still reaches an app, at the same version, through supabase-kt's Auth.
 - The Android artifact depends on `androidx.startup:startup-runtime` itself, at the version
