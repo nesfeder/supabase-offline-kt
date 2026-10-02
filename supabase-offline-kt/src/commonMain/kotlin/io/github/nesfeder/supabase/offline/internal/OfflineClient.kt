@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
@@ -579,38 +580,41 @@ internal class OfflineClient(
             }
         }
         clientScope.launch {
-            // One count per change, in order, so an older count never lands after a newer one
-            store.queueChanges().collect {
-                val count = statusCountOrNull("pending") { store.shownPendingMutationCount(null) }
-                if (count != null)
-                    syncStatusState.update { status -> status.copy(pendingMutationCount = count) }
-            }
-        }
-        clientScope.launch {
-            store
-                .shownRejectionsFlow()
+            // Both counts from one collector, published together and in order: an older count
+            // never lands after a newer one, and the pending count published beside a rejected
+            // list is read after it, so a write the replay refused is not still counted pending
+            combine(store.queueChanges(), store.shownRejectionsFlow()) { _, rejected ->
+                    rejected.size
+                }
                 .catch { failure ->
                     engineLogger.warning {
-                        "The sync status stopped following the rejected list (${failure::class.simpleName})"
+                        "The sync status stopped following the queue (${failure::class.simpleName})"
                     }
                 }
-                .collect { entries ->
+                .collect { rejected ->
+                    val pending = pendingCountOrNull() ?: return@collect
                     syncStatusState.update { status ->
-                        status.copy(rejectedMutationCount = entries.size)
+                        status.copy(
+                            pendingMutationCount = pending,
+                            rejectedMutationCount = rejected,
+                        )
                     }
                 }
         }
     }
 
-    /** [count], or `null` when it fails; the status keeps its last count then, and says so. */
-    private suspend fun statusCountOrNull(name: String, count: suspend () -> Int): Int? =
+    /**
+     * The current user's pending count, or `null` when counting fails; the status keeps its last
+     * counts then, and says so.
+     */
+    private suspend fun pendingCountOrNull(): Int? =
         try {
-            count()
+            store.shownPendingMutationCount(null)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
             engineLogger.warning {
-                "Could not count the $name mutations for the sync status (${failure::class.simpleName})"
+                "Could not count the pending mutations for the sync status (${failure::class.simpleName})"
             }
             null
         }
