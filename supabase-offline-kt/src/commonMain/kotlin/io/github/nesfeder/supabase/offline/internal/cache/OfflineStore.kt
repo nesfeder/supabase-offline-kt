@@ -105,7 +105,7 @@ internal class OfflineStore(
     /** The object cache, every write to it counted. */
     private val countingQueryCacheDao = PayloadWriteCountingDao(queryCacheDao)
 
-    /** The table identities read through the wiring above, at call time. */
+    /** Each table's key columns, read through [primaryKeys] when used. */
     private val currentPrimaryKeys = PrimaryKeys { table -> primaryKeys.of(table) }
 
     /** [identityChanges] as assigned when a flow is collected. */
