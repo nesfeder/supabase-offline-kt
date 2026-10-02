@@ -7,7 +7,6 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -71,11 +70,11 @@ class FilterCaptureFidelityTest {
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val store = newTestOfflineStore()
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
             )
-        builder.updateJson(
+        builder.update(
             Json.parseToJsonElement("""{"done":true}"""),
             MutationStrategy.QueueIfOffline,
         ) {

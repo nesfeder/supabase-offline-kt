@@ -67,7 +67,7 @@ class ReturnedRowsOverlayTest {
         }
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+        items.update(Json.parseToJsonElement("""{"title":"new"}""")) {
             filter { eq("id", 1) }
             select()
         }
@@ -87,7 +87,7 @@ class ReturnedRowsOverlayTest {
         }
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+        items.update(Json.parseToJsonElement("""{"title":"new"}""")) {
             filter { eq("id", 1) }
             select()
             single()
@@ -104,7 +104,7 @@ class ReturnedRowsOverlayTest {
         writeAnswer = { _, _ -> """[{"id":1,"title":"new"}]""" }
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new","done":true}""")) {
+        items.update(Json.parseToJsonElement("""{"title":"new","done":true}""")) {
             filter { eq("id", 1) }
             select(Columns.raw("id,title"))
         }
@@ -126,7 +126,7 @@ class ReturnedRowsOverlayTest {
             }
 
             // When — a filter the strict capture cannot represent
-            items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) {
+            items.update(Json.parseToJsonElement("""{"title":"new"}""")) {
                 filter {
                     or {
                         eq("id", 1)
@@ -153,9 +153,7 @@ class ReturnedRowsOverlayTest {
         }
 
         // When — the insert asks for its row back as one object
-        items.insertJson(
-            Json.parseToJsonElement("""[{"list_id":"A","title":"new"}]""") as JsonArray
-        ) {
+        items.insert(Json.parseToJsonElement("""[{"list_id":"A","title":"new"}]""") as JsonArray) {
             select()
             single()
         }
@@ -173,7 +171,7 @@ class ReturnedRowsOverlayTest {
         writeAnswer = { _, _ -> "" }
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", 1) } }
+        items.update(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", 1) } }
 
         // Then
         val row = cachedRow()

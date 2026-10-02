@@ -5,39 +5,50 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 
 /**
- * Honest result of an offline-aware mutation issued through the verbs on
- * [OfflinePostgrestQueryBuilder].
+ * What became of a write made through [OfflinePostgrestQueryBuilder]: the server applied it, or it
+ * waits in the mutation queue.
  *
- * A mutation either reaches the server or is queued locally when the network is unavailable.
- * Collapsing both into a bare [PostgrestResult] would report a queued write as a synthetic empty
- * result, indistinguishable from "the server executed the mutation and returned no rows" — a caller
- * that reads the written row back would decode the empty placeholder, which either throws or maps
- * to a null domain object. [MutationOutcome] makes the distinction explicit so those callers can
- * construct the domain object from the DTO they just sent instead of decoding a placeholder.
+ * This is the one place the library's verbs differ from supabase-kt's, which return the server's
+ * [PostgrestResult]. A queued write has no server response yet, so a caller that reads the written
+ * rows back decides what to do without one: build them from what it sent, or wait for a later read.
+ * A caller that ignores the result needs no change.
+ *
+ * The set is closed: these two cases are every outcome a write can have, so a `when` over them
+ * stays exhaustive.
  */
 public sealed interface MutationOutcome {
 
     /**
-     * The mutation executed on the server.
+     * The server applied the write.
      *
-     * @property result the live PostgREST response, ready to decode exactly as a legacy verb's
-     *   return value.
+     * @property result the server's response, to decode as supabase-kt's verbs' result is decoded.
      */
-    public data class Applied(val result: PostgrestResult) : MutationOutcome
+    @ConsistentCopyVisibility
+    public data class Applied internal constructor(public val result: PostgrestResult) :
+        MutationOutcome
 
     /**
-     * The mutation could not reach the server (network unavailable) and was queued locally; it will
-     * replay on the next successful sync. There is no server response to decode.
+     * The write waits in the mutation queue and is sent by a later pass. It has no server response
+     * yet.
+     *
+     * @property pendingMutation the queued write, whose [PendingMutation.id] identifies it from now
+     *   on.
      */
-    public data object Queued : MutationOutcome
+    @ConsistentCopyVisibility
+    public data class Queued internal constructor(public val pendingMutation: PendingMutation) :
+        MutationOutcome
+
+    /** Whether the write waits in the mutation queue. */
+    public val isQueued: Boolean
+        get() = this is Queued
 
     /**
-     * The server response when the mutation [Applied], or `null` when it was [Queued].
+     * The server's response when the write was [Applied], or `null` when it was [Queued].
      *
-     * A drop-in bridge for call sites that only need the "result or null when queued" shape, e.g.
-     * `upsert(…).resultOrNull()?.decodeAs<Foo>()`.
+     * For a caller that only needs "the result, if there is one", such as `upsert(row) { select()
+     * }.resultOrNull()?.decodeSingle<Row>()`.
      *
-     * @return the [Applied.result], or `null` for [Queued].
+     * @return the [Applied.result], or `null`.
      */
     public fun resultOrNull(): PostgrestResult? = (this as? Applied)?.result
 }

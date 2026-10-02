@@ -6,6 +6,7 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -43,7 +44,7 @@ class DiscardPendingMutationTest {
             currentIdentity = { session },
         )
     private val builder =
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
@@ -52,7 +53,7 @@ class DiscardPendingMutationTest {
 
     private suspend fun renameOffline(id: Int, title: String) {
         server.answer = { connectivityFailure() }
-        builder.updateJson(patch(title)) { filter { eq("id", id) } }
+        builder.update(patch(title)) { filter { eq("id", id) } }
     }
 
     @Test
@@ -124,7 +125,7 @@ class DiscardPendingMutationTest {
             release.await()
             okJson("[]")
         }
-        val write = async { builder.updateJson(patch("A")) { filter { eq("id", 1) } } }
+        val write = async { builder.update(patch("A")) { filter { eq("id", 1) } } }
         parked.await()
 
         // When

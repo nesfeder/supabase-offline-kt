@@ -31,9 +31,9 @@
 # in prose or in a string never count. Annotations are read on the line above a declaration and
 # on the same line, including multi-line annotation arguments.
 #
-# Known violations are grandfathered in GRANDFATHERED below, each with a reason. An entry that no
-# longer matches anything fails the check too, so the list can only shrink. The pull request that
-# freezes the public API empties it by moving the code; nothing may be added to it.
+# GRANDFATHERED below once held known violations, each with a reason; the public-API work moved
+# the code and emptied it. An entry that no longer matches anything fails the check, and nothing
+# may be added to it.
 #
 # It also fails, with status 2, when it cannot list or scan the sources: a module's source
 # directory is missing, a directory cannot be read, or no main-source file is found at all. A
@@ -57,8 +57,6 @@ MODULES="supabase-offline-kt supabase-offline-kt-testing"
 
 # rule|path relative to the repository root|declaration name|reason
 GRANDFATHERED='
-internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder.kt|OfflinePostgrestQueryBuilderImpl|the implementation behind the public builder interface; moves with the public-API freeze
-internal-in-public-package|supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/SupabaseOfflineClient.kt|SupabaseOfflineClientImpl|the implementation behind the public client interface; moves with the public-API freeze
 '
 
 # ─────────────────────────────────────────────────────────────────────────────

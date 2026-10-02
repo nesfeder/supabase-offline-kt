@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
@@ -36,7 +36,7 @@ class OfflineBucketApiDownloadTest {
     private lateinit var baseDir: Path
     private lateinit var delegate: FakeBucketApi
     private lateinit var api: CachingBucketApi
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
 
     @BeforeTest
     fun setUp() {
@@ -183,11 +183,11 @@ class OfflineBucketApiDownloadTest {
         // Then
         assertEquals(
             listOf("Storage download $BUCKET/$PATH attempting network"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
         assertEquals(
             emptyList(),
-            messagesAt(OfflineLogLevel.WARNING) + messagesAt(OfflineLogLevel.ERROR),
+            messagesAt(EngineLogLevel.WARNING) + messagesAt(EngineLogLevel.ERROR),
         )
     }
 
@@ -204,7 +204,7 @@ class OfflineBucketApiDownloadTest {
         // Then
         assertEquals(
             listOf("Storage download from $BUCKET failed; serving the cached copy"),
-            messagesAt(OfflineLogLevel.WARNING),
+            messagesAt(EngineLogLevel.WARNING),
         )
     }
 
@@ -219,7 +219,7 @@ class OfflineBucketApiDownloadTest {
         // Then
         assertEquals(
             listOf("Storage download from $BUCKET failed and nothing is cached"),
-            messagesAt(OfflineLogLevel.ERROR),
+            messagesAt(EngineLogLevel.ERROR),
         )
     }
 
@@ -234,11 +234,11 @@ class OfflineBucketApiDownloadTest {
         // Then
         assertEquals(
             listOf("Storage download $BUCKET/$PATH attempting network"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
         assertEquals(
             emptyList(),
-            messagesAt(OfflineLogLevel.WARNING) + messagesAt(OfflineLogLevel.ERROR),
+            messagesAt(EngineLogLevel.WARNING) + messagesAt(EngineLogLevel.ERROR),
         )
     }
 
@@ -255,7 +255,7 @@ class OfflineBucketApiDownloadTest {
         // Then
         assertEquals(
             listOf("Storage download from $BUCKET failed; serving the cached copy"),
-            messagesAt(OfflineLogLevel.WARNING),
+            messagesAt(EngineLogLevel.WARNING),
         )
     }
 
@@ -270,7 +270,7 @@ class OfflineBucketApiDownloadTest {
         // Then
         assertEquals(
             listOf("Storage download from $BUCKET failed and nothing is cached"),
-            messagesAt(OfflineLogLevel.ERROR),
+            messagesAt(EngineLogLevel.ERROR),
         )
     }
 
@@ -286,7 +286,7 @@ class OfflineBucketApiDownloadTest {
         assertFailsWith<Exception> { api.downloadPublic(PATH) {} }
 
         // When
-        val visible = logger.entries.filter { it.level != OfflineLogLevel.DEBUG }.map { it.message }
+        val visible = logger.entries.filter { it.level != EngineLogLevel.DEBUG }.map { it.message }
 
         // Then — object paths can name people ("jane-doe/passport.jpg"); they stay out of every log
         // an app is likely to forward to a crash reporter
@@ -297,7 +297,7 @@ class OfflineBucketApiDownloadTest {
         )
     }
 
-    private fun messagesAt(level: OfflineLogLevel): List<String> =
+    private fun messagesAt(level: EngineLogLevel): List<String> =
         logger.entriesAt(level).map { it.message }
 
     private companion object {

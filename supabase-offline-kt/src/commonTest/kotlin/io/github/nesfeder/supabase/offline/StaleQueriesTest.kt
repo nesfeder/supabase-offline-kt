@@ -115,7 +115,7 @@ class StaleQueriesTest {
     private suspend fun OfflinePostgrestQueryBuilder.askedTheServer(list: String): Boolean {
         val before = readsOf(list)
         select(
-            readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours),
+            readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours),
             request = list(list),
         )
         return readsOf(list) > before
@@ -168,7 +168,7 @@ class StaleQueriesTest {
             rows,
             items
                 .select(
-                    readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours),
+                    readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours),
                     request = list("A"),
                 )
                 .data,
@@ -177,7 +177,7 @@ class StaleQueriesTest {
             rows,
             items
                 .select(
-                    readStrategy = ReadStrategy.NetworkFirst(cacheDuration = 1.hours),
+                    readStrategy = ReadStrategy.NetworkFirst(maxAge = 1.hours),
                     request = list("A"),
                 )
                 .data,
@@ -186,7 +186,7 @@ class StaleQueriesTest {
             rows,
             items
                 .select(
-                    readStrategy = ReadStrategy.CacheOnly(cacheDuration = 1.hours),
+                    readStrategy = ReadStrategy.CacheOnly(maxAge = 1.hours),
                     request = list("A"),
                 )
                 .data,
@@ -207,7 +207,7 @@ class StaleQueriesTest {
             lists.getValue("A"),
             offlineLaunch
                 .select(
-                    readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours),
+                    readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours),
                     request = list("A"),
                 )
                 .data,
@@ -231,7 +231,7 @@ class StaleQueriesTest {
             items.cacheBoth()
 
             // When — an update the server applies by a comparison the cache does not evaluate
-            items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+            items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
                 filter {
                     eq("list_id", "A")
                     gt("priority", 3)
@@ -271,7 +271,7 @@ class StaleQueriesTest {
         val readsBefore = readsOf("A") to readsOf("Z")
 
         // When — an update the cache cannot evaluate, within list A
-        items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+        items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
             filter {
                 eq("list_id", "A")
                 gt("priority", 3)

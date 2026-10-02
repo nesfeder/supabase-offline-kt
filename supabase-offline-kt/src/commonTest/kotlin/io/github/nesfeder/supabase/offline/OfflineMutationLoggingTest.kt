@@ -3,7 +3,9 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -22,62 +24,62 @@ import kotlinx.serialization.json.JsonArray
 class OfflineMutationLoggingTest {
 
     private val server = RecordingPostgrestServer(answer = { okJson(RESPONSE) })
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
     private val builder =
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = newTestOfflineStore(),
             engineLogger = logger.asEngineLogger(),
         )
 
-    private fun messagesAt(level: OfflineLogLevel): List<String> =
+    private fun messagesAt(level: EngineLogLevel): List<String> =
         logger.entriesAt(level).map { it.message }
 
     // ─────────────────────────── Success ───────────────────────────
 
     @Test
-    fun insertJson_success_logsDebugWithRequestAndResponseJson() = runTest {
+    fun insert_success_logsDebugWithRequestAndResponseJson() = runTest {
         // Given — the default server accepts the write
 
         // When
-        builder.insertJson(ROWS)
+        builder.insert(ROWS)
 
         // Then
         assertEquals(
             listOf("INSERT $TABLE request body: $ROWS", "INSERT $TABLE response: $RESPONSE"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.INFO))
     }
 
     @Test
-    fun upsertJson_success_logsDebugWithJson() = runTest {
+    fun upsert_success_logsDebugWithJson() = runTest {
         // Given — the default server accepts the write
 
         // When
-        builder.upsertJson(ROWS) { onConflict = "id" }
+        builder.upsert(ROWS) { onConflict = "id" }
 
         // Then
         assertEquals(
             listOf("UPSERT $TABLE request body: $ROWS", "UPSERT $TABLE response: $RESPONSE"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.INFO))
     }
 
     @Test
-    fun updateJson_success_logsDebugWithJson() = runTest {
+    fun update_success_logsDebugWithJson() = runTest {
         // Given — the default server accepts the write
 
         // When
-        builder.updateJson(PATCH) { filter { eq("id", 1) } }
+        builder.update(PATCH) { filter { eq("id", 1) } }
 
         // Then
         assertEquals(
             listOf("UPDATE $TABLE request body: $PATCH", "UPDATE $TABLE response: $RESPONSE"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.INFO))
     }
 
     @Test
@@ -90,55 +92,55 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("DELETE $TABLE attempting network", "DELETE $TABLE response: $RESPONSE"),
-            messagesAt(OfflineLogLevel.DEBUG),
+            messagesAt(EngineLogLevel.DEBUG),
         )
-        assertEquals(emptyList(), messagesAt(OfflineLogLevel.INFO))
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.INFO))
     }
 
     // ─────────────────────────── Queued offline ───────────────────────────
 
     @Test
-    fun insertJson_queuedOffline_logsInfoQueued() = runTest {
+    fun insert_queuedOffline_logsInfoQueued() = runTest {
         // Given
         server.answer = { connectivityFailure() }
 
         // When
-        builder.insertJson(ROWS, MutationStrategy.QueueIfOffline)
+        builder.insert(ROWS, MutationStrategy.QueueIfOffline)
 
         // Then
         assertEquals(
             listOf("INSERT $TABLE queued offline (network unavailable)"),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 
     @Test
-    fun upsertJson_queuedOffline_logsInfoQueued() = runTest {
+    fun upsert_queuedOffline_logsInfoQueued() = runTest {
         // Given
         server.answer = { connectivityFailure() }
 
         // When
-        builder.upsertJson(ROWS, MutationStrategy.QueueIfOffline) { onConflict = "id" }
+        builder.upsert(ROWS, MutationStrategy.QueueIfOffline) { onConflict = "id" }
 
         // Then
         assertEquals(
             listOf("UPSERT $TABLE queued offline (network unavailable)"),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 
     @Test
-    fun updateJson_queuedOffline_logsInfoQueued() = runTest {
+    fun update_queuedOffline_logsInfoQueued() = runTest {
         // Given
         server.answer = { connectivityFailure() }
 
         // When
-        builder.updateJson(PATCH, MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
+        builder.update(PATCH, MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
         // Then
         assertEquals(
             listOf("UPDATE $TABLE queued offline (network unavailable)"),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 
@@ -153,7 +155,7 @@ class OfflineMutationLoggingTest {
         // Then
         assertEquals(
             listOf("DELETE $TABLE queued offline (network unavailable)"),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 

@@ -54,7 +54,7 @@ class QueryShapeRecordsTest {
     private lateinit var store: OfflineStore
 
     /** A client over the same database, as each launch of the app builds one. */
-    private fun launch(queryCacheLimits: QueryCacheLimits? = null): SupabaseOfflineClient {
+    private fun launch(queryCacheLimits: QueryCacheLimits? = null): Offline {
         store =
             if (queryCacheLimits == null) {
                 newTestOfflineStore(
@@ -103,7 +103,7 @@ class QueryShapeRecordsTest {
         first.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = list("B"))
 
         // When — the next launch writes a row of list B before reading either list
-        launch().from(TABLE).insertJson(row("B2", "B"))
+        launch().from(TABLE).insert(row("B2", "B"))
 
         // Then — the row lands in list B only
         assertEquals(listOf("A1"), cachedIds("A"))
@@ -122,9 +122,9 @@ class QueryShapeRecordsTest {
         val client = launch()
 
         // When — a row of list B is written before list A is read, and another after
-        client.from(TABLE).insertJson(row("B2", "B"))
+        client.from(TABLE).insert(row("B2", "B"))
         client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly(), request = list("A"))
-        client.from(TABLE).insertJson(row("B3", "B"))
+        client.from(TABLE).insert(row("B3", "B"))
 
         // Then — unknown conditions admitted the first; the shape the read recorded kept out the
         // second
@@ -196,7 +196,7 @@ class QueryShapeRecordsTest {
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = list("A"))
 
         // When
-        client.clearAllCache()
+        client.clearLocalData()
 
         // Then
         assertTrue(

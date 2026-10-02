@@ -82,7 +82,7 @@ class NonDefaultSchemaTest {
         val outcome =
             client
                 .from(OTHER_SCHEMA, TABLE)
-                .insertJson(rows("""[{"id":2}]"""), mutationStrategy = MutationStrategy.OnlineOnly)
+                .insert(rows("""[{"id":2}]"""), mutationStrategy = MutationStrategy.OnlineOnly)
 
         // Then
         assertTrue(outcome is MutationOutcome.Applied)

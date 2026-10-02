@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
@@ -26,7 +26,7 @@ import kotlinx.serialization.json.JsonArray
 class MutationQueueReplayerLoggingTest {
 
     private val server = RecordingPostgrestServer()
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
     private val store = newTestOfflineStore()
     private val replayer =
         MutationQueueReplayer(
@@ -35,7 +35,7 @@ class MutationQueueReplayerLoggingTest {
             engineLogger = logger.asEngineLogger(),
         )
 
-    private fun messagesAt(level: OfflineLogLevel): List<String> =
+    private fun messagesAt(level: EngineLogLevel): List<String> =
         logger.entriesAt(level).map { it.message }
 
     @Test
@@ -53,7 +53,7 @@ class MutationQueueReplayerLoggingTest {
                 "Syncing 2 pending mutations for $TABLE",
                 "Sync complete: 2 mutations synced for $TABLE",
             ),
-            messagesAt(OfflineLogLevel.INFO),
+            messagesAt(EngineLogLevel.INFO),
         )
     }
 
@@ -66,7 +66,7 @@ class MutationQueueReplayerLoggingTest {
         replayer.syncTable(table = TABLE)
 
         // Then
-        assertEquals(listOf("Synced INSERT mutation for $TABLE"), messagesAt(OfflineLogLevel.DEBUG))
+        assertEquals(listOf("Synced INSERT mutation for $TABLE"), messagesAt(EngineLogLevel.DEBUG))
     }
 
     @Test
@@ -81,7 +81,7 @@ class MutationQueueReplayerLoggingTest {
         // Then
         assertEquals(
             listOf("Permanent failure for INSERT on $TABLE (409); moved to the rejected list"),
-            messagesAt(OfflineLogLevel.WARNING),
+            messagesAt(EngineLogLevel.WARNING),
         )
     }
 
@@ -97,7 +97,7 @@ class MutationQueueReplayerLoggingTest {
         // Then
         assertEquals(
             listOf("Network unavailable, pausing sync for $TABLE"),
-            messagesAt(OfflineLogLevel.WARNING),
+            messagesAt(EngineLogLevel.WARNING),
         )
     }
 
@@ -127,7 +127,7 @@ class MutationQueueReplayerLoggingTest {
             corruptSyncer.syncAllTables()
 
             // Then — a warning names the table and the problem, and carries none of the payload
-            val warnings = messagesAt(OfflineLogLevel.WARNING)
+            val warnings = messagesAt(EngineLogLevel.WARNING)
             assertTrue(
                 warnings.any { it.contains(TABLE) && it.contains("no longer parses") },
                 "got $warnings",

@@ -5,10 +5,10 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -17,6 +17,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -42,7 +43,7 @@ class QueueOwnershipTest {
             currentIdentity = { session },
         )
     private val builder =
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
@@ -50,7 +51,7 @@ class QueueOwnershipTest {
 
     private suspend fun writeOffline(title: String): MutationOutcome {
         server.answer = { connectivityFailure() }
-        return builder.insertJson(rows("""[{"title":"$title"}]"""), MutationStrategy.QueueIfOffline)
+        return builder.insert(rows("""[{"title":"$title"}]"""), MutationStrategy.QueueIfOffline)
     }
 
     @Test
@@ -99,7 +100,7 @@ class QueueOwnershipTest {
         val outcome = writeOffline("B's note")
 
         // Then — B's write is queued as B's, and A's stays A's
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         val pending = store.allPendingMutations()
         assertEquals(listOf(USER_A.storedValue, USER_B.storedValue), pending.map { it.owner })
     }

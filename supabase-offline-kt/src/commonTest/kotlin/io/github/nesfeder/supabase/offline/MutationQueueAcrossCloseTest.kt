@@ -74,13 +74,13 @@ class MutationQueueAcrossCloseTest {
         client.close()
 
         // Then — every verb refuses, whatever its strategy, and nothing reaches the server
-        val queued = assertFailsWith<IllegalStateException> { builder.insertJson(ROW) }
+        val queued = assertFailsWith<IllegalStateException> { builder.insert(ROW) }
         assertEquals(CLIENT_CLOSED_MESSAGE, queued.message)
         assertFailsWith<IllegalStateException> {
-            builder.insertJson(ROW, mutationStrategy = MutationStrategy.OnlineOnly)
+            builder.insert(ROW, mutationStrategy = MutationStrategy.OnlineOnly)
         }
         assertFailsWith<IllegalStateException> {
-            builder.updateJson(buildJsonObject { put("title", "x") }) { filter { eq("id", 1) } }
+            builder.update(buildJsonObject { put("title", "x") }) { filter { eq("id", 1) } }
         }
         assertFailsWith<IllegalStateException> { builder.delete { filter { eq("id", 1) } } }
         assertFailsWith<IllegalStateException> { builder.select() }
@@ -94,10 +94,10 @@ class MutationQueueAcrossCloseTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         val client = newTestOfflineClient(supabase = supabase, coordinatorScope = callerScope)
         supabase.signInForTest("user-a")
-        client.from(TABLE).updateJson(buildJsonObject { put("title", "A's edit") }) {
+        client.from(TABLE).update(buildJsonObject { put("title", "A's edit") }) {
             filter { eq("id", 1) }
         }
-        client.from(TABLE).updateJson(buildJsonObject { put("title", "A's second edit") }) {
+        client.from(TABLE).update(buildJsonObject { put("title", "A's second edit") }) {
             filter { eq("id", 1) }
         }
         supabase.auth.clearSession()
@@ -148,8 +148,8 @@ class MutationQueueAcrossCloseTest {
                 coordinatorScope = idleCoroutineScope(),
                 closeWait = IDLE_CLOSE_WAIT,
             )
-        first.from(TABLE).insertJson(rowWithId(1))
-        first.from(TABLE).insertJson(rowWithId(2))
+        first.from(TABLE).insert(rowWithId(1))
+        first.from(TABLE).insert(rowWithId(2))
 
         // When — A's pass commits the first on the server, and A closes before the answer
         // arrives; the pass finishes that request once it does
@@ -223,7 +223,7 @@ class MutationQueueAcrossCloseTest {
                     coordinatorScope = idleCoroutineScope(),
                     closeWait = 5.seconds,
                 )
-            first.from(TABLE).insertJson(KEYLESS_ROW)
+            first.from(TABLE).insert(KEYLESS_ROW)
 
             // When — a pass has it on the wire when the client closes, and the answer arrives while
             // close() waits

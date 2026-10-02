@@ -7,8 +7,10 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.openAndroidClient
 import io.github.nesfeder.supabase.offline.internal.openOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
@@ -36,8 +38,7 @@ import org.junit.runner.RunWith
 /**
  * Where the Android client keeps its data, and which clients may share it: one client per database
  * and per data directory, however the path is spelled, and an app that starts setting
- * `offlineStoragePath` takes its unsent writes along instead of stranding them in the default
- * database.
+ * `dataDirectory` takes its unsent writes along instead of stranding them in the default database.
  */
 @RunWith(AndroidJUnit4::class)
 class OfflineClientPlacementAndroidTest {
@@ -60,19 +61,18 @@ class OfflineClientPlacementAndroidTest {
         FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)
     }
 
-    private fun configIn(directory: Path, logger: OfflineLogger? = null) =
-        SupabaseOfflineConfig(offlineStoragePath = directory, logger = logger)
+    private fun configIn(directory: Path): Offline.Config = Offline.createConfig {
+        dataDirectory = directory.toString()
+    }
 
     /** Opens a client with [config] and queues one write in it while offline, then closes it. */
-    private suspend fun queueOneWriteOffline(
-        config: SupabaseOfflineConfig = SupabaseOfflineConfig()
-    ) {
+    private suspend fun queueOneWriteOffline(config: Offline.Config = Offline.createConfig {}) {
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val client = createSupabaseOfflineClient(context, server.supabaseClient(), config)
+        val client = openAndroidClient(context, server.supabaseClient(), config)
         try {
             client
                 .from("todos")
-                .insertJson(buildJsonArray { add(buildJsonObject { put("title", "unsent") }) })
+                .insert(buildJsonArray { add(buildJsonObject { put("title", "unsent") }) })
             assertEquals(1, client.pendingMutationCount())
         } finally {
             client.close()
@@ -85,9 +85,8 @@ class OfflineClientPlacementAndroidTest {
         queueOneWriteOffline()
         val configured = root / "configured"
 
-        // When — the app starts setting offlineStoragePath
-        val client =
-            createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(configured))
+        // When — the app starts setting dataDirectory
+        val client = openAndroidClient(context, newTestSupabaseClient(), configIn(configured))
 
         // Then — the queue came along, and nothing is left behind at the default path
         try {
@@ -105,21 +104,21 @@ class OfflineClientPlacementAndroidTest {
         runTest {
             // Given — both locations hold a database; only the default one has an unsent write
             val configured = root / "configured"
-            createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(configured))
+            openAndroidClient(context, newTestSupabaseClient(), configIn(configured))
                 .closingAfter { client ->
                     // Room creates the file on the first query.
                     client.pendingMutationCount()
                 }
             assertTrue(FileSystem.SYSTEM.exists(configured / "supabase_offline.db"))
             queueOneWriteOffline()
-            val logger = RecordingOfflineLogger()
+            val logger = RecordingLogSink()
 
             // When
             val client =
-                createSupabaseOfflineClient(
+                openAndroidClient(
                     context,
-                    newTestSupabaseClient(),
-                    configIn(configured, logger),
+                    newTestSupabaseClient(logs = logger),
+                    configIn(configured),
                 )
 
             // Then — the configured database is used, the default one is untouched, and the app is
@@ -128,7 +127,7 @@ class OfflineClientPlacementAndroidTest {
                 assertEquals(0, client.pendingMutationCount())
                 assertTrue(defaultDatabase.exists())
                 assertTrue(
-                    logger.entriesAt(OfflineLogLevel.WARNING).isNotEmpty(),
+                    logger.entriesAt(EngineLogLevel.WARNING).isNotEmpty(),
                     "the left-behind database was not reported",
                 )
             } finally {
@@ -143,11 +142,11 @@ class OfflineClientPlacementAndroidTest {
         val link = root / "link"
         FileSystem.SYSTEM.createDirectories(real)
         FileSystem.SYSTEM.createSymlink(link, real)
-        val first = createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(link))
+        val first = openAndroidClient(context, newTestSupabaseClient(), configIn(link))
 
         // When
         val second = runCatching {
-            createSupabaseOfflineClient(context, newTestSupabaseClient(), configIn(real))
+            openAndroidClient(context, newTestSupabaseClient(), configIn(real))
         }
 
         // Then
@@ -169,7 +168,7 @@ class OfflineClientPlacementAndroidTest {
         val first =
             openOfflineClient(
                 newTestSupabaseClient(),
-                SupabaseOfflineConfig(),
+                Offline.Config(),
                 root / "a" / "supabase_offline.db",
                 data,
                 open,
@@ -179,7 +178,7 @@ class OfflineClientPlacementAndroidTest {
         val second = runCatching {
             openOfflineClient(
                 newTestSupabaseClient(),
-                SupabaseOfflineConfig(),
+                Offline.Config(),
                 root / "b" / "supabase_offline.db",
                 data,
                 open,

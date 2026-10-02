@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.MutationOperation as MutationQueueOperation
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationOperation as MutationQueueOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
@@ -72,7 +72,7 @@ class RejectedMutationListTest {
         val rejected = report.rejected.single()
         assertEquals(id, rejected.id)
         assertEquals(TABLE, rejected.table)
-        assertEquals(MutationQueueOperation.Insert, rejected.operation)
+        assertEquals(MutationQueueOperation.INSERT, rejected.operation)
         assertEquals(Instant.fromEpochMilliseconds(1_000L), rejected.createdAt)
         assertEquals(Instant.fromEpochMilliseconds(5_000L), rejected.rejectedAt)
         assertEquals(rows("""[{"id":"t1","title":""}]"""), rejected.body)
@@ -149,7 +149,7 @@ class RejectedMutationListTest {
         val report = replayer.sync()
 
         // Then
-        assertEquals(MutationQueueOperation.Update, report.rejected.single().operation)
+        assertEquals(MutationQueueOperation.UPDATE, report.rejected.single().operation)
         assertNull(report.rejected.single().serverError)
         assertTrue(server.requests.isEmpty())
     }
@@ -249,7 +249,7 @@ class RejectedMutationListTest {
     @Test
     fun an_unreadable_rejected_list_is_kept_aside_and_a_fresh_one_started() = runTest {
         // Given — the reserved row holds something this build cannot decode
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         store.engineLogger = logger.asEngineLogger()
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
 
@@ -263,7 +263,7 @@ class RejectedMutationListTest {
                 row.cacheKey.startsWith("$REJECTED_MUTATIONS_CACHE_KEY.unreadable.")
             }
         assertEquals(listOf("not a list"), keptAside.map { row -> row.payload })
-        assertEquals(1, logger.entriesAt(OfflineLogLevel.ERROR).size)
+        assertEquals(1, logger.entriesAt(EngineLogLevel.ERROR).size)
     }
 
     @Test

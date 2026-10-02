@@ -83,7 +83,7 @@ class NetworkFirstThenCacheFallbackTest {
                 }
             }
             testScheduler.runCurrent()
-            items.insertJson(Json.parseToJsonElement("""[{"id":2,"title":"b"}]""") as JsonArray)
+            items.insert(Json.parseToJsonElement("""[{"id":2,"title":"b"}]""") as JsonArray)
             testScheduler.runCurrent()
             reader.cancel()
         }

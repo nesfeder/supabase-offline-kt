@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.openPlatformClient
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.random.Random
@@ -36,7 +37,9 @@ class IosClientLifecycleTest {
         FileSystem.SYSTEM.deleteRecursively(directory, mustExist = false)
     }
 
-    private fun config() = SupabaseOfflineConfig(offlineStoragePath = directory)
+    private fun config(): Offline.Config = Offline.createConfig {
+        dataDirectory = directory.toString()
+    }
 
     @OptIn(ExperimentalForeignApi::class)
     private fun isExcludedFromBackup(path: Path): Boolean {
@@ -49,11 +52,11 @@ class IosClientLifecycleTest {
     @Test
     fun a_second_client_on_the_same_database_fails_fast_while_the_first_is_open() = runTest {
         // Given
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter {
+        openPlatformClient(newTestSupabaseClient(), config()).closingAfter {
             // When / Then
             val failure =
                 assertFailsWith<IllegalStateException> {
-                    createSupabaseOfflineClient(newTestSupabaseClient(), config())
+                    openPlatformClient(newTestSupabaseClient(), config())
                 }
             assertTrue(
                 "already open" in failure.message.orEmpty(),
@@ -65,22 +68,22 @@ class IosClientLifecycleTest {
     @Test
     fun closing_a_client_lets_another_open_the_same_database() = runTest {
         // Given
-        val first = createSupabaseOfflineClient(newTestSupabaseClient(), config())
+        val first = openPlatformClient(newTestSupabaseClient(), config())
         assertEquals(0, first.pendingMutationCount())
 
         // When
         first.close()
 
         // Then
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { second ->
+        openPlatformClient(newTestSupabaseClient(), config()).closingAfter { second ->
             assertEquals(0, second.pendingMutationCount())
         }
     }
 
     @Test
-    fun offlineStoragePath_moves_the_database_as_well_as_the_downloaded_files() = runTest {
+    fun dataDirectory_moves_the_database_as_well_as_the_downloaded_files() = runTest {
         // Given
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { client ->
+        openPlatformClient(newTestSupabaseClient(), config()).closingAfter { client ->
             // When — the first query opens the database
             client.pendingMutationCount()
         }
@@ -88,14 +91,14 @@ class IosClientLifecycleTest {
         // Then
         assertTrue(
             FileSystem.SYSTEM.exists(directory / "supabase_offline.db"),
-            "the database is not in offlineStoragePath",
+            "the database is not in dataDirectory",
         )
     }
 
     @Test
     fun the_database_and_the_file_cache_are_excluded_from_backup() = runTest {
         // Given
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { client ->
+        openPlatformClient(newTestSupabaseClient(), config()).closingAfter { client ->
             // When — the first query opens the database
             client.pendingMutationCount()
 
@@ -119,9 +122,9 @@ class IosClientLifecycleTest {
     @Test
     fun clearing_local_data_keeps_the_file_cache_out_of_backups() = runTest {
         // Given
-        createSupabaseOfflineClient(newTestSupabaseClient(), config()).closingAfter { client ->
+        openPlatformClient(newTestSupabaseClient(), config()).closingAfter { client ->
             // When — the clear deletes and re-creates the cache directories
-            client.clearAllCache()
+            client.clearLocalData()
 
             // Then
             assertTrue(

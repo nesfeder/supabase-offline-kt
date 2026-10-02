@@ -10,6 +10,7 @@ import io.github.jan.supabase.auth.MemorySessionManager
 import io.github.jan.supabase.auth.SessionManager
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -69,7 +70,7 @@ class OldTrustRuleAsksAgainTest {
         server: RecordingPostgrestServer,
         sessions: SessionManager,
         restoresStoredSession: Boolean,
-    ): SupabaseOfflineClientImpl {
+    ): OfflineClient {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val supabase =
             newTestSupabaseClient(engine = server.engine) {
@@ -140,7 +141,7 @@ class OldTrustRuleAsksAgainTest {
         // Given — A signed in, and A's read held on the wire
         val sessions = MemorySessionManager()
         val client = launchClient(newServer(), sessions, restoresStoredSession = false)
-        client.supabase.signInForTest("A")
+        client.supabaseClient.signInForTest("A")
         runCurrent()
         val held = CompletableDeferred<Unit>()
         heldRead = held
@@ -150,7 +151,7 @@ class OldTrustRuleAsksAgainTest {
         runCurrent()
 
         // When — B signs in, then A's answer arrives
-        client.supabase.signInForTest("B")
+        client.supabaseClient.signInForTest("B")
         runCurrent()
         held.complete(Unit)
         advanceTimeBy(5.seconds)

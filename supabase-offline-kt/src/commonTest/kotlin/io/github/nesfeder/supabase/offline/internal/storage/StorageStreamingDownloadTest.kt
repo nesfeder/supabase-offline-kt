@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -47,7 +47,7 @@ class StorageStreamingDownloadTest {
     private lateinit var dataDirectory: Path
     private lateinit var store: OfflineStore
     private lateinit var delegate: FakeBucketApi
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
 
     @BeforeTest
     fun setUp() {
@@ -163,7 +163,7 @@ class StorageStreamingDownloadTest {
         // Then — the caller got the whole object; nothing partial was kept; the refusal was logged
         assertContentEquals(LARGE, received.await())
         assertEquals(emptyList(), regularFilesUnder(dataDirectory))
-        assertTrue(logger.entriesAt(OfflineLogLevel.WARNING).isNotEmpty())
+        assertTrue(logger.entriesAt(EngineLogLevel.WARNING).isNotEmpty())
     }
 
     private fun cachedFile(): Path =

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_BODY_CHARS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_LIST_CHARS
@@ -12,7 +12,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejectio
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -29,7 +29,7 @@ import kotlinx.coroutines.test.runTest
 class RejectedListBoundsTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
     private val store =
         newTestOfflineStore(queryCacheDao = queryCacheDao).also { store ->
             store.engineLogger = logger.asEngineLogger()
@@ -60,7 +60,7 @@ class RejectedListBoundsTest {
 
         // Then — the oldest went, and a WARNING names it
         assertEquals(2L, store.rejectedList.rejections().first().id)
-        val warnings = logger.entriesAt(OfflineLogLevel.WARNING).map { it.message }
+        val warnings = logger.entriesAt(EngineLogLevel.WARNING).map { it.message }
         assertTrue(
             warnings.any { it.contains("1") && it.contains("notes") && it.contains("INSERT") },
             "got $warnings",

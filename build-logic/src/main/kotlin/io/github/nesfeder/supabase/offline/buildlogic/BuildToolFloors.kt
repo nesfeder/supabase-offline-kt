@@ -8,18 +8,24 @@ import org.gradle.api.Project
 private const val BUILD_TOOL_FLOOR_ALIAS_PREFIX = "buildToolFloor."
 
 /**
- * Adds every build-tool floor in the catalog as a dependency constraint to this project's
- * configurations named [configurationNames], whenever a plugin creates them. A constraint only ever
- * raises a version, so a plugin that brings a newer one keeps it.
+ * Constrains this project's configurations named [configurationNames], or starting with one of
+ * [configurationNamePrefixes], to every build-tool floor in the catalog, whenever a plugin creates
+ * them. A constraint only ever raises a version.
  */
-internal fun Project.constrainToBuildToolFloors(configurationNames: Set<String>) {
+internal fun Project.constrainToBuildToolFloors(
+    configurationNames: Set<String>,
+    configurationNamePrefixes: Set<String> = emptySet(),
+) {
     val floors =
         versionCatalog.libraryAliases
             .filter { it.startsWith(BUILD_TOOL_FLOOR_ALIAS_PREFIX) }
             .map { catalogLibrary(it) }
     val constraints = dependencies.constraints
     configurations
-        .matching { it.name in configurationNames }
+        .matching { configuration ->
+            configuration.name in configurationNames ||
+                configurationNamePrefixes.any { configuration.name.startsWith(it) }
+        }
         .configureEach {
             val configurationName = name
             floors.forEach { floor -> constraints.add(configurationName, floor) }

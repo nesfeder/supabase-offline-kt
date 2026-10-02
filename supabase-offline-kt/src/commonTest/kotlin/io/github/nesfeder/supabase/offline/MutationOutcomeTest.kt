@@ -8,8 +8,10 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
+import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
@@ -28,8 +30,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Behavioral contract for the mutation verbs on [OfflinePostgrestQueryBuilderImpl], which return a
- * [MutationOutcome] ([MutationOutcome.Applied] online / [MutationOutcome.Queued] offline).
+ * Behavioral contract for the mutation verbs on [OfflineTable], which return a [MutationOutcome]
+ * ([MutationOutcome.Applied] online / [MutationOutcome.Queued] offline).
  *
  * Verbs run against a scripted [FakeRemoteTable] delegate (no HTTP transport) and a real
  * [OfflineStore] over in-memory DAO fakes, so the enqueue side effect is observable via the fake
@@ -58,7 +60,7 @@ class MutationOutcomeTest {
             )
 
         // When
-        val outcome = builder.insertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
+        val outcome = builder.insert(singleRowBody(), MutationStrategy.QueueIfOffline)
 
         // Then — Applied carries the live response, and nothing was queued
         val applied = assertIs<MutationOutcome.Applied>(outcome)
@@ -83,10 +85,10 @@ class MutationOutcomeTest {
             )
 
         // When
-        val outcome = builder.insertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
+        val outcome = builder.insert(singleRowBody(), MutationStrategy.QueueIfOffline)
 
         // Then — the outcome is honest about being queued, and the mutation was enqueued
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, mutationDao.inserted.size)
         assertEquals("attachments", mutationDao.inserted.single().table)
     }
@@ -109,7 +111,7 @@ class MutationOutcomeTest {
 
         // When / Then — the failure surfaces, nothing is queued
         assertFailsWith<IOException> {
-            builder.insertJson(singleRowBody(), MutationStrategy.OnlineOnly)
+            builder.insert(singleRowBody(), MutationStrategy.OnlineOnly)
         }
         assertTrue(mutationDao.inserted.isEmpty())
     }
@@ -123,7 +125,7 @@ class MutationOutcomeTest {
             buildBuilder(
                 remoteTable =
                     FakeRemoteTable(
-                        table = "beta_feedback",
+                        table = "comments",
                         postgrest = postgrest,
                         onUpsert = { throw IOException("network down") },
                     ),
@@ -136,10 +138,8 @@ class MutationOutcomeTest {
         // (A caller that must read its row back even when queued should instead stamp a
         // client-owned id and project the row from its own payload.)
         assertFailsWith<IllegalStateException> {
-            builder
-                .upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
-                .resultOrNull()
-                ?.data ?: error("write was queued offline; no server row to read back")
+            builder.upsert(singleRowBody(), MutationStrategy.QueueIfOffline).resultOrNull()?.data
+                ?: error("write was queued offline; no server row to read back")
         }
         // And the write really was queued (enqueued exactly once).
         assertEquals(1, mutationDao.inserted.size)
@@ -165,10 +165,7 @@ class MutationOutcomeTest {
         // than `error(...)`, so a Queued outcome falls through to null instead of throwing (the
         // caller then does an explicit id fetch, or reports that no row came back).
         val fellThrough =
-            builder
-                .upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
-                .resultOrNull()
-                ?.data
+            builder.upsert(singleRowBody(), MutationStrategy.QueueIfOffline).resultOrNull()?.data
 
         // Then — the chain short-circuits to null, and the write was still queued.
         assertEquals(null, fellThrough)
@@ -194,7 +191,7 @@ class MutationOutcomeTest {
             )
 
         // When
-        val outcome = builder.upsertJson(singleRowBody(), MutationStrategy.QueueIfOffline)
+        val outcome = builder.upsert(singleRowBody(), MutationStrategy.QueueIfOffline)
 
         // Then
         val applied = assertIs<MutationOutcome.Applied>(outcome)
@@ -221,7 +218,7 @@ class MutationOutcomeTest {
 
         // When — a simple equality filter (strict capture succeeds)
         val outcome =
-            builder.updateJson(
+            builder.update(
                 body = buildJsonObject { put("retired_at", "2026-07-12T00:00:00Z") },
                 mutationStrategy = MutationStrategy.QueueIfOffline,
             ) {
@@ -232,15 +229,16 @@ class MutationOutcomeTest {
             }
 
         // Then — queued and enqueued
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, mutationDao.inserted.size)
     }
 
     @Test
-    fun update_connectivity_failure_with_uncapturable_filter_refuses_and_rethrows() = runTest {
+    fun update_connectivity_failure_with_uncapturable_filter_is_not_queued() = runTest {
         // Given — a queued UPDATE whose filter is a logical OR group, which the offline descriptor
-        // cannot capture faithfully. The strict-capture path must refuse to enqueue and rethrow the
-        // original transport failure instead of queuing an over-broad replay.
+        // cannot capture faithfully. The strict-capture path must refuse to enqueue, and report the
+        // transport failure as the cause of a not-queueable write, instead of queuing an
+        // over-broad replay.
         val postgrest = testPostgrest()
         val mutationDao = FakeMutationDao()
         val builder =
@@ -254,9 +252,9 @@ class MutationOutcomeTest {
                 mutationDao = mutationDao,
             )
 
-        // When / Then — the original failure is rethrown and nothing is queued
-        assertFailsWith<IOException> {
-            builder.updateJson(
+        // When / Then — not queueable, with the transport failure as its cause, and nothing queued
+        assertNotQueueable<IOException> {
+            builder.update(
                 body = buildJsonObject { put("retired_at", "2026-07-12T00:00:00Z") },
                 mutationStrategy = MutationStrategy.QueueIfOffline,
             ) {
@@ -299,7 +297,7 @@ class MutationOutcomeTest {
             }
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, mutationDao.inserted.size)
     }
 
@@ -312,8 +310,8 @@ class MutationOutcomeTest {
     private fun buildBuilder(
         remoteTable: FakeRemoteTable,
         mutationDao: MutationDao,
-    ): OfflinePostgrestQueryBuilderImpl =
-        OfflinePostgrestQueryBuilderImpl(
+    ): OfflineTable =
+        OfflineTable(
             delegate = remoteTable,
             store = buildStore(mutationDao),
         )

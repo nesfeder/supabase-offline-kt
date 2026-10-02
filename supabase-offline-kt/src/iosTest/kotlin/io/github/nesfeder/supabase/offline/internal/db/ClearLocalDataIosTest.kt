@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.createSupabaseOfflineClient
+import io.github.nesfeder.supabase.offline.internal.openPlatformClient
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -15,7 +15,7 @@ import okio.SYSTEM
 
 /**
  * Clearing local data leaves nothing of the cleared user, the mutation queue's reserved rows
- * included, readable in the files of the database the iOS factory opens with this build's SQLite.
+ * included, readable in the files of the database the iOS open path opens with this build's SQLite.
  */
 class ClearLocalDataIosTest {
 
@@ -33,7 +33,7 @@ class ClearLocalDataIosTest {
         // Given / When — cached reads and a queued write carrying a marker, then a clear
         val report =
             runClearLocalDataForensics(directory) { supabase, config ->
-                createSupabaseOfflineClient(supabase, config)
+                openPlatformClient(supabase, config)
             }
 
         // Then — the mutation queue's reserved rows were there, and nothing is left of any of it

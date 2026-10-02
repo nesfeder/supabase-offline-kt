@@ -67,11 +67,11 @@ class StorageClearDuringDownloadTest {
                 baseDirectoryProvider = { dataDirectory },
             )
         server.gate = CompletableDeferred()
-        val download = async { client.storage(BUCKET).downloadAuthenticated(PATH) {} }
+        val download = async { client.storage.from(BUCKET).downloadAuthenticated(PATH) {} }
         server.requestArrived.await()
 
         // When — the user signs out, then the response arrives
-        client.clearAllCache()
+        client.clearLocalData()
         server.gate?.complete(Unit)
         val bytes = download.await()
 
@@ -92,12 +92,12 @@ class StorageClearDuringDownloadTest {
             )
         server.gate = CompletableDeferred()
         val channel = ByteChannel()
-        val download = async { client.storage(BUCKET).downloadAuthenticated(PATH, channel) {} }
+        val download = async { client.storage.from(BUCKET).downloadAuthenticated(PATH, channel) {} }
         val received = async { channel.readRemaining().readByteArray() }
         server.requestArrived.await()
 
         // When
-        client.clearAllCache()
+        client.clearLocalData()
         server.gate?.complete(Unit)
         download.await()
         channel.flushAndClose()

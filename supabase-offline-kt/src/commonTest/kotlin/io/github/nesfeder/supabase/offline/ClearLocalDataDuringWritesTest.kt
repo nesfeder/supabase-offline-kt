@@ -17,6 +17,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
@@ -63,7 +64,7 @@ class ClearLocalDataDuringWritesTest {
         parked.await()
 
         // When — the user signs out while the first replay is in flight
-        client.clearAllCache()
+        client.clearLocalData()
         release.complete(Unit)
         sweep.join()
 
@@ -85,7 +86,7 @@ class ClearLocalDataDuringWritesTest {
         parked.await()
 
         // When — local data is cleared while the replay is in flight, then the refusal comes back
-        client.clearAllCache()
+        client.clearLocalData()
         release.complete(Unit)
         sweep.join()
 
@@ -104,12 +105,12 @@ class ClearLocalDataDuringWritesTest {
                 okJson("[]")
             }
             val write = async {
-                client.from(TABLE).insertJson(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
+                client.from(TABLE).insert(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
             }
             parked.await()
 
             // When — the cache is cleared, the next user's first read lands, then the old response
-            client.clearAllCache()
+            client.clearLocalData()
             store.addPayload(
                 table = TABLE,
                 cacheKey = CACHE_KEY,
@@ -134,13 +135,13 @@ class ClearLocalDataDuringWritesTest {
         }
         val write = async {
             runCatching {
-                client.from(TABLE).insertJson(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
+                client.from(TABLE).insert(rows("""[{"id":1,"title":"outgoing user's row"}]"""))
             }
         }
         parked.await()
 
         // When — the cache is cleared before the failure comes back
-        client.clearAllCache()
+        client.clearLocalData()
         release.complete(Unit)
         val outcome = write.await()
 
@@ -152,14 +153,14 @@ class ClearLocalDataDuringWritesTest {
     @Test
     fun an_offline_write_made_after_clearing_is_queued_normally() = runTest {
         // Given — the cache was cleared earlier
-        client.clearAllCache()
+        client.clearLocalData()
         server.answer = { connectivityFailure() }
 
         // When
-        val outcome = client.from(TABLE).insertJson(rows("""[{"id":1,"title":"new user's row"}]"""))
+        val outcome = client.from(TABLE).insert(rows("""[{"id":1,"title":"new user's row"}]"""))
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, mutationDao.countAll())
     }
 

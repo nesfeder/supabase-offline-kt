@@ -5,10 +5,10 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
 import kotlin.test.Test
@@ -29,10 +29,10 @@ import kotlinx.coroutines.test.runTest
 class AcceptedWritePatchTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
-    private val logger = RecordingOfflineLogger()
+    private val logger = RecordingLogSink()
     private val store =
         newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW }).apply {
-            engineLogger = logger.asEngineLogger(OfflineLogLevel.WARNING)
+            engineLogger = logger.asEngineLogger(EngineLogLevel.WARNING)
         }
 
     /** The queries the store asked to fetch again, by table. */
@@ -147,7 +147,7 @@ class AcceptedWritePatchTest {
         }
 
         // Then — both logged, without their bodies
-        val warnings = logger.entriesAt(OfflineLogLevel.WARNING).map { entry -> entry.message }
+        val warnings = logger.entriesAt(EngineLogLevel.WARNING).map { entry -> entry.message }
         assertEquals(2, warnings.size, "$warnings")
         assertTrue(warnings.none { message -> "not json" in message })
     }

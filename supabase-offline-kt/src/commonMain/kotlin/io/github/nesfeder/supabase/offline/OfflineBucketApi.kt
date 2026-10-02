@@ -8,7 +8,7 @@ import io.github.jan.supabase.storage.BucketApi
  * One Storage bucket seen through the offline client: every [BucketApi] operation, plus a file
  * cache that keeps downloaded objects on the device.
  *
- * Get one with [SupabaseOfflineClient.storage].
+ * Get one with `offline.storage.from(bucketId)` ([OfflineStorage.from]).
  *
  * **Downloads** go to the network first. A successful download is written to the cache (a failure
  * to write the copy is logged and never fails the download); when the network fails, the cached
@@ -27,9 +27,12 @@ import io.github.jan.supabase.storage.BucketApi
  * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\`, or a
  * control character — still download and write normally; they are never mapped onto a file.
  *
- * The cache is bounded by `SupabaseOfflineConfig.fileCacheSizeBytes`, evicting the least recently
- * used files first; clearing local data empties it.
+ * The cache is bounded by [Offline.Config.fileCacheSizeBytes], evicting the least recently used
+ * files first; clearing local data empties it.
+ *
+ * Only the library implements this interface; [OfflineInternal] marks it so.
  */
+@SubclassOptInRequired(OfflineInternal::class)
 public interface OfflineBucketApi : BucketApi {
 
     /**

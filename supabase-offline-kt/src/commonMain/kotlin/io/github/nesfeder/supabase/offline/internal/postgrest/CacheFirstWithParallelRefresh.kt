@@ -79,7 +79,7 @@ internal fun refreshBackoff(failures: Int): Duration =
  * schedule.
  *
  * ### State reporting
- * [onRefreshState] observes the refresh lifecycle: [RefreshState.InFlight] at start,
+ * [onRefreshState] observes the refresh lifecycle: [RefreshState.Refreshing] at start,
  * [RefreshState.Stalled] once the fast ladder exhausts (carrying that attempt's cause), and
  * [RefreshState.Idle] on the first success. This is how the resolver surfaces per-query refresh
  * status in-band on `selectAsFlow`.
@@ -142,7 +142,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
  *
  * @param refresh The refresh operation to retry until it succeeds.
  * @param wakeUps Edge wake-ups that cancel the current backoff sleep.
- * @param onRefreshState Lifecycle callback ([RefreshState.InFlight] / [RefreshState.Stalled] /
+ * @param onRefreshState Lifecycle callback ([RefreshState.Refreshing] / [RefreshState.Stalled] /
  *   [RefreshState.Idle]).
  * @param backoff Backoff schedule keyed by consecutive-failure count.
  */
@@ -152,7 +152,7 @@ internal suspend fun refreshUntilSuccess(
     onRefreshState: (RefreshState) -> Unit,
     backoff: (failures: Int) -> Duration,
 ): Unit = coroutineScope {
-    onRefreshState(RefreshState.InFlight)
+    onRefreshState(RefreshState.Refreshing)
     // Conflated so a burst of edges buys exactly one immediate re-attempt; buffered for the whole
     // loop lifetime so an edge that lands between attempts (not just during a sleep) is not missed.
     val bufferedWakeUps = Channel<Unit>(Channel.CONFLATED)

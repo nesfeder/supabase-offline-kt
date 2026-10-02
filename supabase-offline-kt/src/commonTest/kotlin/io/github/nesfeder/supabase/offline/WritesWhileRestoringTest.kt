@@ -18,6 +18,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -81,11 +82,11 @@ class WritesWhileRestoringTest {
         val items = restoringItems()
 
         // When — written while the session restores
-        val outcome = items.insertJson(ROW)
+        val outcome = items.insert(ROW)
         runCurrent()
 
         // Then — queued, and nothing sent on the anon key
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(0, server.writes())
 
         // When — the session settles as the user
@@ -105,10 +106,10 @@ class WritesWhileRestoringTest {
         online = false
 
         // When
-        val outcome = items.insertJson(ROW)
+        val outcome = items.insert(ROW)
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
     }
 
     @Test
@@ -117,7 +118,7 @@ class WritesWhileRestoringTest {
         val items = restoringItems()
 
         // When
-        val outcome = items.insertJson(ROW, mutationStrategy = MutationStrategy.OnlineOnly)
+        val outcome = items.insert(ROW, mutationStrategy = MutationStrategy.OnlineOnly)
 
         // Then — sent now, as supabase-kt sends any request while the session loads: on the anon
         // key

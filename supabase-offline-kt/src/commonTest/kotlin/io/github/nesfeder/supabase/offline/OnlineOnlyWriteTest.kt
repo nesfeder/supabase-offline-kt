@@ -35,7 +35,7 @@ class OnlineOnlyWriteTest {
 
         // When
         val outcome =
-            items.insertJson(
+            items.insert(
                 Json.parseToJsonElement("""[{"id":2,"title":"b"}]""") as JsonArray,
                 mutationStrategy = MutationStrategy.OnlineOnly,
             )

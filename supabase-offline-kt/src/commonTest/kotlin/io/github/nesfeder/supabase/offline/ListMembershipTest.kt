@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -92,7 +93,7 @@ class ListMembershipTest {
         cacheList("B")
 
         // When
-        items.insertJson(JsonArray(listOf(row("new-b", list = "B", position = 5))))
+        items.insert(JsonArray(listOf(row("new-b", list = "B", position = 5))))
 
         // Then
         assertEquals(listOf("a1", "a2"), cachedIds("A"))
@@ -108,10 +109,10 @@ class ListMembershipTest {
         goOffline()
 
         // When
-        val outcome = items.insertJson(JsonArray(listOf(row("new-b", list = "B", position = 5))))
+        val outcome = items.insert(JsonArray(listOf(row("new-b", list = "B", position = 5))))
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(listOf("a1", "a2"), cachedIds("A"))
         assertEquals(listOf("b1", "new-b"), cachedIds("B"))
         assertEquals(listOf("a1", "a2"), liveIds("A"))
@@ -126,7 +127,7 @@ class ListMembershipTest {
         cacheList("B")
 
         // When
-        items.upsertJson(JsonArray(listOf(row("new-b", list = "B", position = 5)))) {
+        items.upsert(JsonArray(listOf(row("new-b", list = "B", position = 5)))) {
             onConflict = "id"
         }
 
@@ -158,7 +159,7 @@ class ListMembershipTest {
         cacheList("B")
         val online = server.recorder.answer
         goOffline()
-        items.insertJson(JsonArray(listOf(row("new-b", list = "B", position = 5))))
+        items.insert(JsonArray(listOf(row("new-b", list = "B", position = 5))))
 
         // When — back online, the queue replays
         server.recorder.answer = online
@@ -185,7 +186,7 @@ class ListMembershipTest {
                 observedA.collect { read -> if (read.result != null) aCreated = true }
             }
             testScheduler.runCurrent()
-            items.insertJson(JsonArray(listOf(row("new-b", list = "B", position = 5))))
+            items.insert(JsonArray(listOf(row("new-b", list = "B", position = 5))))
             testScheduler.runCurrent()
             reader.cancel()
         }
@@ -207,7 +208,7 @@ class ListMembershipTest {
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = doneList(true))
 
         // When — x is marked done
-        items.updateJson(buildJsonObject { put("done", true) }) { filter { eq("id", "x") } }
+        items.update(buildJsonObject { put("done", true) }) { filter { eq("id", "x") } }
 
         // Then — it leaves the open list and joins the done list once
         assertEquals(
@@ -237,10 +238,10 @@ class ListMembershipTest {
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = doneList(false))
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = doneList(true))
         goOffline()
-        items.insertJson(JsonArray(listOf(row("x", list = "A", position = 1, done = false))))
+        items.insert(JsonArray(listOf(row("x", list = "A", position = 1, done = false))))
 
         // When — it is marked done while still offline
-        items.updateJson(buildJsonObject { put("done", true) }) { filter { eq("id", "x") } }
+        items.update(buildJsonObject { put("done", true) }) { filter { eq("id", "x") } }
 
         // Then
         assertEquals(
@@ -300,7 +301,7 @@ class ListMembershipTest {
         cacheList("A")
 
         // When — every row of list A that is not done is renamed
-        items.updateJson(buildJsonObject { put("title", "renamed") }) {
+        items.update(buildJsonObject { put("title", "renamed") }) {
             filter {
                 eq("list_id", "A")
                 filterNot("done", FilterOperator.EQ, true)

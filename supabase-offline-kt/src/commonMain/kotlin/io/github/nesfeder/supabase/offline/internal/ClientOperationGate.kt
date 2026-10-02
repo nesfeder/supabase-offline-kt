@@ -27,8 +27,14 @@ import kotlinx.coroutines.withContext
 /**
  * Counts the client's calls in flight, whoever's coroutine runs them. After [close] it refuses new
  * ones, and the database is closed only once no call is using it.
+ *
+ * A call the client's closing stops ends with the closed error, never with a cancellation its
+ * caller did not cause: once [close] has run, and once [isTransportClosed] says the client's HTTP
+ * client is closed, which `SupabaseClient.close()` does before it closes the plugin.
+ *
+ * @param isTransportClosed whether the client's HTTP client is closed.
  */
-internal class ClientOperationGate {
+internal class ClientOperationGate(private val isTransportClosed: () -> Boolean = { false }) {
 
     /** Whether the gate is closed, and how many calls are in flight, changed together. */
     private data class State(val isClosed: Boolean, val inFlight: Int)
@@ -51,7 +57,10 @@ internal class ClientOperationGate {
         check(!isClosed) { CLIENT_CLOSED_MESSAGE }
     }
 
-    /** Runs [block] as a call the database's close waits for; refused once [close] has run. */
+    /**
+     * Runs [block] as a call the database's close waits for; refused once [close] has run. A
+     * failure the client's closing caused reaches the caller as the closed error.
+     */
     suspend fun <T> call(block: suspend () -> T): T {
         state.update { current ->
             check(!current.isClosed) { CLIENT_CLOSED_MESSAGE }
@@ -59,6 +68,8 @@ internal class ClientOperationGate {
         }
         try {
             return block()
+        } catch (failure: Throwable) {
+            throw closedErrorFor(failure, isClosed, isTransportClosed())
         } finally {
             state.update { current -> current.copy(inFlight = current.inFlight - 1) }
         }
@@ -85,8 +96,7 @@ internal class ClientOperationGate {
                 withContext(NonCancellable) { work.cancelAndJoin() }
                 throw cancellation
             }
-            if (isClosed) throw IllegalStateException(CLIENT_CLOSED_MESSAGE, cancellation)
-            throw cancellation
+            throw closedErrorFor(cancellation, isClosed, isTransportClosed())
         }
     }
 
@@ -110,7 +120,9 @@ internal class ClientOperationGate {
                                 if (failure is CancellationException && !isActive) {
                                     throw failure
                                 }
-                                this@channelFlow.close(failure)
+                                this@channelFlow.close(
+                                    closedErrorFor(failure, isClosed, isTransportClosed())
+                                )
                             }
                         }
                     // The closed error first, or the cancelled upstream would end it first

@@ -5,21 +5,23 @@ package io.github.nesfeder.supabase.offline.testdoubles
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.SupabaseClientBuilder
 import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClientImpl
+import io.github.nesfeder.supabase.offline.MutationNotQueueableException
+import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -34,6 +36,7 @@ import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -53,7 +56,7 @@ import okio.SYSTEM
  * - newTestOfflineStore — a real OfflineStore over the in-memory DAOs (FakeQueryCacheDao /
  *   FakeMutationDao add recording and scripting hooks; InMemoryCachedFileDao has none to add).
  * - newTestSupabaseClient / newTestPostgrest — a real supabase-kt client on a Ktor MockEngine.
- * - newTestOfflineClient — the real SupabaseOfflineClientImpl over the two.
+ * - newTestOfflineClient — the real OfflineClient over the two.
  *
  * To observe what goes on the wire, build the client from a RecordingPostgrestServer. To script
  * the PostgREST handle without HTTP, use FakeRemoteTable.
@@ -117,11 +120,16 @@ internal fun newTestOfflineStore(
  * Builds a real supabase-kt client whose HTTP goes to [engine] instead of the network.
  *
  * @param engine the Ktor engine answering every request; by default one that answers `200 []`.
+ * @param logs records what the offline plugin logs through the client's logging, at [logLevel];
+ *   `null` leaves supabase-kt's default logging in place.
+ * @param logLevel the client's default log level while [logs] records.
  * @param plugins plugin installation; PostgREST by default. Pass `{}` for a client with none.
  * @return the client.
  */
 internal fun newTestSupabaseClient(
     engine: HttpClientEngine = MockEngine { respondOk("[]") },
+    logs: RecordingLogSink? = null,
+    logLevel: LogLevel = LogLevel.INFO,
     plugins: SupabaseClientBuilder.() -> Unit = { install(Postgrest) },
 ): SupabaseClient =
     createSupabaseClient(
@@ -129,6 +137,10 @@ internal fun newTestSupabaseClient(
         supabaseKey = TEST_SUPABASE_KEY,
     ) {
         httpEngine = engine
+        if (logs != null) {
+            defaultLogLevel = logLevel
+            defaultLoggingFactory = logs.supabaseLoggingFactory
+        }
         plugins()
     }
 
@@ -158,20 +170,21 @@ internal suspend fun OfflineStore.recordQueryShape(
 }
 
 /**
- * Builds the real [SupabaseOfflineClientImpl] over a test store and client.
+ * Builds the real [OfflineClient] over a test store and client.
  *
  * @param supabase the wrapped client.
  * @param store the offline store.
  * @param baseDirectoryProvider base directory for downloaded storage files.
  * @param engineLogger the SDK logger.
- * @param onClose what the client's `close()` releases, as the factories wire the database.
+ * @param onClose what the client's `close()` releases, as the platforms' open paths wire the
+ *   database.
  * @param coordinatorScope the parent of the client's own scope, whose dispatcher runs its
  *   background work (refresh loops, replay passes it starts itself); pass `runTest`'s
  *   `backgroundScope` to drive it from the test scheduler. The default's handler logs a background
  *   failure to [engineLogger] instead of failing the test; build that logger from a
- *   [RecordingOfflineLogger] to see one.
- * @param scrubDatabase what `clearAllCache` runs after the store's wipe, as the factories wire the
- *   database's scrub.
+ *   [RecordingLogSink] to see one.
+ * @param scrubDatabase what `clearLocalData` runs after the store's wipe, as the platforms' open
+ *   paths wire the database's scrub.
  * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose
  *   background work can never run (see [idleCoroutineScope]): its `close()` always waits it out.
  * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
@@ -184,17 +197,17 @@ internal fun newTestOfflineClient(
     supabase: SupabaseClient = newTestSupabaseClient(),
     store: OfflineStore = newTestOfflineStore(),
     baseDirectoryProvider: () -> Path = { "/tmp".toPath() },
-    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     onClose: () -> Unit = {},
     coordinatorScope: CoroutineScope = newEngineScope(engineLogger),
     scrubDatabase: suspend () -> Unit = {},
-    closeWait: Duration = SupabaseOfflineClientImpl.CLOSE_WAIT,
+    closeWait: Duration = OfflineClient.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
-): SupabaseOfflineClientImpl =
-    SupabaseOfflineClientImpl(
-        supabase = supabase,
+): OfflineClient =
+    OfflineClient(
+        supabaseClient = supabase,
         store = store,
         baseDirectoryProvider = baseDirectoryProvider,
         engineLogger = engineLogger,
@@ -222,7 +235,7 @@ internal fun newTestOfflineClient(
 internal fun newTestFileCache(
     baseDirectory: Path,
     store: OfflineStore = newTestOfflineStore(),
-    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     fileSystem: FileSystem = FileSystem.SYSTEM,
     maxSizeBytes: Long? = null,
     nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
@@ -256,7 +269,7 @@ internal fun newTestBucketApi(
     delegate: BucketApi,
     baseDirectory: Path,
     store: OfflineStore = newTestOfflineStore(),
-    engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     cache: StorageFileCache =
         newTestFileCache(baseDirectory = baseDirectory, store = store, engineLogger = engineLogger),
     backgroundScope: CoroutineScope = newEngineScope(engineLogger),
@@ -277,9 +290,7 @@ internal fun newTestBucketApi(
  * @param block what to do with the client.
  * @return what [block] returns.
  */
-internal suspend fun <T> SupabaseOfflineClient.closingAfter(
-    block: suspend (SupabaseOfflineClient) -> T
-): T =
+internal suspend fun <T> Offline.closingAfter(block: suspend (Offline) -> T): T =
     try {
         block(this)
     } finally {
@@ -307,4 +318,16 @@ internal fun assertClientClosedError(failure: Throwable?, context: String = "the
     assertTrue(failure !is CancellationException, "$context gave a cancellation: $failure")
     assertIs<IllegalStateException>(failure, "$context gave $failure")
     assertEquals(CLIENT_CLOSED_MESSAGE, failure.message, "$context gave $failure")
+}
+
+/**
+ * Asserts [block] throws [MutationNotQueueableException] whose cause is a [T]: a write the queue
+ * could not hold was sent at once, and that failure stopped it.
+ *
+ * @param block the write.
+ * @return the cause.
+ */
+internal inline fun <reified T : Throwable> assertNotQueueable(block: () -> Unit): T {
+    val failure = assertFailsWith<MutationNotQueueableException> { block() }
+    return assertIs<T>(failure.cause, "the cause was ${failure.cause}")
 }

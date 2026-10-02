@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -20,7 +20,7 @@ import kotlinx.coroutines.test.runTest
  */
 class AutomaticReplayTest {
 
-    private val logger = EngineLogger(null, OfflineLogLevel.INFO)
+    private val logger = EngineLogger(null, EngineLogLevel.INFO)
 
     @Test
     fun requests_made_while_a_pass_runs_start_one_more_pass() = runTest {
