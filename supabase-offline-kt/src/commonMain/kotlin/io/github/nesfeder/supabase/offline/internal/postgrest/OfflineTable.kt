@@ -39,6 +39,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueId
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
+import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -109,6 +110,8 @@ internal class OfflineTable(
         ),
     /** The client's gate: every read and write passes it, so the client's close waits for them. */
     private val operationGate: ClientOperationGate = ClientOperationGate(),
+    /** The time a read compares a cached row's age with; see [QueryReader]. */
+    private val clock: Clock = Clock.System,
 ) {
 
     constructor(
@@ -132,6 +135,7 @@ internal class OfflineTable(
             ),
         operationGate: ClientOperationGate = ClientOperationGate(),
         readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
+        clock: Clock = Clock.System,
     ) : this(
         delegate = SupabaseRemoteTable(delegate, readShapePostgrest),
         store = store,
@@ -144,6 +148,7 @@ internal class OfflineTable(
         requestSync = requestSync,
         headSender = headSender,
         operationGate = operationGate,
+        clock = clock,
     )
 
     /** The table the requests target. */
@@ -164,6 +169,7 @@ internal class OfflineTable(
             delegate = delegate,
             store = store,
             engineLogger = engineLogger,
+            nowMillis = { clock.now().toEpochMilliseconds() },
             requestSession = requestSession,
             trustPolicy = trustPolicy,
             liveQueries = liveQueries,

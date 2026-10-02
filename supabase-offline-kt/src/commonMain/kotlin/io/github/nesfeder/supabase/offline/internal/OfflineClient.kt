@@ -49,7 +49,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.refreshWakeUps
 import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
+import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -74,7 +76,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import okio.FileSystem
 import okio.Path
+import okio.SYSTEM
 
 /**
  * The client behind [Offline]: one database's cache, mutation queue and Storage file cache, serving
@@ -127,6 +131,12 @@ internal class OfflineClient(
     private val responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     /** The configuration the client was opened with, as [Offline.config] reports it. */
     override val config: Offline.Config = Offline.Config(),
+    /** Where the Storage file cache keeps its files: the device's disk unless a test says not. */
+    fileSystem: FileSystem = FileSystem.SYSTEM,
+    /** Records a use time on one of [fileSystem]'s files. */
+    markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
+    /** The time the client's reads and file cache see; the store keeps its own. */
+    private val clock: Clock = Clock.System,
 ) : Offline {
 
     /**
@@ -169,6 +179,9 @@ internal class OfflineClient(
             dataDirectoryProvider = baseDirectoryProvider,
             maxSizeBytes = fileCacheMaxBytes,
             engineLogger = engineLogger,
+            fileSystem = fileSystem,
+            nowMillis = { clock.now().toEpochMilliseconds() },
+            markUsed = markFileUsed,
         )
 
     private val mutationQueueReplayer =
@@ -364,6 +377,7 @@ internal class OfflineClient(
                 headSender = mutationQueueReplayer,
                 operationGate = operationGate,
                 readShapePostgrest = readShape,
+                clock = clock,
             )
         return OfflinePostgrestQueryBuilder(engine)
     }

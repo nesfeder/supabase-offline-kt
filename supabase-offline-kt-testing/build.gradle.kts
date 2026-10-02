@@ -22,6 +22,8 @@ kotlin {
 
         commonTest.dependencies {
             implementation(libs.ktor.client.mock)
+            // To look at the device's disk, which the in-memory client must leave untouched.
+            implementation(libs.okio)
         }
     }
 }

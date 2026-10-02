@@ -18,6 +18,8 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMAR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
+import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import okio.FileSystem
 import okio.Path
@@ -99,6 +101,10 @@ internal fun openOfflineClient(
  * @param scrubDatabase rewrites the database without the rows a clear deleted.
  * @param onClose releases what the opener opened, when the client closes.
  * @param onStillClosing told when a close returns before the release.
+ * @param fileSystem where the Storage file cache keeps its files: the device's disk unless a test
+ *   keeps them in memory.
+ * @param markFileUsed records a use time on one of [fileSystem]'s files.
+ * @param clock the time the client sees, beside the store's own.
  */
 internal fun Offline.Config.buildOfflineClient(
     supabase: SupabaseClient,
@@ -110,6 +116,9 @@ internal fun Offline.Config.buildOfflineClient(
     scrubDatabase: suspend () -> Unit = {},
     onClose: () -> Unit = {},
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
+    fileSystem: FileSystem = FileSystem.SYSTEM,
+    markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
+    clock: Clock = Clock.System,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
@@ -126,6 +135,9 @@ internal fun Offline.Config.buildOfflineClient(
         primaryKeys = primaryKeysByTable(),
         responseTrust = responseTrustPolicy(),
         config = this,
+        fileSystem = fileSystem,
+        markFileUsed = markFileUsed,
+        clock = clock,
     )
 
 /** The object-cache eviction settings [Offline.Config.cacheSizeBytes] asks for. */
