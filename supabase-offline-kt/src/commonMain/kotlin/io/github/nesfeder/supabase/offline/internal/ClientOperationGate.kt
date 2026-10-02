@@ -30,7 +30,9 @@ import kotlinx.coroutines.withContext
  *
  * A call the client's closing stops ends with the closed error, never with a cancellation its
  * caller did not cause: once [close] has run, and once [isTransportClosed] says the client's HTTP
- * client is closed, which `SupabaseClient.close()` does before it closes the plugin.
+ * client is closed, which `SupabaseClient.close()` does before it closes the plugin. A collection
+ * the closing stops completes instead, so a screen torn down with the client sees its flow end, not
+ * an error; one started after [close] gets the closed error, as a call does.
  *
  * @param isTransportClosed whether the client's HTTP client is closed.
  */
@@ -41,7 +43,7 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
 
     private val state = MutableStateFlow(State(isClosed = false, inFlight = 0))
 
-    /** Completes at [close], which ends every flow [callCollecting] is running. */
+    /** Completes at [close], which completes every flow [callCollecting] is running. */
     private val closing = CompletableDeferred<Unit>()
 
     /** Whether [close] has run. */
@@ -101,9 +103,11 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
     }
 
     /**
-     * [flow] as a call while collected, via a rendezvous channel. At [close] the channel ends with
-     * the closed error, then the upstream is cancelled, and the producer ends quietly. Upstream
-     * failures end it after their values; only the collector's cancellation propagates.
+     * [flow] as a call while collected, via a rendezvous channel. At [close] the channel completes,
+     * then the upstream is cancelled, and the producer ends quietly; an upstream the closing stops
+     * (its HTTP client closed under it) completes the channel too. Collected after [close], it
+     * fails with the closed error. Upstream failures of their own end it after their values; only
+     * the collector's cancellation propagates.
      */
     fun <T> callCollecting(flow: Flow<T>): Flow<T> = channelFlow {
         try {
@@ -116,18 +120,19 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
                                 flow.collect { value -> send(value) }
                             } catch (failure: Throwable) {
                                 // Only ours (the collector's or close()'s) rethrows; the
-                                // upstream's own, a refused send included, ends the channel
+                                // upstream's own, a refused send included, ends the channel, and
+                                // the client's closing completes it
                                 if (failure is CancellationException && !isActive) {
                                     throw failure
                                 }
-                                this@channelFlow.close(
-                                    closedErrorFor(failure, isClosed, isTransportClosed())
-                                )
+                                val endedByClosing =
+                                    isEndedByClosing(failure, isClosed, isTransportClosed())
+                                this@channelFlow.close(if (endedByClosing) null else failure)
                             }
                         }
-                    // The closed error first, or the cancelled upstream would end it first
+                    // Completed first, or the cancelled upstream would end it first
                     val onClose = closing.invokeOnCompletion {
-                        this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
+                        this@channelFlow.close()
                         upstream.cancel()
                     }
                     try {
@@ -138,7 +143,8 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
                 }
             }
         } catch (refused: IllegalStateException) {
-            // Refused because closed: the channel carries the error, the producer ends quietly
+            // Refused because closed before it began: the channel carries the error, the producer
+            // ends quietly
             if (refused is CancellationException) throw refused
             close(refused)
         }
@@ -146,7 +152,7 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
         .buffer(Channel.RENDEZVOUS)
 
     /**
-     * Refuses every call from now on and ends the flows being collected.
+     * Refuses every call from now on and completes the flows being collected.
      *
      * @return `false` when it had already run.
      */

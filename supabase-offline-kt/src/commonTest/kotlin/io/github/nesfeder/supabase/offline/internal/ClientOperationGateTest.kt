@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -38,7 +39,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * A collection through the gate counts until its own work has stopped, so close() never closes the
  * database under a query the collection is still running; and closing ends it however its collector
- * is stuck.
+ * is stuck. A collection live at close() completes, as a flow does at its end; one started after it
+ * gets the closed error, as a call does.
  */
 class ClientOperationGateTest {
 
@@ -106,7 +108,7 @@ class ClientOperationGateTest {
     }
 
     @Test
-    fun closing_ends_a_collection_waiting_for_its_next_value_with_the_closed_error() = runTest {
+    fun closing_completes_a_collection_waiting_for_its_next_value() = runTest {
         // Close and the collection's own end race, so run it enough times to see either order.
         // Unconfined ends the upstream inside close() itself, before anything else close() does
         repeat(ORDERINGS) { attempt ->
@@ -133,10 +135,13 @@ class ClientOperationGateTest {
             // When
             gate.close()
 
-            // Then — it ended with the closed error, never as if the flow were done
+            // Then — it completed, with no error and no cancellation
             val failure =
                 withContext(Dispatchers.Default) { withTimeout(5.seconds) { collection.await() } }
-            assertClientClosedError(failure, "attempt $attempt: the collection live at close()")
+            assertNull(
+                failure,
+                "attempt $attempt: the collection live at close() ended with $failure",
+            )
             assertEquals(0, gate.inFlight)
         }
     }
@@ -171,12 +176,10 @@ class ClientOperationGateTest {
             }
         }
 
-        // Then — the collection ended with the closed error in its own channel, and nothing reached
-        // the app's handler
-        assertClientClosedError(
-            values.receiveCatching().exceptionOrNull(),
-            "the collection live at close()",
-        )
+        // Then — the collection's own channel completed, and nothing reached the app's handler
+        val ending = values.receiveCatching()
+        assertTrue(ending.isClosed, "the channel held $ending after close()")
+        assertNull(ending.exceptionOrNull(), "the collection live at close() ended with an error")
         assertEquals(
             emptyList(),
             uncaught.recorded(),
@@ -216,8 +219,8 @@ class ClientOperationGateTest {
         withContext(Dispatchers.Default) { withTimeout(5.seconds) { holder.join() } }
 
         // Then — the app's launch ended as it would have, not failed; its scope and the job beside
-        // it are untouched; nothing reached the app's handler; and reading again gives the closed
-        // error, after whatever the channel still held
+        // it are untouched; nothing reached the app's handler; and reading again finds the channel
+        // completed, after whatever it still held
         assertEquals(false, holder.isCancelled, "the app's launch was failed by the closed error")
         assertEquals(true, sibling.isActive, "the job beside it was cancelled")
         assertEquals(true, appJob.isActive, "the app's scope was cancelled")
@@ -226,7 +229,7 @@ class ClientOperationGateTest {
             uncaught.recorded(),
             "the closed error escaped into the app's scope",
         )
-        assertClientClosedError(channel.drainToItsEnd(), "reading again after close()")
+        assertNull(channel.drainToItsEnd(), "reading again after close() gave an error")
         assertEquals(0, gate.inFlight)
         appScope.cancel()
     }
@@ -391,7 +394,7 @@ class ClientOperationGateTest {
     }
 
     @Test
-    fun closing_from_inside_the_collector_empties_the_gate_at_once_and_ends_with_the_closed_error() =
+    fun closing_from_inside_the_collector_empties_the_gate_at_once_and_completes_the_collection() =
         runTest {
             // Given — a live collection
             val gate = ClientOperationGate()
@@ -420,12 +423,50 @@ class ClientOperationGateTest {
                 }
 
             // Then — the gate emptied while the collector was still inside its body, and the
-            // collection ended with the closed error
+            // collection completed
             assertTrue(
                 emptied.await(),
                 "the gate did not empty while its collector was inside its body",
             )
-            assertClientClosedError(failure, "the collection closed from inside its collector")
+            assertNull(
+                failure,
+                "the collection closed from inside its collector ended with $failure",
+            )
+        }
+
+    @Test
+    fun an_upstream_the_closing_transport_stops_completes_the_collection_and_its_own_failure_does_not() =
+        runTest {
+            // Given — a gate whose client's HTTP client is closed, as supabase-kt's close() leaves
+            // it before it closes the plugin
+            val gate = ClientOperationGate(isTransportClosed = { true })
+
+            // When — one upstream stopped by the closed transport, one failing on its own
+            val stopped =
+                withContext(Dispatchers.Default) {
+                    runCatching {
+                        gate
+                            .callCollecting(
+                                flow<Int> {
+                                    throw TransportClosedException(CancellationException(GAVE_UP))
+                                }
+                            )
+                            .collect {}
+                    }
+                        .exceptionOrNull()
+                }
+            val failed =
+                withContext(Dispatchers.Default) {
+                    runCatching {
+                        gate.callCollecting(flow<Int> { throw Boom("its own") }).collect {}
+                    }
+                        .exceptionOrNull()
+                }
+
+            // Then — the first completed, and the second kept its own failure
+            assertNull(stopped, "a collection the closing transport stopped ended with $stopped")
+            assertIs<Boom>(failed, "a collection that failed on its own ended with $failed")
+            assertEquals(0, gate.inFlight)
         }
 
     private class Boom(message: String) : RuntimeException(message)

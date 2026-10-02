@@ -26,6 +26,10 @@ release.
   from it, a write the mutation queue holds is `Queued`) or with the closed error, never with a
   cancellation; a request already on the wire still answers. Call `supabase.offline.close()` first
   to let the calls not yet sent go out.
+- A flow being collected when the client closes (`selectAsFlow`, `pendingMutations`,
+  `pendingMutationCountFlow`, `rejectedMutations`) completes, where it failed with the client's
+  closed error, so a screen torn down at logout sees its flow end, not an error. A flow collected
+  after `close()` still fails with the closed error, as every other call does.
 - Logging goes through supabase-kt's own: the plugin logs to the client's logging processor
   (`defaultLoggingFactory`) with the tag `Supabase-Offline`, at `Offline.Config.logLevel` or the
   client's `defaultLogLevel`. `OfflineLogger`, `OfflineLogLevel` and the `logger` and `minLogLevel`
