@@ -268,6 +268,19 @@ internal interface MutationDao {
     }
 }
 
+/**
+ * Runs [block] in one write transaction, as [MutationDao.runInTransaction] does, and returns its
+ * value. The same rule holds: DAO calls only, never a wait on a coroutine lock.
+ */
+internal suspend fun <T> MutationDao.inTransaction(block: suspend () -> T): T {
+    var result: TransactionResult<T>? = null
+    runInTransaction { result = TransactionResult(block()) }
+    return checkNotNull(result) { "The transaction did not run its block" }.value
+}
+
+/** What a transaction's block returned, so a `null` result is told from a block that never ran. */
+private class TransactionResult<T>(val value: T)
+
 /** Simple operation "enum" so we don't rely on Room @TypeConverter right away. */
 internal object MutationOperation {
     const val INSERT = "INSERT"
