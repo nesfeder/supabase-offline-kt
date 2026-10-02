@@ -11,7 +11,8 @@ import kotlin.time.Instant
  * [network] is current as soon as [Offline.disableNetwork] or [Offline.enableNetwork] returns. The
  * counts are eventually current: they follow each change to the mutation queue shortly after it is
  * made, so a test that reads them straight after a write waits for the value it expects. The two
- * are published together: a value that counts a write as refused no longer counts it as pending.
+ * are read together: a write moving between the queue and the rejected list, refused on replay or
+ * retried, is counted in exactly one of them.
  *
  * @property network whether the library believes it can reach the network; see [NetworkStatus].
  * @property pendingMutationCount the current user's writes waiting in the mutation queue, in every

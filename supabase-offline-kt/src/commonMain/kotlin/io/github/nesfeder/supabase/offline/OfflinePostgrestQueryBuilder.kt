@@ -106,11 +106,12 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * the server returned no rows), whether they are the cache's, when they were fetched, whether a
      * queued write changed them, and how the refresh behind them stands ([RefreshState]).
      *
-     * Every strategy ends the same way when the client closes: a collection live at
-     * [Offline.close], or one started after it, fails with [IllegalStateException] through the
-     * flow's own error channel. A read that fails for another reason delivers the values before the
-     * failure, then the failure itself. A slow collector can be handed a value a newer one has
-     * already replaced; the last it is handed is the latest.
+     * Every strategy ends the same way when the client closes: a collection live at [Offline.close]
+     * completes, so a screen torn down with the client sees its flow end, not an error; one started
+     * after it fails with [IllegalStateException] through the flow's own error channel. A read that
+     * fails for another reason delivers the values before the failure, then the failure itself. A
+     * slow collector can be handed a value a newer one has already replaced; the last it is handed
+     * is the latest.
      *
      * A read of a shape the cache does not hold (see [select]) emits the server's answer once, with
      * [RefreshState.Idle], and completes; offline it fails, and under [FlowReadStrategy.CacheOnly]

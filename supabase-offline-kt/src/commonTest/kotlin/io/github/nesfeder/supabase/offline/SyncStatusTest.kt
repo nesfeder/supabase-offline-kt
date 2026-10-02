@@ -6,19 +6,22 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -83,6 +86,45 @@ class SyncStatusTest {
     }
 
     @Test
+    fun a_write_moving_between_the_queue_and_the_rejected_list_is_counted_once() = runTest {
+        // Given — a write the server refuses for good every time it is sent, on the rejected list,
+        // and a collector recording every status it is handed
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val client = newTestOfflineClient(supabase = server.supabaseClient())
+        val status = client.syncStatus
+        client.from(TABLE).insert(row(1))
+        server.answer = { postgrestError(HttpStatusCode.UnprocessableEntity) }
+        var id = client.syncPendingMutations().rejected.single().id
+        val seen = mutableListOf<SyncStatus>()
+        val recorder = launch(Dispatchers.Default) { status.collect { value -> seen += value } }
+
+        // When — it is retried, and refused again on the pass the retry asks for, many times
+        repeat(RETRIES) {
+            val retried = id
+            client.retryRejectedMutation(retried)
+            id =
+                withContext(Dispatchers.Default) {
+                    withTimeout(10.seconds) {
+                        client
+                            .rejectedMutations()
+                            .first { entries ->
+                                entries.singleOrNull()?.id.let { it != null && it != retried }
+                            }
+                            .single()
+                            .id
+                    }
+                }
+        }
+        status.awaiting { it.rejectedMutationCount == 1 && it.pendingMutationCount == 0 }
+        recorder.cancelAndJoin()
+
+        // Then — every status counted the write in exactly one place, once it was counted at all
+        val counted = seen.map { value -> value.pendingMutationCount + value.rejectedMutationCount }
+        assertEquals(listOf(), counted.dropWhile { it == 0 }.filter { it != 1 }, "counts: $counted")
+        client.close()
+    }
+
+    @Test
     fun the_status_says_a_pass_is_running_while_one_is() = runTest {
         // Given — a write queued offline, and a server that holds its replay
         val held = CompletableDeferred<Unit>()
@@ -114,15 +156,54 @@ class SyncStatusTest {
     }
 
     @Test
-    fun the_status_cannot_be_read_once_the_client_is_closed() = runTest {
-        // Given
+    fun a_pass_running_at_close_leaves_the_status_with_no_pass_running_and_it_changes_no_more() =
+        runTest {
+            // Given — a write queued offline, and a pass sending it, held at the server
+            val arrived = CompletableDeferred<Unit>()
+            val held = CompletableDeferred<Unit>()
+            var online = false
+            val server =
+                RecordingPostgrestServer(
+                    answer = {
+                        if (!online) connectivityFailure()
+                        arrived.complete(Unit)
+                        held.await()
+                        okJson("[]")
+                    }
+                )
+            val client = newTestOfflineClient(supabase = server.supabaseClient())
+            val status = client.syncStatus
+            client.from(TABLE).insert(row(1))
+            online = true
+            val sync = async(Dispatchers.Default) { runCatching { client.syncPendingMutations() } }
+            withContext(Dispatchers.Default) { withTimeout(10.seconds) { arrived.await() } }
+            status.awaiting { it.isSyncing }
+
+            // When — the client closes with the pass on the wire, then the server answers
+            client.close()
+            val atClose = status.value
+            held.complete(Unit)
+            sync.await()
+
+            // Then — the last value says no pass runs, it is still the value after the pass ended,
+            // and the status reads the same flow, without throwing, once closed
+            assertFalse(atClose.isSyncing)
+            assertSame(status, client.syncStatus)
+            assertEquals(atClose, client.syncStatus.value)
+        }
+
+    @Test
+    fun the_status_can_be_read_after_close_and_holds_its_last_value() = runTest {
+        // Given — a client whose status nobody read while it was open
         val client = newTestOfflineClient()
 
         // When
         client.close()
+        val status = client.syncStatus
 
         // Then
-        assertClientClosedError(runCatching { client.syncStatus }.exceptionOrNull(), "syncStatus")
+        assertEquals(false, status.value.isSyncing)
+        assertSame(status, client.syncStatus)
     }
 
     private fun row(id: Int): JsonArray = buildJsonArray {
@@ -136,5 +217,6 @@ class SyncStatusTest {
 
     private companion object {
         const val TABLE = "notes"
+        const val RETRIES = 20
     }
 }

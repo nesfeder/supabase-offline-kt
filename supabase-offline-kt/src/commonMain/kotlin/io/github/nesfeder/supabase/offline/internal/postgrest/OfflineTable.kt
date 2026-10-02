@@ -114,7 +114,7 @@ internal class OfflineTable(
     /** The time a read compares a cached row's age with; see [QueryReader]. */
     private val clock: Clock = Clock.System,
     /** Told when a write sent at once left its identity's queue empty. */
-    private val queueEmptied: () -> Unit = {},
+    private val queueEmptied: suspend () -> Unit = {},
     /** Whether the network is known down, for a reactive read's refresh; see [QueryReader]. */
     private val networkAccess: NetworkAccess = NetworkAccess(),
 ) {
@@ -141,7 +141,7 @@ internal class OfflineTable(
         operationGate: ClientOperationGate = ClientOperationGate(),
         readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
         clock: Clock = Clock.System,
-        queueEmptied: () -> Unit = {},
+        queueEmptied: suspend () -> Unit = {},
         networkAccess: NetworkAccess = NetworkAccess(),
     ) : this(
         delegate = SupabaseRemoteTable(delegate, readShapePostgrest, networkAccess),

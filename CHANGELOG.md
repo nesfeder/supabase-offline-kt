@@ -26,6 +26,10 @@ release.
   from it, a write the mutation queue holds is `Queued`) or with the closed error, never with a
   cancellation; a request already on the wire still answers. Call `supabase.offline.close()` first
   to let the calls not yet sent go out.
+- A flow being collected when the client closes (`selectAsFlow`, `pendingMutations`,
+  `pendingMutationCountFlow`, `rejectedMutations`) completes, where it failed with the client's
+  closed error, so a screen torn down at logout sees its flow end, not an error. A flow collected
+  after `close()` still fails with the closed error, as every other call does.
 - Logging goes through supabase-kt's own: the plugin logs to the client's logging processor
   (`defaultLoggingFactory`) with the tag `Supabase-Offline`, at `Offline.Config.logLevel` or the
   client's `defaultLogLevel`. `OfflineLogger`, `OfflineLogLevel` and the `logger` and `minLogLevel`
@@ -141,7 +145,8 @@ release.
   `OFFLINE`, `DISABLED`), the current user's pending and rejected counts, `isSyncing`,
   `lastSyncedAt`, and `lastSyncError`, a `SyncFailedException` that carries the status and code
   but no row, filter value or token. The network is current as soon as the switch below returns;
-  the counts follow the queue shortly after each change.
+  the two counts follow the queue shortly after each change, read together. It never throws: at
+  `close()` it takes one last value, with `isSyncing` false, and changes no more.
 - `disableNetwork()` and `enableNetwork()`: while access is off, nothing is sent, reads are
   answered from the cache, writes that may queue are queued, reactive reads are `Paused`, and
   requests that must reach the server throw `NetworkDisabledException`, which

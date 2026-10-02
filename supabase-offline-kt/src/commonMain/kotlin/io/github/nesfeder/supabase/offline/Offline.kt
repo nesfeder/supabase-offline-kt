@@ -172,8 +172,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * The current user's are the writes made under their session, and those queued with no user
      * recorded that they may take over; never another user's. While the stored session cannot be
-     * read, the list is empty. Collected after [close], or live at it, the flow fails with
-     * [IllegalStateException].
+     * read, the list is empty. A collection live at [close] completes; collected after [close], the
+     * flow fails with [IllegalStateException].
      *
      * @param table the table, or `null` for every table.
      * @return the flow of lists.
@@ -192,7 +192,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
 
     /**
      * [pendingMutationCount] as the queue changes; a value is emitted only when it differs from the
-     * last. Collected after [close], or live at it, the flow fails with [IllegalStateException].
+     * last. A collection live at [close] completes; collected after [close], the flow fails with
+     * [IllegalStateException].
      *
      * @param table the table, or `null` for every table.
      * @return the flow of counts.
@@ -225,8 +226,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * those with no user recorded that they may take over; never another user's.
      *
      * A write sent at once, because nothing of the user was queued ahead of it, that the server
-     * refuses is not listed: its caller gets the server's error, as from supabase-kt. Collected
-     * after [close], or live at it, the flow fails with [IllegalStateException].
+     * refuses is not listed: its caller gets the server's error, as from supabase-kt. A collection
+     * live at [close] completes; collected after [close], the flow fails with
+     * [IllegalStateException].
      *
      * @return the flow of lists.
      */
@@ -285,8 +287,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * changes: one value to draw a sync banner from. See [SyncStatus] for when each part is
      * current.
      *
-     * Reading it after [close] throws [IllegalStateException]; a collection running at [close]
-     * keeps its last value and receives no more.
+     * The same flow whether or not the client is open, and it never throws. At [close] it takes one
+     * last value, with [SyncStatus.isSyncing] `false`, and changes no more; read after [close], it
+     * holds that value.
      */
     public val syncStatus: StateFlow<SyncStatus>
 
@@ -405,11 +408,13 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * What ends, and when:
      * - At once, every new call fails with [IllegalStateException]: on the plugin, and on a
-     *   builder, bucket or flow obtained from it.
-     * - At once, every flow being collected stops, whatever its read strategy: its collector reads
-     *   that error next. A channel the app holds through `produceIn` applied directly to the flow,
-     *   and no longer reads, ends with it quietly, failing no scope; with an operator such as `map`
-     *   between them, the error fails the producer.
+     *   builder, bucket or flow obtained from it. [syncStatus] is the exception: it can still be
+     *   read, and holds its last value.
+     * - At once, every flow being collected completes, whatever its read strategy, so a screen torn
+     *   down with the client sees its flow end, not an error; a channel the app holds through
+     *   `produceIn`, and no longer reads, ends with it, failing no scope. [syncStatus], a
+     *   `StateFlow`, cannot end: it takes one last value, with [SyncStatus.isSyncing] `false`, and
+     *   changes no more.
      * - At once, the plugin's own work stops (refreshes, replay passes), and so does every Storage
      *   call and sync; their callers get the same error, never a cancellation. A replay pass with a
      *   queued write on the wire finishes that request and records its answer first, so the next
