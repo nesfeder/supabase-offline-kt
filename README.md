@@ -103,31 +103,8 @@ passed inside the parentheses.
 
 ### From Swift
 
-```swift
-let offline = SupabaseFactory.offlineClient(
-    supabaseUrl: AppSecrets.supabaseURL,
-    supabaseAnonKey: AppSecrets.supabaseAnonKey
-)
-
-// Cache-friendly read
-let res = try await offline.get(table: "tasks").selectAll(
-    readStrategy: .networkFirst,
-    orderBy: "created_at",
-    ascending: false
-)
-let tasks = try res.decode([Task].self)
-
-// Queues automatically if offline
-_ = try await offline.get(table: "tasks").insertOne(
-    value: Task(id: nil, title: "Buy milk", notes: "Whole, not skim")
-)
-
-// Trigger a sync when the device is online again
-_ = try await offline.syncAllPendingMutations()
-```
-
-> `selectAsFlow` (reactive observation) is Kotlin-only today. On iOS, reload after mutations or
-> on connectivity changes.
+The Swift package is being rebuilt as a native Swift API over a new bridge, and this build has no
+Swift API to call; its quick start returns with it.
 
 ## Core concepts at a glance
 
