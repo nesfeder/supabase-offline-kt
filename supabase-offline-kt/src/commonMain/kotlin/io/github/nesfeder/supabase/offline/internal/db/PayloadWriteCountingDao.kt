@@ -2,15 +2,51 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+
 /**
- * [delegate], telling [onWrite] of each write once it has returned or failed: the table it changed,
- * or `null` for one that may change any table. The store reads through it, so every write it makes
- * to the object cache is counted.
+ * Counts of committed changes to a kind of row: mutation rows, or cached payloads.
+ *
+ * @property everyTable changes that may reach every table's rows, such as a clear.
+ * @property byTable changes to one table's rows, by table.
  */
-internal class PayloadWriteCountingDao(
-    private val delegate: QueryCacheDao,
-    private val onWrite: (table: String?) -> Unit,
-) : QueryCacheDao by delegate {
+internal data class ChangeCounts(
+    val everyTable: Long = 0L,
+    val byTable: Map<String, Long> = emptyMap(),
+) {
+    /** What a reader of [table] watches: both counts that reach it. */
+    fun of(table: String): Pair<Long, Long> = everyTable to (byTable[table] ?: 0L)
+}
+
+/**
+ * [delegate], counting each write once it has returned or failed against the table it changed, or
+ * against every table for one that may change any. Every component writes the object cache through
+ * the one instance, and only one store is open on a database (see [OpenDatabaseRegistry]), so these
+ * are every write its payloads see.
+ */
+internal class PayloadWriteCountingDao(private val delegate: QueryCacheDao) :
+    QueryCacheDao by delegate {
+
+    /** The writes counted so far. */
+    private val writes = MutableStateFlow(ChangeCounts())
+
+    /** The writes counted against [table]: those that may reach every table, and those to it. */
+    fun writesTo(table: String): Pair<Long, Long> = writes.value.of(table)
+
+    /** Counts a change to every table made outside this DAO's own writes, such as a commit. */
+    fun countWriteToEveryTable() {
+        count(table = null)
+    }
+
+    /** Counts a write to [table]'s rows, or to any table's when it is `null`. */
+    private fun count(table: String?) {
+        writes.update { counts ->
+            if (table == null) counts.copy(everyTable = counts.everyTable + 1)
+            else
+                counts.copy(byTable = counts.byTable + (table to (counts.byTable[table] ?: 0L) + 1))
+        }
+    }
 
     override suspend fun upsert(row: CachedQueryRow) = counted(row.table) { delegate.upsert(row) }
 
@@ -38,6 +74,6 @@ internal class PayloadWriteCountingDao(
         try {
             write()
         } finally {
-            onWrite(table)
+            count(table)
         }
 }

@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
+import io.github.nesfeder.supabase.offline.internal.db.ChangeCounts
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
@@ -158,16 +159,8 @@ internal class OfflineStore(
     /** The watermarks and the clear lock; see [CacheFreshness]. */
     private val freshness = CacheFreshness(monotonicTick)
 
-    /**
-     * How many writes this store made to each table's cached payloads, each counted once it
-     * returned; see [tableKeyIndexOf]. Only one store is open on a database (see
-     * [OpenDatabaseRegistry]), so these are every write its payloads see.
-     */
-    private val payloadWrites = MutableStateFlow(ChangeCounts())
-
-    /** The object cache, every write to it counted in [payloadWrites]. */
-    private val queryCacheDao: QueryCacheDao =
-        PayloadWriteCountingDao(queryCacheDao) { table -> notePayloadsWritten(table) }
+    /** The object cache, every write to it counted; see [tableKeyIndexOf]. */
+    private val queryCacheDao = PayloadWriteCountingDao(queryCacheDao)
 
     /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
     internal val queryShapes: QueryShapeRecords = QueryShapeRecords(this.queryCacheDao, json)
@@ -341,18 +334,10 @@ internal class OfflineStore(
      * should not queue behind it. Keyed lazily; the map is guarded by its own mutex because it is
      * touched from many coroutines and commonMain has no concurrent map.
      */
-    private val tableWriteLocksMutex = Mutex()
-    private val tableWriteLocks = mutableMapOf<String, Mutex>()
+    private val tableWriteLocks = TableWriteLocks()
 
-    /**
-     * The write lock for [table], created on first use.
-     *
-     * @param table Table whose object-cache writes the lock serializes.
-     * @return The table's lock; hold it via `withLock` around the whole read-modify-write.
-     */
-    private suspend fun tableWriteLock(table: String): Mutex = tableWriteLocksMutex.withLock {
-        tableWriteLocks.getOrPut(table) { Mutex() }
-    }
+    /** The write lock for [table]; see [TableWriteLocks]. */
+    private suspend fun tableWriteLock(table: String): Mutex = tableWriteLocks.of(table)
 
     /** Reads the tick source; see [CacheFreshness.tickNow]. */
     internal fun monotonicTickNow(): Long = freshness.tickNow()
@@ -613,7 +598,7 @@ internal class OfflineStore(
                 parsedPayloads.value = emptyMap()
                 // Counted again once committed: a read between the delete and the commit saw the
                 // rows before it
-                notePayloadsWritten(table = null)
+                queryCacheDao.countWriteToEveryTable()
                 tableKeyIndexes.value = emptyMap()
                 loggedOverlaySkips.value = emptySet()
                 lastTableMutations.value = emptyMap()
@@ -647,7 +632,7 @@ internal class OfflineStore(
                 queryShapes.forgetAll()
                 parsedPayloads.value = emptyMap()
                 // Counted again once committed, as in clearLocalData
-                notePayloadsWritten(table = null)
+                queryCacheDao.countWriteToEveryTable()
             }
         }
     }
@@ -915,20 +900,6 @@ internal class OfflineStore(
      */
     private val mutationChanges = MutableStateFlow(ChangeCounts())
 
-    /**
-     * Counts of committed changes to a kind of row: mutation rows, or cached payloads.
-     *
-     * @property everyTable changes that may reach every table's rows, such as a clear.
-     * @property byTable changes to one table's rows, by table.
-     */
-    private data class ChangeCounts(
-        val everyTable: Long = 0L,
-        val byTable: Map<String, Long> = emptyMap(),
-    ) {
-        /** What a reader of [table] watches: both counts that reach it. */
-        fun of(table: String): Pair<Long, Long> = everyTable to (byTable[table] ?: 0L)
-    }
-
     /** Tells the readers of [tables] that their mutation rows changed; call once committed. */
     private fun noteMutationsChanged(vararg tables: String) {
         noteMutationsChanged(tables.asList())
@@ -949,15 +920,6 @@ internal class OfflineStore(
     /** Tells every table's readers that their mutation rows may have changed. */
     private fun noteEveryTableChanged() {
         mutationChanges.update { counts -> counts.copy(everyTable = counts.everyTable + 1) }
-    }
-
-    /** Counts a write to [table]'s cached payloads, or to any table's when it is `null`. */
-    private fun notePayloadsWritten(table: String?) {
-        payloadWrites.update { counts ->
-            if (table == null) counts.copy(everyTable = counts.everyTable + 1)
-            else
-                counts.copy(byTable = counts.byTable + (table to (counts.byTable[table] ?: 0L) + 1))
-        }
     }
 
     /**
@@ -1811,7 +1773,7 @@ internal class OfflineStore(
      * when no payload write landed while it was read.
      */
     private suspend fun tableKeyIndexOf(table: String, keyColumns: List<String>): TableKeyIndex? {
-        val writes = payloadWrites.value.of(table)
+        val writes = queryCacheDao.writesTo(table)
         tableKeyIndexes.value[table]?.let { index ->
             if (index.writes == writes && index.keyColumns == keyColumns) return index
         }
@@ -1831,7 +1793,7 @@ internal class OfflineStore(
             }
         }
         val index = TableKeyIndex(writes, keyColumns, holders)
-        if (payloadWrites.value.of(table) == writes) {
+        if (queryCacheDao.writesTo(table) == writes) {
             tableKeyIndexes.update { indexes -> indexes + (table to index) }
         }
         return index
