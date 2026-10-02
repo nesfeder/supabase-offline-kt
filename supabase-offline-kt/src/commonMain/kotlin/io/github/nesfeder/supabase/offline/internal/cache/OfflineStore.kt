@@ -10,9 +10,7 @@ import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
-import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
-import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
@@ -201,6 +199,19 @@ internal class OfflineStore(
             onQueriesMarkedStale = { table, cacheKeys -> onQueriesMarkedStale(table, cacheKeys) },
         )
 
+    /** Clearing and dropping local data, in the one lock order; see [LocalData]. */
+    private val localData =
+        LocalData(
+            queryCacheDao = this.queryCacheDao,
+            cachedFileDao = cachedFileDao,
+            mutationDao = mutationDao,
+            freshness = freshness,
+            ownership = cacheOwnership,
+            mutationQueue = mutationQueue,
+            queryCache = queryCache,
+            queryOverlay = queryOverlay,
+        )
+
     /** The write lock for [table]; see [TableWriteLocks]. */
     private suspend fun tableWriteLock(table: String): Mutex = tableWriteLocks.of(table)
 
@@ -288,73 +299,14 @@ internal class OfflineStore(
         queryCache.evictOverBudget()
     }
 
-    /**
-     * Wipes every cached payload, storage-object row and mutation, the mutation queue's records
-     * included, in one transaction, and marks the teardown so that no response or cache patch
-     * started before it lands afterwards. For identity changes: sign-out, account switch, deletion.
-     *
-     * @param owner the identity the emptied cache belongs to, recorded in the same transaction;
-     *   `null` records none, and the next identity to use the cache claims it.
-     */
+    /** See [LocalData.clearLocalData]. */
     suspend fun clearLocalData(owner: String? = null) {
-        // Under the mutation-queue lock, so a write whose operation predates this teardown cannot
-        // slip its mutation row in between the tick and the deletes (see [enqueueOwnedBy]); and
-        // under the teardown lock, so no overlay or payload write that checked the tick before it
-        // can land after the deletes. Neither lock is held across a request, so a teardown never
-        // waits on one.
-        mutationQueue.holdingQueueLock {
-            freshness.holdingClearLock {
-                freshness.markEmptied(freshness.tickNow(), queueCleared = true)
-                // One transaction: a clear that fails part-way leaves the queue, the caches and
-                // the cache's owner as they were, never a mix the next identity could read.
-                cacheOwner.emptying(owner) {
-                    mutationDao.runInTransaction {
-                        mutationDao.deleteAll()
-                        cachedFileDao.deleteAll()
-                        queryCacheDao.deleteAll()
-                        if (owner != null) queryCacheDao.upsert(cacheOwner.rowOf(owner))
-                    }
-                    mutationQueue.forgetRecordsOfClearedQueue()
-                }
-                queryShapes.forgetAll()
-                queryCache.forgetParsedPayloads()
-                // Counted again once committed: a read between the delete and the commit saw the
-                // rows before it
-                queryCacheDao.countWriteToEveryTable()
-                queryOverlay.forgetKeyIndexes()
-                mutationQueue.forgetReadsOfClearedQueue()
-            }
-        }
+        localData.clearLocalData(owner)
     }
 
-    /**
-     * Empties the cache for [owner], the identity it now belongs to: every cached query with its
-     * shape record, and every Storage row, go in one transaction that records [owner]. The mutation
-     * queue and its records stay. No response or cache patch started before it lands afterwards;
-     * the files of the Storage cache are its caller's to delete.
-     */
+    /** See [LocalData.dropCacheFor]. */
     suspend fun dropCacheFor(owner: String) {
-        // The locks and order of [clearLocalData], which this is but for the mutation queue
-        mutationQueue.holdingQueueLock {
-            freshness.holdingClearLock {
-                freshness.markEmptied(freshness.tickNow(), queueCleared = false)
-                cacheOwner.emptying(owner) {
-                    mutationDao.runInTransaction {
-                        cachedFileDao.deleteAll()
-                        queryCacheDao.deleteAllExceptTable(RESERVED_TABLE_NAME)
-                        queryCacheDao.deleteWithCacheKeyPrefix(
-                            RESERVED_TABLE_NAME,
-                            QUERY_SHAPE_CACHE_KEY_PREFIX,
-                        )
-                        queryCacheDao.upsert(cacheOwner.rowOf(owner))
-                    }
-                }
-                queryShapes.forgetAll()
-                queryCache.forgetParsedPayloads()
-                // Counted again once committed, as in clearLocalData
-                queryCacheDao.countWriteToEveryTable()
-            }
-        }
+        localData.dropCacheFor(owner)
     }
 
     /* ───────────────────────────── Storage metadata ───────────────────────────── */
