@@ -18,6 +18,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
@@ -126,6 +127,7 @@ internal enum class CommitOutcome {
  *
  * @param maxSizeBytes the size bound, or `null` for none.
  * @param markUsed records a use time on a file.
+ * @param ioDispatcher where file work runs.
  */
 internal class StorageFileCache(
     private val store: OfflineStore,
@@ -136,6 +138,7 @@ internal class StorageFileCache(
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val markUsed: (Path, Long) -> Unit = ::markFileUsed,
     private val excludeFromBackup: (Path) -> Boolean = ::excludeFromBackup,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
     private val dataDirectory: Path by lazy { dataDirectoryProvider().normalized() }
@@ -243,7 +246,7 @@ internal class StorageFileCache(
      * @return the cached file, reporting the size of the file on disk.
      */
     suspend fun useCachedCopy(entry: FileCacheEntry): CachedFile? =
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             if (!store.cacheServesCurrentIdentity()) return@withContext null
             val row =
                 store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return@withContext null
@@ -293,7 +296,7 @@ internal class StorageFileCache(
     suspend fun readBytes(entry: FileCacheEntry): ByteArray? =
         withPinned(entry) {
             val cached = useCachedCopy(entry) ?: return@withPinned null
-            withContext(Dispatchers.IO) {
+            withContext(ioDispatcher) {
                 try {
                     fileSystem.read(cached.path.toPath()) { readByteArray() }
                 } catch (failure: IOException) {
@@ -331,7 +334,7 @@ internal class StorageFileCache(
         source.use { reader ->
             val buffer = ByteArray(STREAM_BUFFER_BYTES)
             while (true) {
-                val read = withContext(Dispatchers.IO) { reader.read(buffer, 0, buffer.size) }
+                val read = withContext(ioDispatcher) { reader.read(buffer, 0, buffer.size) }
                 if (read == -1) break
                 channel.writeFully(buffer, 0, read)
             }
@@ -394,7 +397,7 @@ internal class StorageFileCache(
     suspend fun write(entry: FileCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
         val temporary = openTemporaryDownload(entry) ?: return
         try {
-            withContext(Dispatchers.IO) { temporary.sink.write(bytes) }
+            withContext(ioDispatcher) { temporary.sink.write(bytes) }
         } catch (failure: Throwable) {
             discard(temporary)
             if (failure !is IOException) throw failure
@@ -489,7 +492,7 @@ internal class StorageFileCache(
      * @param temporary the download.
      */
     suspend fun discard(temporary: TemporaryDownload) {
-        withContext(Dispatchers.IO + NonCancellable) {
+        withContext(ioDispatcher + NonCancellable) {
             try {
                 temporary.sink.close()
             } catch (_: IOException) {
@@ -507,7 +510,7 @@ internal class StorageFileCache(
      * @param objectPath the object path.
      */
     suspend fun invalidateObject(bucketId: String, objectPath: String) {
-        withContext(Dispatchers.IO + NonCancellable) {
+        withContext(ioDispatcher + NonCancellable) {
             lock.withLock { removeObjectLocked(bucketId, objectPath) }
         }
     }
@@ -518,7 +521,7 @@ internal class StorageFileCache(
      * dropped; they are cached again when next downloaded.
      */
     suspend fun moveObject(fromBucket: String, from: String, toBucket: String, to: String) {
-        withContext(Dispatchers.IO + NonCancellable) {
+        withContext(ioDispatcher + NonCancellable) {
             lock.withLock {
                 removeObjectLocked(toBucket, to)
                 val source = entryFor(fromBucket, from)
@@ -545,7 +548,7 @@ internal class StorageFileCache(
      * @param clearDatabase the store's wipe.
      */
     suspend fun clear(clearDatabase: suspend () -> Unit) {
-        withContext(Dispatchers.IO + NonCancellable) {
+        withContext(ioDispatcher + NonCancellable) {
             lock.withLock {
                 generation.addAndFetch(1L)
                 trackedBytes = null
@@ -748,7 +751,7 @@ internal class StorageFileCache(
      * can clean up.
      */
     private suspend fun <T> onIoHandingBackItsResult(block: suspend () -> T): T =
-        withContext(NonCancellable) { withContext(Dispatchers.IO) { block() } }
+        withContext(NonCancellable) { withContext(ioDispatcher) { block() } }
 
     /**
      * Deletes the temporary files a crash left behind, once per cache, under [lock]. It takes those

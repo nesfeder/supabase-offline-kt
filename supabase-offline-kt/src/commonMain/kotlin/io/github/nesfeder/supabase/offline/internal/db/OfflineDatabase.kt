@@ -7,6 +7,7 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.RoomDatabaseConstructor
 import androidx.sqlite.SQLiteDriver
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 
@@ -52,11 +53,13 @@ internal expect fun defaultSQLiteDriver(): SQLiteDriver
  * @param builder the platform builder, already pointed at the database file.
  * @param driver the SQLite driver to open it with; [defaultSQLiteDriver] unless a caller needs
  *   another. Internal on purpose: the published artifact always uses the default.
+ * @param queryDispatcher where Room runs its queries.
  * @return the database, not yet opened; Room opens it on first use.
  */
 internal fun buildOfflineDatabase(
     builder: RoomDatabase.Builder<OfflineDatabase>,
     driver: SQLiteDriver = defaultSQLiteDriver(),
+    queryDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ): OfflineDatabase {
     return builder
         // A version with no migration path to this one — a file another schema wrote, or a later
@@ -64,6 +67,6 @@ internal fun buildOfflineDatabase(
         // under the module's `schemas/` directory, so a change is a reviewed diff.
         .fallbackToDestructiveMigration(true)
         .setDriver(driver)
-        .setQueryCoroutineContext(Dispatchers.IO)
+        .setQueryCoroutineContext(queryDispatcher)
         .build()
 }

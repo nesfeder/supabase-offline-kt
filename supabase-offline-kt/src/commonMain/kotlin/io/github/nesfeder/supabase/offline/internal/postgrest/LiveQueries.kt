@@ -3,10 +3,10 @@
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.OfflineReadResult
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
@@ -37,8 +37,12 @@ internal const val CLIENT_CLOSED_MESSAGE: String = "This offline client is close
  * signatures, so the store can materialize a write into a query that is observed but not cached.
  *
  * @param scope hosts the shared upstreams: the client's own scope, which its close ends.
+ * @param engineLogger where a failure no collector receives is logged.
  */
-internal class LiveQueries(private val scope: CoroutineScope) {
+internal class LiveQueries(
+    private val scope: CoroutineScope,
+    private val engineLogger: EngineLogger? = null,
+) {
 
     private data class Key(val table: String, val cacheKey: String)
 
@@ -144,10 +148,7 @@ internal class LiveQueries(private val scope: CoroutineScope) {
         sharedFlowsMutex.withLock {
             val entry =
                 sharedFlows.getOrPut(key) {
-                    val entryScope =
-                        CoroutineScope(
-                            scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job])
-                        )
+                    val entryScope = newEngineScope(engineLogger, parent = scope)
                     val shared =
                         upstream()
                             .map<OfflineReadResult, Emission> { result -> Emission.Value(result) }

@@ -56,8 +56,10 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
@@ -137,13 +139,18 @@ internal class OfflineClient(
     markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
     /** The time the client's reads and file cache see; the store keeps its own. */
     private val clock: Clock = Clock.System,
+    /** Where file work runs. */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** Where [close] waits out its bound, which is real time unless a test injects otherwise. */
+    private val closeWaitDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : Offline {
 
     /**
      * Where everything the client starts runs: a child of the injected scope, on its dispatcher.
      * [close] cancels it without touching the caller's scope.
      */
-    private val clientScope: CoroutineScope = childEngineScope(coordinatorScope, engineLogger)
+    private val clientScope: CoroutineScope =
+        newEngineScope(engineLogger, parent = coordinatorScope)
 
     /**
      * The scope a close that outlived its wait finishes in; the injected one, which close leaves
@@ -182,6 +189,7 @@ internal class OfflineClient(
             fileSystem = fileSystem,
             nowMillis = { clock.now().toEpochMilliseconds() },
             markUsed = markFileUsed,
+            ioDispatcher = ioDispatcher,
         )
 
     private val mutationQueueReplayer =
@@ -209,7 +217,7 @@ internal class OfflineClient(
      * sharing per `(table, cacheKey)` plus the live-signature registry that backs
      * materialize-on-write in [OfflineStore.patchCachedQueries].
      */
-    private val liveQueries = LiveQueries(clientScope)
+    private val liveQueries = LiveQueries(clientScope, engineLogger)
 
     /**
      * SDK-internal recovery accelerator merging auth-session-restored and connectivity-regained
@@ -418,6 +426,7 @@ internal class OfflineClient(
             backgroundScope = clientScope,
             operationGate = operationGate,
             renderImagePath = renderImagePath,
+            ioDispatcher = ioDispatcher,
         )
     }
 
@@ -550,7 +559,7 @@ internal class OfflineClient(
         readShapePostgrest.value = null
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
         val releasedInTime =
-            withContext(NonCancellable + Dispatchers.Default) {
+            withContext(NonCancellable + closeWaitDispatcher) {
                 withTimeoutOrNull(closeWait) { releaseOnceIdle() } != null
             }
         if (releasedInTime || released.isCompleted) return
