@@ -172,10 +172,22 @@ internal class OfflineStore(
     /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
     internal val queryShapes: QueryShapeRecords = QueryShapeRecords(this.queryCacheDao, json)
 
+    /** Whose the caches are, and whether the current identity may use them. */
+    private val cacheOwnership =
+        CacheOwnership(
+            queryCacheDao = this.queryCacheDao,
+            cachedFileDao = cachedFileDao,
+            json = json,
+            isCacheOwnedPerIdentity = { isCacheOwnedPerIdentity },
+            identityProvider = { identityProvider() },
+            onCacheNotServed = { onCacheNotServed() },
+        )
+
     /**
      * The identity the query cache and the Storage file cache belong to; see [CacheOwnerRecord].
      */
-    internal val cacheOwner: CacheOwnerRecord = CacheOwnerRecord(this.queryCacheDao, json)
+    internal val cacheOwner: CacheOwnerRecord
+        get() = cacheOwnership.record
 
     /**
      * Whether the cache belongs to one identity at a time, checked on every read and write: `true`
@@ -348,53 +360,17 @@ internal class OfflineStore(
     /** See [CacheFreshness.wasClearedSince]. */
     internal fun wasClearedSince(tick: Long): Boolean = freshness.wasClearedSince(tick)
 
-    /**
-     * Whether the cache may be read for the current identity: it is that identity's, or no
-     * identity's yet and the identity is a user, who adopts it. Without the Auth plugin there is
-     * one identity, and it always may. When it may not, the client is told, so a settled session
-     * drops the cache for the new identity.
-     */
+    /** See [CacheOwnership.cacheServesCurrentIdentity]. */
     internal suspend fun cacheServesCurrentIdentity(): Boolean =
-        cacheIsCurrentIdentitys(forWrite = false)
+        cacheOwnership.cacheServesCurrentIdentity()
 
-    /**
-     * Whether the cache may be written for the current identity, as [cacheServesCurrentIdentity]
-     * says; a cache no identity owns is first recorded as that identity's, so what is written into
-     * it is never adopted by another.
-     */
+    /** See [CacheOwnership.cacheTakesWritesOfCurrentIdentity]. */
     internal suspend fun cacheTakesWritesOfCurrentIdentity(): Boolean =
-        cacheIsCurrentIdentitys(forWrite = true)
+        cacheOwnership.cacheTakesWritesOfCurrentIdentity()
 
-    /** [cacheServesCurrentIdentity], or with [forWrite] [cacheTakesWritesOfCurrentIdentity]. */
-    private suspend fun cacheIsCurrentIdentitys(forWrite: Boolean): Boolean {
-        if (!isCacheOwnedPerIdentity) {
-            if (forWrite)
-                identityProvider()?.let { identity -> cacheOwner.owner(claimant = identity) }
-            return true
-        }
-        val identity = identityProvider()
-        val owner = identity?.let { cacheOwnerClaimingFor(it, claimsForUser = forWrite) }
-        val mine =
-            identity != null &&
-                (owner == identity ||
-                    (owner == null && identity != QueueIdentity.Anonymous.storedValue))
-        if (!mine) onCacheNotServed()
-        return mine
-    }
-
-    /**
-     * The cache's recorded owner, recording [identity] first when none is and it may claim the
-     * cache: a user when [claimsForUser]; nobody signed in only while the cache holds nothing,
-     * since rows an earlier build left may be a user's.
-     */
+    /** See [CacheOwnership.cacheOwnerClaimingFor]. */
     internal suspend fun cacheOwnerClaimingFor(identity: String, claimsForUser: Boolean): String? =
-        cacheOwner.owner(
-            claimant = identity,
-            mayClaim = {
-                if (identity != QueueIdentity.Anonymous.storedValue) claimsForUser
-                else queryCacheDao.totalPayloadBytes() == 0L && cachedFileDao.all().isEmpty()
-            },
-        )
+        cacheOwnership.cacheOwnerClaimingFor(identity, claimsForUser)
 
     /**
      * Rolling count of [addPayload] writes, used to run size enforcement only periodically instead
