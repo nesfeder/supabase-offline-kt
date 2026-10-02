@@ -15,6 +15,7 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.db.inTransaction
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
@@ -605,10 +606,10 @@ internal class MutationQueue(
                 entry.toRequeuedRow(createdAtMs = nowMillis(), owner = identity)
                     ?: return@withLock null
             val (rejectedRow, list) = rejectedList.rejectedRowWith(removeId = id)
-            var newId = 0L
-            mutationDao.runInTransaction {
-                newId = mutationDao.insert(row)
+            val newId = mutationDao.inTransaction {
+                val inserted = mutationDao.insert(row)
                 queryCacheDao.upsert(rejectedRow)
+                inserted
             }
             rejectedList.rejectedWritten(list)
             noteMutationsChanged(row.table)
