@@ -114,9 +114,11 @@ the changelog, and closes the issue.
   stored formats, and the version catalog: none, patch, additive or breaking. The pull request must
   add a matching entry to the changelog, and a person can always mark a change breaking when the
   script cannot see it.
-- Some changes reach no record, so a reviewer checks them by hand: parameter names and their order
-  (a renamed parameter breaks a call that names it), changed defaults and documented behaviour, the
-  bodies of inline functions, and new deprecation levels or opt-in requirements.
+- Parameter names and their order, which the ABI records do not show, have a record of their own:
+  a renamed or reordered parameter breaks a call that names it, so it changes that record and is
+  rated breaking.
+- Some changes reach no record, so a reviewer checks them by hand: changed defaults and documented
+  behaviour, the bodies of inline functions, and new deprecation levels or opt-in requirements.
 - The release workflow runs the same script over everything since the last release tag, and
   refuses a version number too small for what it finds ([Releasing](releasing.md)).
 

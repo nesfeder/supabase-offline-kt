@@ -122,13 +122,23 @@ removed or changed breaks someone.
 
 The records hold every public declaration's types, but not its parameter names or their order.
 Renaming a public parameter breaks every caller that passes it by name, and swapping two
-parameters of the same type changes what a call does, yet neither changes a record. A reviewer
-checks every parameter name and order in the diff of the sources.
+parameters of the same type changes what a call does, yet neither changes a record. A third
+record, `<module>/api/<module>.signatures`, lists every public function and constructor with its
+parameter names in order. CI fails when it differs from the sources; write it again and commit it
+with the records:
+
+```bash
+python3 scripts/check-public-signatures.py --update
+```
+
+The same script requires `@Throws(Throwable::class)` on every public `suspend` function that does
+not override another: without it, a failure that reaches Swift through a framework exporting the
+library ends the process.
 
 ### 2. Say what kind of change it is
 
-CI rates each pull request as none, patch, additive or breaking, from the committed records, the
-Room schemas, the tests that pin stored formats and the version catalog. To see the rating before
+CI rates each pull request as none, patch, additive or breaking, from the committed records
+(a line gone from the signatures record is breaking), the Room schemas, the tests that pin stored formats and the version catalog. To see the rating before
 you push, commit and run:
 
 ```bash
@@ -154,7 +164,6 @@ check CI does.
 
 The script cannot see everything. A person reviews:
 
-- **Parameter names and their order**, which neither record shows (see step 1).
 - **Documented behaviour**, such as a default, the order of replay, or what is kept after a
   sign-out. If your change alters it, put it under `### Breaking` yourself: the release check
   treats a Breaking line as breaking whatever the records say.

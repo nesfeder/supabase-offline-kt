@@ -355,6 +355,16 @@ jobs:
           python3 scripts/check-no-console.py --self-test
           python3 scripts/check-no-console.py
 
+      # The third record beside the ABI records: every public function and constructor with its
+      # parameter names in order, which neither ABI record shows, and @Throws(Throwable::class) on
+      # every public suspend function. On failure, run the script with --update and commit the
+      # record (CONTRIBUTING.md).
+      - name: Check the public signatures record
+        if: needs.changes.outputs.kotlin == 'true'
+        run: |
+          python3 scripts/check-public-signatures.py --self-test
+          python3 scripts/check-public-signatures.py
+
       # What this change does to the public contract: none, patch, additive or breaking, from the
       # committed API records, Room schemas, stored-format pins and version catalog. A change that
       # needs one must add a matching line under `## Unreleased` in CHANGELOG.md. The rating goes to

@@ -1,0 +1,9 @@
+// Public functions and constructors of supabase-offline-kt-testing, with their parameter names.
+// Written by scripts/check-public-signatures.py --update; checked in CI.
+io.github.nesfeder.supabase.offline.testing: fun (Offline.Config).inMemory(clock: Clock = …)
+io.github.nesfeder.supabase.offline.testing: fun appliedOutcome(result: PostgrestResult)
+io.github.nesfeder.supabase.offline.testing: fun cacheMissException(message: String = …)
+io.github.nesfeder.supabase.offline.testing: fun cachedFile(path: String, fetchedAt: Instant, sizeBytes: Long)
+io.github.nesfeder.supabase.offline.testing: fun mutationNotQueueableException(cause: Throwable, message: String = …)
+io.github.nesfeder.supabase.offline.testing: fun networkDisabledException(message: String = …)
+io.github.nesfeder.supabase.offline.testing: fun queuedOutcome(pendingMutation: PendingMutation)
