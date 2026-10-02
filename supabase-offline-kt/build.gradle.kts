@@ -7,7 +7,6 @@ plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidKmpLibrary)
     alias(libs.plugins.kotlinSerialization)
-    alias(libs.plugins.skie)
     id("supabase-offline.kmp-library")
     id("supabase-offline.published")
     id("supabase-offline.host-test-sqlite")
@@ -68,9 +67,9 @@ kotlin {
             api(libs.kotlinx.serialization.json)
             api(libs.kotlinx.coroutines.core)
             api(libs.ktor.client.core)
-            // okio.Path appears in the public API on iOS (SupabaseFactory.offlineClientKt).
-            api(libs.okio)
             implementation(libs.androidx.room.runtime)
+            // The engine's file access; no public declaration names an okio type.
+            implementation(libs.okio)
         }
 
         androidMain.dependencies {

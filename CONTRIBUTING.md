@@ -322,10 +322,10 @@ moves the coupled versions together.
 | Kotlin | The version the library is built with limits the Kotlin versions its consumers can use, and it has to work with the pinned supabase-kt. |
 | Android Gradle plugin | It has to stay inside the Kotlin Gradle plugin's supported range. |
 | Room, androidx.sqlite | Together they define the on-device database and the bundled SQLite, and Room is built against a particular androidx.sqlite. |
-| SKIE | It supports exact Kotlin versions only, so Dependabot proposes no version updates for it; it moves with Kotlin. |
 
-**The pass-through set.** Ktor, okio, kotlinx.coroutines and kotlinx.serialization are `api`
-dependencies: every app that uses the library gets the versions this build names. The library
+**The pass-through set.** Ktor, okio, kotlinx.coroutines and kotlinx.serialization reach every
+app that uses the library at the versions this build names: the first, third and fourth as `api`
+dependencies, okio through supabase-kt's Auth (the library's own use of it is internal). The library
 keeps each at the version the pinned supabase-kt release was built with, so an app gets the
 combination supabase-kt was tested with, and a newer one here would be a newer one for every
 consumer. Dependabot proposes no version update for them, patch releases included. They move by

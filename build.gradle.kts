@@ -26,5 +26,4 @@ plugins {
     alias(libs.plugins.kover) apply false
     alias(libs.plugins.ksp) apply false
     alias(libs.plugins.mavenPublish) apply false
-    alias(libs.plugins.skie) apply false
 }
