@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
+import io.github.nesfeder.supabase.offline.internal.logging.engineLogger
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.coroutines.flow.Flow
@@ -35,10 +36,15 @@ internal class OfflinePlugin(
                 "The Offline plugin is used before its SupabaseClient finished initialising it"
             }
 
-    /** Opens the client's database: every plugin of [supabaseClient] exists by now. */
+    /**
+     * Opens the client's database: every plugin of [supabaseClient] exists by now. Then warns,
+     * once, when the app resolved another supabase-kt minor than the one this library was tested
+     * with.
+     */
     override fun init() {
         val client = config.openLocalData(supabaseClient, config)
         if (!opened.compareAndSet(null, client)) error("The Offline plugin was initialised twice")
+        supabaseClient.warnUnlessTestedSupabaseKt(supabaseClient.engineLogger(config.logLevel))
     }
 
     override fun from(table: String): OfflinePostgrestQueryBuilder = client.from(table)

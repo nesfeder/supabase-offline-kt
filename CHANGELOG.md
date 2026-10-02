@@ -53,6 +53,12 @@ release.
 
 ### Added
 
+- Built and tested against supabase-kt 3.8 (`supabase-bom` in the version catalog). Each minor
+  release of this library names exactly one supabase-kt minor: the artifact compiles supabase-kt's
+  inline functions into itself and implements its `BucketApi`, which gains members in minor
+  releases, so a range cannot be promised. When an app resolves another supabase-kt minor, the
+  plugin logs one warning when it is installed, naming both versions, and carries on; a patch
+  difference is no warning.
 - The `Offline` plugin for supabase-kt: `install(Offline) { … }` and `supabase.offline`, with its
   settings in `Offline.Config`: the two cache sizes, `dataDirectory`, `primaryKeys` (each table's
   key, `id` unless set; `primaryKey(table, columns)`), `responseTrust` (`ResponseTrust`, with the

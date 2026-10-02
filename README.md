@@ -122,6 +122,10 @@ Swift API to call; its quick start returns with it.
 
 ## Consumer integration
 
+Each minor release of this library is built and tested against exactly one supabase-kt minor:
+this one against **supabase-kt 3.8**. Use supabase-kt 3.8.x with it; with another minor, the plugin
+logs a warning when it is installed, naming both versions.
+
 - **Kotlin Multiplatform and Android (Gradle):**
   `io.github.nesfeder.supabase-offline:supabase-offline-kt:X.Y.Z` from Maven Central, and
   `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:X.Y.Z` for tests. See
