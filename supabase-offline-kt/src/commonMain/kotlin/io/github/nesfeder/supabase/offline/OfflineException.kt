@@ -41,7 +41,35 @@ public class MutationNotQueueableException internal constructor(message: String,
 
 /**
  * A request that must reach the server was asked for while the app had turned the library's network
- * access off. Nothing was sent.
+ * access off with [Offline.disableNetwork]. Nothing was sent.
+ *
+ * It is what a [ReadStrategy.NetworkOnly] read, a [MutationStrategy.OnlineOnly] write, an
+ * [Offline.rpc] or a Storage call other than a cached download throws while access is off; a read
+ * the cache can answer is answered from it, and a write the mutation queue can hold is queued, as
+ * offline. [isNetworkOrConnectivityFailure] is `true` for it, so code that handles being offline
+ * handles it too.
  */
 public class NetworkDisabledException internal constructor(message: String) :
     OfflineException(message, null)
+
+/**
+ * Why a sync pass stopped with writes still queued, as [SyncStatus.lastSyncError] reports it: the
+ * network could not be reached, the server answered with a failure that may pass (a `5xx`, `408`,
+ * `429` or `401`, or a refusal held behind an earlier write), or a local failure stopped it. The
+ * writes stay queued and are sent by a later pass.
+ *
+ * The library builds it from what stopped the pass and keeps nothing else of that failure, whose
+ * message may carry a row, a filter value or a token. [isNetworkOrConnectivityFailure] is `true`
+ * for one the network caused, and [httpStatusOrNull] gives the server's status.
+ *
+ * @property httpStatus the HTTP status the server answered with, or `null` when it did not answer.
+ * @property code PostgREST's error code (such as `PGRST000`) or the Postgres SQLSTATE, when the
+ *   server sent one.
+ */
+public class SyncFailedException
+internal constructor(
+    message: String,
+    public val httpStatus: Int?,
+    public val code: String?,
+    internal val isConnectivityFailure: Boolean,
+) : OfflineException(message, null)

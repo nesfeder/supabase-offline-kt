@@ -126,7 +126,7 @@ class ReactiveReadFailuresTest {
     private suspend fun aReadThatFailsAfterItsFirstValue(
         strategy: FlowReadStrategy,
         failure: Throwable,
-    ): Pair<List<OfflineReadResult>, Throwable?> {
+    ): Pair<List<QuerySnapshot>, Throwable?> {
         val server =
             RecordingPostgrestServer(
                 answer = { request ->
@@ -146,7 +146,7 @@ class ReactiveReadFailuresTest {
             if (failing.load()) throw failure
             null
         }
-        val values = mutableListOf<OfflineReadResult>()
+        val values = mutableListOf<QuerySnapshot>()
         val ended =
             withContext(Dispatchers.Default) {
                 withTimeout(5.seconds) {

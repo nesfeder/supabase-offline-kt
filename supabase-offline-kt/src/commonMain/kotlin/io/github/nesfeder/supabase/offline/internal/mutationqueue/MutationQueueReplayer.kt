@@ -8,6 +8,7 @@ import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
@@ -16,6 +17,7 @@ import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailu
 import io.github.nesfeder.supabase.offline.internal.isPermanentMutationFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.SendOutcome
@@ -33,7 +35,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
@@ -52,8 +58,10 @@ internal class MutationQueueReplayer(
     private val store: OfflineStore,
     private val supabase: SupabaseClient,
     private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
+    /** Whether the client may reach the network; nothing is sent while it is off. */
+    private val networkAccess: NetworkAccess = NetworkAccess(),
     private val remoteTableFor: (schema: String, table: String) -> RemoteTable = { schema, table ->
-        SupabaseRemoteTable(supabase.postgrest.from(schema, table))
+        SupabaseRemoteTable(supabase.postgrest.from(schema, table), networkAccess = networkAccess)
     },
     /**
      * Waits, bounded, for a settled session; `false` means it did not settle and nothing is sent.
@@ -63,7 +71,11 @@ internal class MutationQueueReplayer(
     private val currentIdentity: suspend () -> QueueIdentity? = {
         supabase.currentReplayIdentity()
     },
+    /** Whether the session is settled now, without waiting; see [awaitSessionSettled]. */
+    private val isSessionSettledNow: () -> Boolean = { supabase.currentReplayIdentity() != null },
     private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    /** Told of each pass's report as it ends, with the table it covered (`null` for all). */
+    private val passEnded: suspend (table: String?, report: SyncReport) -> Unit = { _, _ -> },
 ) {
 
     /**
@@ -72,15 +84,20 @@ internal class MutationQueueReplayer(
     private val sendLock = Mutex()
 
     /**
-     * Ids of the mutations being sent right now, by a pass or at the head. Guarded by [sendLock].
+     * Ids of the mutations being sent right now, by a pass or at the head. Changed under
+     * [sendLock]; observed by a caller waiting for a sender to let go.
      */
-    private val inFlight = mutableSetOf<Long>()
+    private val inFlight = MutableStateFlow<Set<Long>>(emptySet())
 
     /** Bumped by [clearLocalData]; an outcome recorded after it moved is discarded. */
     private val clearGeneration = MutableStateFlow(0L)
 
     /** Passes in flight, so [clearLocalData] can cancel them. */
     private val activePasses = MutableStateFlow<Set<Job>>(emptySet())
+
+    /** Whether a pass is running, as it changes. */
+    val passRunning: Flow<Boolean> =
+        activePasses.map { passes -> passes.isNotEmpty() }.distinctUntilChanged()
 
     /**
      * When this process last counted a schema-cache miss of each mutation, as a
@@ -132,7 +149,37 @@ internal class MutationQueueReplayer(
     suspend fun sync(
         table: String? = null,
         schema: String = supabase.postgrest.config.defaultSchema,
-    ): SyncReport {
+    ): SyncReport = runSync(table, schema).also { report -> passEnded(table, report) }
+
+    /**
+     * Runs passes as [sync] does until one ends for a reason other than another sender holding the
+     * head of the queue, waiting between them for that sender to let go. So it returns once the
+     * queue is empty or a pass stopped on something else, and its counts are its own passes'.
+     *
+     * @param table The table to replay, or `null` for every table.
+     * @return What its passes synced and rejected, and what the last one left pending.
+     */
+    suspend fun syncWaitingOutOtherSenders(table: String? = null): SyncReport {
+        var total: SyncReport? = null
+        while (true) {
+            val report = sync(table = table)
+            total = total?.followedBy(report) ?: report
+            if (report.stop != SyncStop.HeadInFlight) return total
+            val holding = inFlight.value
+            if (holding.isNotEmpty()) inFlight.first { current -> holding.none { it in current } }
+        }
+    }
+
+    /** One pass, as [sync] describes it, without telling [passEnded]. */
+    private suspend fun runSync(table: String?, schema: String): SyncReport {
+        if (networkAccess.isDisabled) {
+            val remaining = remainingFor(currentIdentity(), table)
+            return SyncReport(0, emptyList(), remaining, SyncStop.NetworkDisabled)
+        }
+        // Offline, a session that is not settled now will not settle until the network is back
+        if (networkAccess.isKnownUnavailable && !isSessionSettledNow()) {
+            return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.SessionNotReady)
+        }
         if (!awaitSessionSettled()) {
             engineLogger.info {
                 if (table == null) "Session not settled; deferring mutation replay"
@@ -216,14 +263,19 @@ internal class MutationQueueReplayer(
         send: suspend () -> PostgrestResult,
         onAccepted: suspend (PostgrestResult) -> Unit,
     ): HeadSendOutcome {
+        // Nothing leaves the device while network access is off: it waits, queued
+        if (networkAccess.isDisabled)
+            return HeadSendOutcome.StaysQueued(
+                NetworkDisabledException(NetworkAccess.NETWORK_DISABLED_MESSAGE)
+            )
         val generation = clearGeneration.value
         val claimed = sendLock.withLock {
             val available =
                 clearGeneration.value == generation &&
-                    mutationId !in inFlight &&
+                    mutationId !in inFlight.value &&
                     currentIdentity() == identity &&
                     store.isAtHead(mutationId, identity.storedValue)
-            if (available) inFlight += mutationId
+            if (available) inFlight.update { ids -> ids + mutationId }
             available
         }
         if (!claimed) return HeadSendOutcome.NotAtHead
@@ -260,7 +312,9 @@ internal class MutationQueueReplayer(
             }
             return HeadSendOutcome.Sent(result)
         } finally {
-            withContext(NonCancellable) { sendLock.withLock { inFlight -= mutationId } }
+            withContext(NonCancellable) {
+                sendLock.withLock { inFlight.update { ids -> ids - mutationId } }
+            }
         }
     }
 
@@ -383,8 +437,27 @@ internal class MutationQueueReplayer(
      */
     suspend fun discardPendingMutation(id: Long, identity: QueueIdentity?): Boolean =
         sendLock.withLock {
-            if (id in inFlight) false else store.discardPendingMutation(id, identity?.storedValue)
+            if (id in inFlight.value) false
+            else store.discardPendingMutation(id, identity?.storedValue)
         }
+
+    /**
+     * [discardPendingMutation], waiting first for a sender that has [id] on the wire to let go:
+     * once it returns, the mutation is not pending, unless it is another identity's.
+     *
+     * @return `true` when it was discarded; `false` when it was not pending by then, or not
+     *   [identity]'s.
+     */
+    suspend fun discardPendingMutationOnceUnsent(id: Long, identity: QueueIdentity?): Boolean {
+        while (true) {
+            val discarded: Boolean? = sendLock.withLock {
+                if (id in inFlight.value) null
+                else store.discardPendingMutation(id, identity?.storedValue)
+            }
+            if (discarded != null) return discarded
+            inFlight.first { current -> id !in current }
+        }
+    }
 
     private suspend fun remainingFor(identity: QueueIdentity?, table: String?): Int {
         if (identity == null)
@@ -412,11 +485,13 @@ internal class MutationQueueReplayer(
         generation: Long,
     ): Claim {
         if (clearGeneration.value != generation) return Claim.Stop(SyncStop.LocalDataCleared)
+        if (networkAccess.isDisabled) return Claim.Stop(SyncStop.NetworkDisabled)
         val now = currentIdentity() ?: return Claim.Stop(SyncStop.IdentityUnknown)
         if (now != identity) return Claim.Stop(SyncStop.SessionChanged)
-        if (inFlight.any { id -> id <= candidate.id }) return Claim.Stop(SyncStop.HeadInFlight)
+        if (inFlight.value.any { id -> id <= candidate.id })
+            return Claim.Stop(SyncStop.HeadInFlight)
         if (!store.isPending(candidate.id)) return Claim.Skip
-        inFlight += candidate.id
+        inFlight.update { ids -> ids + candidate.id }
         return Claim.Send(candidate)
     }
 
@@ -449,6 +524,7 @@ internal class MutationQueueReplayer(
         val syncedTables = mutableSetOf<String>()
         val rejected = mutableListOf<StoredRejection>()
         var syncedCount = 0
+        var alreadyOnServerCount = 0
         var stop: SyncStop? = null
 
         for (candidate in queue) {
@@ -490,7 +566,7 @@ internal class MutationQueueReplayer(
                                 ReplayOutcome.Stopped(localFailure)
                             }
                         sendLock.withLock {
-                            inFlight -= mutation.id
+                            inFlight.update { ids -> ids - mutation.id }
                             released = true
                             outcome to
                                 if (clearGeneration.value != generation) SyncStop.LocalDataCleared
@@ -500,10 +576,13 @@ internal class MutationQueueReplayer(
                 } finally {
                     if (!released)
                         withContext(NonCancellable) {
-                            sendLock.withLock { inFlight -= mutation.id }
+                            sendLock.withLock { inFlight.update { ids -> ids - mutation.id } }
                         }
                 }
-            if (outcome == ReplayOutcome.Synced && recorded == null) syncedCount++
+            if (outcome is ReplayOutcome.Synced && recorded == null) {
+                syncedCount++
+                if (outcome.rowsWereOnServer) alreadyOnServerCount++
+            }
             if (recorded != null) {
                 stop = recorded
                 break
@@ -523,6 +602,7 @@ internal class MutationQueueReplayer(
             rejected = rejected.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) },
             remainingCount = remainingFor(identity, table),
             stop = stop,
+            alreadyOnServerCount = alreadyOnServerCount,
         )
     }
 
@@ -538,7 +618,7 @@ internal class MutationQueueReplayer(
         syncedTables: MutableSet<String>,
     ): SyncStop? =
         when (outcome) {
-            ReplayOutcome.Synced -> {
+            is ReplayOutcome.Synced -> {
                 schemaCacheMissesCountedAt -= mutation.id
                 store.markMutationSynced(id = mutation.id, table = mutation.table)
                 syncedTables += mutation.table
@@ -585,7 +665,13 @@ internal class MutationQueueReplayer(
 
     /** How one mutation's replay ended. */
     private sealed interface ReplayOutcome {
-        data object Synced : ReplayOutcome
+        /**
+         * The server accepted it.
+         *
+         * @property rowsWereOnServer whether it found rows of it already on the server: an earlier
+         *   send that seemed lost had arrived.
+         */
+        data class Synced(val rowsWereOnServer: Boolean) : ReplayOutcome
 
         /** The session stopped being the owner's before the request left; nothing was sent. */
         data object SessionChanged : ReplayOutcome
@@ -623,7 +709,7 @@ internal class MutationQueueReplayer(
                     withContext(owner) { prepared.request(tableApi) }
                 }
                 when (sent) {
-                    is SendOutcome.Succeeded -> ReplayOutcome.Synced
+                    is SendOutcome.Succeeded -> ReplayOutcome.Synced(rowsWereOnServer = sent.value)
                     is SendOutcome.Failed ->
                         if (owner.stoppedWithItsSender) {
                             // It never left the device: the pass ends here, cancelled
@@ -691,7 +777,8 @@ internal class MutationQueueReplayer(
 
     /** A mutation ready to send, or refused before any request. */
     private sealed interface Prepared {
-        class Ready(val request: suspend (RemoteTable) -> Unit) : Prepared
+        /** Ready; [request] sends it and says whether rows of it were already on the server. */
+        class Ready(val request: suspend (RemoteTable) -> Boolean) : Prepared
 
         class Refused(val outcome: ReplayOutcome.Rejected) : Prepared
     }
@@ -757,6 +844,7 @@ internal class MutationQueueReplayer(
                         defaultToNull = mutation.defaultToNull,
                         filter = filter,
                     )
+                    false
                 }
             }
 
@@ -771,14 +859,20 @@ internal class MutationQueueReplayer(
                 val replayableFilter =
                     replayableFilterOrNull(filter)
                         ?: return refuseUnreplayableFilter(mutation, filter)
-                Prepared.Ready { tableApi -> sendUpdate(tableApi, body, replayableFilter) }
+                Prepared.Ready { tableApi ->
+                    sendUpdate(tableApi, body, replayableFilter)
+                    false
+                }
             }
 
             MutationOperation.DELETE -> {
                 val replayableFilter =
                     replayableFilterOrNull(filter)
                         ?: return refuseUnreplayableFilter(mutation, filter)
-                Prepared.Ready { tableApi -> sendDelete(tableApi, replayableFilter) }
+                Prepared.Ready { tableApi ->
+                    sendDelete(tableApi, replayableFilter)
+                    false
+                }
             }
 
             else ->
@@ -839,6 +933,8 @@ internal class MutationQueueReplayer(
      * rows it wrote; every other INSERT goes out as sent, so a duplicate key is refused by the
      * server. An upsert with no matching unique constraint (`42P10`) is sent again as the plain
      * INSERT.
+     *
+     * @return whether the server already held rows of it, taken as an earlier send's.
      */
     private suspend fun sendInsert(
         tableApi: RemoteTable,
@@ -847,11 +943,11 @@ internal class MutationQueueReplayer(
         defaultToNull: Boolean?,
         filter: FilterDescriptor?,
         earlierSendUnconfirmed: Boolean,
-    ) {
+    ): Boolean {
         val keyColumns = primaryKeys.of(table)
         if (!earlierSendUnconfirmed || !everyRowCarriesPrimaryKey(body, keyColumns)) {
             insertAsSent(tableApi, body, defaultToNull, filter)
-            return
+            return false
         }
         val result =
             try {
@@ -868,14 +964,16 @@ internal class MutationQueueReplayer(
                     "Replayed INSERT on $table has no unique key to match; sending it as a plain INSERT"
                 }
                 insertAsSent(tableApi, body, defaultToNull, filter)
-                return
+                return false
             }
         val written = result.countOrNull()
         if (written != null && written < body.size) {
             engineLogger.info {
                 "Replayed INSERT on $table: ${body.size - written} of ${body.size} rows were already on the server, taken as its earlier send"
             }
+            return true
         }
+        return false
     }
 
     private suspend fun insertAsSent(

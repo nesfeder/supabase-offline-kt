@@ -133,6 +133,24 @@ internal interface MutationDao {
     )
     suspend fun pendingOwnedBy(owner: String, includeOwnerless: Boolean): List<MutationRow>
 
+    /** How many mutations [pendingOwnedBy] would return, without reading them. */
+    @Query(
+        "SELECT COUNT(*) FROM mutation_cache WHERE synced_at_ms IS NULL " +
+            "AND (owner = :owner OR (:includeOwnerless AND owner IS NULL))"
+    )
+    suspend fun countPendingOwnedBy(owner: String, includeOwnerless: Boolean): Int
+
+    /** How many mutations [pendingOwnedByInTable] would return, without reading them. */
+    @Query(
+        "SELECT COUNT(*) FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NULL " +
+            "AND (owner = :owner OR (:includeOwnerless AND owner IS NULL))"
+    )
+    suspend fun countPendingOwnedByInTable(
+        owner: String,
+        includeOwnerless: Boolean,
+        table: String,
+    ): Int
+
     /** [pendingOwnedBy], of [table] only. */
     @Query(
         "SELECT * FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NULL " +

@@ -21,7 +21,8 @@ public fun Throwable.isNetworkOrConnectivityFailure(): Boolean =
 
 /**
  * The HTTP status the server answered with, read from this failure or a cause: a supabase-kt
- * `RestException` (PostgREST's and Storage's errors among them) or a Ktor `ResponseException`.
+ * `RestException` (PostgREST's and Storage's errors among them), a Ktor `ResponseException`, or a
+ * [SyncFailedException].
  *
  * @return the status, or `null` when no failure in the chain carries one, as for a connectivity
  *   failure.
@@ -32,6 +33,7 @@ public fun Throwable.httpStatusOrNull(): Int? {
         when (current) {
             is RestException -> return current.statusCode
             is ResponseException -> return current.response.status.value
+            is SyncFailedException -> return current.httpStatus
         }
         current = current.cause
     }

@@ -34,19 +34,18 @@ import kotlinx.coroutines.flow.merge
  *   signed out, or only signed in under [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY]. Covers
  *   the cold-start race where session restore takes longer than the fast ladder, plus recovery from
  *   a failed token refresh. Empty when the Auth plugin is not installed.
- * - **Connectivity regained** — the optional [networkAvailability] hint transitioning to `true`.
- *   This is a plain platform-agnostic `Flow<Boolean>`, not any particular connectivity type; the
- *   caller maps its own connectivity monitor into it, so that mapping stays with the caller.
+ * - **Connectivity regained** — [reconnections]: the network becoming reachable again, as the
+ *   connectivity monitor or the app's own signal says, or the app turning network access back on.
  *
  * @param supabase The underlying online client whose auth session status is observed.
- * @param networkAvailability Optional connectivity hint; `null` disables the connectivity source.
+ * @param reconnections One [Unit] each time the network becomes reachable again.
  * @param trustPolicy which session statuses a read trusts, and so which ones wake it.
  * @return A merged edge-triggered accelerator flow, or an effectively-empty flow when no source is
  *   available.
  */
 internal fun refreshWakeUps(
     supabase: SupabaseClient,
-    networkAvailability: Flow<Boolean>?,
+    reconnections: Flow<Unit>,
     trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
 ): Flow<Unit> {
     val sessionReady: (SessionStatus) -> Boolean =
@@ -60,9 +59,7 @@ internal fun refreshWakeUps(
         supabase.pluginManager.getPluginOrNull(Auth)?.sessionStatus?.let { statuses ->
             risingEdges(statuses.map(sessionReady))
         } ?: emptyFlow()
-    val connectivityWakeUps =
-        networkAvailability?.let { availability -> risingEdges(availability) } ?: emptyFlow()
-    return merge(authWakeUps, connectivityWakeUps)
+    return merge(authWakeUps, reconnections)
 }
 
 /**

@@ -60,7 +60,7 @@ class ClearLocalDataDuringWritesTest {
             release.await()
             okJson("[]")
         }
-        val sweep = launch { client.syncAllPendingMutations() }
+        val sweep = launch { client.syncPendingMutations().syncedCount }
         parked.await()
 
         // When — the user signs out while the first replay is in flight
@@ -82,7 +82,7 @@ class ClearLocalDataDuringWritesTest {
             release.await()
             postgrestError(HttpStatusCode.Forbidden)
         }
-        val sweep = launch { client.syncAllPendingMutations() }
+        val sweep = launch { client.syncPendingMutations().syncedCount }
         parked.await()
 
         // When — local data is cleared while the replay is in flight, then the refusal comes back

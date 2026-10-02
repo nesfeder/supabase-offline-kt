@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAM
 import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.defaultDatabasePath
 import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
+import io.github.nesfeder.supabase.offline.internal.network.connectivityManagerNetworkAvailability
 import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
 import okio.Path.Companion.toPath
 
@@ -42,5 +43,6 @@ internal fun openAndroidClient(
             buildOfflineDatabase(offlineDatabaseBuilder(context, databasePath.toString()))
         },
         defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
+        platformNetworkAvailability = connectivityManagerNetworkAvailability(context),
     )
 }

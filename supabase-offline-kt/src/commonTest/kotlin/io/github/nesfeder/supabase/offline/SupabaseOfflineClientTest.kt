@@ -53,7 +53,8 @@ class SupabaseOfflineClientTest {
 
         // When
         val fromTable = assertFailsWith<IllegalStateException> { client.from("todos") }
-        val sync = assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
+        val sync =
+            assertFailsWith<IllegalStateException> { client.syncPendingMutations().syncedCount }
 
         // Then
         listOf(fromTable, sync).forEach { error ->
@@ -144,7 +145,7 @@ class SupabaseOfflineClientTest {
     }
 
     @Test
-    fun syncAllPendingMutations_replays_the_client_queue() = runTest {
+    fun syncPendingMutations_replays_the_client_queue() = runTest {
         // Given — a write queued while the network is down, then the network returns
         val client = newTestOfflineClient(supabase = server.supabaseClient())
         server.answer = { connectivityFailure() }
@@ -153,7 +154,7 @@ class SupabaseOfflineClientTest {
         server.requests.clear()
 
         // When
-        val synced = client.syncAllPendingMutations()
+        val synced = client.syncPendingMutations().syncedCount
 
         // Then
         assertEquals(1, synced)
@@ -177,7 +178,7 @@ class SupabaseOfflineClientTest {
         server.requests.clear()
 
         // When
-        val synced = client.syncPendingMutations("todos")
+        val synced = client.syncPendingMutations("todos").syncedCount
 
         // Then
         assertEquals(1, synced)

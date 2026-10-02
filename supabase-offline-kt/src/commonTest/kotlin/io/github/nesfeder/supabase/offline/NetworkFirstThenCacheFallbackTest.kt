@@ -70,7 +70,7 @@ class NetworkFirstThenCacheFallbackTest {
         items.select(readStrategy = ReadStrategy.NetworkOnly)
         answer = { null }
         val sentBefore = onTheTestClock.requests.size
-        val shown = mutableListOf<OfflineReadResult>()
+        val shown = mutableListOf<QuerySnapshot>()
 
         // When — the read starts, then a row is written while it is live
         var firstShownAt = -1L

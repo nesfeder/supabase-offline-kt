@@ -11,6 +11,7 @@ import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.sendUnlessClosing
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -74,10 +75,13 @@ internal interface RemoteTable : DryRunProbe, ReadShapeProbe {
  * @property builder The underlying [PostgrestQueryBuilder] instance.
  * @param readShapePostgrest the instance the read-shape check builds reads through; see
  *   [readShapePostgrestOf]. The client shares one across its handles.
+ * @param networkAccess the client's network switch: while it is off, every verb throws
+ *   `NetworkDisabledException` before supabase-kt is called, so nothing is sent.
  */
 internal class SupabaseRemoteTable(
     private val builder: PostgrestQueryBuilder,
     private val readShapePostgrest: Postgrest = readShapePostgrestOf(builder.postgrest),
+    private val networkAccess: NetworkAccess = NetworkAccess(),
 ) : RemoteTable {
 
     init {
@@ -96,7 +100,7 @@ internal class SupabaseRemoteTable(
 
     /**
      * This table on [readShapePostgrest], whose requests carry a placeholder token; made when first
-     * asked for.
+     * asked for. Its requests are all stopped before the network, so the switch does not apply.
      */
     private val tokenFreeHandle: RemoteTable by lazy {
         SupabaseRemoteTable(
@@ -129,6 +133,7 @@ internal class SupabaseRemoteTable(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult {
+        networkAccess.ensureEnabled()
         return supabaseClient.sendUnlessClosing { builder.select(columns, request) }
     }
 
@@ -137,6 +142,7 @@ internal class SupabaseRemoteTable(
         body: JsonArray,
         request: InsertRequestBuilder.() -> Unit,
     ): PostgrestResult {
+        networkAccess.ensureEnabled()
         return supabaseClient.sendUnlessClosing { builder.insert(body, request) }
     }
 
@@ -145,6 +151,7 @@ internal class SupabaseRemoteTable(
         body: JsonArray,
         request: UpsertRequestBuilder.() -> Unit,
     ): PostgrestResult {
+        networkAccess.ensureEnabled()
         return supabaseClient.sendUnlessClosing { builder.upsert(body, request) }
     }
 
@@ -153,11 +160,13 @@ internal class SupabaseRemoteTable(
         body: JsonElement,
         request: PostgrestRequestBuilder.() -> Unit,
     ): PostgrestResult {
+        networkAccess.ensureEnabled()
         return supabaseClient.sendUnlessClosing { builder.update(body, request) }
     }
 
     /** @see RemoteTable.delete */
     override suspend fun delete(request: PostgrestRequestBuilder.() -> Unit): PostgrestResult {
+        networkAccess.ensureEnabled()
         return supabaseClient.sendUnlessClosing { builder.delete(request) }
     }
 

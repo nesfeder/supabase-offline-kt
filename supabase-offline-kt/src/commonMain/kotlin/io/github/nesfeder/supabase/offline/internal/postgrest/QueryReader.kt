@@ -12,24 +12,27 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
-import io.github.nesfeder.supabase.offline.OfflineReadResult
+import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.ServedPayload
 import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
-import io.ktor.http.HeadersBuilder
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
+import io.ktor.http.Headers
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -40,7 +43,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withTimeoutOrNull
@@ -59,12 +62,14 @@ internal class UntrustedResponseException(table: String) :
  * @property sessionBefore the session the request went out under.
  * @property sessionAfter the session when it answered.
  * @property outcome what the cache did with it.
+ * @property receivedAtMillis when it arrived, by the reader's clock.
  */
 private data class FetchedResponse(
     val response: PostgrestResult,
     val sessionBefore: RequestSession,
     val sessionAfter: RequestSession,
     val outcome: CacheWriteOutcome,
+    val receivedAtMillis: Long,
 ) {
     /** Whether the server's own body held no rows. */
     val isEmpty: Boolean
@@ -101,6 +106,8 @@ private class NetworkAnswer(val result: PostgrestResult, val wasCached: Boolean)
  * @param trustPolicy which responses may replace what the cache holds.
  * @param liveQueries shares one refresh per live query and tracks which queries are live.
  * @param wakeUps wake-ups (the session settled, connectivity back) that cut a retry's wait short.
+ * @param networkAccess whether the network is known down, or access to it off: a reactive read's
+ *   refresh is [RefreshState.Paused] then.
  */
 internal class QueryReader(
     private val delegate: RemoteTable,
@@ -111,6 +118,7 @@ internal class QueryReader(
     private val trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     private val liveQueries: LiveQueries,
     private val wakeUps: Flow<Unit> = emptyFlow(),
+    private val networkAccess: NetworkAccess = NetworkAccess(),
 ) {
 
     /**
@@ -131,7 +139,7 @@ internal class QueryReader(
         if (shape is ReadShape.Uncacheable) {
             if (readStrategy is ReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
             engineLogger.debug { "SELECT $table asks for ${shape.kind}; bypassing the cache" }
-            return delegate.select(columns, request)
+            return networkResult(delegate.select(columns, request))
         }
         engineLogger.debug { "SELECT $table via ${readStrategy::class.simpleName}" }
         return when (readStrategy) {
@@ -240,7 +248,15 @@ internal class QueryReader(
             // again
             if (fetched.wasRefusedAfterClear)
                 return NetworkAnswer(
-                    buildResult(EMPTY_JSON_ARRAY, delegate.postgrest),
+                    provenancedResult(
+                        EMPTY_JSON_ARRAY,
+                        delegate.postgrest,
+                        ResultProvenance(
+                            isFromCache = true,
+                            fetchedAtMillis = null,
+                            hasPendingMutations = false,
+                        ),
+                    ),
                     wasCached = true,
                 )
             if (
@@ -290,7 +306,7 @@ internal class QueryReader(
     }
 
     /**
-     * A reactive read of the query as [OfflineReadResult]s. Every collection registers the query as
+     * A reactive read of the query as [QuerySnapshot]s. Every collection registers the query as
      * live while it runs; `CacheFirstThenNetwork` collections of one query share one refresh. A
      * read whose response is not a row list emits the network's answer once and completes.
      */
@@ -298,7 +314,7 @@ internal class QueryReader(
         columns: Columns,
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit,
-    ): Flow<OfflineReadResult> = flow {
+    ): Flow<QuerySnapshot> = flow {
         var built: CacheSlot? = null
         val shape =
             delegate.shapeOf(columns, request) { builder -> built = cacheSlotOf(columns, builder) }
@@ -307,9 +323,13 @@ internal class QueryReader(
             engineLogger.debug {
                 "SELECT ${delegate.table} asks for ${shape.kind}; bypassing the cache"
             }
+            val result = networkResult(delegate.select(columns, request))
             emit(
-                OfflineReadResult(
-                    result = delegate.select(columns, request),
+                QuerySnapshot(
+                    result = result,
+                    isFromCache = false,
+                    fetchedAt = result.fetchedAtInstant(),
+                    hasPendingMutations = false,
                     refresh = RefreshState.Idle,
                 )
             )
@@ -331,7 +351,7 @@ internal class QueryReader(
         readStrategy: FlowReadStrategy,
         request: SelectRequestBuilder.() -> Unit,
         slot: CacheSlot,
-    ): Flow<OfflineReadResult> {
+    ): Flow<QuerySnapshot> {
         val base =
             when (readStrategy) {
                 FlowReadStrategy.CacheFirstThenNetwork ->
@@ -351,14 +371,15 @@ internal class QueryReader(
             .onCompletion { liveQueries.unregisterLiveQuery(slot.table, slot.cacheKey) }
     }
 
-    /** The cache and the overlay as they change, never the network; the refresh is always idle. */
-    private fun cacheOnlyWithState(slot: CacheSlot): Flow<OfflineReadResult> =
-        store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape).map { payload ->
-            OfflineReadResult(
-                result = payload?.let { json -> buildResult(json, delegate.postgrest) },
-                refresh = RefreshState.Idle,
-            )
-        }
+    /**
+     * The cache and the overlay as they change, never the network: always from the cache, and the
+     * refresh always idle.
+     */
+    private fun cacheOnlyWithState(slot: CacheSlot): Flow<QuerySnapshot> =
+        snapshotsOf(
+            store.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape),
+            flowOf(ReadProgress(RefreshState.Idle, confirmedFetchedAt = null)),
+        )
 
     /**
      * The cache and the overlay as they change, while a refresh retried until it succeeds runs
@@ -368,24 +389,109 @@ internal class QueryReader(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
-    ): Flow<OfflineReadResult> {
-        val refreshState = MutableStateFlow<RefreshState>(RefreshState.Refreshing)
+    ): Flow<QuerySnapshot> {
+        val progress = MutableStateFlow(ReadProgress(RefreshState.Refreshing, null))
+        var confirmedByRefresh: Long? = null
         val payloads =
             cacheFirstWithParallelRefresh(
-                cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape),
-                refresh = { refreshFromNetwork(slot, columns, request) },
+                cache = store.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape),
+                refresh = {
+                    refreshFromNetwork(slot, columns, request)
+                    confirmedByRefresh = fetchedAtOfCached(slot)
+                },
                 wakeUps = wakeUps,
-                onRefreshState = { state -> refreshState.value = state },
+                onRefreshState = { state ->
+                    progress.value = progress.value.reached(state, confirmedByRefresh)
+                },
                 refreshRequests = liveQueries.refreshRequestsFor(slot.table, slot.cacheKey),
+                networkAccess = networkAccess,
             )
-        // One result per distinct payload: a refresh-state change re-emits the same result instance
-        val results =
-            payloads.distinctUntilChanged().map { payload ->
-                payload?.let { json -> buildResult(json, delegate.postgrest) }
+        return snapshotsOf(payloads, progress)
+    }
+
+    /**
+     * Where a reactive read's refresh stands, and the fetch time of the cached payload its last
+     * successful refresh confirmed, `null` before one has.
+     */
+    private data class ReadProgress(val refresh: RefreshState, val confirmedFetchedAt: Long?) {
+        /** This progress once the refresh reports [state], [confirmed] by it when it succeeded. */
+        fun reached(state: RefreshState, confirmed: Long?): ReadProgress =
+            ReadProgress(
+                state,
+                if (state == RefreshState.Idle) confirmed ?: confirmedFetchedAt
+                else confirmedFetchedAt,
+            )
+    }
+
+    /**
+     * [payloads] with the read's [progress], as snapshots: one result per distinct payload, so a
+     * change of anything else re-emits the same result instance.
+     */
+    private fun snapshotsOf(
+        payloads: Flow<ServedPayload?>,
+        progress: Flow<ReadProgress>,
+    ): Flow<QuerySnapshot> = flow {
+        // Each collection its own: the results it built are its alone
+        val results = ResultsByPayload()
+        emitAll(
+            combine(payloads.distinctUntilChanged(), progress) { served, current ->
+                snapshotOf(results, served, current.confirmedFetchedAt, current.refresh)
             }
-        return combine(results, refreshState) { result, state ->
-            OfflineReadResult(result = result, refresh = state)
+        )
+    }
+
+    /**
+     * The snapshot of [served]: from the cache unless a refresh confirmed a payload fetched no
+     * earlier than it ([confirmedFetchedAt]) and it is not stale.
+     */
+    private fun snapshotOf(
+        results: ResultsByPayload,
+        served: ServedPayload?,
+        confirmedFetchedAt: Long?,
+        refresh: RefreshState,
+    ): QuerySnapshot {
+        val fetchedAt = served?.fetchedAtMillis
+        val confirmed =
+            served != null &&
+                !served.isStale &&
+                fetchedAt != null &&
+                confirmedFetchedAt != null &&
+                fetchedAt >= confirmedFetchedAt
+        return QuerySnapshot(
+            result = served?.let { payload -> results.resultOf(payload.payload) },
+            isFromCache = !confirmed,
+            fetchedAt = fetchedAt?.let(Instant::fromEpochMilliseconds),
+            hasPendingMutations = served?.hasPendingMutations == true,
+            refresh = refresh,
+        )
+    }
+
+    /** The result of a reactive read's last payload, built once for as long as it is current. */
+    private inner class ResultsByPayload {
+        private var lastPayload: String? = null
+        private var lastResult: PostgrestResult? = null
+
+        /** The result for [payload]: the last one when the payload is unchanged. */
+        fun resultOf(payload: String): PostgrestResult {
+            lastResult
+                ?.takeIf { lastPayload == payload }
+                ?.let {
+                    return it
+                }
+            return buildResult(payload, delegate.postgrest).also { result ->
+                lastPayload = payload
+                lastResult = result
+            }
         }
+    }
+
+    /**
+     * When the payload cached for [slot] was fetched, when it is cached and not stale; `null`
+     * otherwise.
+     */
+    private suspend fun fetchedAtOfCached(slot: CacheSlot): Long? {
+        val (_, updatedAt) = store.getPayloadWithTimestamp(slot.table, slot.cacheKey) ?: return null
+        return if (isStaleStamp(updatedAt)) null else fetchedAtOf(updatedAt)
     }
 
     /**
@@ -430,13 +536,12 @@ internal class QueryReader(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
-    ): Flow<OfflineReadResult> = flow {
+    ): Flow<QuerySnapshot> = flow {
         val unconfirmedBy = bootstrapFromNetwork(slot, columns, request)
-        val cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape)
+        val cache = store.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape)
         if (unconfirmedBy == null) {
-            emitAll(
-                cache.map { payload -> OfflineReadResult(resultOf(payload), RefreshState.Idle) }
-            )
+            val confirmed = ReadProgress(RefreshState.Idle, fetchedAtOfCached(slot))
+            emitAll(snapshotsOf(cache, flowOf(confirmed)))
         } else {
             emitAll(unconfirmedCache(slot, columns, request, cache, unconfirmedBy))
         }
@@ -444,19 +549,24 @@ internal class QueryReader(
 
     /**
      * The cache a network-first read shows when its bootstrap could not confirm it,
-     * [RefreshState.Stalled] by [cause], while a refresh retried as a cache-first read's runs until
-     * it succeeds; then [RefreshState.Idle]. The bootstrap counts as the first attempt, so the next
-     * waits.
+     * [RefreshState.Stalled] by [cause] ([RefreshState.Paused] when the network is known down),
+     * while a refresh retried as a cache-first read's runs until it succeeds; then
+     * [RefreshState.Idle]. The bootstrap counts as the first attempt, so the next waits.
      */
     private fun unconfirmedCache(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
-        cache: Flow<String?>,
+        cache: Flow<ServedPayload?>,
         cause: Exception,
-    ): Flow<OfflineReadResult> {
-        val refreshState = MutableStateFlow<RefreshState>(RefreshState.Stalled(cause))
+    ): Flow<QuerySnapshot> {
+        val waiting =
+            if (cause.isNetworkOrConnectivityFailure() && networkAccess.isKnownUnavailable)
+                RefreshState.Paused
+            else RefreshState.Stalled(cause)
+        val progress = MutableStateFlow(ReadProgress(waiting, null))
         var bootstrapCounted = false
+        var confirmedByRefresh: Long? = null
         val payloads =
             cacheFirstWithParallelRefresh(
                 cache = cache,
@@ -466,23 +576,17 @@ internal class QueryReader(
                         throw cause
                     }
                     refreshFromNetwork(slot, columns, request)
+                    confirmedByRefresh = fetchedAtOfCached(slot)
                 },
                 wakeUps = wakeUps,
                 // Not confirmed until a refresh succeeds: an attempt in flight changes nothing
                 onRefreshState = { state ->
-                    if (state !is RefreshState.Refreshing) refreshState.value = state
+                    if (state !is RefreshState.Refreshing)
+                        progress.value = progress.value.reached(state, confirmedByRefresh)
                 },
+                networkAccess = networkAccess,
             )
-        return combine(payloads.distinctUntilChanged().map(::resultOf), refreshState) {
-            result,
-            state ->
-            OfflineReadResult(result = result, refresh = state)
-        }
-    }
-
-    /** The result a reactive read shows for [payload]; `null` while nothing is known. */
-    private fun resultOf(payload: String?): PostgrestResult? = payload?.let { json ->
-        buildResult(json, delegate.postgrest)
+        return snapshotsOf(payloads, progress)
     }
 
     /**
@@ -572,7 +676,7 @@ internal class QueryReader(
                     store.retireCoveredSyncedMutations(table, requestStartedAtTick)
                 else -> Unit
             }
-            return FetchedResponse(response, sessionBefore, sessionAfter, outcome)
+            return FetchedResponse(response, sessionBefore, sessionAfter, outcome, nowMillis())
         }
     }
 
@@ -585,25 +689,50 @@ internal class QueryReader(
         fetched: FetchedResponse,
     ): PostgrestResult {
         val (table, cacheKey) = slot
-        val base =
+        val cached =
             if (fetched.outcome == CacheWriteOutcome.REFUSED_STALE) {
                 engineLogger.warning {
                     "SELECT $table response still predates a local write; serving cached state"
                 }
-                store.getPayload(table, cacheKey) ?: fetched.response.data
+                store.getPayloadWithTimestamp(table, cacheKey)
             } else {
-                fetched.response.data
+                null
             }
         val overlaid =
-            store.overlayPendingOnResponse(
+            store.overlayPendingOnResponseReporting(
                 table = table,
                 cacheKey = cacheKey,
-                serverJson = base,
+                serverJson = cached?.first ?: fetched.response.data,
                 shape = slot.shape,
             )
-        return if (overlaid == fetched.response.data) fetched.response
-        else buildResult(overlaid, delegate.postgrest)
+        val provenance =
+            ResultProvenance(
+                isFromCache = cached != null,
+                fetchedAtMillis =
+                    cached?.let { (_, updatedAt) -> fetchedAtOf(updatedAt) }
+                        ?: fetched.receivedAtMillis,
+                hasPendingMutations = overlaid.hasPendingMutations,
+            )
+        // The server's own headers stay with its own rows: a count, for one
+        val headers = if (cached == null) fetched.response.headers else Headers.Empty
+        return provenancedResult(overlaid.payload, delegate.postgrest, provenance, headers)
     }
+
+    /** [result], the server's answer to this read just now, stamped as such. */
+    private fun networkResult(result: PostgrestResult): PostgrestResult =
+        provenancedResult(
+            result.data,
+            delegate.postgrest,
+            ResultProvenance(
+                isFromCache = false,
+                fetchedAtMillis = nowMillis(),
+                hasPendingMutations = false,
+            ),
+            result.headers,
+        )
+
+    /** When this result's rows were fetched, as its stamp says. */
+    private fun PostgrestResult.fetchedAtInstant(): Instant? = fetchedAtStamped(this)
 
     /**
      * Sends the SELECT. With [Retries.TRANSPORT_FAILS_FAST] a transport failure is thrown at once,
@@ -649,13 +778,21 @@ internal class QueryReader(
         if (!servesStale && isStaleStamp(updatedAt)) return null
         if (!isFresh(fetchedAtOf(updatedAt), cacheDuration)) return null
         val overlaid =
-            store.overlayCachedPayload(
+            store.overlayCachedPayloadReporting(
                 table = table,
                 cacheKey = cacheKey,
                 cachedJson = payload,
                 shape = slot.shape,
             )
-        return buildResult(overlaid, delegate.postgrest)
+        return provenancedResult(
+            overlaid.payload,
+            delegate.postgrest,
+            ResultProvenance(
+                isFromCache = true,
+                fetchedAtMillis = fetchedAtOf(updatedAt),
+                hasPendingMutations = overlaid.hasPendingMutations,
+            ),
+        )
     }
 
     /**
@@ -709,7 +846,7 @@ internal class QueryReader(
         )
 
     private fun buildResult(data: String, postgrest: Postgrest): PostgrestResult =
-        PostgrestResult(data, HeadersBuilder().build(), postgrest)
+        PostgrestResult(data, Headers.Empty, postgrest)
 
     /** How a network SELECT meets a failure supabase-kt would retry. */
     private enum class Retries {

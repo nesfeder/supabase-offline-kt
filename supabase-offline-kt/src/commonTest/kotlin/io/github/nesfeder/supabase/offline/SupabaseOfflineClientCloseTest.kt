@@ -586,7 +586,9 @@ class SupabaseOfflineClientCloseTest {
         // When — back online, a replay and an online write are in flight, held at the server, when
         // the client closes; the server answers while close() waits for them
         online.store(1)
-        val replay = callerScope.launch { runCatching { client.syncAllPendingMutations() } }
+        val replay = callerScope.launch {
+            runCatching { client.syncPendingMutations().syncedCount }
+        }
         val write = callerScope.launch {
             runCatching {
                 builder.insert(buildJsonArray { add(buildJsonObject { put("id", 3) }) })
@@ -612,7 +614,7 @@ class SupabaseOfflineClientCloseTest {
         // began, and the client refuses another replay
         assertEquals(0, gaveUp.load())
         assertEquals(sentAtClose, sent.load(), "a request was sent after close()")
-        assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
+        assertFailsWith<IllegalStateException> { client.syncPendingMutations().syncedCount }
     }
 
     @Test
@@ -642,7 +644,7 @@ class SupabaseOfflineClientCloseTest {
 
         // When — its first request is held at the server when the client closes
         online.store(1)
-        val replay = callerScope.async { runCatching { client.syncAllPendingMutations() } }
+        val replay = callerScope.async { runCatching { client.syncPendingMutations().syncedCount } }
         withContext(Dispatchers.Default) {
             withTimeout(5.seconds) { while (sent.load() == 0) delay(5) }
         }
@@ -882,7 +884,7 @@ class SupabaseOfflineClientCloseTest {
         // Then
         assertFailsWith<IllegalStateException> { client.from("todos") }
         assertFailsWith<IllegalStateException> { client.storage.from("avatars") }
-        assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
+        assertFailsWith<IllegalStateException> { client.syncPendingMutations().syncedCount }
         assertFailsWith<IllegalStateException> { client.syncPendingMutations("todos") }
         assertFailsWith<IllegalStateException> { client.pendingMutationCount() }
         assertFailsWith<IllegalStateException> { client.pendingMutationCount("todos") }

@@ -52,7 +52,7 @@ class ReactiveRefreshOfflineTest {
                         coordinatorScope = backgroundScope,
                     )
                     .from(TABLE)
-            val shown = mutableListOf<OfflineReadResult>()
+            val shown = mutableListOf<QuerySnapshot>()
 
             // When
             val collection = launch {

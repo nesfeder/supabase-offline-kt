@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
+import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
+import io.github.nesfeder.supabase.offline.NetworkDisabledException
+import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.ResponseException
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
+import io.ktor.http.fromHttpToGmtDate
+import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.io.IOException
 
@@ -65,9 +75,9 @@ internal fun Int.isPermanentMutationFailureStatus(): Boolean {
 }
 
 /**
- * Whether this failure is the network's rather than the server's: a timeout or an [IOException],
- * here or in a cause. A cancellation, or anything carrying an HTTP status, never is. Read fallback,
- * write queueing and replay all decide on it.
+ * Whether this failure is the network's rather than the server's: a timeout, an [IOException] or a
+ * [NetworkDisabledException], here or in a cause. A cancellation, or anything carrying an HTTP
+ * status, never is. Read fallback, write queueing and replay all decide on it.
  */
 internal fun Throwable.isNetworkOrConnectivityFailure(): Boolean {
     // Cancellation is never treated as a network error.
@@ -80,6 +90,9 @@ internal fun Throwable.isNetworkOrConnectivityFailure(): Boolean {
     while (current != null) {
         when (current) {
             is CancellationException -> return false
+            // The app turned network access off: offline, as far as reads and writes go
+            is NetworkDisabledException -> return true
+            is SyncFailedException -> return current.isConnectivityFailure
             is HttpRequestTimeoutException -> return true
             is ConnectTimeoutException -> return true
             is SocketTimeoutException -> return true
@@ -90,4 +103,46 @@ internal fun Throwable.isNetworkOrConnectivityFailure(): Boolean {
     }
 
     return false
+}
+
+/**
+ * How long the server asked the client to wait, from a `Retry-After` header on the response this
+ * failure, or a cause, carries: a number of seconds, or an HTTP date.
+ *
+ * @param now the current time, for an HTTP date.
+ * @return the wait, never negative; `null` when no response in the chain carries a readable one.
+ */
+internal fun Throwable.retryAfterOrNull(
+    now: () -> Long = { Clock.System.now().toEpochMilliseconds() }
+): Duration? {
+    var current: Throwable? = this
+    while (current != null) {
+        val headers: Headers? =
+            when (current) {
+                is RestException -> current.response.headers
+                is ResponseException -> current.response.headers
+                else -> null
+            }
+        headers?.get(HttpHeaders.RetryAfter)?.let { value ->
+            return retryAfterValueOrNull(value.trim(), now)
+        }
+        current = current.cause
+    }
+    return null
+}
+
+/** A `Retry-After` value read as a wait: delta-seconds, or an HTTP date; `null` when unreadable. */
+private fun retryAfterValueOrNull(value: String, now: () -> Long): Duration? {
+    value.toLongOrNull()?.let { seconds ->
+        return seconds.coerceAtLeast(0L).seconds
+    }
+    val date =
+        try {
+            value.fromHttpToGmtDate()
+        } catch (_: IllegalStateException) {
+            return null
+        } catch (_: IllegalArgumentException) {
+            return null
+        }
+    return (date.timestamp - now()).coerceAtLeast(0L).milliseconds
 }

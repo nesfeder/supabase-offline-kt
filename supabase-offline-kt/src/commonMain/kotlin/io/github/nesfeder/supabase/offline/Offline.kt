@@ -17,6 +17,7 @@ import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.OfflinePlugin
 import io.github.nesfeder.supabase.offline.internal.openPlatformClient
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
@@ -164,67 +165,154 @@ public interface Offline : SupabasePlugin<Offline.Config> {
     public val storage: OfflineStorage
 
     /**
-     * Sends the current user's queued writes, in every table, in the order they were made.
+     * The current user's writes waiting in the mutation queue, of [table] or of every table, in the
+     * order they will be sent, as the queue changes.
+     *
+     * The current user's are the writes made under their session, and those queued with no user
+     * recorded that they may take over; never another user's. While the stored session cannot be
+     * read, the list is empty. Collected after [close], or live at it, the flow fails with
+     * [IllegalStateException].
+     *
+     * @param table the table, or `null` for every table.
+     * @return the flow of lists.
+     */
+    public fun pendingMutations(table: String? = null): Flow<List<PendingMutation>>
+
+    /**
+     * How many of the current user's writes wait in the mutation queue, of [table] or of every
+     * table; see [pendingMutations] for whose they are.
+     *
+     * @param table the table, or `null` for every table.
+     * @return the count.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Exception::class) public suspend fun pendingMutationCount(table: String? = null): Int
+
+    /**
+     * [pendingMutationCount] as the queue changes; a value is emitted only when it differs from the
+     * last. Collected after [close], or live at it, the flow fails with [IllegalStateException].
+     *
+     * @param table the table, or `null` for every table.
+     * @return the flow of counts.
+     */
+    public fun pendingMutationCountFlow(table: String? = null): Flow<Int>
+
+    /**
+     * Removes one of the current user's queued writes without sending it: **destructive**. The
+     * write is lost, and the rows it changed show again as the server last sent them. It is the way
+     * out of a write the server keeps failing (a `5xx` it never stops answering), which holds every
+     * later write of the user behind it; once it is gone, what waited behind it is sent.
+     *
+     * When the write is being sent at that moment, this waits for the send to end, then discards it
+     * if it is still queued. Nothing happens when no queued write of the current user has this id:
+     * it was sent or refused meanwhile, it is another user's, or there is none.
+     *
+     * @param id the write's [PendingMutation.id].
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Exception::class) public suspend fun discardPendingMutation(id: Long)
+
+    /**
+     * The current user's queued writes the server refused for good when they were replayed, oldest
+     * first, as the list changes: what an app shows so its user can fix or drop a write that will
+     * never go through on its own.
+     *
+     * The list is kept on the device across restarts until each entry is dismissed or retried, and
+     * holds the newest 100 entries of every user together, within a size bound; when it is full,
+     * the oldest entries go, and their writes are lost. It shows the current user's entries, and
+     * those with no user recorded that they may take over; never another user's.
+     *
+     * A write sent at once, because nothing of the user was queued ahead of it, that the server
+     * refuses is not listed: its caller gets the server's error, as from supabase-kt. Collected
+     * after [close], or live at it, the flow fails with [IllegalStateException].
+     *
+     * @return the flow of lists.
+     */
+    public fun rejectedMutations(): Flow<List<RejectedMutation>>
+
+    /**
+     * Removes a refused write from the rejected list for good. Nothing happens when the current
+     * user has no entry with this id.
+     *
+     * @param id the entry's [RejectedMutation.id].
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Exception::class) public suspend fun dismissRejectedMutation(id: Long)
+
+    /**
+     * Queues a refused write again, at the end of the current user's queue and under a new id, and
+     * asks for it to be sent: for when the cause has been fixed, such as a missing parent row or a
+     * policy. It leaves the rejected list. Nothing happens when the current user has no entry with
+     * this id.
+     *
+     * @param id the entry's [RejectedMutation.id].
+     * @throws IllegalArgumentException when the entry cannot be retried
+     *   ([RejectedMutation.isRetryable] is `false`).
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Exception::class) public suspend fun retryRejectedMutation(id: Long)
+
+    /**
+     * Sends the current user's queued writes, of [table] or of every table, in the order they were
+     * made, and reports what happened. Returns promptly when offline, with the writes still queued.
      *
      * The pass first waits, for a bounded time, for the session to settle (signed in, or signed
-     * out); when it does not, nothing is sent and 0 is returned. Another user's writes are neither
-     * sent nor counted. A failure that may pass (no connection, a `401`, `408`, `429` or `5xx`)
-     * stops the pass with every remaining write still queued, so no write overtakes an earlier one;
-     * it is not thrown. A write the server refuses for good (another `4xx`) is taken out of the
-     * queue and kept on a rejected list, and the pass goes on.
+     * out); it does not wait when the network is known to be down. A failure that may pass (no
+     * connection, a `401`, `408`, `429` or `5xx`) stops it with every remaining write still queued,
+     * so no write overtakes an earlier one; it is not thrown, and [SyncStatus.lastSyncError] says
+     * what it was. A write the server refuses for good (another `4xx`) goes to [rejectedMutations],
+     * and the pass goes on. For a single table, a `403` or `409` on a write with an earlier write
+     * of the user pending in another table is held rather than rejected: that earlier write may be
+     * the row it depends on.
      *
-     * @return how many writes the server accepted.
+     * When the library is sending the same writes at that moment, by itself or for another call,
+     * this waits for it to let go and then sends what is left, so it returns only once nothing more
+     * can be sent now: [SyncReport.remainingCount] is what is still queued after both, and the
+     * report's other counts are what this call sent. While network access is off ([disableNetwork])
+     * it sends nothing.
+     *
+     * @param table the table, or `null` for every table.
+     * @return what this call sent, what was refused, and what is still queued.
      * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
-    @Throws(Exception::class) public suspend fun syncAllPendingMutations(): Int
+    @Throws(Exception::class)
+    public suspend fun syncPendingMutations(table: String? = null): SyncReport
 
     /**
-     * Sends the current user's queued writes to [table], in the order they were made, as
-     * [syncAllPendingMutations] does for every table.
+     * Where the library stands with the current user's queued writes and the network, as it
+     * changes: one value to draw a sync banner from. See [SyncStatus] for when each part is
+     * current.
      *
-     * A `403` or `409` on a write with an earlier write of the same user pending in another table
-     * is held rather than rejected: that earlier write may be the row it depends on. A failure that
-     * may pass is thrown, with the write still queued.
-     *
-     * @param table the table.
-     * @return how many writes the server accepted.
-     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+     * Reading it after [close] throws [IllegalStateException]; a collection running at [close]
+     * keeps its last value and receives no more.
      */
-    @Throws(Exception::class) public suspend fun syncPendingMutations(table: String): Int
+    public val syncStatus: StateFlow<SyncStatus>
 
     /**
-     * How many of the current user's writes wait in the mutation queue, in every table.
+     * Turns the library's network access off, as an airplane-mode switch in an app or a test does:
+     * until [enableNetwork], it sends nothing. Reads are answered from the cache as offline,
+     * reactive reads report [RefreshState.Paused], writes that may queue are queued, a sync pass
+     * sends nothing, and a Storage download is answered from the file cache. A request that must
+     * reach the server (a [ReadStrategy.NetworkOnly] read, a [MutationStrategy.OnlineOnly] write,
+     * an [rpc], a Storage call other than a download) throws [NetworkDisabledException]. A request
+     * already on the wire still answers.
      *
-     * @return the count.
+     * [SyncStatus.network] is [NetworkStatus.DISABLED] as soon as this returns. The switch is not
+     * kept: a new client starts with network access on. Calling it again changes nothing.
+     *
      * @throws IllegalStateException when the client is closed.
      */
-    @Throws(Exception::class) public suspend fun pendingMutationCount(): Int
+    @Throws(Exception::class) public suspend fun disableNetwork()
 
     /**
-     * How many of the current user's writes wait in the mutation queue, in every table, as it
-     * changes. Collected after [close], or live at it, the flow fails with [IllegalStateException].
+     * Turns the library's network access back on after [disableNetwork]. A reactive read refreshes,
+     * and with [Config.autoSync] queued writes are sent, as when the network comes back.
+     * [SyncStatus.network] is the monitor's again as soon as this returns. Calling it while access
+     * is on changes nothing.
      *
-     * @return the flow of counts.
-     */
-    public fun pendingMutationCountFlow(): Flow<Int>
-
-    /**
-     * How many of the current user's writes to [table] wait in the mutation queue.
-     *
-     * @param table the table.
-     * @return the count.
      * @throws IllegalStateException when the client is closed.
      */
-    @Throws(Exception::class) public suspend fun pendingMutationCount(table: String): Int
-
-    /**
-     * How many of the current user's writes to [table] wait in the mutation queue, as it changes.
-     * Collected after [close], or live at it, the flow fails with [IllegalStateException].
-     *
-     * @param table the table.
-     * @return the flow of counts.
-     */
-    public fun pendingMutationCountFlow(table: String): Flow<Int>
+    @Throws(Exception::class) public suspend fun enableNetwork()
 
     /**
      * Applies a row the server reports, such as a Realtime `postgres_changes` INSERT or UPDATE
@@ -297,12 +385,13 @@ public interface Offline : SupabasePlugin<Offline.Config> {
     /**
      * Closes the plugin and frees its database for another client. Nothing is deleted.
      *
-     * [SupabaseClient.close] calls it after supabase-kt has closed its HTTP client, and no request
-     * can be sent from then on. A call made in between, or one already running whose request had
-     * not gone out, ends as it would offline: a read the cache can answer is answered from it, a
-     * write the mutation queue holds returns [MutationOutcome.Queued], and anything else fails with
-     * the closed error below, never with a cancellation. A request already on the wire still
-     * answers. Call this before [SupabaseClient.close] to let the calls not yet sent go out.
+     * [SupabaseClient.close] calls it after supabase-kt has begun closing its HTTP client. A call
+     * made in between, or one already running whose request had not gone out, is either still sent
+     * (Ktor can send a request while its client finishes closing) or ends as it would offline: a
+     * read the cache can answer is answered from it, a write the mutation queue holds returns
+     * [MutationOutcome.Queued], and anything else fails with the closed error below, never with a
+     * cancellation. A request already on the wire still answers. Call this before
+     * [SupabaseClient.close] to let the calls not yet sent go out.
      *
      * What ends, and when:
      * - At once, every new call fails with [IllegalStateException]: on the plugin, and on a
@@ -371,24 +460,33 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         public var dataDirectory: String? = null
 
         /**
-         * The app's own connectivity signal, `true` while the device is online, or `null` (the
-         * default) for none.
+         * The app's own connectivity signal, `true` while the device is online, in place of the
+         * platform's monitor; `null`, the default, uses the monitor. The monitor is Android's
+         * `ConnectivityManager` (a network with internet that Android has validated), which needs
+         * the `ACCESS_NETWORK_STATE` permission the library's manifest declares, and Network's path
+         * monitor on iOS. It starts with the client and stops with [close].
          *
-         * When it turns `true`, a reactive read whose refresh is waiting out its backoff tries
-         * again at once. It is a hint, never a gate: a request is tried whenever the app makes one,
-         * whatever the signal says.
+         * The signal is a hint, never a gate: a request is tried whenever the app makes one,
+         * whatever it says, because monitors are wrong both ways. It decides when the library tries
+         * by itself: when it turns `true`, a reactive read's waiting refresh tries again at once
+         * and, with [autoSync], queued writes are sent. While it is `false`, a refresh that cannot
+         * reach the network reports [RefreshState.Paused], and [SyncStatus.network] says
+         * [NetworkStatus.OFFLINE].
          */
         public var networkAvailability: Flow<Boolean>? = null
 
         /**
          * Whether the plugin sends queued writes by itself, without the app calling
-         * [syncAllPendingMutations]. `true` by default.
+         * [syncPendingMutations]. `true` by default.
          *
-         * Experimental: in this release the plugin always does, whatever this says. A later release
-         * makes `false` stop the passes it starts when the session settles and when the network
-         * comes back; a write queued behind an earlier one is still sent by itself.
+         * When `true`, it sends them when the session settles into a user with writes queued, and
+         * when the network comes back. `false` stops those two; the app then calls
+         * [syncPendingMutations] itself. Either way, a write queued behind an earlier one of the
+         * same user is sent by itself once that one is, as is what a sent, refused or discarded
+         * write leaves queued, and a retried rejection: a write made online would otherwise wait
+         * for the app with nothing to show for it.
          */
-        @OfflineExperimental public var autoSync: Boolean = true
+        public var autoSync: Boolean = true
 
         /**
          * Each table's primary-key columns, by table name in the client's default schema. A table
