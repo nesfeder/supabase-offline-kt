@@ -39,8 +39,6 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.equalityDecidedByContent
 import io.github.nesfeder.supabase.offline.internal.postgrest.isPlainColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
-import kotlin.concurrent.Volatile
-import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
@@ -66,54 +64,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import okio.Path
 
 /**
- * What [OfflineStore.addPayload] did with the payload it was handed. Lets the select resolver
- * distinguish "the cache took this" from the two reasons it may refuse, and react accordingly.
- */
-internal enum class CacheWriteOutcome {
-    /** The payload was written to the object cache. */
-    WRITTEN,
-
-    /**
-     * The producing request started **before** the most recent local write to the table, so the
-     * response cannot know about that write and would roll the cache back. The caller should
-     * re-fetch (a request issued now starts after the write and converges) rather than treat the
-     * response as the current server state.
-     */
-    REFUSED_STALE,
-
-    /**
-     * The payload was an empty array that was not attributed to an authenticated session, so the
-     * empty-clobber guard refused it. Unattributed empties never reach the cache: over non-empty
-     * rows they erase real data, and into a cold (or already-empty) slot they install a phantom
-     * empty that later cache-first reads then serve as truth.
-     */
-    REFUSED_EMPTY,
-
-    /**
-     * The response came back under a session the read's trust policy does not take as speaking for
-     * the current identity, such as one still restoring, so nothing of it was written.
-     */
-    REFUSED_UNTRUSTED,
-
-    /**
-     * The producing request started **before** the cache was torn down by
-     * [OfflineStore.clearLocalData] — sign-out, account switch, or account deletion. The response
-     * belongs to a cache generation that no longer exists and, on an account switch, to a different
-     * user entirely. Unlike [REFUSED_STALE] the caller must **not** re-fetch: a follow-up issued
-     * during teardown can still carry the outgoing session's JWT and would re-import the very rows
-     * teardown removed.
-     */
-    REFUSED_AFTER_CLEAR,
-
-    /**
-     * The cache belongs to another identity than the current session's, or was dropped for a new
-     * one after the request started; see [OfflineStore.dropCacheFor]. The caller may ask again,
-     * once the cache is the current identity's.
-     */
-    REFUSED_OTHER_OWNER,
-}
-
-/**
  * Central persistence for offline features:
  *
  * - PostgREST object cache (SELECT payloads) via [QueryCacheDao]
@@ -137,16 +87,12 @@ internal class OfflineStore(
 ) {
 
     internal val json: Json = EngineJson
-    private val evictionMutex = Mutex()
 
     /** The watermarks and the clear lock; see [CacheFreshness]. */
     private val freshness = CacheFreshness(monotonicTick)
 
     /** The object cache, every write to it counted; see [tableKeyIndexOf]. */
     private val queryCacheDao = PayloadWriteCountingDao(queryCacheDao)
-
-    /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
-    internal val queryShapes: QueryShapeRecords = QueryShapeRecords(this.queryCacheDao, json)
 
     /** Whose the caches are, and whether the current identity may use them. */
     private val cacheOwnership =
@@ -188,31 +134,6 @@ internal class OfflineStore(
     private val patchIds = AtomicLong(0L)
 
     /**
-     * Payloads' rows as parsed, by table and cache key, each with the text it was parsed from, so
-     * an unchanged payload is not parsed again; see [parsedPayloadOf].
-     */
-    private val parsedPayloads =
-        MutableStateFlow<Map<Pair<String, String>, ParsedPayload>>(emptyMap())
-
-    /** A payload's [text] and its [rows], `null` when it is not a JSON array. */
-    private class ParsedPayload(val text: String, val rows: List<JsonElement>?) {
-
-        /** The key columns [keys] were read for, and each row's [keyOf] under them. */
-        @Volatile private var keyed: Pair<List<String>, List<List<String>?>>? = null
-
-        /** Each row's [keyOf] under [keyColumns], `null` for a row without one; read once. */
-        fun keysFor(keyColumns: List<String>): List<List<String>?> {
-            keyed?.let { (columns, keys) -> if (columns == keyColumns) return keys }
-            val keys =
-                rows.orEmpty().map { element ->
-                    (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
-                }
-            keyed = keyColumns to keys
-            return keys
-        }
-    }
-
-    /**
      * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
      * cannot apply). Wired by the client, like [liveCacheKeysOf]; silent when built directly.
      */
@@ -240,31 +161,6 @@ internal class OfflineStore(
      */
     internal var ownerlessMutationsAreAnonymous: Boolean = true
 
-    /**
-     * Per-table locks serializing every write to the object cache — [addPayload] and the
-     * read-modify-write overlays ([patchCachedQueries], [clearTable], [deleteTablePayload]).
-     *
-     * The overlay is not atomic on its own: it snapshots every cached payload for the table,
-     * patches each in memory, and writes each back **whole**. Two overlays interleaving on one
-     * table therefore lose a write — the second snapshots before the first has written, appends its
-     * own row, and writes the first's row back out. Nothing replays an online-success overlay (it
-     * never enters the mutation queue), so the lost row is simply gone from every reactive observer
-     * until some later network read of that signature. In practice, a batch job upserting several
-     * rows from four parallel workers left a screen on a blank loading placeholder for minutes
-     * after its row was already on the server.
-     *
-     * The same read-modify-write race exists between an overlay and a fresh network payload: the
-     * stale-response watermark refuses a response whose request *predates* the local write, but a
-     * response that started after it can still land between the overlay's snapshot and its write
-     * and be rolled back by it. Taking the lock in [addPayload] as well closes that side, and keeps
-     * the watermark check itself ordered after any overlay in progress.
-     *
-     * Per table rather than store-wide because the hazard is per table — the overlay reads
-     * `allForTable` — and one heavily cached table's overlay can be expensive (every cached
-     * signature of that table is parsed and re-serialized per write), so other tables' writes
-     * should not queue behind it. Keyed lazily; the map is guarded by its own mutex because it is
-     * touched from many coroutines and commonMain has no concurrent map.
-     */
     private val tableWriteLocks = TableWriteLocks()
 
     /** The mutation queue; see [MutationQueue]. */
@@ -288,6 +184,24 @@ internal class OfflineStore(
     internal val rejectedList: RejectedMutationList
         get() = mutationQueue.rejectedList
 
+    /** The cached queries' rows; see [QueryCache]. */
+    private val queryCache =
+        QueryCache(
+            queryCacheDao = this.queryCacheDao,
+            queryCacheLimits = queryCacheLimits,
+            json = json,
+            nowMillis = nowMillis,
+            freshness = freshness,
+            ownership = cacheOwnership,
+            mutationQueue = mutationQueue,
+            tableWriteLocks = tableWriteLocks,
+            allLiveCacheKeys = { allLiveCacheKeys() },
+        )
+
+    /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
+    internal val queryShapes: QueryShapeRecords
+        get() = queryCache.queryShapes
+
     /** The write lock for [table]; see [TableWriteLocks]. */
     private suspend fun tableWriteLock(table: String): Mutex = tableWriteLocks.of(table)
 
@@ -310,13 +224,6 @@ internal class OfflineStore(
         cacheOwnership.cacheOwnerClaimingFor(identity, claimsForUser)
 
     /**
-     * Rolling count of [addPayload] writes, used to run size enforcement only periodically instead
-     * of on every network SELECT. Atomic because writes can arrive concurrently from multiple
-     * coroutines/threads; exactness isn't required, only a monotonic cadence.
-     */
-    private val writeCounter = AtomicInt(0)
-
-    /**
      * Signatures of a table that currently have a live `selectAsFlow` collector. Wired by
      * [io.github.nesfeder.supabase.offline.OfflineClient] to the client-scoped
      * [io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries] so [patchCachedQueries]
@@ -335,26 +242,7 @@ internal class OfflineStore(
 
     /* ────────────────────────── Object cache (SELECT payloads) ────────────────────────── */
 
-    /**
-     * Writes a network SELECT's [payload] for [table]/[cacheKey], unless it must be refused:
-     * [CacheWriteOutcome.REFUSED_AFTER_CLEAR] when its request started before [clearLocalData],
-     * [CacheWriteOutcome.REFUSED_OTHER_OWNER] when the cache is not the current identity's or was
-     * dropped for it after the request started, [CacheWriteOutcome.REFUSED_STALE] when it started
-     * before the table's last local write (it would roll that write back), and
-     * [CacheWriteOutcome.REFUSED_EMPTY] for an empty payload that is not [authoritativeEmpty]. A
-     * payload written with a start tick is recorded as holding the synced mutations so far
-     * ([CachedQueryRow.syncedThrough]). Runs under the table's write lock.
-     *
-     * @param authoritativeEmpty Whether an empty [payload] is the server's real answer (the request
-     *   went out signed in), so it may replace cached rows or seed a cold slot.
-     * @param requestStartedAtTick [monotonicTickNow] read before the request went out, or `null`
-     *   for a writer with no request behind it, which is never refused as stale.
-     * @param isTrusted Whether the response speaks for the current identity at all; one that does
-     *   not is refused as [CacheWriteOutcome.REFUSED_UNTRUSTED], empty or not.
-     * @param shape the query's shape, recorded with a written payload before the table's lock is
-     *   released; `null` when not known.
-     * @return What happened, so a caller can re-fetch after a stale drop.
-     */
+    /** See [QueryCache.addPayload]. */
     suspend fun addPayload(
         table: String,
         cacheKey: String,
@@ -363,159 +251,42 @@ internal class OfflineStore(
         requestStartedAtTick: Long? = null,
         isTrusted: Boolean = true,
         shape: QueryShape? = null,
-    ): CacheWriteOutcome {
-        requireUserTable(table)
-        // Before the locks: telling the identity may read the stored session. A drop that lands
-        // between here and the write is caught by its tick below.
-        val ownedByCurrentIdentity = cacheTakesWritesOfCurrentIdentity()
-        // The guards and the write are one critical section under the table's write lock, so a
-        // response is judged against the watermark *after* any overlay in progress has recorded
-        // its write, and never lands between an overlay's snapshot and its write-back (where the
-        // overlay would roll it straight back out) — see [tableWriteLocks].
-        val outcome =
-            tableWriteLock(table).withLock {
-                mutationQueue.holdingQueueLock {
-                    freshness.holdingClearLock {
-                        when {
-                            // The cache was wiped for an identity change while this request was
-                            // in flight. Its rows belong to the outgoing account; writing them
-                            // here undoes the teardown.
-                            freshness.predatesQueueClear(requestStartedAtTick) ->
-                                CacheWriteOutcome.REFUSED_AFTER_CLEAR
+    ): CacheWriteOutcome =
+        queryCache.addPayload(
+            table = table,
+            cacheKey = cacheKey,
+            payload = payload,
+            authoritativeEmpty = authoritativeEmpty,
+            requestStartedAtTick = requestStartedAtTick,
+            isTrusted = isTrusted,
+            shape = shape,
+        )
 
-                            // The cache is another identity's, or became the current one's after
-                            // this request left: its rows would mix two identities' data.
-                            !ownedByCurrentIdentity ||
-                                freshness.predatesCacheClear(requestStartedAtTick) ->
-                                CacheWriteOutcome.REFUSED_OTHER_OWNER
-
-                            // The response left before the local write landed; keeping the cache
-                            // is the only answer that preserves it. The caller re-fetches to
-                            // converge on real server state.
-                            freshness.isStaleRelativeToLocalWrite(table, requestStartedAtTick) ->
-                                CacheWriteOutcome.REFUSED_STALE
-
-                            !isTrusted -> CacheWriteOutcome.REFUSED_UNTRUSTED
-
-                            // Nothing about this emptiness is known to describe the signed-in
-                            // user's data, so it is never written — not over cached rows, and not
-                            // into a cold or already-empty slot where it would become the answer
-                            // every later cache-first read is served.
-                            !authoritativeEmpty && isEmptyJsonArrayPayload(payload) ->
-                                CacheWriteOutcome.REFUSED_EMPTY
-
-                            else -> {
-                                // A response whose request started after the table's last local
-                                // write holds every mutation synced so far; a payload with no
-                                // request behind it holds none for certain
-                                queryCacheDao.upsert(
-                                    CachedQueryRow(
-                                        table = table,
-                                        cacheKey = cacheKey,
-                                        payload = payload,
-                                        updatedAt = nowMillis(),
-                                        syncedThrough =
-                                            if (requestStartedAtTick != null)
-                                                mutationQueue.latestSyncSequence()
-                                            else 0L,
-                                    )
-                                )
-                                // Before the lock is released, so no patch finds the payload
-                                // without the shape that says which rows it admits
-                                if (shape != null)
-                                    queryShapes.remember(table, cacheKey, shape, persist = true)
-                                CacheWriteOutcome.WRITTEN
-                            }
-                        }
-                    }
-                }
-            }
-
-        // Outside the table lock: eviction takes its own mutex and scans every table.
-        if (outcome == CacheWriteOutcome.WRITTEN && shouldEnforceSizeAfterWrite(payload)) {
-            evictOverBudget()
-        }
-        return outcome
-    }
-
-    /**
-     * Whether a size-enforcement pass should run after writing [payload].
-     *
-     * Enforcement is deliberately kept off the per-write hot path: measuring the cache (a
-     * `SUM(LENGTH(payload))` scan) on every network SELECT would tax the dominant write path for no
-     * benefit while the cache sits comfortably under its limit. Instead a pass is triggered only
-     * when it can matter:
-     *
-     * - the incoming [payload] is large (>= [ENFORCEMENT_LARGE_PAYLOAD_CHARS]), so a single
-     *   oversized write can't blow the budget before the periodic pass comes around; or
-     * - a rolling counter reaches [ENFORCEMENT_WRITE_INTERVAL], a cheap periodic backstop that
-     *   bounds accumulation from many small writes.
-     *
-     * Both checks are O(1); the expensive scan runs only when one fires. Returns `false`
-     * immediately when size-based eviction is disabled ([QueryCacheLimits.maxPayloadBytes] is
-     * `null`).
-     *
-     * @param payload the JSON payload just written to the cache.
-     * @return `true` when [evictOverBudget] should be invoked.
-     */
-    private fun shouldEnforceSizeAfterWrite(payload: String): Boolean {
-        if (queryCacheLimits.maxPayloadBytes == null) return false
-        val isLargePayload = payload.length >= ENFORCEMENT_LARGE_PAYLOAD_CHARS
-        // Always advance the counter so the cadence reflects the true write count; combine with
-        // the large-payload trigger afterwards so both side effects run regardless of order.
-        // fetchAndAdd returns the pre-increment value, so +1 yields the just-completed write's
-        // ordinal — enforcing on every ENFORCEMENT_WRITE_INTERVAL-th write.
-        val cadenceReached = (writeCounter.fetchAndAdd(1) + 1) % ENFORCEMENT_WRITE_INTERVAL == 0
-        return isLargePayload || cadenceReached
-    }
-
-    /**
-     * The payload cached for [table]/[cacheKey], or `null` when none is, or the cache is not the
-     * current identity's.
-     */
+    /** See [QueryCache.getPayload]. */
     suspend fun getPayload(table: String, cacheKey: String): String? =
-        getPayloadWithTimestamp(table, cacheKey)?.first
+        queryCache.getPayload(table, cacheKey)
 
-    /**
-     * The payload cached for [table]/[cacheKey] with the time it was written, or `null` when none
-     * is, or the cache is not the current identity's.
-     */
-    suspend fun getPayloadWithTimestamp(table: String, cacheKey: String): Pair<String, Long>? {
-        if (isReservedTable(table) || !cacheServesCurrentIdentity()) return null
-        val row = queryCacheDao.get(table, cacheKey) ?: return null
-        return row.payload to row.updatedAt
-    }
+    /** See [QueryCache.getPayloadWithTimestamp]. */
+    suspend fun getPayloadWithTimestamp(table: String, cacheKey: String): Pair<String, Long>? =
+        queryCache.getPayloadWithTimestamp(table, cacheKey)
 
-    fun observePayload(table: String, cacheKey: String): Flow<String?> {
-        if (isReservedTable(table)) return flowOf(null)
-        return queryCacheDao.observe(table, cacheKey).map { row -> row?.payload }
-    }
+    /** See [QueryCache.observePayload]. */
+    fun observePayload(table: String, cacheKey: String): Flow<String?> =
+        queryCache.observePayload(table, cacheKey)
 
+    /** See [QueryCache.deleteTablePayload]. */
     suspend fun deleteTablePayload(table: String, cacheKey: String) {
-        requireUserTable(table)
-        tableWriteLock(table).withLock {
-            queryCacheDao.delete(table, cacheKey)
-            queryShapes.forget(table, cacheKey)
-        }
+        queryCache.deleteTablePayload(table, cacheKey)
     }
 
-    /**
-     * Drop every cached SELECT payload for [table].
-     *
-     * Advances the table's stale-refresh watermark: an emptied table is local truth just as much as
-     * a patched row, so a refresh already in flight must not land on top of it. Unlike
-     * [clearLocalData] this is not identity teardown, so a follow-up re-fetch is the right
-     * recovery.
-     *
-     * @param table Table whose cached payloads are removed.
-     */
+    /** See [QueryCache.clearTable]. */
     suspend fun clearTable(table: String) {
-        requireUserTable(table)
-        tableWriteLock(table).withLock {
-            freshness.recordLocalMutation(table)
-            queryCacheDao.deleteTable(table)
-            queryShapes.forgetTable(table)
-        }
+        queryCache.clearTable(table)
+    }
+
+    /** See [QueryCache.evictOverBudget]. */
+    internal suspend fun evictOverBudget() {
+        queryCache.evictOverBudget()
     }
 
     /**
@@ -547,7 +318,7 @@ internal class OfflineStore(
                     mutationQueue.forgetRecordsOfClearedQueue()
                 }
                 queryShapes.forgetAll()
-                parsedPayloads.value = emptyMap()
+                queryCache.forgetParsedPayloads()
                 // Counted again once committed: a read between the delete and the commit saw the
                 // rows before it
                 queryCacheDao.countWriteToEveryTable()
@@ -580,7 +351,7 @@ internal class OfflineStore(
                     }
                 }
                 queryShapes.forgetAll()
-                parsedPayloads.value = emptyMap()
+                queryCache.forgetParsedPayloads()
                 // Counted again once committed, as in clearLocalData
                 queryCacheDao.countWriteToEveryTable()
             }
@@ -1154,7 +925,10 @@ internal class OfflineStore(
         val keyColumns = primaryKeys.of(table)
         val ownKeys by lazy {
             ownJson?.let { text ->
-                parsedTextOf(table, cacheKey, text).keysFor(keyColumns).filterNotNullTo(HashSet())
+                queryCache
+                    .parsedTextOf(table, cacheKey, text)
+                    .keysFor(keyColumns)
+                    .filterNotNullTo(HashSet())
             } ?: emptySet()
         }
         val bringing = mutations.filter { mutation ->
@@ -1177,7 +951,7 @@ internal class OfflineStore(
                 row.cacheKey != cacheKey && shapes[row.cacheKey]?.let(::projectionOf) == projection
             }
         if (sameSelect.isEmpty()) return emptyList()
-        val parsed = sameSelect.map { row -> row to parsedPayloadOf(row) }
+        val parsed = sameSelect.map { row -> row to queryCache.parsedPayloadOf(row) }
         return KnownRows(parsed, shapes, keyColumns, mayMatter)
             .targetFor(cacheKey, known, rows = emptyList())
             .sameSelectRows
@@ -1226,7 +1000,7 @@ internal class OfflineStore(
                 } ?: continue
             // The index is read with the payload writes it counted; this checks the row is there
             val row = queryCacheDao.get(table, holder.cacheKey) ?: return null
-            val payload = parsedPayloadOf(row)
+            val payload = queryCache.parsedPayloadOf(row)
             if (payload.keysFor(keyColumns).getOrNull(holder.position) != key) return null
             borrowed += payload.rows?.getOrNull(holder.position) as? JsonObject ?: return null
         }
@@ -1247,7 +1021,7 @@ internal class OfflineStore(
         val newestFirst =
             queryCacheDao
                 .allForTable(table)
-                .map { row -> row to parsedPayloadOf(row) }
+                .map { row -> row to queryCache.parsedPayloadOf(row) }
                 .sortedByDescending { (row, _) -> fetchedAtOf(row.updatedAt) }
         val holders = HashMap<List<String>, MutableList<KeyHolder>>()
         var indexed = 0
@@ -1604,7 +1378,7 @@ internal class OfflineStore(
             // Only a patch that may write claims an unowned cache for the current identity
             if (cached.isEmpty() && uncachedLive.isEmpty()) return@withLock
             if (!cacheTakesWritesOfCurrentIdentity()) return@withLock
-            val parsed = cached.map { row -> row to parsedPayloadOf(row) }
+            val parsed = cached.map { row -> row to queryCache.parsedPayloadOf(row) }
             val shapes = queryShapes.shapesOf(table)
             val keyColumns = primaryKeys.of(table)
             val batch = PatchWrites()
@@ -1889,27 +1663,6 @@ internal class OfflineStore(
         return reaching
     }
 
-    /**
-     * [row]'s rows, parsed once for each text the payload holds. What is kept is dropped whole when
-     * it would pass [PARSED_PAYLOAD_TEXT_KEPT] characters, and when the cache is emptied.
-     */
-    private fun parsedPayloadOf(row: CachedQueryRow): ParsedPayload =
-        parsedTextOf(row.table, row.cacheKey, row.payload)
-
-    /** [parsedPayloadOf] for [text], the rows the query cached under [cacheKey] shows. */
-    private fun parsedTextOf(table: String, cacheKey: String, text: String): ParsedPayload {
-        val key = table to cacheKey
-        parsedPayloads.value[key]?.let { kept -> if (kept.text == text) return kept }
-        val parsed = ParsedPayload(text, payloadRowsOf(json, text))
-        if (text.length <= PARSED_PAYLOAD_TEXT_KEPT) {
-            parsedPayloads.update { kept ->
-                val total = kept.values.sumOf { held -> held.text.length } + text.length
-                (if (total > PARSED_PAYLOAD_TEXT_KEPT) emptyMap() else kept) + (key to parsed)
-            }
-        }
-        return parsed
-    }
-
     /** An UPSERT's body rows; none when the body is not JSON. */
     private fun upsertRowsOf(mutation: MutationRow): List<JsonObject> =
         try {
@@ -2048,106 +1801,7 @@ internal class OfflineStore(
     private suspend fun writeUnlessCleared(guardTick: Long, row: CachedQueryRow): Boolean =
         freshness.writeUnlessCleared(guardTick) { queryCacheDao.upsert(row) }
 
-    /* ──────────────────────── Size-based eviction (DB) ──────────────────────── */
-
-    /**
-     * Evict the oldest cached SELECT payloads until the cache is back within
-     * [QueryCacheLimits.maxPayloadBytes].
-     *
-     * Size is measured **logically** via [QueryCacheDao.totalPayloadBytes] (summed payload length),
-     * never the on-disk database file size. SQLite returns pages freed by `DELETE` to its internal
-     * freelist rather than to the OS, so the file never shrinks after eviction; driving the loop
-     * off file size therefore empties the cache and then spins forever holding [evictionMutex].
-     * Summed payload length decreases as rows are deleted, so it terminates.
-     *
-     * Eviction is **triggered** once the cache exceeds [QueryCacheLimits.maxPayloadBytes] and then
-     * **drains** down to a hysteresis floor of `max - evictionHeadroomBytes` (coerced to the
-     * ceiling when [QueryCacheLimits.evictionHeadroomBytes] is non-positive or meets/exceeds the
-     * ceiling). Draining a little below the ceiling keeps a burst of writes that crosses the limit
-     * from re-triggering a pass on every subsequent write.
-     *
-     * Termination is guaranteed three independent ways:
-     * 1. the `currentBytes > evictionFloorBytes` loop condition (the floor is never above the
-     *    ceiling),
-     * 2. a progress guard that stops the instant a delete batch removes zero rows (the cache is
-     *    empty, or nothing more can be evicted), and
-     * 3. a hard [MAX_EVICTION_ITERATIONS] cap as a final belt-and-braces backstop.
-     *
-     * The loop holds [evictionMutex] via [withLock] so concurrent writers serialize rather than
-     * racing, and the lock is always released even on cancellation. Does nothing when size-based
-     * eviction is disabled ([QueryCacheLimits.maxPayloadBytes] is `null`).
-     *
-     * Reclaiming the on-disk pages freed by these deletes (`VACUUM`/`auto_vacuum`) is intentionally
-     * out of scope: cache correctness doesn't depend on returning bytes to the filesystem.
-     */
-    internal suspend fun evictOverBudget() {
-        val max = queryCacheLimits.maxPayloadBytes ?: return
-
-        // Cheap pre-check outside the lock: eviction triggers only once the cache exceeds the
-        // ceiling, so skip acquiring the mutex when already within budget (the common case even
-        // on the writes that reach enforcement).
-        if (queryCacheDao.totalPayloadBytes() <= max) return
-
-        // Once triggered, drain a little below the ceiling to this hysteresis floor so a burst of
-        // writes crossing the limit doesn't re-trigger a pass on every subsequent write. When
-        // evictionHeadroomBytes is non-positive or meets/exceeds the ceiling the headroom coerces
-        // to
-        // zero and the floor is the ceiling, keeping small-cache configs evicting fully.
-        val evictionFloorBytes =
-            if (queryCacheLimits.evictionHeadroomBytes in 1L until max)
-                max - queryCacheLimits.evictionHeadroomBytes
-            else max
-
-        evictionMutex.withLock {
-            var iterations = 0
-            var currentBytes = queryCacheDao.totalPayloadBytes()
-            while (currentBytes > evictionFloorBytes && iterations < MAX_EVICTION_ITERATIONS) {
-                // Coerce to at least one row so a misconfigured non-positive evictionBatchSize
-                // can't stall eviction — a zero-row batch trips the progress guard immediately
-                // and would otherwise leave the cache permanently over budget.
-                val deleted =
-                    queryCacheDao.deleteOldestPayloadRows(
-                        limit = queryCacheLimits.evictionBatchSize.coerceAtLeast(1),
-                        // A payload a live reader shows stays, or the reader would drop to no data
-                        keptCacheKeys = allLiveCacheKeys().take(MAX_KEPT_LIVE_CACHE_KEYS),
-                    )
-                // Progress guard: no rows removed means the cache can't shrink further, so stop
-                // instead of re-measuring the same over-limit size forever.
-                if (deleted == 0) break
-                iterations++
-                currentBytes = queryCacheDao.totalPayloadBytes()
-            }
-            if (iterations > 0) queryShapes.dropOrphans()
-        }
-    }
-
     private companion object {
-        /**
-         * Run size enforcement once every this many [addPayload] writes. A cheap periodic backstop
-         * that bounds cache growth from many small writes without measuring on every write.
-         */
-        const val ENFORCEMENT_WRITE_INTERVAL = 32
-
-        /**
-         * A single payload of at least this many characters triggers an immediate enforcement pass
-         * regardless of the write counter, so one oversized write can't overshoot the budget before
-         * the periodic pass runs.
-         */
-        const val ENFORCEMENT_LARGE_PAYLOAD_CHARS = 4 * 1024
-
-        /**
-         * Hard upper bound on eviction-loop iterations. The progress guard already terminates the
-         * loop on real input; this guarantees termination even against a degenerate store whose
-         * measured size never drops despite reported deletions.
-         */
-        const val MAX_EVICTION_ITERATIONS = 1_000
-
-        /** Live signatures eviction passes over at most, within SQLite's 999 bound variables. */
-        const val MAX_KEPT_LIVE_CACHE_KEYS = 500
-
-        /** The characters of payload text whose parsed rows are kept, about a megabyte of text. */
-        const val PARSED_PAYLOAD_TEXT_KEPT = 1_000_000
-
         /**
          * The most rows a table's key index reads, beyond which a read finds rows held elsewhere by
          * reading every payload instead.
