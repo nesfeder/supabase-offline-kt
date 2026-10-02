@@ -23,6 +23,7 @@ import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
@@ -74,7 +75,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
@@ -586,23 +586,22 @@ internal class OfflineClient(
             }
         }
         clientScope.launch {
-            // Both counts from one collector, published together and in order: an older count
-            // never lands after a newer one, and the pending count published beside a rejected
-            // list is read after it, so a write the replay refused is not still counted pending
-            combine(store.queueChanges(), store.shownRejectionsFlow()) { _, rejected ->
-                    rejected.size
-                }
+            // The two flows only say when to count; both counts are read in one snapshot under the
+            // queue's lock, so a write moving between the queue and the rejected list is counted
+            // once, and an older snapshot never lands after a newer one
+            merge(store.queueChanges(), store.shownRejectionsFlow().map {})
+                .conflate()
                 .catch { failure ->
                     engineLogger.warning {
                         "The sync status stopped following the queue (${failure::class.simpleName})"
                     }
                 }
-                .collect { rejected ->
-                    val pending = pendingCountOrNull() ?: return@collect
+                .collect {
+                    val counts = queueCountsOrNull() ?: return@collect
                     syncStatusState.update { status ->
                         status.copy(
-                            pendingMutationCount = pending,
-                            rejectedMutationCount = rejected,
+                            pendingMutationCount = counts.pending,
+                            rejectedMutationCount = counts.rejected,
                         )
                     }
                 }
@@ -610,17 +609,18 @@ internal class OfflineClient(
     }
 
     /**
-     * The current user's pending count, or `null` when counting fails; the status keeps its last
-     * counts then, and says so.
+     * The current user's pending and rejected counts, or `null` when counting fails; the status
+     * keeps its last counts then, and says so.
      */
-    private suspend fun pendingCountOrNull(): Int? =
+    private suspend fun queueCountsOrNull(): ShownQueueCounts? =
         try {
-            store.shownPendingMutationCount(null)
+            store.shownQueueCounts()
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
             engineLogger.warning {
-                "Could not count the pending mutations for the sync status (${failure::class.simpleName})"
+                "Could not count the queued and rejected mutations for the sync status " +
+                    "(${failure::class.simpleName})"
             }
             null
         }

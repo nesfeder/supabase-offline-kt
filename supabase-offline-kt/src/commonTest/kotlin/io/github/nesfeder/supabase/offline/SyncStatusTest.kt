@@ -17,8 +17,10 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -83,6 +85,45 @@ class SyncStatusTest {
     }
 
     @Test
+    fun a_write_moving_between_the_queue_and_the_rejected_list_is_counted_once() = runTest {
+        // Given — a write the server refuses for good every time it is sent, on the rejected list,
+        // and a collector recording every status it is handed
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val client = newTestOfflineClient(supabase = server.supabaseClient())
+        val status = client.syncStatus
+        client.from(TABLE).insert(row(1))
+        server.answer = { postgrestError(HttpStatusCode.UnprocessableEntity) }
+        var id = client.syncPendingMutations().rejected.single().id
+        val seen = mutableListOf<SyncStatus>()
+        val recorder = launch(Dispatchers.Default) { status.collect { value -> seen += value } }
+
+        // When — it is retried, and refused again on the pass the retry asks for, many times
+        repeat(RETRIES) {
+            val retried = id
+            client.retryRejectedMutation(retried)
+            id =
+                withContext(Dispatchers.Default) {
+                    withTimeout(10.seconds) {
+                        client
+                            .rejectedMutations()
+                            .first { entries ->
+                                entries.singleOrNull()?.id.let { it != null && it != retried }
+                            }
+                            .single()
+                            .id
+                    }
+                }
+        }
+        status.awaiting { it.rejectedMutationCount == 1 && it.pendingMutationCount == 0 }
+        recorder.cancelAndJoin()
+
+        // Then — every status counted the write in exactly one place, once it was counted at all
+        val counted = seen.map { value -> value.pendingMutationCount + value.rejectedMutationCount }
+        assertEquals(listOf(), counted.dropWhile { it == 0 }.filter { it != 1 }, "counts: $counted")
+        client.close()
+    }
+
+    @Test
     fun the_status_says_a_pass_is_running_while_one_is() = runTest {
         // Given — a write queued offline, and a server that holds its replay
         val held = CompletableDeferred<Unit>()
@@ -136,5 +177,6 @@ class SyncStatusTest {
 
     private companion object {
         const val TABLE = "notes"
+        const val RETRIES = 20
     }
 }

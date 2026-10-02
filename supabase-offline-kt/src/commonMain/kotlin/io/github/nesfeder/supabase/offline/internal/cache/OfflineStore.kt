@@ -1489,6 +1489,23 @@ internal class OfflineStore(
     }
 
     /**
+     * How many pending mutations and rejected entries the app is shown, read together under the
+     * queue's lock. A refusal and a retry move a mutation between the two under that lock, so it is
+     * in exactly one of them, never both and never neither.
+     */
+    suspend fun shownQueueCounts(): ShownQueueCounts {
+        val identity = identityProvider() ?: return ShownQueueCounts(pending = 0, rejected = 0)
+        val adopts = mayAdoptOwnerlessMutations(identity)
+        return mutationQueueMutex.withLock {
+            ShownQueueCounts(
+                pending = mutationDao.countPendingOwnedBy(identity, adopts),
+                rejected =
+                    shownTo(identity, rejectedList.rejections()) { entry -> entry.owner }.size,
+            )
+        }
+    }
+
+    /**
      * Emits once at once, and once for each committed change to any mutation row or a change of
      * session: when a count of the queue may have moved.
      */
