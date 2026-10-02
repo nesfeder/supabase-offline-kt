@@ -10,12 +10,12 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.update
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -114,7 +114,7 @@ internal class QueryCache(
      * an unchanged payload is not parsed again; see [parsedPayloadOf].
      */
     private val parsedPayloads =
-        MutableStateFlow<Map<Pair<String, String>, ParsedPayload>>(emptyMap())
+        AtomicReference<Map<Pair<String, String>, ParsedPayload>>(emptyMap())
 
     /** Writes since the last size check; see [shouldEnforceSizeAfterWrite]. */
     private val writeCounter = AtomicInt(0)
@@ -291,7 +291,7 @@ internal class QueryCache(
     /** [parsedPayloadOf] for [text], the rows the query cached under [cacheKey] shows. */
     fun parsedTextOf(table: String, cacheKey: String, text: String): ParsedPayload {
         val key = table to cacheKey
-        parsedPayloads.value[key]?.let { kept -> if (kept.text == text) return kept }
+        parsedPayloads.load()[key]?.let { kept -> if (kept.text == text) return kept }
         val parsed = ParsedPayload(text, payloadRowsOf(json, text))
         if (text.length <= PARSED_PAYLOAD_TEXT_KEPT) {
             parsedPayloads.update { kept ->
@@ -304,7 +304,7 @@ internal class QueryCache(
 
     /** Forgets every parsed payload, after the cache was emptied. */
     fun forgetParsedPayloads() {
-        parsedPayloads.value = emptyMap()
+        parsedPayloads.store(emptyMap())
     }
 
     /**

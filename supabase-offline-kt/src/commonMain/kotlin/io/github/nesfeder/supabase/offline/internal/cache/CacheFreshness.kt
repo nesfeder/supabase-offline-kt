@@ -1,12 +1,16 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import kotlin.concurrent.atomics.AtomicLong
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.update
 import kotlin.time.TimeSource
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -41,13 +45,13 @@ internal fun belongsOnPayload(mutation: MutationRow, payloadSyncedThrough: Long)
 internal class CacheFreshness(private val monotonicTick: () -> Long) {
 
     /** Table → tick of its most recent local write: a patch, a replay, an emptied table. */
-    private val lastLocalMutationTick = MutableStateFlow<Map<String, Long>>(emptyMap())
+    private val lastLocalMutationTick = AtomicReference<Map<String, Long>>(emptyMap())
 
     /** Tick of the most recent clear of local data, `0` until one ran. */
-    private val cacheClearedTick = MutableStateFlow(0L)
+    private val cacheClearedTick = AtomicLong(0L)
 
     /** Tick of the most recent time the cache was emptied: a clear, or a drop for a new owner. */
-    private val cacheDroppedTick = MutableStateFlow(0L)
+    private val cacheDroppedTick = AtomicLong(0L)
 
     /**
      * Makes a clear and every write that must not follow it one step each; see
@@ -77,20 +81,20 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
      */
     fun isStaleRelativeToLocalWrite(table: String, requestStartedAtTick: Long?): Boolean {
         if (requestStartedAtTick == null) return false
-        val watermark = lastLocalMutationTick.value[table] ?: return false
+        val watermark = lastLocalMutationTick.load()[table] ?: return false
         return requestStartedAtTick < watermark
     }
 
     /** Whether the cache was cleared or dropped after [requestStartedAtTick]; `null` never is. */
     fun predatesCacheClear(requestStartedAtTick: Long?): Boolean {
         if (requestStartedAtTick == null) return false
-        return requestStartedAtTick < cacheDroppedTick.value
+        return requestStartedAtTick < cacheDroppedTick.load()
     }
 
     /** Whether local data, the mutation queue with it, was cleared after [requestStartedAtTick]. */
     fun predatesQueueClear(requestStartedAtTick: Long?): Boolean {
         if (requestStartedAtTick == null) return false
-        return requestStartedAtTick < cacheClearedTick.value
+        return requestStartedAtTick < cacheClearedTick.load()
     }
 
     /**

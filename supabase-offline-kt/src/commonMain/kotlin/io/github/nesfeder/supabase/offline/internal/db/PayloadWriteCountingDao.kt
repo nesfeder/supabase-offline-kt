@@ -1,9 +1,12 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline.internal.db
 
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.update
 
 /**
  * Counts of committed changes to a kind of row: mutation rows, or cached payloads.
@@ -29,10 +32,10 @@ internal class PayloadWriteCountingDao(private val delegate: QueryCacheDao) :
     QueryCacheDao by delegate {
 
     /** The writes counted so far. */
-    private val writes = MutableStateFlow(ChangeCounts())
+    private val writes = AtomicReference(ChangeCounts())
 
     /** The writes counted against [table]: those that may reach every table, and those to it. */
-    fun writesTo(table: String): Pair<Long, Long> = writes.value.of(table)
+    fun writesTo(table: String): Pair<Long, Long> = writes.load().of(table)
 
     /** Counts a change to every table made outside this DAO's own writes, such as a commit. */
     fun countWriteToEveryTable() {

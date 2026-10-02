@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
@@ -18,6 +20,10 @@ import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.update
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -75,7 +81,7 @@ internal class MutationQueue(
      * ([MutationRow.sendUnconfirmed]). Read once, then kept in step with every change this store
      * makes to them; `null` until first read. See [unconfirmedSends].
      */
-    private val unconfirmedSendIds = MutableStateFlow<Set<Long>?>(null)
+    private val unconfirmedSendIds = AtomicReference<Set<Long>?>(null)
 
     /**
      * The queue lock: held by every change to the queue's rows and the records kept beside them, in
@@ -100,13 +106,13 @@ internal class MutationQueue(
             }
 
     /** Mutation ids whose overlay failure was already logged, so a failing one is logged once. */
-    private val loggedOverlaySkips = MutableStateFlow<Set<Long>>(emptySet())
+    private val loggedOverlaySkips = AtomicReference<Set<Long>>(emptySet())
 
     /**
      * Whether an unclassifiable dry-run status has been reported yet; see
      * [reportUnclassifiableWriteOnce].
      */
-    private val unclassifiableWriteReported = MutableStateFlow(false)
+    private val unclassifiableWriteReported = AtomicBoolean(false)
 
     /* ────────────────────────────── Mutation queue ────────────────────────────── */
 
@@ -288,10 +294,9 @@ internal class MutationQueue(
     }
 
     /**
-     * How many changes this store made to each table's mutation rows, each counted once committed.
-     * A reader of a table reads its mutations again only when its count moves; see
-     * [mutationsOfTableFlow]. Only one store is open on a database (see [OpenDatabaseRegistry]), so
-     * these are every change its rows see.
+     * How many changes this queue made to each table's mutation rows, each counted once committed:
+     * a flow, because readers collect it and read a table's rows again only when its count moves
+     * ([mutationsOfTableFlow], [queueChanges]). One queue per database ([OpenDatabaseRegistry]).
      */
     private val mutationChanges = MutableStateFlow(ChangeCounts())
 
@@ -331,7 +336,7 @@ internal class MutationQueue(
     /**
      * Each table's mutation rows as last read for its readers, with the counts they were read at.
      */
-    private val lastTableMutations = MutableStateFlow<Map<String, TableMutations>>(emptyMap())
+    private val lastTableMutations = AtomicReference<Map<String, TableMutations>>(emptyMap())
 
     /** Held while a table's mutation rows are read for its readers, so they share one read. */
     private val tableReadLocksMutex = Mutex()
@@ -344,7 +349,7 @@ internal class MutationQueue(
     private suspend fun tableMutationsAt(table: String, counts: Pair<Long, Long>): TableMutations {
         val lock = tableReadLocksMutex.withLock { tableReadLocks.getOrPut(table) { Mutex() } }
         return lock.withLock {
-            val last = lastTableMutations.value[table]
+            val last = lastTableMutations.load()[table]
             if (last != null && last.counts == counts) return@withLock last
             val read = TableMutations(counts, mutationDao.allForTable(table), json, last)
             lastTableMutations.update { reads -> reads + (table to read) }
@@ -762,7 +767,7 @@ internal class MutationQueue(
      * @return `true` the first time only; the caller then logs it at ERROR.
      */
     internal fun claimUnclassifiableWriteReport(): Boolean =
-        unclassifiableWriteReported.compareAndSet(expect = false, update = true)
+        unclassifiableWriteReported.compareAndSet(expectedValue = false, newValue = true)
 
     /**
      * Marks mutation [id] replayed with the next sync sequence, clearing its send record. In the
@@ -850,12 +855,12 @@ internal class MutationQueue(
      * always reaches it.
      */
     suspend fun unconfirmedSends(): Set<Long> {
-        unconfirmedSendIds.value?.let {
+        unconfirmedSendIds.load()?.let {
             return it
         }
         val loaded = mutationDao.unconfirmedSendIds().toSet()
         unconfirmedSendIds.compareAndSet(null, loaded)
-        return unconfirmedSendIds.value ?: loaded
+        return unconfirmedSendIds.load() ?: loaded
     }
 
     /**
@@ -939,7 +944,7 @@ internal class MutationQueue(
      */
     fun forgetRecordsOfClearedQueue() {
         rejectedList.resetCaches()
-        unconfirmedSendIds.value = emptySet()
+        unconfirmedSendIds.store(emptySet())
     }
 
     /**
@@ -947,8 +952,8 @@ internal class MutationQueue(
      * then tells every table's readers. Caller holds the queue lock.
      */
     fun forgetReadsOfClearedQueue() {
-        loggedOverlaySkips.value = emptySet()
-        lastTableMutations.value = emptyMap()
+        loggedOverlaySkips.store(emptySet())
+        lastTableMutations.store(emptyMap())
         noteEveryTableChanged()
     }
 

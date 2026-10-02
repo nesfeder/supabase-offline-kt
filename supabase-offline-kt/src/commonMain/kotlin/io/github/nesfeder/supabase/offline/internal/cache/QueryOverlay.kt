@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
@@ -17,14 +19,15 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.equalityDecidedByContent
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.update
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -453,7 +456,7 @@ internal class QueryOverlay(
      */
     private suspend fun tableKeyIndexOf(table: String, keyColumns: List<String>): TableKeyIndex? {
         val writes = queryCacheDao.writesTo(table)
-        tableKeyIndexes.value[table]?.let { index ->
+        tableKeyIndexes.load()[table]?.let { index ->
             if (index.writes == writes && index.keyColumns == keyColumns) return index
         }
         // Most recently fetched first, as KnownRows orders the copies of one row
@@ -500,7 +503,7 @@ internal class QueryOverlay(
     private class KeyHolder(val cacheKey: String, val position: Int)
 
     /** Each table's [TableKeyIndex], as last read. */
-    private val tableKeyIndexes = MutableStateFlow<Map<String, TableKeyIndex>>(emptyMap())
+    private val tableKeyIndexes = AtomicReference<Map<String, TableKeyIndex>>(emptyMap())
 
     /**
      * Whether [mutation] may bring a row another query holds into a query of [shape]: an UPSERT of
@@ -684,7 +687,7 @@ internal class QueryOverlay(
 
     /** Forgets every table's key index, after the cache was emptied. */
     fun forgetKeyIndexes() {
-        tableKeyIndexes.value = emptyMap()
+        tableKeyIndexes.store(emptyMap())
     }
 
     private companion object {
