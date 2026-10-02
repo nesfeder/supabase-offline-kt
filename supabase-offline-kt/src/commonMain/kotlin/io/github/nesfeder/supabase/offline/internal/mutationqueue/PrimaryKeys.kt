@@ -11,8 +11,8 @@ import kotlinx.serialization.json.JsonPrimitive
 /**
  * The primary-key column(s) of each table, as far as the engine knows them.
  *
- * This is the one place the engine asks. Today every table's key is [DEFAULT_PRIMARY_KEY]; a
- * per-table configuration can replace [DefaultPrimaryKeys] without touching any caller.
+ * This is the one place the engine asks: the key `Offline.Config.primaryKeys` names for a table,
+ * and [DEFAULT_PRIMARY_KEY] for every other.
  */
 internal fun interface PrimaryKeys {
 

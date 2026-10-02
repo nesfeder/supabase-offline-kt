@@ -20,10 +20,12 @@ public sealed interface MutationStrategy {
      * The write is sent at once when nothing of the same user is pending ahead of it, in any table;
      * the result is [MutationOutcome.Applied] with the server's response. Otherwise it waits and
      * the result is [MutationOutcome.Queued]: no connection or no answer, a `503` or `520` after
-     * which it may not have run, earlier writes still pending, or a session still restoring. It is
-     * then sent by a later pass, and a refusal is kept on the rejected list instead of being
-     * thrown. A write sent at once that the server refuses, or fails with another `5xx`, is thrown
-     * and does not stay queued. Cached reads show a queued write at once.
+     * which it may not have run, an expired token that could not be refreshed, PostgREST's schema
+     * cache not knowing the table or a column yet (`PGRST204`, `PGRST205`, up to the tenth such
+     * refusal), earlier writes still pending, or a session still restoring. It is then sent by a
+     * later pass, and a refusal is kept on the rejected list instead of being thrown. A write sent
+     * at once that the server refuses otherwise, or fails with another `5xx`, is thrown and does
+     * not stay queued. Cached reads show a queued write at once.
      *
      * Some writes cannot be queued faithfully and are sent at once instead, as with [OnlineOnly]: a
      * `dryRun()` write or one whose request could not be inspected to tell whether it is one, an
