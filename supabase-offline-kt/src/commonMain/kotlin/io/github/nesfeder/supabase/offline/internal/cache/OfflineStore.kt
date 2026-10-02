@@ -1,7 +1,5 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:OptIn(ExperimentalTime::class, ExperimentalAtomicApi::class)
-
 package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.EngineJson
@@ -21,96 +19,64 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejectio
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.storage.cachedFileKeyOf
+import io.github.nesfeder.supabase.offline.internal.storage.cachedFileRowOf
 import kotlin.time.Clock
-import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import okio.Path
 
 /**
- * Central persistence for offline features:
+ * The store as one object over the components it was split into: a facade, retired in C3b, that
+ * keeps every member the engine and its tests call, each delegating in one line. The components are
+ * [CacheFreshness], [CacheOwnership], [MutationQueue], [QueryCache], [QueryOverlay], [CachePatcher]
+ * and [LocalData], whose KDoc states the lock order.
  *
- * - PostgREST object cache (SELECT payloads) via [QueryCacheDao]
- * - Storage metadata (downloaded files) via [CachedFileDao]
- * - Mutation queue (insert/upsert/update/delete) via [MutationDao]
+ * Its wiring stays assignable `var`s for the client and the tests: each component takes, as a
+ * constructor parameter, a function that reads the current value when it is used, so a value may be
+ * assigned before or after the first call, as before.
  */
 internal class OfflineStore(
     queryCacheDao: QueryCacheDao,
-    private val cachedFileDao: CachedFileDao,
-    private val mutationDao: MutationDao,
-    private val queryCacheLimits: QueryCacheLimits,
-    private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
-    /**
-     * The single tick source behind the stale-refresh watermark — read both when a local write
-     * advances a table's watermark and when a network SELECT records the moment its request went
-     * out. Both stamps **must** come from here so they are comparable; see [monotonicTickSource]
-     * for why this is monotonic rather than wall-clock. Injectable so tests can drive interleavings
-     * deterministically.
-     */
-    private val monotonicTick: () -> Long = monotonicTickSource(),
+    /** The cached files' rows; read by [StorageFileCache]'s facade constructor. */
+    internal val cachedFileDao: CachedFileDao,
+    mutationDao: MutationDao,
+    queryCacheLimits: QueryCacheLimits,
+    /** The clock rows are stamped with; a cached file's fetch time too. */
+    internal val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    /** The one tick source of the watermarks and of request starts; see [CacheFreshness]. */
+    monotonicTick: () -> Long = monotonicTickSource(),
 ) {
 
+    /** The engine's [Json]. */
     internal val json: Json = EngineJson
 
-    /** The watermarks and the clear lock; see [CacheFreshness]. */
-    private val freshness = CacheFreshness(monotonicTick)
-
-    /** The object cache, every write to it counted; see [tableKeyIndexOf]. */
-    private val queryCacheDao = PayloadWriteCountingDao(queryCacheDao)
-
-    /** Whose the caches are, and whether the current identity may use them. */
-    private val cacheOwnership =
-        CacheOwnership(
-            queryCacheDao = this.queryCacheDao,
-            cachedFileDao = cachedFileDao,
-            json = json,
-            isCacheOwnedPerIdentity = { isCacheOwnedPerIdentity },
-            identityProvider = { identityProvider() },
-            onCacheNotServed = { onCacheNotServed() },
-        )
-
-    /**
-     * The identity the query cache and the Storage file cache belong to; see [CacheOwnerRecord].
-     */
-    internal val cacheOwner: CacheOwnerRecord
-        get() = cacheOwnership.record
+    /* ─────────────────────────────── Wiring ─────────────────────────────── */
 
     /**
      * Whether the cache belongs to one identity at a time, checked on every read and write: `true`
-     * with the Auth plugin. Without it there is one identity, which owns the cache for good. Wired
-     * by the client.
+     * with the Auth plugin. Wired by the client.
      */
     internal var isCacheOwnedPerIdentity: Boolean = false
 
-    /**
-     * Told when the cache was not served to, or written for, the current identity. Wired by the
-     * client.
-     */
+    /** Told when the cache was not served to, or written for, the current identity. */
     internal var onCacheNotServed: () -> Unit = {}
 
-    /**
-     * Told of the cached queries of a table a write marked stale, and of live ones it may have
-     * changed without a payload, so their live readers fetch again. Wired by the client.
-     */
+    /** Told of the cached queries a write marked stale, so their live readers fetch again. */
     internal var onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit = { _, _ -> }
 
-    /**
-     * Logger for conditions the store recovers from on its own (an overlay that skips a mutation it
-     * cannot apply). Wired by the client, like [liveCacheKeysOf]; silent when built directly.
-     */
+    /** Where conditions the store recovers from are logged; silent when built directly. */
     internal var engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO)
 
     /**
      * The identity whose queued writes the overlay shows and the counts count — its stored value —
-     * or `null` for no filtering (a store driven directly, with no session model). Wired by the
-     * client.
+     * or `null` for no filtering (a store driven directly, with no session model).
      */
     internal var identityProvider: suspend () -> String? = { null }
 
@@ -119,43 +85,69 @@ internal class OfflineStore(
      */
     internal var identityChanges: Flow<Any?> = flowOf(Unit)
 
-    /** Where the store learns each table's primary key, for de-duplicating overlaid rows. */
+    /** Each table's primary key, for de-duplicating overlaid rows and telling a keyed INSERT. */
     internal var primaryKeys: PrimaryKeys = DefaultPrimaryKeys
 
     /**
-     * Whether mutations an earlier build queued without an owner belong to the anonymous identity:
-     * `true` when the client has no Auth plugin, so there is no other identity. Wired by the
-     * client.
+     * Whether mutations queued without an owner belong to the anonymous identity: `true` when the
+     * client has no Auth plugin, so there is no other identity.
      */
     internal var ownerlessMutationsAreAnonymous: Boolean = true
 
+    /**
+     * A table's queries with a live reader, which a patch gives a payload and retirement waits for;
+     * none when built directly.
+     */
+    internal var liveCacheKeysOf: (table: String) -> Set<String> = { _ -> emptySet() }
+
+    /** The queries of every table with a live reader, which eviction keeps. */
+    internal var allLiveCacheKeys: () -> Set<String> = { emptySet() }
+
+    /* ───────────────────────────── Components ───────────────────────────── */
+
+    /** The object cache, every write to it counted. */
+    private val countingQueryCacheDao = PayloadWriteCountingDao(queryCacheDao)
+
+    /** The table identities read through the wiring above, at call time. */
+    private val currentPrimaryKeys = PrimaryKeys { table -> primaryKeys.of(table) }
+
+    /** [identityChanges] as assigned when a flow is collected. */
+    private val currentIdentityChanges: Flow<Any?> = flow { emitAll(identityChanges) }
+
+    private val freshness = CacheFreshness(monotonicTick)
+
+    /** Whose the caches are; read by [StorageFileCache]'s facade constructor. */
+    internal val cacheOwnership =
+        CacheOwnership(
+            queryCacheDao = countingQueryCacheDao,
+            cachedFileDao = cachedFileDao,
+            json = json,
+            isCacheOwnedPerIdentity = { isCacheOwnedPerIdentity },
+            identityProvider = { identityProvider() },
+            onCacheNotServed = { onCacheNotServed() },
+        )
+
     private val tableWriteLocks = TableWriteLocks()
 
-    /** The mutation queue; see [MutationQueue]. */
     private val mutationQueue =
         MutationQueue(
             mutationDao = mutationDao,
-            queryCacheDao = this.queryCacheDao,
+            queryCacheDao = countingQueryCacheDao,
             json = json,
             nowMillis = nowMillis,
             freshness = freshness,
             tableWriteLocks = tableWriteLocks,
-            primaryKeys = PrimaryKeys { table -> primaryKeys.of(table) },
+            primaryKeys = currentPrimaryKeys,
             identityProvider = { identityProvider() },
-            identityChanges = flow { emitAll(identityChanges) },
+            identityChanges = currentIdentityChanges,
             ownerlessMutationsAreAnonymous = { ownerlessMutationsAreAnonymous },
             liveCacheKeysOf = { table -> liveCacheKeysOf(table) },
             engineLogger = { engineLogger },
         )
 
-    /** The mutation queue's record kept beside the rows: the rejected list. */
-    internal val rejectedList: RejectedMutationList
-        get() = mutationQueue.rejectedList
-
-    /** The cached queries' rows; see [QueryCache]. */
     private val queryCache =
         QueryCache(
-            queryCacheDao = this.queryCacheDao,
+            queryCacheDao = countingQueryCacheDao,
             queryCacheLimits = queryCacheLimits,
             json = json,
             nowMillis = nowMillis,
@@ -166,43 +158,36 @@ internal class OfflineStore(
             allLiveCacheKeys = { allLiveCacheKeys() },
         )
 
-    /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
-    internal val queryShapes: QueryShapeRecords
-        get() = queryCache.queryShapes
-
-    /** The overlaid reads; see [QueryOverlay]. */
     private val queryOverlay =
         QueryOverlay(
-            queryCacheDao = this.queryCacheDao,
+            queryCacheDao = countingQueryCacheDao,
             json = json,
             queryCache = queryCache,
             mutationQueue = mutationQueue,
             ownership = cacheOwnership,
-            primaryKeys = PrimaryKeys { table -> primaryKeys.of(table) },
+            primaryKeys = currentPrimaryKeys,
             identityProvider = { identityProvider() },
-            identityChanges = flow { emitAll(identityChanges) },
+            identityChanges = currentIdentityChanges,
             engineLogger = { engineLogger },
         )
 
-    /** The online-write patch of cached queries; see [CachePatcher]. */
     private val cachePatcher =
         CachePatcher(
-            queryCacheDao = this.queryCacheDao,
+            queryCacheDao = countingQueryCacheDao,
             json = json,
             nowMillis = nowMillis,
             freshness = freshness,
             ownership = cacheOwnership,
             queryCache = queryCache,
             queryOverlay = queryOverlay,
-            primaryKeys = PrimaryKeys { table -> primaryKeys.of(table) },
+            primaryKeys = currentPrimaryKeys,
             liveCacheKeysOf = { table -> liveCacheKeysOf(table) },
             onQueriesMarkedStale = { table, cacheKeys -> onQueriesMarkedStale(table, cacheKeys) },
         )
 
-    /** Clearing and dropping local data, in the one lock order; see [LocalData]. */
     private val localData =
         LocalData(
-            queryCacheDao = this.queryCacheDao,
+            queryCacheDao = countingQueryCacheDao,
             cachedFileDao = cachedFileDao,
             mutationDao = mutationDao,
             freshness = freshness,
@@ -212,45 +197,34 @@ internal class OfflineStore(
             queryOverlay = queryOverlay,
         )
 
-    /** The write lock for [table]; see [TableWriteLocks]. */
-    private suspend fun tableWriteLock(table: String): Mutex = tableWriteLocks.of(table)
+    /* ────────────────────────── Freshness and ownership ────────────────────────── */
 
-    /** Reads the tick source; see [CacheFreshness.tickNow]. */
+    /** See [CacheFreshness.tickNow]. */
     internal fun monotonicTickNow(): Long = freshness.tickNow()
 
     /** See [CacheFreshness.wasClearedSince]. */
     internal fun wasClearedSince(tick: Long): Boolean = freshness.wasClearedSince(tick)
 
+    /** The identity the caches belong to; see [CacheOwnerRecord]. */
+    // test-only: moves in C3b
+    internal val cacheOwner: CacheOwnerRecord
+        get() = cacheOwnership.record
+
     /** See [CacheOwnership.cacheServesCurrentIdentity]. */
+    // test-only: moves in C3b
     internal suspend fun cacheServesCurrentIdentity(): Boolean =
         cacheOwnership.cacheServesCurrentIdentity()
-
-    /** See [CacheOwnership.cacheTakesWritesOfCurrentIdentity]. */
-    internal suspend fun cacheTakesWritesOfCurrentIdentity(): Boolean =
-        cacheOwnership.cacheTakesWritesOfCurrentIdentity()
 
     /** See [CacheOwnership.cacheOwnerClaimingFor]. */
     internal suspend fun cacheOwnerClaimingFor(identity: String, claimsForUser: Boolean): String? =
         cacheOwnership.cacheOwnerClaimingFor(identity, claimsForUser)
 
-    /**
-     * Signatures of a table that currently have a live `selectAsFlow` collector. Wired by
-     * [io.github.nesfeder.supabase.offline.OfflineClient] to the client-scoped
-     * [io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries] so [patchCachedQueries]
-     * can materialize a server-successful mutation into a real cache row for a cache-less-but-
-     * observed signature (the "save then stale UI" fix), and self-GC when nothing observes the
-     * table. Defaults to reporting no live signatures so direct construction in tests keeps the
-     * conservative "only patch existing rows" behavior unless a set is passed explicitly.
-     */
-    internal var liveCacheKeysOf: (table: String) -> Set<String> = { _ -> emptySet() }
-
-    /**
-     * Signatures of every table with a live reader, which eviction keeps; wired like
-     * [liveCacheKeysOf].
-     */
-    internal var allLiveCacheKeys: () -> Set<String> = { emptySet() }
-
     /* ────────────────────────── Object cache (SELECT payloads) ────────────────────────── */
+
+    /** See [QueryCache.queryShapes]. */
+    // test-only: moves in C3b
+    internal val queryShapes: QueryShapeRecords
+        get() = queryCache.queryShapes
 
     /** See [QueryCache.addPayload]. */
     suspend fun addPayload(
@@ -273,6 +247,7 @@ internal class OfflineStore(
         )
 
     /** See [QueryCache.getPayload]. */
+    // test-only: moves in C3b
     suspend fun getPayload(table: String, cacheKey: String): String? =
         queryCache.getPayload(table, cacheKey)
 
@@ -281,23 +256,29 @@ internal class OfflineStore(
         queryCache.getPayloadWithTimestamp(table, cacheKey)
 
     /** See [QueryCache.observePayload]. */
+    // test-only: moves in C3b
     fun observePayload(table: String, cacheKey: String): Flow<String?> =
         queryCache.observePayload(table, cacheKey)
 
     /** See [QueryCache.deleteTablePayload]. */
+    // test-only: moves in C3b
     suspend fun deleteTablePayload(table: String, cacheKey: String) {
         queryCache.deleteTablePayload(table, cacheKey)
     }
 
     /** See [QueryCache.clearTable]. */
+    // test-only: moves in C3b
     suspend fun clearTable(table: String) {
         queryCache.clearTable(table)
     }
 
     /** See [QueryCache.evictOverBudget]. */
+    // test-only: moves in C3b
     internal suspend fun evictOverBudget() {
         queryCache.evictOverBudget()
     }
+
+    /* ────────────────────────────── Local data ────────────────────────────── */
 
     /** See [LocalData.clearLocalData]. */
     suspend fun clearLocalData(owner: String? = null) {
@@ -311,6 +292,8 @@ internal class OfflineStore(
 
     /* ───────────────────────────── Storage metadata ───────────────────────────── */
 
+    /** Records [file] as the cached copy of [path] in [bucketId], fetched now. */
+    // test-only: moves in C3b
     suspend fun addStorage(
         bucketId: String,
         path: String,
@@ -318,76 +301,43 @@ internal class OfflineStore(
         size: Long?,
         eTag: String?,
     ) {
-        val row =
-            CachedFileRow(
-                key = storageKey(bucketId, path),
-                bucketId = bucketId,
-                path = path,
-                localPath = file.toString(),
-                sizeBytes = size,
-                eTag = eTag,
-                lastFetchedEpochMs = nowMillis(),
-            )
-        cachedFileDao.upsert(row)
+        cachedFileDao.upsert(cachedFileRowOf(bucketId, path, file, size, eTag, nowMillis()))
     }
 
+    /** The cached file row of [path] in [bucketId], or `null`. */
+    // test-only: moves in C3b
     suspend fun getStorageByKey(
         bucketId: String,
         path: String,
     ): CachedFileRow? {
-        return cachedFileDao.getByKey(storageKey(bucketId, path))
+        return cachedFileDao.getByKey(cachedFileKeyOf(bucketId, path))
     }
 
+    /** Deletes the cached file row of [path] in [bucketId]. */
+    // test-only: moves in C3b
     suspend fun deleteStorageByKey(
         bucketId: String,
         path: String,
     ) {
-        cachedFileDao.delete(storageKey(bucketId, path))
+        cachedFileDao.delete(cachedFileKeyOf(bucketId, path))
     }
 
-    private fun storageKey(bucketId: String, path: String) = "$bucketId::$path"
-
-    /**
-     * The storage rows of one object: its own and those of its image-transform variants.
-     *
-     * @param bucketId the bucket.
-     * @param path the object path.
-     * @param variantPrefix [path] followed by the variant separator.
-     * @return the rows.
-     */
-    suspend fun cachedFileRowsForObject(
-        bucketId: String,
-        path: String,
-        variantPrefix: String,
-    ): List<CachedFileRow> = cachedFileDao.forObject(bucketId, path, variantPrefix)
-
     /** Every storage row. */
+    // test-only: moves in C3b
     suspend fun allCachedFileRows(): List<CachedFileRow> = cachedFileDao.all()
 
     /** The summed recorded size of every cached file, in bytes. */
+    // test-only: moves in C3b
     suspend fun totalStorageSizeBytes(): Long = cachedFileDao.totalSizeBytes()
-
-    /**
-     * Writes [row] back as it was, replacing whatever row has its key.
-     *
-     * @param row the row to restore.
-     */
-    suspend fun restoreCachedFileRow(row: CachedFileRow) {
-        cachedFileDao.upsert(row)
-    }
-
-    /**
-     * Deletes the storage row with [key].
-     *
-     * @param key the row's key, `"$bucket::$path"`.
-     */
-    suspend fun deleteCachedFileRow(key: String) {
-        cachedFileDao.delete(key)
-    }
 
     /* ────────────────────────────── Mutation queue ────────────────────────────── */
 
+    /** See [MutationQueue.rejectedList]. */
+    internal val rejectedList: RejectedMutationList
+        get() = mutationQueue.rejectedList
+
     /** See [MutationQueue.enqueueInsert]. */
+    // test-only: moves in C3b
     suspend fun enqueueInsert(
         table: String,
         body: JsonArray,
@@ -396,6 +346,7 @@ internal class OfflineStore(
     ): Long = mutationQueue.enqueueInsert(table, body, filter, defaultToNull)
 
     /** See [MutationQueue.enqueueUpsert]. */
+    // test-only: moves in C3b
     suspend fun enqueueUpsert(
         table: String,
         bodyJson: JsonArray,
@@ -414,6 +365,7 @@ internal class OfflineStore(
         )
 
     /** See [MutationQueue.enqueueUpdate]. */
+    // test-only: moves in C3b
     suspend fun enqueueUpdate(
         table: String,
         body: JsonElement,
@@ -421,6 +373,7 @@ internal class OfflineStore(
     ): Long = mutationQueue.enqueueUpdate(table, body, filter)
 
     /** See [MutationQueue.enqueueDelete]. */
+    // test-only: moves in C3b
     suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): Long =
         mutationQueue.enqueueDelete(table, filter)
 
@@ -483,6 +436,7 @@ internal class OfflineStore(
         mutationQueue.retryRejectedMutation(id, identity)
 
     /** See [MutationQueue.dismissRejectedMutation]. */
+    // test-only: moves in C3b
     suspend fun dismissRejectedMutation(id: Long): Boolean =
         mutationQueue.dismissRejectedMutation(id)
 
@@ -495,20 +449,25 @@ internal class OfflineStore(
     suspend fun allPendingMutations(): List<MutationRow> = mutationQueue.allPendingMutations()
 
     /** See [MutationQueue.pendingMutationsFlow]. */
+    // test-only: moves in C3b
     fun pendingMutationsFlow(table: String?): Flow<List<MutationRow>> =
         mutationQueue.pendingMutationsFlow(table)
 
     /** See [MutationQueue.pendingMutationCount]. */
+    // test-only: moves in C3b
     suspend fun pendingMutationCount(): Int = mutationQueue.pendingMutationCount()
 
     /** See [MutationQueue.pendingMutationCountFlow]. */
+    // test-only: moves in C3b
     fun pendingMutationCountFlow(): Flow<Int> = mutationQueue.pendingMutationCountFlow()
 
     /** See [MutationQueue.pendingMutationCountForTable]. */
+    // test-only: moves in C3b
     suspend fun pendingMutationCountForTable(table: String): Int =
         mutationQueue.pendingMutationCountForTable(table)
 
     /** See [MutationQueue.pendingMutationCountForTableFlow]. */
+    // test-only: moves in C3b
     fun pendingMutationCountForTableFlow(table: String): Flow<Int> =
         mutationQueue.pendingMutationCountForTableFlow(table)
 
@@ -564,6 +523,7 @@ internal class OfflineStore(
     suspend fun hasUnconfirmedSend(id: Long): Boolean = mutationQueue.hasUnconfirmedSend(id)
 
     /** See [MutationQueue.unconfirmedSends]. */
+    // test-only: moves in C3b
     suspend fun unconfirmedSends(): Set<Long> = mutationQueue.unconfirmedSends()
 
     /** See [MutationQueue.retireCoveredSyncedMutations]. */
@@ -579,6 +539,7 @@ internal class OfflineStore(
     /* ────────────────── Overlay pending mutations onto SELECT JSON ────────────────── */
 
     /** See [QueryOverlay.overlayPendingOnResponse]. */
+    // test-only: moves in C3b
     suspend fun overlayPendingOnResponse(
         table: String,
         cacheKey: String,
@@ -596,6 +557,7 @@ internal class OfflineStore(
         queryOverlay.overlayPendingOnResponseReporting(table, cacheKey, serverJson, shape)
 
     /** See [QueryOverlay.overlayCachedPayload]. */
+    // test-only: moves in C3b
     suspend fun overlayCachedPayload(
         table: String,
         cacheKey: String?,
@@ -613,10 +575,12 @@ internal class OfflineStore(
         queryOverlay.overlayCachedPayloadReporting(table, cacheKey, cachedJson, shape)
 
     /** See [QueryOverlay.overlayCachedPayload]. */
+    // test-only: moves in C3b
     suspend fun overlayCachedPayload(table: String, cachedJson: String): String =
         queryOverlay.overlayCachedPayload(table, cachedJson)
 
     /** See [QueryOverlay.overlaidPayloadFlow]. */
+    // test-only: moves in C3b
     fun overlaidPayloadFlow(
         table: String,
         cacheKey: String,
