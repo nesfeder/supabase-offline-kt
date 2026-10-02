@@ -4,7 +4,7 @@
 
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.LocalData
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
@@ -139,9 +139,9 @@ internal data class StoredRejectionList(
  * [RESERVED_TABLE_NAME]): one bounded value read and written whole, rarely. It is cached in memory
  * after the first read.
  *
- * Callers hold the store's mutation-queue lock, and build the row here before opening a
- * transaction, so no transaction waits on a coroutine lock. An unreadable row is kept aside,
- * logged, and started afresh.
+ * Callers hold the queue lock ([MutationQueue.holdingQueueLock]), and build the row here before
+ * opening a transaction, so no transaction waits on a coroutine lock. An unreadable row is kept
+ * aside, logged, and started afresh.
  */
 internal class RejectedMutationList(
     private val queryCacheDao: QueryCacheDao,
@@ -179,7 +179,7 @@ internal class RejectedMutationList(
      */
     suspend fun droppedCount(): Long = rejectedList().droppedCount
 
-    /** Resets [droppedCount] to zero. Caller holds the store's mutation-queue lock. */
+    /** Resets [droppedCount] to zero. Caller holds the queue lock. */
     suspend fun resetDroppedCount() {
         val current = rejectedList()
         writeRejected(current.copy(droppedCount = 0))
@@ -190,6 +190,7 @@ internal class RejectedMutationList(
      *
      * @param entry The rejection.
      */
+    // test-only: moves in C3b
     suspend fun addRejection(entry: StoredRejection) {
         val (row, list) = rejectedRowWith(add = entry)
         queryCacheDao.upsert(row)
@@ -270,7 +271,7 @@ internal class RejectedMutationList(
     }
 
     /**
-     * Records that every row is gone and the queue empty; called once [OfflineStore.clearLocalData]
+     * Records that every row is gone and the queue empty; called once [LocalData.clearLocalData]
      * has deleted them. The records then read empty without a row, so no reader writes one back.
      */
     fun resetCaches() {

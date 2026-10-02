@@ -51,3 +51,14 @@ internal const val QUERY_SHAPE_CACHE_KEY_PREFIX_LENGTH: Int = 12
  * @return `true` only for [RESERVED_TABLE_NAME].
  */
 internal fun isReservedTable(table: String): Boolean = table == RESERVED_TABLE_NAME
+
+/**
+ * Refuses the engine's reserved state table as the target of a cache write or a queued write, so no
+ * user-facing path can touch the reserved rows.
+ *
+ * @return [table], when it is an app table.
+ */
+internal fun requireUserTable(table: String): String {
+    require(!isReservedTable(table)) { "The table name is reserved by the offline engine" }
+    return table
+}

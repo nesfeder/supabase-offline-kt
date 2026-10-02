@@ -5,7 +5,9 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.CachedFile
+import io.github.nesfeder.supabase.offline.internal.cache.CacheOwnership
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.ktor.utils.io.ByteWriteChannel
@@ -120,17 +122,48 @@ internal enum class CommitOutcome {
     FAILED,
 }
 
+/** The key of the cached file row of [path] in [bucketId]: the persisted `"$bucket::$path"`. */
+internal fun cachedFileKeyOf(bucketId: String, path: String): String = "$bucketId::$path"
+
+/**
+ * The cached file row recording [file] as the copy of [path] in [bucketId], fetched at
+ * [fetchedAtMillis].
+ */
+internal fun cachedFileRowOf(
+    bucketId: String,
+    path: String,
+    file: Path,
+    size: Long?,
+    eTag: String?,
+    fetchedAtMillis: Long,
+): CachedFileRow =
+    CachedFileRow(
+        key = cachedFileKeyOf(bucketId, path),
+        bucketId = bucketId,
+        path = path,
+        localPath = file.toString(),
+        sizeBytes = size,
+        eTag = eTag,
+        lastFetchedEpochMs = fetchedAtMillis,
+    )
+
 /**
  * The client's file cache for Storage objects, shared by every bucket it hands out. An entry's file
  * is derived from its bucket and path, never read back from its row, and every file operation stays
  * inside the data directory; commits, evictions, invalidations and clears run under one lock.
  *
+ * @param cachedFileDao the cached files' rows.
+ * @param ownership whether the cache serves, and takes files for, the current identity.
+ * @param fetchedAtMillis the clock a row's fetch time is read from.
  * @param maxSizeBytes the size bound, or `null` for none.
+ * @param nowMillis the clock use times and file ages are read from.
  * @param markUsed records a use time on a file.
  * @param ioDispatcher where file work runs.
  */
 internal class StorageFileCache(
-    private val store: OfflineStore,
+    private val cachedFileDao: CachedFileDao,
+    private val ownership: CacheOwnership,
+    private val fetchedAtMillis: () -> Long,
     private val dataDirectoryProvider: () -> Path,
     private val maxSizeBytes: Long?,
     private val engineLogger: EngineLogger,
@@ -140,6 +173,42 @@ internal class StorageFileCache(
     private val excludeFromBackup: (Path) -> Boolean = ::excludeFromBackup,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
+
+    /** Over the store facade's file rows, identity and clock; retired with the facade in C3b. */
+    constructor(
+        store: OfflineStore,
+        dataDirectoryProvider: () -> Path,
+        maxSizeBytes: Long?,
+        engineLogger: EngineLogger,
+        fileSystem: FileSystem = FileSystem.SYSTEM,
+        nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+        markUsed: (Path, Long) -> Unit = ::markFileUsed,
+        excludeFromBackup: (Path) -> Boolean = ::excludeFromBackup,
+        ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    ) : this(
+        cachedFileDao = store.cachedFileDao,
+        ownership = store.cacheOwnership,
+        fetchedAtMillis = store.nowMillis,
+        dataDirectoryProvider = dataDirectoryProvider,
+        maxSizeBytes = maxSizeBytes,
+        engineLogger = engineLogger,
+        fileSystem = fileSystem,
+        nowMillis = nowMillis,
+        markUsed = markUsed,
+        excludeFromBackup = excludeFromBackup,
+        ioDispatcher = ioDispatcher,
+    )
+
+    /** The row of [path] in [bucketId], or `null` when none is cached. */
+    private suspend fun rowOf(bucketId: String, path: String): CachedFileRow? =
+        cachedFileDao.getByKey(cachedFileKeyOf(bucketId, path))
+
+    /** Records [file] as the cached copy of [path] in [bucketId], fetched now. */
+    private suspend fun recordRow(bucketId: String, path: String, file: Path, size: Long?) {
+        cachedFileDao.upsert(
+            cachedFileRowOf(bucketId, path, file, size, eTag = null, fetchedAtMillis())
+        )
+    }
 
     private val dataDirectory: Path by lazy { dataDirectoryProvider().normalized() }
     private val storageDirectory: Path
@@ -247,9 +316,8 @@ internal class StorageFileCache(
      */
     suspend fun useCachedCopy(entry: FileCacheEntry): CachedFile? =
         withContext(ioDispatcher) {
-            if (!store.cacheServesCurrentIdentity()) return@withContext null
-            val row =
-                store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return@withContext null
+            if (!ownership.cacheServesCurrentIdentity()) return@withContext null
+            val row = rowOf(entry.bucketId, entry.rowPath) ?: return@withContext null
             if (row.recordsOutdatedPath(entry)) {
                 withContext(NonCancellable) { lock.withLock { dropOutdatedRowLocked(entry) } }
                 return@withContext null
@@ -431,7 +499,7 @@ internal class StorageFileCache(
                 }
                 if (
                     generation.load() != startedInGeneration ||
-                        !store.cacheTakesWritesOfCurrentIdentity()
+                        !ownership.cacheTakesWritesOfCurrentIdentity()
                 ) {
                     engineLogger.info {
                         "Storage download from ${entry.bucketId} finished after local data was cleared; not caching"
@@ -448,13 +516,12 @@ internal class StorageFileCache(
                 val size = fileSystem.metadataOrNull(temporary.path)?.size
                 val previous =
                     try {
-                        store.getStorageByKey(entry.bucketId, entry.rowPath).also {
-                            store.addStorage(
+                        rowOf(entry.bucketId, entry.rowPath).also {
+                            recordRow(
                                 bucketId = entry.bucketId,
                                 path = entry.rowPath,
                                 file = entry.file,
                                 size = size,
-                                eTag = null,
                             )
                         }
                     } catch (failure: Exception) {
@@ -526,7 +593,7 @@ internal class StorageFileCache(
                 removeObjectLocked(toBucket, to)
                 val source = entryFor(fromBucket, from)
                 val destination = entryFor(toBucket, to)
-                val sourceRow = store.getStorageByKey(fromBucket, from)
+                val sourceRow = rowOf(fromBucket, from)
                 if (
                     source != null &&
                         destination != null &&
@@ -596,22 +663,21 @@ internal class StorageFileCache(
 
     /** Drops every row and file of the object at [objectPath], its variants included. */
     private suspend fun removeObjectLocked(bucketId: String, objectPath: String) {
-        store
-            .cachedFileRowsForObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR")
-            .forEach { row ->
-                removeRowLocked(row)
-                val entry = entryForRow(row) ?: return@forEach
-                deleteContained(entry.file)
-                if (row.recordsOutdatedPath(entry))
-                    deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
-            }
+        cachedFileDao.forObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR").forEach { row
+            ->
+            removeRowLocked(row)
+            val entry = entryForRow(row) ?: return@forEach
+            deleteContained(entry.file)
+            if (row.recordsOutdatedPath(entry))
+                deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
+        }
         // The object's own file even without a row: an outdated row may have recorded another path.
         entryFor(bucketId, objectPath)?.let { entry -> deleteContained(entry.file) }
     }
 
     /** Deletes [row] and takes its recorded size off [trackedBytes]. */
     private suspend fun removeRowLocked(row: CachedFileRow) {
-        store.deleteCachedFileRow(row.key)
+        cachedFileDao.delete(row.key)
         trackedBytes = trackedBytes?.minus(row.sizeBytes ?: 0L)
     }
 
@@ -626,8 +692,8 @@ internal class StorageFileCache(
         recordedSize: Long?,
     ) {
         try {
-            if (replaced != null) store.restoreCachedFileRow(replaced)
-            else store.deleteCachedFileRow(entry.key)
+            if (replaced != null) cachedFileDao.upsert(replaced)
+            else cachedFileDao.delete(entry.key)
             trackedBytes = trackedBytes?.plus((replaced?.sizeBytes ?: 0L) - (recordedSize ?: 0L))
         } catch (failure: Exception) {
             engineLogger.warning {
@@ -641,7 +707,7 @@ internal class StorageFileCache(
      * it.
      */
     private suspend fun dropOutdatedRowLocked(entry: FileCacheEntry) {
-        val row = store.getStorageByKey(entry.bucketId, entry.rowPath) ?: return
+        val row = rowOf(entry.bucketId, entry.rowPath) ?: return
         if (!row.recordsOutdatedPath(entry)) return
         removeRowLocked(row)
         deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
@@ -658,11 +724,7 @@ internal class StorageFileCache(
             val bucketId = segments.first()
             val objectPath = segments.drop(1).joinToString("/")
             val owner = entryFor(bucketId, objectPath)
-            if (
-                owner != null &&
-                    owner.file == recorded &&
-                    store.getStorageByKey(bucketId, objectPath) != null
-            )
+            if (owner != null && owner.file == recorded && rowOf(bucketId, objectPath) != null)
                 return
         }
         deleteContained(recorded)
@@ -677,12 +739,11 @@ internal class StorageFileCache(
             fileSystem.metadataOrNull(source.file)?.takeIf { it.isRegularFile }?.size ?: return
         try {
             fileSystem.createDirectories(directory)
-            store.addStorage(
+            recordRow(
                 bucketId = destination.bucketId,
                 path = destination.rowPath,
                 file = destination.file,
                 size = size,
-                eTag = null,
             )
             trackedBytes = trackedBytes?.plus(size)
         } catch (failure: Exception) {
@@ -708,15 +769,15 @@ internal class StorageFileCache(
      */
     private suspend fun evictOverLimit(protectedKey: String) {
         val limit = maxSizeBytes ?: return
-        val total = trackedBytes ?: store.totalStorageSizeBytes().also { trackedBytes = it }
+        val total = trackedBytes ?: cachedFileDao.totalSizeBytes().also { trackedBytes = it }
         if (total <= limit) return
         val now = nowMillis()
         if (now < evictionIdleUntilMillis) return
         val lowWater = limit - limit / LOW_WATER_FRACTION
         val usedBefore = now - RECENT_USE_GRACE.inWholeMilliseconds
         val (evictable, recent) =
-            store
-                .allCachedFileRows()
+            cachedFileDao
+                .all()
                 .filter { row -> row.key != protectedKey && row.key !in pins }
                 .map { row -> row to lastUsedMillis(row) }
                 .partition { (_, lastUsed) -> lastUsed < usedBefore }
@@ -725,7 +786,7 @@ internal class StorageFileCache(
         for ((row, _) in evictable.sortedBy { (_, lastUsed) -> lastUsed }) {
             if (remaining <= lowWater) break
             entryForRow(row)?.let { entry -> deleteContained(entry.file) }
-            store.deleteCachedFileRow(row.key)
+            cachedFileDao.delete(row.key)
             remaining -= row.sizeBytes ?: 0L
             evicted++
         }
@@ -793,7 +854,7 @@ internal class StorageFileCache(
         if (segments.size < 2) return false
         val objectPath = segments.drop(1).joinToString("/")
         return entryFor(segments.first(), objectPath)?.file == normalized &&
-            store.getStorageByKey(segments.first(), objectPath) != null
+            rowOf(segments.first(), objectPath) != null
     }
 
     /**
