@@ -283,8 +283,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * changes: one value to draw a sync banner from. See [SyncStatus] for when each part is
      * current.
      *
-     * Reading it after [close] throws [IllegalStateException]; a collection running at [close]
-     * keeps its last value and receives no more.
+     * The same flow whether or not the client is open, and it never throws. At [close] it takes one
+     * last value, with [SyncStatus.isSyncing] `false`, and changes no more; read after [close], it
+     * holds that value.
      */
     public val syncStatus: StateFlow<SyncStatus>
 
@@ -401,11 +402,14 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * What ends, and when:
      * - At once, every new call fails with [IllegalStateException]: on the plugin, and on a
-     *   builder, bucket or flow obtained from it.
+     *   builder, bucket or flow obtained from it. [syncStatus] is the exception: it can still be
+     *   read, and holds its last value.
      * - At once, every flow being collected stops, whatever its read strategy: its collector reads
-     *   that error next. A channel the app holds through `produceIn` applied directly to the flow,
-     *   and no longer reads, ends with it quietly, failing no scope; with an operator such as `map`
-     *   between them, the error fails the producer.
+     *   that error next. [syncStatus], a `StateFlow`, cannot end: it takes one last value, with
+     *   [SyncStatus.isSyncing] `false`, and changes no more. A channel the app holds through
+     *   `produceIn` applied directly to the flow, and no longer reads, ends with it quietly,
+     *   failing no scope; with an operator such as `map` between them, the error fails the
+     *   producer.
      * - At once, the plugin's own work stops (refreshes, replay passes), and so does every Storage
      *   call and sync; their callers get the same error, never a cancellation. A replay pass with a
      *   queued write on the wire finishes that request and records its answer first, so the next

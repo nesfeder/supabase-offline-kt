@@ -111,7 +111,7 @@ internal class OfflineTable(
     /** The client's gate: every read and write passes it, so the client's close waits for them. */
     private val operationGate: ClientOperationGate = ClientOperationGate(),
     /** Told when a write sent at once left its identity's queue empty. */
-    private val queueEmptied: () -> Unit = {},
+    private val queueEmptied: suspend () -> Unit = {},
     /** Whether the network is known down, for a reactive read's refresh; see [QueryReader]. */
     private val networkAccess: NetworkAccess = NetworkAccess(),
 ) {
@@ -137,7 +137,7 @@ internal class OfflineTable(
             ),
         operationGate: ClientOperationGate = ClientOperationGate(),
         readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
-        queueEmptied: () -> Unit = {},
+        queueEmptied: suspend () -> Unit = {},
         networkAccess: NetworkAccess = NetworkAccess(),
     ) : this(
         delegate = SupabaseRemoteTable(delegate, readShapePostgrest, networkAccess),

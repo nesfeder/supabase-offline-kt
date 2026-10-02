@@ -84,6 +84,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
@@ -185,6 +187,12 @@ internal class OfflineClient(
 
     /** Taken by the first read of [syncStatus], which starts the work that keeps it current. */
     private val statusTracked = AtomicBoolean(false)
+
+    /** Held by every change to [syncStatusState], so [close] can publish the last one. */
+    private val statusLock = Mutex()
+
+    /** Set, under [statusLock], by [close]: the status changes no more. */
+    private var statusFinal = false
 
     /** Completed once the database is released: what every [close] waits for. */
     private val released = CompletableDeferred<Unit>()
@@ -548,22 +556,39 @@ internal class OfflineClient(
     /** [syncStatusState], read only. */
     private val syncStatusView: StateFlow<SyncStatus> = syncStatusState.asStateFlow()
 
+    /** The same flow whether or not the client is open; after [close] it keeps its last value. */
     override val syncStatus: StateFlow<SyncStatus>
         get() {
-            ensureOpen()
-            trackStatusOnce()
+            if (!operationGate.isClosed) trackStatusOnce()
             return syncStatusView
         }
 
     override suspend fun disableNetwork(): Unit = operationGate.call {
         networkAccess.disable()
-        syncStatusState.update { status -> status.copy(network = networkAccess.status) }
+        publishStatus { status -> status.copy(network = networkAccess.status) }
     }
 
     override suspend fun enableNetwork(): Unit = operationGate.call {
         val reconnected = networkAccess.enable()
-        syncStatusState.update { status -> status.copy(network = networkAccess.status) }
+        publishStatus { status -> status.copy(network = networkAccess.status) }
         if (reconnected) replayAsTheNetworkReturns()
+    }
+
+    /** Applies [change] to the status, unless [close] has published its last value. */
+    private suspend fun publishStatus(change: (SyncStatus) -> SyncStatus) {
+        statusLock.withLock { if (!statusFinal) syncStatusState.update(change) }
+    }
+
+    /**
+     * Publishes the status's last value, with no pass running, after which it changes no more: the
+     * work that kept it current is cancelled with the client's scope, and a pass running at [close]
+     * would otherwise leave it syncing for good.
+     */
+    private suspend fun publishFinalStatus() {
+        statusLock.withLock {
+            statusFinal = true
+            syncStatusState.update { status -> status.copy(isSyncing = false) }
+        }
     }
 
     /**
@@ -573,16 +598,26 @@ internal class OfflineClient(
      */
     private fun trackStatusOnce() {
         if (!statusTracked.compareAndSet(expectedValue = false, newValue = true)) return
-        // Current from the first read; the collection below keeps it so
-        syncStatusState.update { status -> status.copy(network = networkAccess.status) }
+        // Current from the first read when the lock is free at once; the collection below
+        // publishes it first thing either way, then keeps it current
+        if (statusLock.tryLock()) {
+            try {
+                if (!statusFinal) {
+                    syncStatusState.update { status -> status.copy(network = networkAccess.status) }
+                }
+            } finally {
+                statusLock.unlock()
+            }
+        }
         clientScope.launch {
+            publishStatus { status -> status.copy(network = networkAccess.status) }
             networkAccess.statusChanges.collect {
-                syncStatusState.update { status -> status.copy(network = networkAccess.status) }
+                publishStatus { status -> status.copy(network = networkAccess.status) }
             }
         }
         clientScope.launch {
             mutationQueueReplayer.passRunning.collect { running ->
-                syncStatusState.update { status -> status.copy(isSyncing = running) }
+                publishStatus { status -> status.copy(isSyncing = running) }
             }
         }
         clientScope.launch {
@@ -598,7 +633,7 @@ internal class OfflineClient(
                 }
                 .collect {
                     val counts = queueCountsOrNull() ?: return@collect
-                    syncStatusState.update { status ->
+                    publishStatus { status ->
                         status.copy(
                             pendingMutationCount = counts.pending,
                             rejectedMutationCount = counts.rejected,
@@ -636,14 +671,12 @@ internal class OfflineClient(
                 if (report.remainingCount == 0 && sessionQueueIsEmpty()) {
                     recordQueueEmptiedBySending()
                 } else {
-                    syncStatusState.update { status -> status.copy(lastSyncError = null) }
+                    publishStatus { status -> status.copy(lastSyncError = null) }
                 }
             is SyncStop.TransientFailure ->
-                syncStatusState.update { status ->
-                    status.copy(lastSyncError = syncFailureOf(stop.cause))
-                }
+                publishStatus { status -> status.copy(lastSyncError = syncFailureOf(stop.cause)) }
             is SyncStop.HeldBehindEarlierMutations ->
-                syncStatusState.update { status ->
+                publishStatus { status ->
                     status.copy(lastSyncError = syncFailureOf(stop.cause))
                 }
             // The session, a clear, the switch or another sender: nothing failed
@@ -668,8 +701,8 @@ internal class OfflineClient(
     }
 
     /** Records that sending left the session's queue empty: now, and no error since. */
-    private fun recordQueueEmptiedBySending() {
-        syncStatusState.update { status ->
+    private suspend fun recordQueueEmptiedBySending() {
+        publishStatus { status ->
             status.copy(lastSyncedAt = Clock.System.now(), lastSyncError = null)
         }
     }
@@ -812,15 +845,17 @@ internal class OfflineClient(
             }
         }
         // The writes an earlier failure held back are gone with it
-        syncStatusState.update { status -> status.copy(lastSyncError = null) }
+        publishStatus { status -> status.copy(lastSyncError = null) }
     }
 
     /**
-     * The first call shuts the gate, which ends every collection, and cancels the client's work and
-     * the calls it may stop. Every call then waits, up to [closeWait], for the release.
+     * The first call shuts the gate, which ends every collection, cancels the client's work and the
+     * calls it may stop, and publishes the status's last value. Every call then waits, up to
+     * [closeWait], for the release.
      */
     override suspend fun close() {
         if (operationGate.close()) clientScope.coroutineContext.job.cancel()
+        publishFinalStatus()
         readShapePostgrest.value = null
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
         val releasedInTime =

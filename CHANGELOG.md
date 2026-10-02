@@ -127,7 +127,8 @@ release.
   `OFFLINE`, `DISABLED`), the current user's pending and rejected counts, `isSyncing`,
   `lastSyncedAt`, and `lastSyncError`, a `SyncFailedException` that carries the status and code
   but no row, filter value or token. The network is current as soon as the switch below returns;
-  the counts follow the queue shortly after each change.
+  the two counts follow the queue shortly after each change, read together. It never throws: at
+  `close()` it takes one last value, with `isSyncing` false, and changes no more.
 - `disableNetwork()` and `enableNetwork()`: while access is off, nothing is sent, reads are
   answered from the cache, writes that may queue are queued, reactive reads are `Paused`, and
   requests that must reach the server throw `NetworkDisabledException`, which

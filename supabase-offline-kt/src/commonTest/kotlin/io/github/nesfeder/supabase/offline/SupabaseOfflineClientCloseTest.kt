@@ -904,7 +904,6 @@ class SupabaseOfflineClientCloseTest {
         assertFailsWith<IllegalStateException> { client.rejectedMutations().first() }
         assertFailsWith<IllegalStateException> { client.dismissRejectedMutation(1L) }
         assertFailsWith<IllegalStateException> { client.retryRejectedMutation(1L) }
-        assertFailsWith<IllegalStateException> { client.syncStatus }
         assertFailsWith<IllegalStateException> { client.disableNetwork() }
         assertFailsWith<IllegalStateException> { client.enableNetwork() }
         assertFailsWith<IllegalStateException> {

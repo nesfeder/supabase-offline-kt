@@ -6,13 +6,14 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -155,15 +156,54 @@ class SyncStatusTest {
     }
 
     @Test
-    fun the_status_cannot_be_read_once_the_client_is_closed() = runTest {
-        // Given
+    fun a_pass_running_at_close_leaves_the_status_with_no_pass_running_and_it_changes_no_more() =
+        runTest {
+            // Given — a write queued offline, and a pass sending it, held at the server
+            val arrived = CompletableDeferred<Unit>()
+            val held = CompletableDeferred<Unit>()
+            var online = false
+            val server =
+                RecordingPostgrestServer(
+                    answer = {
+                        if (!online) connectivityFailure()
+                        arrived.complete(Unit)
+                        held.await()
+                        okJson("[]")
+                    }
+                )
+            val client = newTestOfflineClient(supabase = server.supabaseClient())
+            val status = client.syncStatus
+            client.from(TABLE).insert(row(1))
+            online = true
+            val sync = async(Dispatchers.Default) { runCatching { client.syncPendingMutations() } }
+            withContext(Dispatchers.Default) { withTimeout(10.seconds) { arrived.await() } }
+            status.awaiting { it.isSyncing }
+
+            // When — the client closes with the pass on the wire, then the server answers
+            client.close()
+            val atClose = status.value
+            held.complete(Unit)
+            sync.await()
+
+            // Then — the last value says no pass runs, it is still the value after the pass ended,
+            // and the status reads the same flow, without throwing, once closed
+            assertFalse(atClose.isSyncing)
+            assertSame(status, client.syncStatus)
+            assertEquals(atClose, client.syncStatus.value)
+        }
+
+    @Test
+    fun the_status_can_be_read_after_close_and_holds_its_last_value() = runTest {
+        // Given — a client whose status nobody read while it was open
         val client = newTestOfflineClient()
 
         // When
         client.close()
+        val status = client.syncStatus
 
         // Then
-        assertClientClosedError(runCatching { client.syncStatus }.exceptionOrNull(), "syncStatus")
+        assertEquals(false, status.value.isSyncing)
+        assertSame(status, client.syncStatus)
     }
 
     private fun row(id: Int): JsonArray = buildJsonArray {
