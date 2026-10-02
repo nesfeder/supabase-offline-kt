@@ -217,66 +217,98 @@ class ReadPathCostAndroidTest {
     fun twenty_live_readers_recompute_for_one_queued_write() =
         runTest(timeout = 20.minutes) {
             assumeBenchmark()
-            withClient { client ->
-                // Given — 20 cached lists observed by 20 live readers, and 100 mutations already
-                // pending
-                val items = client.from(TABLE)
-                val lists = (0 until READERS).map { index -> "L$index" }
-                lists.forEach { list ->
-                    items.select(readStrategy = ReadStrategy.NetworkOnly, request = listQuery(list))
-                }
-                online.value = false
-                repeat(100) { index ->
-                    queueInsert(items, list = lists[index % READERS], position = 2_000 + index)
-                }
-                val emissions = MutableStateFlow(List(READERS) { 0 })
-                coroutineScope {
-                    val readers: List<Job> = lists.mapIndexed { index, list ->
-                        launch(Dispatchers.Default) {
-                            items
-                                .selectAsFlow(
-                                    readStrategy = FlowReadStrategy.CacheOnly,
-                                    request = listQuery(list),
-                                )
-                                .collect {
-                                    emissions.update { counts ->
-                                        counts.toMutableList().also { copy -> copy[index] += 1 }
-                                    }
-                                }
-                        }
-                    }
-                    emissions.first { counts -> counts.all { count -> count >= 1 } }
-                    delay(SETTLE)
+            twentyLiveReadersRecompute(label = "recompute 20-readers", followsSyncStatus = false)
+        }
 
-                    // When — one write at a time, each in one of the lists
-                    val latencies = mutableListOf<Double>()
-                    val cpu = mutableListOf<Double>()
-                    repeat(WARMUP + SAMPLES) { round ->
-                        val reader = round % READERS
-                        val before = emissions.value[reader]
-                        val cpuBefore = processCpuNanos()
-                        val started = System.nanoTime()
-                        queueInsert(items, list = lists[reader], position = 3_000 + round)
-                        withContext(Dispatchers.Default) {
-                            withTimeout(30.seconds) {
-                                emissions.first { counts -> counts[reader] > before }
+    @Test
+    fun twenty_live_readers_and_a_sync_status_collector_for_one_queued_write() =
+        runTest(timeout = 20.minutes) {
+            assumeBenchmark()
+            twentyLiveReadersRecompute(
+                label = "recompute 20-readers+status",
+                followsSyncStatus = true,
+            )
+        }
+
+    /**
+     * One queued write at a time against 20 live readers and 100 pending mutations, the write's
+     * time to its reader's emission and the process CPU it costs reported under [label]; with
+     * [followsSyncStatus], a collector of `syncStatus` runs too, and each write waits for its
+     * count.
+     */
+    private suspend fun twentyLiveReadersRecompute(label: String, followsSyncStatus: Boolean) {
+        withClient { client ->
+            // Given — 20 cached lists observed by 20 live readers, and 100 mutations already
+            // pending
+            val items = client.from(TABLE)
+            val lists = (0 until READERS).map { index -> "L$index" }
+            lists.forEach { list ->
+                items.select(readStrategy = ReadStrategy.NetworkOnly, request = listQuery(list))
+            }
+            online.value = false
+            repeat(100) { index ->
+                queueInsert(items, list = lists[index % READERS], position = 2_000 + index)
+            }
+            val emissions = MutableStateFlow(List(READERS) { 0 })
+            coroutineScope {
+                val readers: List<Job> = lists.mapIndexed { index, list ->
+                    launch(Dispatchers.Default) {
+                        items
+                            .selectAsFlow(
+                                readStrategy = FlowReadStrategy.CacheOnly,
+                                request = listQuery(list),
+                            )
+                            .collect {
+                                emissions.update { counts ->
+                                    counts.toMutableList().also { copy -> copy[index] += 1 }
+                                }
+                            }
+                    }
+                }
+                emissions.first { counts -> counts.all { count -> count >= 1 } }
+                val statuses = MutableStateFlow(0)
+                val statusCollector =
+                    if (!followsSyncStatus) null
+                    else
+                        launch(Dispatchers.Default) {
+                            client.syncStatus.collect { status ->
+                                statuses.value = status.pendingMutationCount
                             }
                         }
-                        val seen = System.nanoTime()
-                        withContext(Dispatchers.Default) { delay(SETTLE) }
-                        if (round >= WARMUP) {
-                            latencies += (seen - started) / 1e6
-                            cpu += (processCpuNanos() - cpuBefore) / 1e6
+                delay(SETTLE)
+
+                // When — one write at a time, each in one of the lists
+                val latencies = mutableListOf<Double>()
+                val cpu = mutableListOf<Double>()
+                repeat(WARMUP + SAMPLES) { round ->
+                    val reader = round % READERS
+                    val before = emissions.value[reader]
+                    val cpuBefore = processCpuNanos()
+                    val started = System.nanoTime()
+                    queueInsert(items, list = lists[reader], position = 3_000 + round)
+                    withContext(Dispatchers.Default) {
+                        withTimeout(30.seconds) {
+                            emissions.first { counts -> counts[reader] > before }
+                            if (followsSyncStatus)
+                                statuses.first { count -> count == 100 + round + 1 }
                         }
                     }
-                    readers.forEach { reader -> reader.cancelAndJoin() }
-
-                    // Then
-                    report("recompute 20-readers write-to-emission", latencies)
-                    report("recompute 20-readers process-cpu-per-write", cpu)
+                    val seen = System.nanoTime()
+                    withContext(Dispatchers.Default) { delay(SETTLE) }
+                    if (round >= WARMUP) {
+                        latencies += (seen - started) / 1e6
+                        cpu += (processCpuNanos() - cpuBefore) / 1e6
+                    }
                 }
+                readers.forEach { reader -> reader.cancelAndJoin() }
+                statusCollector?.cancelAndJoin()
+
+                // Then
+                report("$label write-to-emission", latencies)
+                report("$label process-cpu-per-write", cpu)
             }
         }
+    }
 
     @Test
     fun a_cold_start_restores_fifty_cached_queries() =

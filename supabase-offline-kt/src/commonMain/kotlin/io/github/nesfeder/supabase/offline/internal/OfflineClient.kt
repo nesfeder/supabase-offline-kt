@@ -524,7 +524,16 @@ internal class OfflineClient(
     override suspend fun syncPendingMutations(table: String?): SyncReport =
         operationGate.cancellableCall(clientScope) {
             ensurePostgrestInstalled()
-            mutationQueueReplayer.syncWaitingOutOtherSenders(table).shown()
+            val report = mutationQueueReplayer.syncWaitingOutOtherSenders(table)
+            // A pass that could not tell whose queue it was counted every user's: count the shown
+            val remaining =
+                when (report.stop) {
+                    SyncStop.SessionNotReady,
+                    SyncStop.IdentityUnknown,
+                    SyncStop.NetworkDisabled -> store.shownPendingMutationCount(table)
+                    else -> report.remainingCount
+                }
+            report.copy(remainingCount = remaining).shown()
         }
 
     /* ─────────────────────────── Sync status and the network ─────────────────────────── */
@@ -557,6 +566,8 @@ internal class OfflineClient(
      */
     private fun trackStatusOnce() {
         if (!statusTracked.compareAndSet(expectedValue = false, newValue = true)) return
+        // Current from the first read; the collection below keeps it so
+        syncStatusState.update { status -> status.copy(network = networkAccess.status) }
         clientScope.launch {
             networkAccess.statusChanges.collect {
                 syncStatusState.update { status -> status.copy(network = networkAccess.status) }
@@ -637,7 +648,11 @@ internal class OfflineClient(
             !store.hasPendingMutationsOf(identity.storedValue)
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not tell whether the queue is empty for the sync status " +
+                    "(${failure::class.simpleName})"
+            }
             false
         }
     }
@@ -786,6 +801,8 @@ internal class OfflineClient(
                 scrubDatabase()
             }
         }
+        // The writes an earlier failure held back are gone with it
+        syncStatusState.update { status -> status.copy(lastSyncError = null) }
     }
 
     /**
