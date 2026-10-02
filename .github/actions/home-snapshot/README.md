@@ -79,11 +79,13 @@ with its reason, in a pull request that shows the samples behind it.
   second apart, inside whatever job was running. They are **excluded**: a job cannot reconfigure
   a runner (that needs the registration token), so nothing a job does shows in them, and a daily
   red that spans that minute would be noise. Two such reds landed on 2026-09-29 and 2026-09-30
-  before the exclusion.
+  before the exclusion. The rewrite goes through a rename, which also moves the runner
+  directory's own times, so each `~/actions-runner-*` directory is recorded by name only: a child
+  added or removed in it is listed on its own line anyway, and everything inside stays watched.
 - `bin.*`, `externals.*` and `update.finished`, written when a runner updates itself, with its
   `bin` and `externals` links moved to the new folders. These stay **watched**: a red that names
-  only a runner's directory and these is that update, recorded in the runner's `_diag` log.
-  Re-run the job, and do not exclude them.
+  only these is that update, recorded in the runner's `_diag` log. Re-run the job, and do not
+  exclude them.
 
 ## A job that never compared
 
