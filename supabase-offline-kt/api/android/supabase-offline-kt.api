@@ -238,7 +238,6 @@ public abstract interface class io/github/nesfeder/supabase/offline/ReadStrategy
 
 public final class io/github/nesfeder/supabase/offline/ReadStrategy$CacheFirst : io/github/nesfeder/supabase/offline/ReadStrategy {
 	public fun <init> ()V
-	public fun <init> (Ljava/lang/Long;)V
 	public synthetic fun <init> (Lkotlin/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lkotlin/time/Duration;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
@@ -249,7 +248,6 @@ public final class io/github/nesfeder/supabase/offline/ReadStrategy$CacheFirst :
 
 public final class io/github/nesfeder/supabase/offline/ReadStrategy$CacheOnly : io/github/nesfeder/supabase/offline/ReadStrategy {
 	public fun <init> ()V
-	public fun <init> (Ljava/lang/Long;)V
 	public synthetic fun <init> (Lkotlin/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lkotlin/time/Duration;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
@@ -260,7 +258,6 @@ public final class io/github/nesfeder/supabase/offline/ReadStrategy$CacheOnly : 
 
 public final class io/github/nesfeder/supabase/offline/ReadStrategy$NetworkFirst : io/github/nesfeder/supabase/offline/ReadStrategy {
 	public fun <init> ()V
-	public fun <init> (Ljava/lang/Long;)V
 	public synthetic fun <init> (Lkotlin/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lkotlin/time/Duration;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
