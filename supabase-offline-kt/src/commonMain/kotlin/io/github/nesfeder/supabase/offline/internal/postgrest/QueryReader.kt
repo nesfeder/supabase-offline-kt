@@ -33,6 +33,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -396,7 +397,9 @@ internal class QueryReader(
             cacheFirstWithParallelRefresh(
                 cache = store.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape),
                 refresh = {
-                    refreshFromNetwork(slot, columns, request)
+                    refreshLoggingFailures(slot.table) {
+                        refreshFromNetwork(slot, columns, request)
+                    }
                     confirmedByRefresh = fetchedAtOfCached(slot)
                 },
                 wakeUps = wakeUps,
@@ -407,6 +410,26 @@ internal class QueryReader(
                 networkAccess = networkAccess,
             )
         return snapshotsOf(payloads, progress)
+    }
+
+    /**
+     * Runs one refresh attempt of [table]'s reactive read, logging a failure that is not the
+     * network's before the retry it leads to, which would otherwise hide it. A connectivity failure
+     * is expected offline and shows in the read's refresh state instead.
+     */
+    private suspend fun refreshLoggingFailures(table: String, refresh: suspend () -> Unit) {
+        try {
+            refresh()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            if (!failure.isNetworkOrConnectivityFailure()) {
+                engineLogger.warning {
+                    "SELECT $table refresh failed (${failure::class.simpleName}); it is tried again"
+                }
+            }
+            throw failure
+        }
     }
 
     /**
@@ -575,7 +598,9 @@ internal class QueryReader(
                         bootstrapCounted = true
                         throw cause
                     }
-                    refreshFromNetwork(slot, columns, request)
+                    refreshLoggingFailures(slot.table) {
+                        refreshFromNetwork(slot, columns, request)
+                    }
                     confirmedByRefresh = fetchedAtOfCached(slot)
                 },
                 wakeUps = wakeUps,
