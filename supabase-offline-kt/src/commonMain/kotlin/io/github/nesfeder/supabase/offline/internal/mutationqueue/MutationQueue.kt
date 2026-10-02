@@ -769,8 +769,8 @@ internal class MutationQueue(
      * same transaction it removes any stale rejected entry; it also advances [table]'s
      * stale-refresh watermark, so a refresh that started before the replay cannot land after it.
      */
-    suspend fun markMutationSynced(id: Long, table: String) {
-        freshness.recordLocalMutation(table)
+    suspend fun recordReplayed(id: Long, table: String) {
+        freshness.advanceLocalWriteWatermark(table)
         mutationQueueMutex.withLock {
             val sequence = latestSyncSequence() + 1
             // Its outcome is known now: markSynced clears its send record. And a crash between

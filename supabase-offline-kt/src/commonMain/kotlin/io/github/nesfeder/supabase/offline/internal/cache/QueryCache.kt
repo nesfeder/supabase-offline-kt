@@ -22,7 +22,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
-/** What [QueryCache.addPayload] did with a response, so a reader can tell why it was refused. */
+/** What [QueryCache.cacheResponse] did with a response, so a reader can tell why it was refused. */
 internal enum class CacheWriteOutcome {
     /** The payload was written to the object cache. */
     WRITTEN,
@@ -136,7 +136,7 @@ internal class QueryCache(
      * @param shape the query's shape, recorded with a written payload before the table's lock is
      *   released; `null` when not known.
      */
-    suspend fun addPayload(
+    suspend fun cacheResponse(
         table: String,
         cacheKey: String,
         payload: String,
@@ -275,7 +275,7 @@ internal class QueryCache(
     suspend fun clearTable(table: String) {
         requireUserTable(table)
         tableWriteLocks.of(table).withLock {
-            freshness.recordLocalMutation(table)
+            freshness.advanceLocalWriteWatermark(table)
             queryCacheDao.deleteTable(table)
             queryShapes.forgetTable(table)
         }

@@ -226,7 +226,7 @@ internal class OfflineStore(
     internal val queryShapes: QueryShapeRecords
         get() = queryCache.queryShapes
 
-    /** See [QueryCache.addPayload]. */
+    /** See [QueryCache.cacheResponse]. */
     suspend fun addPayload(
         table: String,
         cacheKey: String,
@@ -236,7 +236,7 @@ internal class OfflineStore(
         isTrusted: Boolean = true,
         shape: QueryShape? = null,
     ): CacheWriteOutcome =
-        queryCache.addPayload(
+        queryCache.cacheResponse(
             table = table,
             cacheKey = cacheKey,
             payload = payload,
@@ -506,9 +506,9 @@ internal class OfflineStore(
     internal fun claimUnclassifiableWriteReport(): Boolean =
         mutationQueue.claimUnclassifiableWriteReport()
 
-    /** See [MutationQueue.markMutationSynced]. */
+    /** See [MutationQueue.recordReplayed]. */
     suspend fun markMutationSynced(id: Long, table: String) {
-        mutationQueue.markMutationSynced(id, table)
+        mutationQueue.recordReplayed(id, table)
     }
 
     /** See [MutationQueue.markSendUnconfirmed]. */

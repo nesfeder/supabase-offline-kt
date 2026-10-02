@@ -63,7 +63,7 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
      * started before the write and cannot describe it. Taken at the write's start, so a request
      * that started just before is dropped too, which costs a fetch and never loses the write.
      */
-    fun recordLocalMutation(table: String, tick: Long = monotonicTick()) {
+    fun advanceLocalWriteWatermark(table: String, tick: Long = monotonicTick()) {
         lastLocalMutationTick.update { current ->
             val existing = current[table]
             // Never move a watermark backwards: two writes racing here must leave the later tick.

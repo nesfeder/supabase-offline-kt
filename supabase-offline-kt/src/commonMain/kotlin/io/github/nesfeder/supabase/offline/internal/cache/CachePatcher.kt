@@ -107,7 +107,7 @@ internal class CachePatcher(
                 onConflict = onConflict,
                 ignoreDuplicates = ignoreDuplicates,
             )
-        patchQueries(table, listOf(write), liveCacheKeys, guardTick)
+        patchWithWrites(table, listOf(write), liveCacheKeys, guardTick)
     }
 
     /**
@@ -154,16 +154,16 @@ internal class CachePatcher(
                 )
             }
         if (writes.isNotEmpty())
-            patchQueries(table, writes, liveCacheKeys = null, guardTick = startedAtTick)
+            patchWithWrites(table, writes, liveCacheKeys = null, guardTick = startedAtTick)
     }
 
     /**
-     * Overlays [writes], in order, on every cached query of [table] and creates the payloads live
-     * queries without one now admit; see [patchCachedQueries]. A query the patch may leave wrong
-     * ([patchMayLeaveWrong]) is marked stale and fetched again. A cache that is not the current
-     * identity's is left alone.
+     * The patch itself, over writes already built: [patchCachedQueries] builds one from a write,
+     * [patchReturnedRows] one per returned row. Overlays [writes], in order, on every cached query
+     * of [table], creates the payloads live queries without one now admit, and marks stale a query
+     * it may leave wrong ([patchMayLeaveWrong]). A cache not the current identity's is left alone.
      */
-    private suspend fun patchQueries(
+    private suspend fun patchWithWrites(
         table: String,
         writes: List<MutationRow>,
         liveCacheKeys: Set<String>?,
@@ -172,7 +172,7 @@ internal class CachePatcher(
         if (!ownership.cacheServesCurrentIdentity()) return
         val toFetchAgain = mutableSetOf<String>()
         queryCache.tableWriteLock(table).withLock {
-            freshness.recordLocalMutation(table)
+            freshness.advanceLocalWriteWatermark(table)
             val cached = queryCacheDao.allForTable(table)
             val uncachedLive =
                 (liveCacheKeys ?: liveCacheKeysOf(table)) -
@@ -353,7 +353,7 @@ internal class CachePatcher(
                 as? JsonObject
         val toFetchAgain = mutableSetOf<String>()
         queryCache.tableWriteLock(table).withLock {
-            freshness.recordLocalMutation(table)
+            freshness.advanceLocalWriteWatermark(table)
             val shapes = queryCache.queryShapes.shapesOf(table)
             val cached = queryCacheDao.allForTable(table)
             for (row in cached) {
