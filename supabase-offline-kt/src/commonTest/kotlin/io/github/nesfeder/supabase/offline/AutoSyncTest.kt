@@ -197,6 +197,28 @@ class AutoSyncTest {
     }
 
     @Test
+    fun auto_sync_is_read_once_when_the_client_opens() = runTest {
+        // Given — a client opened with autoSync on, whose configuration the app then changes, and
+        // a write queued offline
+        val signal = MutableStateFlow(false)
+        val rig = rig(autoSync = true, signal = signal)
+        rig.client.config.autoSync = false
+        rig.client.from(TABLE).insert(row(1))
+        runCurrent()
+
+        // When — the network comes back
+        rig.server.requests.clear()
+        rig.server.answer = { okJson("[]") }
+        signal.value = true
+        settle()
+
+        // Then — the client kept the value it was opened with
+        assertEquals(listOf(row(1).toString()), rig.writes)
+        assertEquals(0, rig.client.pendingMutationCount())
+        rig.scope.cancel()
+    }
+
+    @Test
     fun the_session_settling_with_writes_queued_sends_them_unless_auto_sync_is_off() = runTest {
         for (autoSync in listOf(true, false)) {
             // Given — user A signed in, and A's write queued offline

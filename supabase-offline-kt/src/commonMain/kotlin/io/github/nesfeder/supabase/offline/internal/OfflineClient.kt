@@ -164,6 +164,12 @@ internal class OfflineClient(
      */
     private val networkAccess = NetworkAccess(networkAvailability)
 
+    /**
+     * [Offline.Config.autoSync], read once when the client opens, as every other setting is: both
+     * triggers it governs follow the value the client was opened with.
+     */
+    private val autoSync: Boolean = config.autoSync
+
     /** What [syncStatus] reports; its network is set at once, its counts as the queue changes. */
     private val syncStatusState =
         MutableStateFlow(
@@ -279,7 +285,7 @@ internal class OfflineClient(
         supabaseClient.installReadShapeCheck()
         supabaseClient.installTransportFailureCapture()
         networkAccess.watchIn(clientScope, onReconnected = ::replayAsTheNetworkReturns)
-        if (config.autoSync) replayWhenTheSessionSettles()
+        if (autoSync) replayWhenTheSessionSettles()
         keepCacheWithTheSession()
     }
 
@@ -324,7 +330,7 @@ internal class OfflineClient(
      * is left to the session trigger. Does nothing with `autoSync` off; see [AutomaticReplay].
      */
     private suspend fun replayAsTheNetworkReturns() {
-        if (!config.autoSync) return
+        if (!autoSync) return
         val identity = supabaseClient.currentReplayIdentity() ?: return
         try {
             if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
