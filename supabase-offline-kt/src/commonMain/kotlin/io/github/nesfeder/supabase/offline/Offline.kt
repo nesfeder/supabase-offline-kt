@@ -323,22 +323,25 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * holds one as `null`, an array or an object: the row cannot be located, so the record is
      * logged and dropped.
      *
-     * It acts on [table] in the client's default schema. A table of another schema, cached apart,
-     * cannot be named here.
+     * It acts on [table] in [schema], the client's default schema unless named: a table of another
+     * schema is cached apart from one of the same name in the default schema.
      *
      * This keeps the cache current between refreshes. It does not replace them: Realtime does not
      * replay what happened while the device was disconnected, so read again after a reconnect.
      *
-     * @param table the table, in the client's default schema.
+     * @param table the table.
      * @param record the row as the server sent it.
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
-     *   as [Config.primaryKeys] gives it (`id` unless configured).
+     *   as [Config.primaryKeys] gives it (`id` unless configured, and for a table of another
+     *   schema).
+     * @param schema the table's schema, or `null` for the client's default schema.
      * @throws IllegalStateException when the client is closed.
      */
     public suspend fun applyServerRecord(
         table: String,
         record: JsonObject,
         primaryKeys: List<String>? = null,
+        schema: String? = null,
     )
 
     /**
@@ -346,18 +349,21 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * `postgres_changes` DELETE, from every cached query of [table].
      *
      * Nothing happens under the same conditions as for [applyServerRecord], and it too acts on
-     * [table] in the client's default schema only.
+     * [table] in [schema], the client's default schema unless named.
      *
-     * @param table the table, in the client's default schema.
+     * @param table the table.
      * @param oldRecord the deleted row's values, carrying at least its key.
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
-     *   as [Config.primaryKeys] gives it (`id` unless configured).
+     *   as [Config.primaryKeys] gives it (`id` unless configured, and for a table of another
+     *   schema).
+     * @param schema the table's schema, or `null` for the client's default schema.
      * @throws IllegalStateException when the client is closed.
      */
     public suspend fun applyServerDelete(
         table: String,
         oldRecord: JsonObject,
         primaryKeys: List<String>? = null,
+        schema: String? = null,
     )
 
     /**
@@ -603,19 +609,22 @@ public suspend inline fun <reified T : Any> Offline.rpc(
  * Applies a row the server reports to every cached query of [table], encoded by the client's
  * PostgREST serializer; see [Offline.applyServerRecord].
  *
- * @param table the table, in the client's default schema.
+ * @param table the table.
  * @param record the row, an object that encodes to a JSON object.
  * @param primaryKeys the columns that identify the row, or `null` for the table's primary key.
+ * @param schema the table's schema, or `null` for the client's default schema.
  * @throws IllegalStateException when the client is closed.
  */
 public suspend inline fun <reified T : Any> Offline.applyServerRecord(
     table: String,
     record: T,
     primaryKeys: List<String>? = null,
+    schema: String? = null,
 ) {
     applyServerRecord(
         table,
         supabaseClient.postgrest.serializer.encodeToJsonElement(record).jsonObject,
         primaryKeys,
+        schema,
     )
 }

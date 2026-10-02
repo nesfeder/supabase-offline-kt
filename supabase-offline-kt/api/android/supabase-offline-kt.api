@@ -109,10 +109,10 @@ public final class io/github/nesfeder/supabase/offline/NetworkStatus : java/lang
 public abstract interface class io/github/nesfeder/supabase/offline/Offline : io/github/jan/supabase/plugins/SupabasePlugin {
 	public static final field CACHE_SIZE_UNLIMITED J
 	public static final field Companion Lio/github/nesfeder/supabase/offline/Offline$Companion;
-	public abstract fun applyServerDelete (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun applyServerDelete$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public abstract fun applyServerRecord (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun applyServerRecord$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun applyServerDelete (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun applyServerDelete$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun applyServerRecord (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun applyServerRecord$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun clearLocalData (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disableNetwork (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

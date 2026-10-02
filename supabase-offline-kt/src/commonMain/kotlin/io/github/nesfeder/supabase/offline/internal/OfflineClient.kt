@@ -686,8 +686,10 @@ internal class OfflineClient(
         table: String,
         record: JsonObject,
         primaryKeys: List<String>?,
+        schema: String?,
     ): Unit = operationGate.call {
-        val keyColumns = primaryKeys ?: this.primaryKeys.of(table)
+        val cachedTable = cachedTableOf(table, schema)
+        val keyColumns = primaryKeys ?: this.primaryKeys.of(cachedTable)
         val filterJson = primaryKeyFilterJson(record, keyColumns)
         if (filterJson == null) {
             engineLogger.warning {
@@ -697,7 +699,7 @@ internal class OfflineClient(
             return@call
         }
         store.patchCachedQueries(
-            table = table,
+            table = cachedTable,
             operation = MutationOperation.UPSERT,
             bodyJson = JsonArray(listOf(record)).toString(),
             filterJson = filterJson,
@@ -709,8 +711,10 @@ internal class OfflineClient(
         table: String,
         oldRecord: JsonObject,
         primaryKeys: List<String>?,
+        schema: String?,
     ): Unit = operationGate.call {
-        val keyColumns = primaryKeys ?: this.primaryKeys.of(table)
+        val cachedTable = cachedTableOf(table, schema)
+        val keyColumns = primaryKeys ?: this.primaryKeys.of(cachedTable)
         val filterJson = primaryKeyFilterJson(oldRecord, keyColumns)
         if (filterJson == null) {
             engineLogger.warning {
@@ -720,11 +724,21 @@ internal class OfflineClient(
             return@call
         }
         store.patchCachedQueries(
-            table = table,
+            table = cachedTable,
             operation = MutationOperation.DELETE,
             bodyJson = "{}",
             filterJson = filterJson,
         )
+    }
+
+    /**
+     * The name [table] of [schema] is cached under: its own in the default schema, `schema.table`
+     * in another, as a read of it caches it.
+     */
+    private fun cachedTableOf(table: String, schema: String?): String {
+        val defaultSchema =
+            supabaseClient.pluginManager.getPluginOrNull(Postgrest)?.config?.defaultSchema
+        return if (schema.isNullOrBlank() || schema == defaultSchema) table else "$schema.$table"
     }
 
     /**

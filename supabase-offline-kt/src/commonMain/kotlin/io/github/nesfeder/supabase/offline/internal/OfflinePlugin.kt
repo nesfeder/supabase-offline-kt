@@ -97,13 +97,15 @@ internal class OfflinePlugin(
         table: String,
         record: JsonObject,
         primaryKeys: List<String>?,
-    ): Unit = client.applyServerRecord(table, record, primaryKeys)
+        schema: String?,
+    ): Unit = client.applyServerRecord(table, record, primaryKeys, schema)
 
     override suspend fun applyServerDelete(
         table: String,
         oldRecord: JsonObject,
         primaryKeys: List<String>?,
-    ): Unit = client.applyServerDelete(table, oldRecord, primaryKeys)
+        schema: String?,
+    ): Unit = client.applyServerDelete(table, oldRecord, primaryKeys, schema)
 
     override suspend fun clearLocalData(): Unit = client.clearLocalData()
 

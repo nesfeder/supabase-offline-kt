@@ -99,7 +99,8 @@ release.
   `MutationOutcome.isQueued`.
 - `rpc` on the plugin, network only, with a typed overload; `offline.storage.from(bucket)` and
   `offline.storage[bucket]`; a typed `applyServerRecord`, whose `primaryKeys` default to the table's
-  configured key.
+  configured key. `applyServerRecord` and `applyServerDelete` take a `schema`, for a table of a
+  schema other than the client's default.
 - `OfflineException`, open for new subclasses, with `CacheMissException`,
   `MutationNotQueueableException` and `NetworkDisabledException`; `httpStatusOrNull()`, which reads
   supabase-kt's and Ktor's errors, Storage's included.
