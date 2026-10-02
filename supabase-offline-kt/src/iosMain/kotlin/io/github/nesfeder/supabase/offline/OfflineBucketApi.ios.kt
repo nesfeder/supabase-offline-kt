@@ -13,7 +13,7 @@ import io.github.jan.supabase.storage.BucketApi
  * @return the file's absolute path, or `null` only when this bucket did not come from the offline
  *   client.
  */
-@Throws(Exception::class)
+@Throws(Throwable::class)
 public suspend fun BucketApi.ensureLocalPath(
     objectPath: String,
     isPublic: Boolean = false,
@@ -30,7 +30,7 @@ public suspend fun BucketApi.ensureLocalPath(
  * @return the file's absolute path, or `null` when nothing is cached or this bucket did not come
  *   from the offline client.
  */
-@Throws(Exception::class)
+@Throws(Throwable::class)
 public suspend fun BucketApi.localPathIfCached(objectPath: String): String? {
     val offline = this as? OfflineBucketApi ?: return null
     return offline.cachedFile(objectPath)?.path

@@ -51,7 +51,7 @@ public interface OfflineBucketApi : BucketApi {
      * @param path the object path within this bucket.
      * @return the cached file, or `null`.
      */
-    @Throws(Exception::class) public suspend fun cachedFile(path: String): CachedFile?
+    @Throws(Throwable::class) public suspend fun cachedFile(path: String): CachedFile?
 
     /**
      * The cached copy of the object at [path], downloading it into the cache first when none is
@@ -67,6 +67,6 @@ public interface OfflineBucketApi : BucketApi {
      * @throws Exception the download's own failure when nothing is cached: supabase-kt's
      *   connectivity error offline, or its REST error from the server.
      */
-    @Throws(Exception::class)
+    @Throws(Throwable::class)
     public suspend fun ensureCachedFile(path: String, isPublic: Boolean = false): CachedFile
 }

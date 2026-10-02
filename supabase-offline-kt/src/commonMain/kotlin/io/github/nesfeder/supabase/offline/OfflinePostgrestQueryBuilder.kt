@@ -91,6 +91,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   read, or the read asks for a shape the cache never holds.
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend fun select(
         columns: Columns = Columns.ALL,
         readStrategy: ReadStrategy = ReadStrategy.NetworkFirst(),
@@ -142,6 +143,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend fun insert(
         body: JsonArray,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -160,6 +162,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> insert(
         values: List<T>,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -183,6 +186,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> insert(
         value: T,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -201,6 +205,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend fun upsert(
         body: JsonArray,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -219,6 +224,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> upsert(
         values: List<T>,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -242,6 +248,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> upsert(
         value: T,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -265,6 +272,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend fun update(
         update: PostgrestUpdate.() -> Unit = {},
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -285,6 +293,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend fun update(
         body: JsonElement,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -305,6 +314,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> update(
         value: T,
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
@@ -324,6 +334,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
      */
+    @Throws(Throwable::class)
     public suspend fun delete(
         mutationStrategy: MutationStrategy = MutationStrategy.QueueIfOffline,
         request: PostgrestRequestBuilder.() -> Unit = {},
