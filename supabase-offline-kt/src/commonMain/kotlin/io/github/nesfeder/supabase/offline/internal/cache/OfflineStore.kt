@@ -47,7 +47,6 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
-import kotlin.time.TimeSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -66,23 +65,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import okio.Path
-
-/**
- * Builds the default tick source backing the stale-refresh watermark: elapsed nanoseconds since the
- * owning [OfflineStore] was constructed, read from [TimeSource.Monotonic].
- *
- * Deliberately **not** wall-clock. The watermark only ever compares two ticks taken by the same
- * process, and a wall-clock source can step backwards (NTP correction, user clock change) — which
- * would make a response look older or newer than the local write it raced. A monotonic source
- * cannot. Nanosecond granularity keeps a mutation and a request start that land in the same
- * millisecond distinguishable.
- *
- * @return A tick reader whose values increase monotonically for the lifetime of the store.
- */
-private fun monotonicTickSource(): () -> Long {
-    val origin = TimeSource.Monotonic.markNow()
-    return { origin.elapsedNow().inWholeNanoseconds }
-}
 
 /**
  * What [OfflineStore.addPayload] did with the payload it was handed. Lets the select resolver
@@ -172,6 +154,9 @@ internal class OfflineStore(
 
     internal val json: Json = EngineJson
     private val evictionMutex = Mutex()
+
+    /** The watermarks and the clear lock; see [CacheFreshness]. */
+    private val freshness = CacheFreshness(monotonicTick)
 
     /**
      * How many writes this store made to each table's cached payloads, each counted once it
@@ -289,14 +274,6 @@ internal class OfflineStore(
             }
 
     /**
-     * Makes a teardown and every cache write it must not be followed by one step: [clearLocalData]
-     * stamps the teardown tick and deletes under it, and every overlay and payload write checks the
-     * tick and writes under it. So a write whose operation started before a teardown can never land
-     * after it.
-     */
-    private val clearMutex = Mutex()
-
-    /**
      * The identity whose queued writes the overlay shows and the counts count — its stored value —
      * or `null` for no filtering (a store driven directly, with no session model). Wired by the
      * client.
@@ -326,17 +303,6 @@ internal class OfflineStore(
      * [reportUnclassifiableWriteOnce].
      */
     private val unclassifiableWriteReported = MutableStateFlow(false)
-
-    /**
-     * Whether [mutation] belongs on a payload that holds the synced mutations through
-     * [payloadSyncedThrough] (see [CachedQueryRow.syncedThrough]): a pending one always does, a
-     * synced one only when it replayed after them. Without a sequence it is taken as held by none.
-     */
-    private fun belongsOnPayload(mutation: MutationRow, payloadSyncedThrough: Long): Boolean {
-        if (mutation.syncedAtMs == null) return true
-        val sequence = mutation.syncSequence ?: return true
-        return sequence > payloadSyncedThrough
-    }
 
     /**
      * Per-table locks serializing every write to the object cache — [addPayload] and the
@@ -376,111 +342,11 @@ internal class OfflineStore(
         tableWriteLocks.getOrPut(table) { Mutex() }
     }
 
-    /**
-     * Table → tick of the most recent local write that changed what the cache knows: an
-     * online-success mutation materialized by [patchCachedQueries] (which also carries the realtime
-     * `applyServerRecord` / `applyServerDelete` edges) and a queue replay confirmed by
-     * [markMutationSynced]. A network SELECT whose request started before that tick describes a
-     * server state that predates the write, so [addPayload] refuses it.
-     *
-     * In-memory and per-process by design: the watermark only orders events inside one run of the
-     * app, needs no schema change, and a fresh process has no in-flight requests left to
-     * disqualify. Held in a [MutableStateFlow] purely for its atomic [update] — reads and writes
-     * can arrive concurrently from several coroutines, and no lock is wanted on the write path.
-     */
-    private val lastLocalMutationTick = MutableStateFlow<Map<String, Long>>(emptyMap())
+    /** Reads the tick source; see [CacheFreshness.tickNow]. */
+    internal fun monotonicTickNow(): Long = freshness.tickNow()
 
-    /**
-     * Tick of the most recent identity teardown ([clearLocalData]), or `0` while the cache has
-     * never been wiped in this process.
-     *
-     * Teardown is the same ordering hazard as a local write, one generation wider: a SELECT that
-     * left before sign-out returns the *outgoing* user's rows, and writing them afterwards
-     * repopulates a cache that was just emptied precisely so one account's data never shows up
-     * under the next. Global rather than per-table because [clearLocalData] wipes every table at
-     * once.
-     */
-    private val cacheClearedTick = MutableStateFlow(0L)
-
-    /**
-     * Tick of the most recent time the cache was emptied: by [clearLocalData], or by [dropCacheFor]
-     * when it passed to another identity. No cache write whose operation started before it lands.
-     * Unlike [cacheClearedTick] it leaves queueing alone, since a drop keeps the mutation queue.
-     */
-    private val cacheDroppedTick = MutableStateFlow(0L)
-
-    /**
-     * Reads the shared tick source. Callers that are about to issue a network SELECT capture this
-     * **before** the request goes out and hand it back to [addPayload] as `requestStartedAtTick`.
-     *
-     * @return The current monotonic tick.
-     */
-    internal fun monotonicTickNow(): Long = monotonicTick()
-
-    /**
-     * Advances [table]'s stale-refresh watermark to now, marking every network SELECT already in
-     * flight for that table as unable to describe current truth.
-     *
-     * Recorded at the *start* of the write it guards: the server side of the write has already
-     * committed by the time these seams run, so a request that started even slightly earlier may
-     * predate it. Over-dropping in that narrow window is safe — the resolver re-fetches — while
-     * under-dropping loses the write.
-     *
-     * @param table Table whose local truth just moved forward.
-     */
-    private fun recordLocalMutation(table: String, tick: Long = monotonicTick()) {
-        lastLocalMutationTick.update { current ->
-            val existing = current[table]
-            // Never move a watermark backwards: two writes racing here must leave the later tick.
-            if (existing != null && existing >= tick) current else current + (table to tick)
-        }
-    }
-
-    /**
-     * Whether a response produced by a request that started at [requestStartedAtTick] is known to
-     * predate [table]'s most recent local write.
-     *
-     * @param table Table the response belongs to.
-     * @param requestStartedAtTick Tick captured before the request went out, or `null` for writers
-     *   that carry no request-time information (they are never dropped).
-     * @return `true` when the response cannot know about the latest local write.
-     */
-    private fun isStaleRelativeToLocalWrite(table: String, requestStartedAtTick: Long?): Boolean {
-        if (requestStartedAtTick == null) return false
-        val watermark = lastLocalMutationTick.value[table] ?: return false
-        return requestStartedAtTick < watermark
-    }
-
-    /**
-     * Whether a response produced by a request that started at [requestStartedAtTick] belongs to a
-     * cache generation that [clearLocalData] or [dropCacheFor] has since discarded.
-     *
-     * @param requestStartedAtTick Tick captured before the request went out, or `null` for writers
-     *   that carry no request-time information (they are never dropped).
-     * @return `true` when the cache was emptied after the request left.
-     */
-    private fun predatesCacheClear(requestStartedAtTick: Long?): Boolean {
-        if (requestStartedAtTick == null) return false
-        return requestStartedAtTick < cacheDroppedTick.value
-    }
-
-    /**
-     * Whether [clearLocalData] — which empties the mutation queue too — ran after
-     * [requestStartedAtTick].
-     */
-    private fun predatesQueueClear(requestStartedAtTick: Long?): Boolean {
-        if (requestStartedAtTick == null) return false
-        return requestStartedAtTick < cacheClearedTick.value
-    }
-
-    /**
-     * Whether the cache was cleared, or dropped for another identity, since [tick] was read from
-     * [monotonicTickNow]: a write whose request was in flight then must not be overlaid onto it.
-     *
-     * @param tick A tick read before the operation started.
-     * @return `true` when the cache was emptied after [tick].
-     */
-    internal fun wasClearedSince(tick: Long): Boolean = predatesCacheClear(tick)
+    /** See [CacheFreshness.wasClearedSince]. */
+    internal fun wasClearedSince(tick: Long): Boolean = freshness.wasClearedSince(tick)
 
     /**
      * Whether the cache may be read for the current identity: it is that identity's, or no
@@ -596,23 +462,24 @@ internal class OfflineStore(
         val outcome =
             tableWriteLock(table).withLock {
                 mutationQueueMutex.withLock {
-                    clearMutex.withLock {
+                    freshness.holdingClearLock {
                         when {
                             // The cache was wiped for an identity change while this request was
                             // in flight. Its rows belong to the outgoing account; writing them
                             // here undoes the teardown.
-                            predatesQueueClear(requestStartedAtTick) ->
+                            freshness.predatesQueueClear(requestStartedAtTick) ->
                                 CacheWriteOutcome.REFUSED_AFTER_CLEAR
 
                             // The cache is another identity's, or became the current one's after
                             // this request left: its rows would mix two identities' data.
-                            !ownedByCurrentIdentity || predatesCacheClear(requestStartedAtTick) ->
+                            !ownedByCurrentIdentity ||
+                                freshness.predatesCacheClear(requestStartedAtTick) ->
                                 CacheWriteOutcome.REFUSED_OTHER_OWNER
 
                             // The response left before the local write landed; keeping the cache
                             // is the only answer that preserves it. The caller re-fetches to
                             // converge on real server state.
-                            isStaleRelativeToLocalWrite(table, requestStartedAtTick) ->
+                            freshness.isStaleRelativeToLocalWrite(table, requestStartedAtTick) ->
                                 CacheWriteOutcome.REFUSED_STALE
 
                             !isTrusted -> CacheWriteOutcome.REFUSED_UNTRUSTED
@@ -731,7 +598,7 @@ internal class OfflineStore(
     suspend fun clearTable(table: String) {
         requireUserTable(table)
         tableWriteLock(table).withLock {
-            recordLocalMutation(table)
+            freshness.recordLocalMutation(table)
             queryCacheDao.deleteTable(table)
             queryShapes.forgetTable(table)
         }
@@ -752,12 +619,8 @@ internal class OfflineStore(
         // can land after the deletes. Neither lock is held across a request, so a teardown never
         // waits on one.
         mutationQueueMutex.withLock {
-            clearMutex.withLock {
-                val tick = monotonicTick()
-                // Never move the teardown tick backwards: two teardowns racing here must leave the
-                // later one, or the earlier assignment would re-admit responses it disqualified.
-                cacheClearedTick.update { existing -> if (existing >= tick) existing else tick }
-                cacheDroppedTick.update { existing -> if (existing >= tick) existing else tick }
+            freshness.holdingClearLock {
+                freshness.markEmptied(freshness.tickNow(), queueCleared = true)
                 // One transaction: a clear that fails part-way leaves the queue, the caches and
                 // the cache's owner as they were, never a mix the next identity could read.
                 cacheOwner.emptying(owner) {
@@ -792,9 +655,8 @@ internal class OfflineStore(
     suspend fun dropCacheFor(owner: String) {
         // The locks and order of [clearLocalData], which this is but for the mutation queue
         mutationQueueMutex.withLock {
-            clearMutex.withLock {
-                val tick = monotonicTick()
-                cacheDroppedTick.update { existing -> if (existing >= tick) existing else tick }
+            freshness.holdingClearLock {
+                freshness.markEmptied(freshness.tickNow(), queueCleared = false)
                 cacheOwner.emptying(owner) {
                     mutationDao.runInTransaction {
                         cachedFileDao.deleteAll()
@@ -1061,7 +923,8 @@ internal class OfflineStore(
         startedAtTick: Long? = null,
         enqueue: suspend MutationWriter.() -> Long,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
-        if (predatesQueueClear(startedAtTick)) return@withLock EnqueueOutcome.LocalDataCleared
+        if (freshness.predatesQueueClear(startedAtTick))
+            return@withLock EnqueueOutcome.LocalDataCleared
         val writer = MutationWriter(owner = identity)
         val id = writer.enqueue()
         val row = checkNotNull(writer.lastStored) { "enqueue stored no mutation" }
@@ -2250,7 +2113,7 @@ internal class OfflineStore(
         requireUserTable(table)
         // A clear after this point voids the patch: each write below checks it under the teardown
         // lock
-        val guardTick = startedAtTick ?: monotonicTick()
+        val guardTick = startedAtTick ?: freshness.tickNow()
         val write =
             MutationRow(
                 id = nextPatchId(),
@@ -2329,7 +2192,7 @@ internal class OfflineStore(
         if (!cacheServesCurrentIdentity()) return
         val toFetchAgain = mutableSetOf<String>()
         tableWriteLock(table).withLock {
-            recordLocalMutation(table)
+            freshness.recordLocalMutation(table)
             val cached = queryCacheDao.allForTable(table)
             val uncachedLive =
                 (liveCacheKeys ?: liveCacheKeysOf(table)) -
@@ -2751,7 +2614,7 @@ internal class OfflineStore(
                 as? JsonObject
         val toFetchAgain = mutableSetOf<String>()
         tableWriteLock(table).withLock {
-            recordLocalMutation(table)
+            freshness.recordLocalMutation(table)
             val shapes = queryShapes.shapesOf(table)
             val cached = queryCacheDao.allForTable(table)
             for (row in cached) {
@@ -2777,21 +2640,9 @@ internal class OfflineStore(
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }
 
-    /**
-     * Writes [row] unless the cache was cleared or dropped since [guardTick], as one step with the
-     * teardown.
-     *
-     * @return `false` when a teardown voided the write.
-     */
+    /** Writes [row] unless the cache was cleared or dropped since [guardTick]. */
     private suspend fun writeUnlessCleared(guardTick: Long, row: CachedQueryRow): Boolean =
-        clearMutex.withLock {
-            if (predatesCacheClear(guardTick)) {
-                false
-            } else {
-                queryCacheDao.upsert(row)
-                true
-            }
-        }
+        freshness.writeUnlessCleared(guardTick) { queryCacheDao.upsert(row) }
 
     /**
      * Marks mutation [id] replayed with the next sync sequence, clearing its send record. In the
@@ -2799,7 +2650,7 @@ internal class OfflineStore(
      * stale-refresh watermark, so a refresh that started before the replay cannot land after it.
      */
     suspend fun markMutationSynced(id: Long, table: String) {
-        recordLocalMutation(table)
+        freshness.recordLocalMutation(table)
         mutationQueueMutex.withLock {
             val sequence = latestSyncSequence() + 1
             // Its outcome is known now: markSynced clears its send record. And a crash between
@@ -2894,7 +2745,7 @@ internal class OfflineStore(
      */
     suspend fun retireCoveredSyncedMutations(table: String, requestStartedAtTick: Long? = null) {
         if (isReservedTable(table)) return
-        if (isStaleRelativeToLocalWrite(table, requestStartedAtTick)) return
+        if (freshness.isStaleRelativeToLocalWrite(table, requestStartedAtTick)) return
         tableWriteLock(table).withLock { retireSyncedMutationsOf(table) }
     }
 
