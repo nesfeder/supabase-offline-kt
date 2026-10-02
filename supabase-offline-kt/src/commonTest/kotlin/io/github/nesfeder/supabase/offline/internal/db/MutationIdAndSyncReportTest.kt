@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation as MutationQueueOperation
+import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationOperation as MutationQueueOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -98,7 +98,7 @@ class MutationIdAndSyncReportTest {
                 PendingMutation(
                     id = insertId,
                     table = TABLE,
-                    operation = MutationQueueOperation.Insert,
+                    operation = MutationQueueOperation.INSERT,
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("a")),
                     body = rows("""[{"id":"a","title":"x"},{"title":"no key"}]"""),
@@ -106,7 +106,7 @@ class MutationIdAndSyncReportTest {
                 PendingMutation(
                     id = updateId,
                     table = TABLE,
-                    operation = MutationQueueOperation.Update,
+                    operation = MutationQueueOperation.UPDATE,
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("b")),
                     body = Json.parseToJsonElement("""{"done":true}"""),

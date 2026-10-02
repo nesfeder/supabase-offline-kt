@@ -6,4 +6,4 @@
 // - Show declarations: true
 
 // Library unique name: <io.github.nesfeder.supabase-offline:supabase-offline-kt-testing>
-final fun io.github.nesfeder.supabase.offline.testing/buildInMemorySupabaseOfflineClient(io.github.jan.supabase/SupabaseClient, kotlinx.coroutines/CoroutineScope, kotlin/Function0<kotlin/Long> = ...): io.github.nesfeder.supabase.offline/SupabaseOfflineClient // io.github.nesfeder.supabase.offline.testing/buildInMemorySupabaseOfflineClient|buildInMemorySupabaseOfflineClient(io.github.jan.supabase.SupabaseClient;kotlinx.coroutines.CoroutineScope;kotlin.Function0<kotlin.Long>){}[0]
+final fun io.github.nesfeder.supabase.offline.testing/buildInMemorySupabaseOfflineClient(io.github.jan.supabase/SupabaseClient, kotlinx.coroutines/CoroutineScope, kotlin/Function0<kotlin/Long> = ...): io.github.nesfeder.supabase.offline/Offline // io.github.nesfeder.supabase.offline.testing/buildInMemorySupabaseOfflineClient|buildInMemorySupabaseOfflineClient(io.github.jan.supabase.SupabaseClient;kotlinx.coroutines.CoroutineScope;kotlin.Function0<kotlin.Long>){}[0]

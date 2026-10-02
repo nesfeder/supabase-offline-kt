@@ -10,8 +10,8 @@ import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
@@ -22,6 +22,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayloa
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.ktor.http.HeadersBuilder
 import kotlin.time.Clock
@@ -104,7 +105,7 @@ private class NetworkAnswer(val result: PostgrestResult, val wasCached: Boolean)
 internal class QueryReader(
     private val delegate: RemoteTable,
     private val store: OfflineStore,
-    private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
     private val trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
@@ -138,14 +139,13 @@ internal class QueryReader(
                 // The cache answers a transport failure, so upstream's waits before one would only
                 // delay it
                 val retries =
-                    if (hasFreshCache(slot, readStrategy.cacheDuration))
-                        Retries.TRANSPORT_FAILS_FAST
+                    if (hasFreshCache(slot, readStrategy.maxAge)) Retries.TRANSPORT_FAILS_FAST
                     else Retries.UPSTREAM
                 try {
                     fetchWaitingOutRestore(slot, columns, request, retries)
                 } catch (exception: Exception) {
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
-                    val cached = readCached(slot, readStrategy.cacheDuration, servesStale = true)
+                    val cached = readCached(slot, readStrategy.maxAge, servesStale = true)
                     if (cached != null) {
                         engineLogger.warning {
                             "SELECT $table network failed, falling back to cache"
@@ -161,22 +161,22 @@ internal class QueryReader(
                 fetchWaitingOutRestore(slot, columns, request, Retries.UPSTREAM)
             }
             is ReadStrategy.CacheFirst -> {
-                val cached = readCached(slot, readStrategy.cacheDuration, servesStale = false)
+                val cached = readCached(slot, readStrategy.maxAge, servesStale = false)
                 if (cached != null) {
                     engineLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
-                    cacheFirstFromNetwork(slot, columns, request, readStrategy.cacheDuration)
+                    cacheFirstFromNetwork(slot, columns, request, readStrategy.maxAge)
                 }
             }
             is ReadStrategy.CacheOnly -> {
-                val cached = readCached(slot, readStrategy.cacheDuration, servesStale = true)
+                val cached = readCached(slot, readStrategy.maxAge, servesStale = true)
                 if (cached != null) {
                     engineLogger.info { "SELECT $table served from cache" }
                     cached
                 } else {
                     engineLogger.error { "SELECT $table no cached data available" }
-                    throw NoSuchElementException("No valid cached data found for this query")
+                    throw CacheMissException("No valid cached data found for this query")
                 }
             }
         }
@@ -369,7 +369,7 @@ internal class QueryReader(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<OfflineReadResult> {
-        val refreshState = MutableStateFlow<RefreshState>(RefreshState.InFlight)
+        val refreshState = MutableStateFlow<RefreshState>(RefreshState.Refreshing)
         val payloads =
             cacheFirstWithParallelRefresh(
                 cache = store.overlaidPayloadFlow(slot.table, slot.cacheKey, slot.shape),
@@ -470,7 +470,7 @@ internal class QueryReader(
                 wakeUps = wakeUps,
                 // Not confirmed until a refresh succeeds: an attempt in flight changes nothing
                 onRefreshState = { state ->
-                    if (state !is RefreshState.InFlight) refreshState.value = state
+                    if (state !is RefreshState.Refreshing) refreshState.value = state
                 },
             )
         return combine(payloads.distinctUntilChanged().map(::resultOf), refreshState) {
@@ -702,8 +702,8 @@ internal class QueryReader(
      * What a cache-only read of [shape] fails with: the cache holds lists of rows, and it sends
      * nothing.
      */
-    private fun cacheCannotAnswer(shape: ReadShape.Uncacheable): NoSuchElementException =
-        NoSuchElementException(
+    private fun cacheCannotAnswer(shape: ReadShape.Uncacheable): CacheMissException =
+        CacheMissException(
             "A cache-only read cannot answer ${shape.kind}: the cache holds lists of rows. Read the list and take " +
                 "the rows you need, or read with a strategy that may use the network."
         )

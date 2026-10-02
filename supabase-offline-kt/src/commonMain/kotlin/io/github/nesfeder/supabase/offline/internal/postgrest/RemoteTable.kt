@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
@@ -10,6 +11,7 @@ import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.internal.sendUnlessClosing
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 
@@ -106,6 +108,10 @@ internal class SupabaseRemoteTable(
     private val readShapeProbe =
         PipelineReadShapeProbe(readShapePostgrest, builder.table, builder.schema)
 
+    /** The client the requests go through; see [sendUnlessClosing]. */
+    private val supabaseClient: SupabaseClient
+        get() = builder.postgrest.supabaseClient
+
     /** @see RemoteTable.table */
     override val table: String
         get() = builder.table
@@ -123,7 +129,7 @@ internal class SupabaseRemoteTable(
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
     ): PostgrestResult {
-        return builder.select(columns, request)
+        return supabaseClient.sendUnlessClosing { builder.select(columns, request) }
     }
 
     /** @see RemoteTable.insert */
@@ -131,7 +137,7 @@ internal class SupabaseRemoteTable(
         body: JsonArray,
         request: InsertRequestBuilder.() -> Unit,
     ): PostgrestResult {
-        return builder.insert(body, request)
+        return supabaseClient.sendUnlessClosing { builder.insert(body, request) }
     }
 
     /** @see RemoteTable.upsert */
@@ -139,7 +145,7 @@ internal class SupabaseRemoteTable(
         body: JsonArray,
         request: UpsertRequestBuilder.() -> Unit,
     ): PostgrestResult {
-        return builder.upsert(body, request)
+        return supabaseClient.sendUnlessClosing { builder.upsert(body, request) }
     }
 
     /** @see RemoteTable.update */
@@ -147,12 +153,12 @@ internal class SupabaseRemoteTable(
         body: JsonElement,
         request: PostgrestRequestBuilder.() -> Unit,
     ): PostgrestResult {
-        return builder.update(body, request)
+        return supabaseClient.sendUnlessClosing { builder.update(body, request) }
     }
 
     /** @see RemoteTable.delete */
     override suspend fun delete(request: PostgrestRequestBuilder.() -> Unit): PostgrestResult {
-        return builder.delete(request)
+        return supabaseClient.sendUnlessClosing { builder.delete(request) }
     }
 
     /** @see PreferHeaderDryRunProbe */

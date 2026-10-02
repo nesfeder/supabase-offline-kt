@@ -4,7 +4,10 @@
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogSink
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -28,13 +31,13 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Tests for [SupabaseOfflineClient.applyServerRecord] / [SupabaseOfflineClient.applyServerDelete] —
- * the realtime primitives that merge a server-authored row into every cached SELECT payload for a
- * table by primary key, without a caller-visible cache signature.
+ * Tests for [Offline.applyServerRecord] / [Offline.applyServerDelete] — the realtime primitives
+ * that merge a server-authored row into every cached SELECT payload for a table by primary key,
+ * without a caller-visible cache signature.
  *
- * These run the real [SupabaseOfflineClientImpl] over a real [OfflineStore] backed by in-memory
- * fake DAOs; the [SupabaseClient][io.github.jan.supabase.SupabaseClient] is a mock-engine stub that
- * these methods never touch (they read/write only the local store).
+ * These run the real [OfflineClient] over a real [OfflineStore] backed by in-memory fake DAOs; the
+ * [SupabaseClient][io.github.jan.supabase.SupabaseClient] is a mock-engine stub that these methods
+ * never touch (they read/write only the local store).
  */
 class ApplyServerRecordTest {
 
@@ -210,11 +213,11 @@ class ApplyServerRecordTest {
             payload = """[{"user_id":"u-1","period_id":"2026-P25"}]""",
         )
         val warnings = mutableListOf<String>()
-        val logger = OfflineLogger { level, message ->
-            if (level == OfflineLogLevel.WARNING) warnings += message
+        val logger = EngineLogSink { level, message ->
+            if (level == EngineLogLevel.WARNING) warnings += message
         }
         val client =
-            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, OfflineLogLevel.DEBUG))
+            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, EngineLogLevel.DEBUG))
 
         // When — the record lacks period_id
         client.applyServerRecord(
@@ -314,11 +317,11 @@ class ApplyServerRecordTest {
             payload = """[{"user_id":"u-1","period_id":"2026-P25"}]""",
         )
         val warnings = mutableListOf<String>()
-        val logger = OfflineLogger { level, message ->
-            if (level == OfflineLogLevel.WARNING) warnings += message
+        val logger = EngineLogSink { level, message ->
+            if (level == EngineLogLevel.WARNING) warnings += message
         }
         val client =
-            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, OfflineLogLevel.DEBUG))
+            buildClient(queryCacheDao, engineLogger = EngineLogger(logger, EngineLogLevel.DEBUG))
 
         // When — the old record lacks period_id
         client.applyServerDelete(
@@ -359,8 +362,8 @@ class ApplyServerRecordTest {
 
     private fun buildClient(
         queryCacheDao: FakeQueryCacheDao,
-        engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
-    ): SupabaseOfflineClientImpl =
+        engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
+    ): OfflineClient =
         newTestOfflineClient(
             store = newTestOfflineStore(queryCacheDao = queryCacheDao),
             engineLogger = engineLogger,

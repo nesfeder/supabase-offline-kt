@@ -1,1 +1,1 @@
-supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/internal/testing/InMemoryOfflineClient.kt|fun createInMemorySupabaseOfflineClient|InternalOfflineTestingApi
+supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/internal/testing/InMemoryOfflineClient.kt|fun createInMemorySupabaseOfflineClient|OfflineInternal

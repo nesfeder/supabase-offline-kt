@@ -2,28 +2,25 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.logging
 
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.OfflineLogger
-
 /**
- * Internal logger wrapper that gates on [minLevel] and uses lazy message construction so
- * filtered-out levels incur zero string-building overhead.
+ * The engine's logger: it passes a message on to [sink] only at [minLevel] or above, and builds the
+ * message only then, so a filtered-out level costs no string building.
  */
 internal class EngineLogger(
-    private val logger: OfflineLogger?,
-    private val minLevel: OfflineLogLevel,
+    private val sink: EngineLogSink?,
+    private val minLevel: EngineLogLevel,
 ) {
-    inline fun log(level: OfflineLogLevel, message: () -> String) {
-        if (logger != null && level.ordinal >= minLevel.ordinal) {
-            logger.log(level, message())
+    inline fun log(level: EngineLogLevel, message: () -> String) {
+        if (sink != null && level.ordinal >= minLevel.ordinal) {
+            sink.log(level, message())
         }
     }
 
-    inline fun debug(message: () -> String) = log(OfflineLogLevel.DEBUG, message)
+    inline fun debug(message: () -> String) = log(EngineLogLevel.DEBUG, message)
 
-    inline fun info(message: () -> String) = log(OfflineLogLevel.INFO, message)
+    inline fun info(message: () -> String) = log(EngineLogLevel.INFO, message)
 
-    inline fun warning(message: () -> String) = log(OfflineLogLevel.WARNING, message)
+    inline fun warning(message: () -> String) = log(EngineLogLevel.WARNING, message)
 
-    inline fun error(message: () -> String) = log(OfflineLogLevel.ERROR, message)
+    inline fun error(message: () -> String) = log(EngineLogLevel.ERROR, message)
 }

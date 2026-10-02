@@ -16,8 +16,8 @@ This README is the entry point. Deep dives live in [docs/](./docs).
   resolution, mutation overlay, sync orchestration, error classification, eviction.
 - [docs/api-reference.md](./docs/reference/supported-features.md) — Every public type with behavior tables and
   the full exception reference.
-- [docs/configuration.md](./docs/reference/configuration.md) — `SupabaseOfflineConfig` and the
-  `OfflineLogger` setup for both platforms.
+- [docs/configuration.md](./docs/reference/configuration.md) — Configuration and logging, for both
+  platforms.
 - [docs/storage.md](./docs/behaviours/storage.md) — Storage download cache, path helpers, client-driven
   staleness model.
 - [docs/persistence.md](./docs/reference/on-device-data.md) — Room schema for `object_cache`,
@@ -62,35 +62,46 @@ The two snippets below are the smallest end-to-end examples.
 For the full API surface (read strategies, mutation strategies, flow observation, storage cache
 helpers), see [docs/api-reference.md](./docs/reference/supported-features.md).
 
-### Minimal Android usage
+### Minimal Kotlin usage
+
+The library is a supabase-kt plugin: install it beside PostgREST (and Storage, if you use it) and
+reach it as `supabase.offline`, the way `supabase.postgrest` is reached. The same code runs on
+Android and iOS.
 
 ```kotlin
 val supabase = createSupabaseClient(
     supabaseUrl = BuildConfig.SUPABASE_URL,
-    supabaseKey = BuildConfig.SUPABASE_ANON_KEY
+    supabaseKey = BuildConfig.SUPABASE_ANON_KEY,
 ) {
     install(Postgrest)
     install(Storage)
+    install(Offline) // settings go here: install(Offline) { cacheSizeBytes = … }
 }
 
-val offline = createSupabaseOfflineClient(context = this, supabase = supabase)
-
-// Cache-friendly read (falls back to cache on connectivity failure by default)
-val tasks = offline["tasks"].select(
-    columns = Columns.ALL,
-    readStrategy = ReadStrategy.NetworkFirst()
-) {
+// A read that falls back to the cache when the server cannot be reached (NetworkFirst)
+val tasks = supabase.offline.from("tasks").select {
     order("created_at", Order.DESCENDING)
 }.decodeList<Task>()
 
-// Queues automatically if offline
-offline["tasks"].insert(Task(id = null, title = "Buy milk", notes = "Whole, not skim"))
+// A write: sent now, or queued while offline and sent when the network is back
+when (val outcome = supabase.offline.from("tasks").insert(Task(title = "Buy milk"))) {
+    is MutationOutcome.Applied -> outcome.result
+    is MutationOutcome.Queued -> outcome.pendingMutation
+}
 
-// Trigger a sync when the device is online again
-offline.syncAllPendingMutations()
+// Send what is queued, for example when the device is online again
+supabase.offline.syncAllPendingMutations()
+
+// On sign-out: the cache, the downloaded files and every unsent write
+supabase.offline.clearLocalData()
 ```
 
-### Minimal iOS usage
+`supabase.offline.from(…)` takes supabase-kt's own calls, filters and request DSL. A few call
+shapes need an edit, listed in the documentation of `OfflinePostgrestQueryBuilder`: a write whose
+result is read, a suspending call or a `return` inside a request lambda, and a request lambda
+passed inside the parentheses.
+
+### From Swift
 
 ```swift
 let offline = SupabaseFactory.offlineClient(
@@ -120,8 +131,8 @@ _ = try await offline.syncAllPendingMutations()
 
 ## Core concepts at a glance
 
-- **`ReadStrategy`** — `NetworkOnly`, `NetworkFirst(cacheDuration?)`, `CacheFirst(cacheDuration?)`,
-  `CacheOnly(cacheDuration?)`. TTL is evaluated at **read** time against the cached row's
+- **`ReadStrategy`** — `NetworkOnly`, `NetworkFirst(maxAge?)`, `CacheFirst(maxAge?)`,
+  `CacheOnly(maxAge?)`. TTL is evaluated at **read** time against the cached row's
   timestamp. See [docs/architecture.md → Read path](./docs/project/internals.md#read-path-caching-deep-dive).
 - **`FlowReadStrategy`** — `CacheFirstThenNetwork`, `NetworkFirstThenCache`, `CacheOnly` for
   reactive `selectAsFlow`.

@@ -5,12 +5,14 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,7 +32,7 @@ class PerIdentityQueueTest {
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
     private val builder =
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
@@ -44,7 +46,7 @@ class PerIdentityQueueTest {
 
     private suspend fun writeOffline(title: String): MutationOutcome {
         server.answer = { connectivityFailure() }
-        return builder.insertJson(rows("""[{"title":"$title"}]"""))
+        return builder.insert(rows("""[{"title":"$title"}]"""))
     }
 
     private fun sentBodies(): List<String> =
@@ -60,7 +62,7 @@ class PerIdentityQueueTest {
         val outcome = writeOffline("A's note")
 
         // Then — A's write is queued, not refused because the anonymous one is pending
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(2, store.allPendingMutations().size)
     }
 
@@ -113,7 +115,7 @@ class PerIdentityQueueTest {
             release.await()
             connectivityFailure()
         }
-        val write = async { runCatching { builder.insertJson(rows("""[{"title":"A's note"}]""")) } }
+        val write = async { runCatching { builder.insert(rows("""[{"title":"A's note"}]""")) } }
         parked.await()
 
         // When — the app switches to user B (no clear), then A's request fails offline

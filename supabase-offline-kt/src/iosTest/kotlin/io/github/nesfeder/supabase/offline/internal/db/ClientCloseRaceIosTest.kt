@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.createSupabaseOfflineClient
+import io.github.nesfeder.supabase.offline.internal.openPlatformClient
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -13,8 +13,8 @@ import okio.Path
 import okio.SYSTEM
 
 /**
- * `close()` never closes the database the iOS factory opened, on this build's SQLite, under a call
- * still using it.
+ * `close()` never closes the database the iOS open path opened, on this build's SQLite, under a
+ * call still using it.
  */
 class ClientCloseRaceIosTest {
 
@@ -22,7 +22,7 @@ class ClientCloseRaceIosTest {
         FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
             "supabase-offline-close-race-${Random.nextLong().toULong()}"
     private val openClient: OpenOfflineClient = { supabase, config ->
-        createSupabaseOfflineClient(supabase, config)
+        openPlatformClient(supabase, config)
     }
 
     @AfterTest

@@ -68,10 +68,10 @@ class OverlayFreshnessTest {
         storeClockLag = Duration.ZERO
 
         // When — a write is patched into it now, then a read accepts five minutes of age
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", 1) } }
+        items.update(Json.parseToJsonElement("""{"title":"new"}""")) { filter { eq("id", 1) } }
         val readsBefore = readsSent()
         items.select(
-            readStrategy = ReadStrategy.CacheFirst(cacheDuration = 5.minutes),
+            readStrategy = ReadStrategy.CacheFirst(maxAge = 5.minutes),
             request = list("A"),
         )
 
@@ -91,7 +91,7 @@ class OverlayFreshnessTest {
             testScheduler.runCurrent()
 
             // When — a write into B creates its payload, then a read accepts five minutes of age
-            items.insertJson(
+            items.insert(
                 Json.parseToJsonElement("""[{"id":2,"list_id":"B","title":"b"}]""") as JsonArray
             )
             testScheduler.runCurrent()
@@ -99,7 +99,7 @@ class OverlayFreshnessTest {
         }
         val readsBefore = readsSent()
         items.select(
-            readStrategy = ReadStrategy.CacheFirst(cacheDuration = 5.minutes),
+            readStrategy = ReadStrategy.CacheFirst(maxAge = 5.minutes),
             request = list("B"),
         )
 

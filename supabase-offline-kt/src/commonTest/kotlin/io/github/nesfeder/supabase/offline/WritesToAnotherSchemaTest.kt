@@ -52,7 +52,7 @@ class WritesToAnotherSchemaTest {
     fun online_it_is_sent_to_that_schema() = runTest {
         // When
         val outcome =
-            client.from(OTHER_SCHEMA, TABLE).updateJson(
+            client.from(OTHER_SCHEMA, TABLE).update(
                 Json.parseToJsonElement("""{"done":true}""") as JsonObject
             ) {
                 filter { eq("id", 1) }
@@ -72,7 +72,7 @@ class WritesToAnotherSchemaTest {
         val failure = runCatching {
             client
                 .from(OTHER_SCHEMA, TABLE)
-                .insertJson(Json.parseToJsonElement("""[{"id":2}]""") as JsonArray)
+                .insert(Json.parseToJsonElement("""[{"id":2}]""") as JsonArray)
         }
             .exceptionOrNull()
 
@@ -86,13 +86,13 @@ class WritesToAnotherSchemaTest {
     fun it_does_not_wait_for_writes_queued_to_the_default_schema() = runTest {
         // Given — a write to the default schema queued offline
         online = false
-        client.from(TABLE).insertJson(Json.parseToJsonElement("""[{"id":3}]""") as JsonArray)
+        client.from(TABLE).insert(Json.parseToJsonElement("""[{"id":3}]""") as JsonArray)
         online = true
 
         // When — a write to another schema, before the queue is replayed
         client
             .from(OTHER_SCHEMA, TABLE)
-            .insertJson(Json.parseToJsonElement("""[{"id":4}]""") as JsonArray)
+            .insert(Json.parseToJsonElement("""[{"id":4}]""") as JsonArray)
 
         // Then — sent at once, ahead of the queued one
         assertEquals(1, writesTo(OTHER_SCHEMA).size)
@@ -107,10 +107,10 @@ class WritesToAnotherSchemaTest {
         val readsBefore = server.requests.count { request -> request.method == "GET" }
 
         // When
-        list.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+        list.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
             filter { eq("id", 1) }
         }
-        list.select(readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours))
+        list.select(readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours))
 
         // Then — the list was asked for again
         assertEquals(readsBefore + 1, server.requests.count { request -> request.method == "GET" })

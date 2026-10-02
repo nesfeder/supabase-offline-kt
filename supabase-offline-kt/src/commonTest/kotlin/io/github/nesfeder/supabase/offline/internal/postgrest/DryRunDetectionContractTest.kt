@@ -7,7 +7,6 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_URL
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -132,7 +131,7 @@ class DryRunDetectionContractTest {
                 }
             }
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from("todos"),
                 store = newTestOfflineStore(),
             )
@@ -140,7 +139,7 @@ class DryRunDetectionContractTest {
         // When — one QueueIfOffline write, timed on the test's clock, which a retry's wait would
         // move
         val startedAt = testScheduler.currentTime
-        builder.updateJson(Json.parseToJsonElement("""{"title":"x"}""")) { filter { eq("id", 1) } }
+        builder.update(Json.parseToJsonElement("""{"title":"x"}""")) { filter { eq("id", 1) } }
         val waited = (testScheduler.currentTime - startedAt).milliseconds
 
         // Then — the check that stops before the network was never retried

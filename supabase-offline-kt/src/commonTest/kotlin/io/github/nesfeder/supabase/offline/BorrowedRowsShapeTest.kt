@@ -98,7 +98,7 @@ class BorrowedRowsShapeTest {
         val before = readsOf(columns.value, key)
         items.select(
             columns = columns,
-            readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours),
+            readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours),
         ) {
             filter { eq(condition.first, condition.second) }
         }
@@ -106,7 +106,7 @@ class BorrowedRowsShapeTest {
     }
 
     private suspend fun update(body: String, id: String) {
-        items.updateJson(Json.parseToJsonElement(body) as JsonObject) { filter { eq("id", id) } }
+        items.update(Json.parseToJsonElement(body) as JsonObject) { filter { eq("id", id) } }
     }
 
     /** The answer to a read of [EMBEDDING]: one comment per row when it limits them to one. */
@@ -255,7 +255,7 @@ class BorrowedRowsShapeTest {
         reader.cancel()
 
         // Then — no payload of x without `headline` was made for it
-        assertFailsWith<NoSuchElementException> { cached(Columns.raw(ALIASED), "done" to true) }
+        assertFailsWith<CacheMissException> { cached(Columns.raw(ALIASED), "done" to true) }
     }
 
     private companion object {

@@ -6,9 +6,11 @@
 # error-level @RequiresOptIn marker in the sources is missing here, or when a line here names
 # anything else, so nothing can be hidden from the records by adding a line.
 #
-# A marker listed here gates a public hook that another module of this project needs and no
-# consumer may call. It is not API; see docs/project/compatibility.md. Nothing is excluded by
-# package: a public declaration in an internal package must carry one of these markers, and the
-# visibility check fails if it does not.
+# A marker listed here gates declarations that are not API (docs/project/compatibility.md):
+# OfflineInternal, a public hook another module of this project needs and no consumer may call;
+# OfflineExperimental, API a consumer may opt into whose shape may still change in a minor release.
+# Nothing is excluded by package: a public declaration in an internal package must carry one of
+# these markers, and the visibility check fails if it does not.
 
-annotation io.github.nesfeder.supabase.offline.InternalOfflineTestingApi
+annotation io.github.nesfeder.supabase.offline.OfflineInternal
+annotation io.github.nesfeder.supabase.offline.OfflineExperimental

@@ -68,13 +68,16 @@ kotlin {
             api(libs.kotlinx.serialization.json)
             api(libs.kotlinx.coroutines.core)
             api(libs.ktor.client.core)
-            // okio.Path appears in the public API (SupabaseOfflineConfig.offlineStoragePath).
+            // okio.Path appears in the public API on iOS (SupabaseFactory.offlineClientKt).
             api(libs.okio)
             implementation(libs.androidx.room.runtime)
         }
 
         androidMain.dependencies {
             implementation(libs.androidx.sqlite.bundled)
+            // Records the application context at startup, as supabase-kt's Storage does, so
+            // install(Offline) needs none.
+            implementation(libs.androidx.startup.runtime)
         }
 
         iosMain {

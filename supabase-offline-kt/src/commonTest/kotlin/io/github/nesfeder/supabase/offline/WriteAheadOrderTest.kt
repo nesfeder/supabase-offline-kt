@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer.ForeignKey
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -12,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -50,17 +52,17 @@ class WriteAheadOrderTest {
                     }
                 )
             val builder =
-                OfflinePostgrestQueryBuilderImpl(
+                OfflineTable(
                     delegate = server.supabaseClient().postgrest.from(TABLE),
                     store = store,
                 )
             val first = async {
-                builder.updateJson(element("""{"title":"A"}""")) { filter { eq("id", 1) } }
+                builder.update(element("""{"title":"A"}""")) { filter { eq("id", 1) } }
             }
             parked.await()
 
             // When — the user edits again (B); then A times out; then the queue replays
-            val second = builder.updateJson(element("""{"title":"B"}""")) { filter { eq("id", 1) } }
+            val second = builder.update(element("""{"title":"B"}""")) { filter { eq("id", 1) } }
             release.complete(Unit)
             val firstOutcome = first.await()
             MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
@@ -84,18 +86,18 @@ class WriteAheadOrderTest {
             )
         store.enqueueInsert(table = TASKS, body = rows("""[{"id":"T","title":"new task"}]"""))
         val photos =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = server.supabaseClient().postgrest.from(PHOTOS),
                 store = store,
             )
 
         // When — back online, the user attaches a photo to it before any pass has run
-        val outcome = runCatching { photos.insertJson(rows("""[{"id":"P","task_id":"T"}]""")) }
+        val outcome = runCatching { photos.insert(rows("""[{"id":"P","task_id":"T"}]""")) }
         MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — no error reached the caller, and both rows arrived, parent first
         assertTrue(outcome.isSuccess, "child write failed with ${outcome.exceptionOrNull()}")
-        assertEquals(MutationOutcome.Queued, outcome.getOrNull())
+        assertIs<MutationOutcome.Queued>(outcome.getOrNull())
         assertEquals(1, server.rows(PHOTOS).size)
     }
 

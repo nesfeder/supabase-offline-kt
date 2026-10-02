@@ -18,6 +18,8 @@ androidx-lifecycle = "2.11.0"
 androidx-navigation3 = "1.2.0"
 # The version navigation3-ui resolves today; the sample reads its back-gesture state directly.
 androidx-navigationevent = "1.1.1"
+# The library's Android artifact: records the application context at startup.
+androidx-startup = "1.2.0"
 androidx-test-core = "1.7.0"
 androidx-testExt = "1.3.0"
 # Build-tool floors: patched minimum versions of libraries that the Gradle plugins and their tools
@@ -129,6 +131,7 @@ androidx-sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.r
 androidx-sqlite-bundled-jvm = { module = "androidx.sqlite:sqlite-bundled-jvm", version.ref = "sqlite" }
 androidx-sqlite-framework-system = { module = "androidx.sqlite:sqlite-framework", version.ref = "sqlite-system" }
 androidx-sqlite-system = { module = "androidx.sqlite:sqlite", version.ref = "sqlite-system" }
+androidx-startup-runtime = { module = "androidx.startup:startup-runtime", version.ref = "androidx-startup" }
 androidx-test-core-ktx = { module = "androidx.test:core-ktx", version.ref = "androidx-test-core" }
 androidx-testExt-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-testExt" }
 # The build-tool floors (see [versions]). Never a dependency of anything: each is a constraint on

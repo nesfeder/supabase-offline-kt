@@ -53,7 +53,7 @@ class WritesThatSelectTest {
         writeAnswer = """[{"id":2}]"""
 
         // When
-        items.insertJson(Json.parseToJsonElement("""[{"title":"new"}]""") as JsonArray) {
+        items.insert(Json.parseToJsonElement("""[{"title":"new"}]""") as JsonArray) {
             select(Columns.list("id"))
         }
 
@@ -68,7 +68,7 @@ class WritesThatSelectTest {
         writeAnswer = "[]"
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""") as JsonObject) {
+        items.update(Json.parseToJsonElement("""{"title":"new"}""") as JsonObject) {
             filter { eq("id", 1) }
             select()
         }
@@ -84,7 +84,7 @@ class WritesThatSelectTest {
         writeAnswer = """[{"id":1,"title":"new","updated_by":"server"}]"""
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"title":"new"}""") as JsonObject) {
+        items.update(Json.parseToJsonElement("""{"title":"new"}""") as JsonObject) {
             filter { eq("id", 1) }
             select()
         }

@@ -96,7 +96,7 @@ class QueryReaderRecoveryTest {
                 reads.first().result,
                 "fresh cache-less subscription starts at no-data, not empty []",
             )
-            assertIs<RefreshState.InFlight>(reads.first().refresh)
+            assertIs<RefreshState.Refreshing>(reads.first().refresh)
             assertTrue(
                 reads.any { it.result == null && it.refresh is RefreshState.Stalled },
                 "fast-ladder exhaustion surfaces Stalled while still no-data",
@@ -465,7 +465,7 @@ class QueryReaderRecoveryTest {
 
             // Then: the caller still sees the server response, but the RLS-shaped empty says
             // nothing about the signed-in user's data — the cached rows are preserved for
-            // identity teardown (clearAllCache) to remove, not clobbered
+            // identity teardown (clearLocalData) to remove, not clobbered
             assertEquals("[]", oneShot.data)
             assertEquals(freshPayload, queryCacheDao.allForTable("plans").single().payload)
         }

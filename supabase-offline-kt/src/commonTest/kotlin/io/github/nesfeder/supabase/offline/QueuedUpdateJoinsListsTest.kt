@@ -65,7 +65,7 @@ class QueuedUpdateJoinsListsTest {
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = list(false))
         items.select(readStrategy = ReadStrategy.NetworkOnly, request = list(true))
         online = false
-        items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+        items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
             filter { eq("id", "x") }
         }
     }
@@ -111,7 +111,7 @@ class QueuedUpdateJoinsListsTest {
         online = false
 
         // When
-        items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+        items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
             filter { eq("id", "x") }
         }
 
@@ -130,8 +130,8 @@ class QueuedUpdateJoinsListsTest {
 
             // When — offline, an upsert of some of x's columns flags it, and an update marks every
             // urgent task done
-            items.upsertJson(Json.parseToJsonElement(URGENT_X) as JsonArray)
-            items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+            items.upsert(Json.parseToJsonElement(URGENT_X) as JsonArray)
+            items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
                 filter { eq("flag", "urgent") }
             }
 

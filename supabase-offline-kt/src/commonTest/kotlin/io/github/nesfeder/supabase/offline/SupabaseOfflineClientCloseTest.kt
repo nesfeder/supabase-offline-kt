@@ -4,15 +4,17 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingUncaughtExceptions
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
+import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -79,7 +81,7 @@ class SupabaseOfflineClientCloseTest {
 
     @Test
     fun close_stops_the_clients_background_work_and_ends_a_live_read_of_every_strategy() = runTest {
-        for (strategy in FlowReadStrategy.entries) {
+        for (strategy in everyFlowReadStrategy) {
             // Given — a live reactive read of this strategy, which has emitted
             val releases = AtomicInt(0)
             val server = RecordingPostgrestServer()
@@ -136,7 +138,7 @@ class SupabaseOfflineClientCloseTest {
     @Test
     fun a_read_of_any_strategy_made_after_close_fails_with_the_closed_error_and_sends_nothing() =
         runTest {
-            for (strategy in FlowReadStrategy.entries) {
+            for (strategy in everyFlowReadStrategy) {
                 // Given — a builder obtained before close()
                 val server = RecordingPostgrestServer()
                 val client =
@@ -170,17 +172,17 @@ class SupabaseOfflineClientCloseTest {
 
     @Test
     fun close_called_inside_a_collector_returns_at_once_and_ends_the_collection() = runTest {
-        val flows: List<Pair<String, (SupabaseOfflineClient) -> Flow<*>>> =
-            listOf<Pair<String, (SupabaseOfflineClient) -> Flow<*>>>(
+        val flows: List<Pair<String, (Offline) -> Flow<*>>> =
+            listOf<Pair<String, (Offline) -> Flow<*>>>(
                 "pendingMutationCountFlow()" to { client -> client.pendingMutationCountFlow() },
                 "pendingMutationCountFlow(table)" to
                     { client ->
                         client.pendingMutationCountFlow("todos")
                     },
             ) +
-                FlowReadStrategy.entries.map { strategy ->
+                everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
-                        { client: SupabaseOfflineClient ->
+                        { client: Offline ->
                             client.from("todos").selectAsFlow(readStrategy = strategy)
                         }
                 }
@@ -236,7 +238,7 @@ class SupabaseOfflineClientCloseTest {
     @Test
     fun a_collection_that_stops_reading_does_not_hold_close() = runTest {
         for (variant in listOf(STUCK_IN_ITS_BODY, NEVER_READ_AGAIN, NEVER_READ_AGAIN_RENDEZVOUS)) {
-            for (strategy in FlowReadStrategy.entries) {
+            for (strategy in everyFlowReadStrategy) {
                 // Given — reads the server answers and writes that queue, so every read keeps
                 // wanting to emit, and a collection that stops reading after its first value
                 val releases = AtomicInt(0)
@@ -295,7 +297,7 @@ class SupabaseOfflineClientCloseTest {
                 repeat(3) { index ->
                     client
                         .from("todos")
-                        .insertJson(buildJsonArray { add(buildJsonObject { put("id", index) }) })
+                        .insert(buildJsonArray { add(buildJsonObject { put("id", index) }) })
                 }
 
                 // When
@@ -349,17 +351,17 @@ class SupabaseOfflineClientCloseTest {
 
     @Test
     fun a_flow_the_app_stopped_reading_through_produceIn_ends_quietly_at_close() = runTest {
-        val flows: List<Pair<String, (SupabaseOfflineClient) -> Flow<*>>> =
-            listOf<Pair<String, (SupabaseOfflineClient) -> Flow<*>>>(
+        val flows: List<Pair<String, (Offline) -> Flow<*>>> =
+            listOf<Pair<String, (Offline) -> Flow<*>>>(
                 "pendingMutationCountFlow()" to { client -> client.pendingMutationCountFlow() },
                 "pendingMutationCountFlow(table)" to
                     { client ->
                         client.pendingMutationCountFlow("todos")
                     },
             ) +
-                FlowReadStrategy.entries.map { strategy ->
+                everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
-                        { client: SupabaseOfflineClient ->
+                        { client: Offline ->
                             client.from("todos").selectAsFlow(readStrategy = strategy)
                         }
                 }
@@ -396,7 +398,7 @@ class SupabaseOfflineClientCloseTest {
             repeat(5) { index ->
                 client
                     .from("todos")
-                    .insertJson(buildJsonArray { add(buildJsonObject { put("id", index) }) })
+                    .insert(buildJsonArray { add(buildJsonObject { put("id", index) }) })
             }
 
             // When
@@ -452,7 +454,7 @@ class SupabaseOfflineClientCloseTest {
             runCatching {
                 client
                     .from("todos")
-                    .insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+                    .insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
             }
         }
         withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
@@ -528,7 +530,7 @@ class SupabaseOfflineClientCloseTest {
                     coordinatorScope = callerScope,
                     onStillClosing = { gaveUp.addAndFetch(1) },
                 )
-            val bucket = client.storage("avatars")
+            val bucket = client.storage.from("avatars")
             val outcome = callerScope.async { runCatching { call(bucket) } }
             withContext(Dispatchers.Default) {
                 withTimeout(5.seconds) { server.requestArrived.await() }
@@ -577,8 +579,8 @@ class SupabaseOfflineClientCloseTest {
                 onStillClosing = { gaveUp.addAndFetch(1) },
             )
         val builder = client.from("todos")
-        builder.insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
-        builder.insertJson(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
+        builder.insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+        builder.insert(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
         assertEquals(2, client.pendingMutationCount())
 
         // When — back online, a replay and an online write are in flight, held at the server, when
@@ -587,7 +589,7 @@ class SupabaseOfflineClientCloseTest {
         val replay = callerScope.launch { runCatching { client.syncAllPendingMutations() } }
         val write = callerScope.launch {
             runCatching {
-                builder.insertJson(buildJsonArray { add(buildJsonObject { put("id", 3) }) })
+                builder.insert(buildJsonArray { add(buildJsonObject { put("id", 3) }) })
             }
         }
         withContext(Dispatchers.Default) {
@@ -635,8 +637,8 @@ class SupabaseOfflineClientCloseTest {
                 coordinatorScope = idleCoroutineScope(),
                 closeWait = IDLE_CLOSE_WAIT,
             )
-        client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
-        client.from("todos").insertJson(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
+        client.from("todos").insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+        client.from("todos").insert(buildJsonArray { add(buildJsonObject { put("id", 2) }) })
 
         // When — its first request is held at the server when the client closes
         online.store(1)
@@ -678,7 +680,7 @@ class SupabaseOfflineClientCloseTest {
                 runCatching {
                     client
                         .from("todos")
-                        .insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+                        .insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
                 }
             }
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
@@ -703,7 +705,7 @@ class SupabaseOfflineClientCloseTest {
         runTest {
             // Given — a write on the wire that the server holds past close()'s wait
             val releases = AtomicInt(0)
-            val logger = RecordingOfflineLogger()
+            val logger = RecordingLogSink()
             val arrived = CompletableDeferred<Unit>()
             val held = CompletableDeferred<Unit>()
             val server =
@@ -718,7 +720,7 @@ class SupabaseOfflineClientCloseTest {
             val client =
                 newTestOfflineClient(
                     supabase = server.supabaseClient(),
-                    engineLogger = EngineLogger(logger, OfflineLogLevel.INFO),
+                    engineLogger = EngineLogger(logger, EngineLogLevel.INFO),
                     onClose = { releases.addAndFetch(1) },
                     coordinatorScope = callerScope,
                     closeWait = IDLE_CLOSE_WAIT,
@@ -730,7 +732,7 @@ class SupabaseOfflineClientCloseTest {
                 runCatching {
                     client
                         .from("todos")
-                        .insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+                        .insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
                 }
             }
             withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
@@ -759,7 +761,7 @@ class SupabaseOfflineClientCloseTest {
             )
             assertEquals(
                 1,
-                logger.entriesAt(OfflineLogLevel.WARNING).count { entry ->
+                logger.entriesAt(EngineLogLevel.WARNING).count { entry ->
                     entry.message.startsWith("close() waited")
                 },
             )
@@ -803,7 +805,7 @@ class SupabaseOfflineClientCloseTest {
                     runCatching {
                         client
                             .from("todos")
-                            .insertJson(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
+                            .insert(buildJsonArray { add(buildJsonObject { put("id", 1) }) })
                     }
                 }
                 withContext(Dispatchers.Default) { withTimeout(5.seconds) { arrived.await() } }
@@ -847,7 +849,7 @@ class SupabaseOfflineClientCloseTest {
                 "pendingMutationCountFlow()" to { client.pendingMutationCountFlow() },
                 "pendingMutationCountFlow(table)" to { client.pendingMutationCountFlow("todos") },
             ) +
-                FlowReadStrategy.entries.map { strategy ->
+                everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to { builder.selectAsFlow(readStrategy = strategy) }
                 }
 
@@ -879,7 +881,7 @@ class SupabaseOfflineClientCloseTest {
 
         // Then
         assertFailsWith<IllegalStateException> { client.from("todos") }
-        assertFailsWith<IllegalStateException> { client.storage("avatars") }
+        assertFailsWith<IllegalStateException> { client.storage.from("avatars") }
         assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
         assertFailsWith<IllegalStateException> { client.syncPendingMutations("todos") }
         assertFailsWith<IllegalStateException> { client.pendingMutationCount() }
@@ -892,7 +894,7 @@ class SupabaseOfflineClientCloseTest {
         assertFailsWith<IllegalStateException> {
             client.applyServerDelete("todos", buildJsonObject { put("id", 1) })
         }
-        assertFailsWith<IllegalStateException> { client.clearAllCache() }
+        assertFailsWith<IllegalStateException> { client.clearLocalData() }
     }
 
     private companion object {

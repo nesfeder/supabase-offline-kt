@@ -12,6 +12,7 @@ import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
@@ -20,6 +21,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -45,8 +47,7 @@ class AuthPluginQueueIdentityTest {
             }
         }
     private val store = newTestOfflineStore()
-    private val builder =
-        OfflinePostgrestQueryBuilderImpl(delegate = supabase.postgrest.from(TABLE), store = store)
+    private val builder = OfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)
     private val replayer = MutationQueueReplayer(store = store, supabase = supabase)
 
     private fun sentBodies(): List<String> =
@@ -57,7 +58,7 @@ class AuthPluginQueueIdentityTest {
         runTest {
             // Given — Auth installed, nobody signed in, and an offline write
             supabase.auth.sessionStatus.first { status -> status !is SessionStatus.Initializing }
-            val anonymousOutcome = builder.insertJson(rows("""[{"id":"n0","title":"anonymous"}]"""))
+            val anonymousOutcome = builder.insert(rows("""[{"id":"n0","title":"anonymous"}]"""))
             val attemptsWhileOffline = sentBodies().size
 
             // When — a pass while still signed out
@@ -65,7 +66,7 @@ class AuthPluginQueueIdentityTest {
             val signedOut = replayer.sync()
 
             // Then — the anonymous write went out
-            assertEquals(MutationOutcome.Queued, anonymousOutcome)
+            assertIs<MutationOutcome.Queued>(anonymousOutcome)
             assertEquals(1, signedOut.syncedCount)
             assertEquals(
                 listOf("""[{"id":"n0","title":"anonymous"}]"""),
@@ -83,12 +84,12 @@ class AuthPluginQueueIdentityTest {
                 autoRefresh = false,
             )
             server.answer = { connectivityFailure() }
-            val userAOutcome = builder.insertJson(rows("""[{"id":"n1","title":"A's note"}]"""))
+            val userAOutcome = builder.insert(rows("""[{"id":"n1","title":"A's note"}]"""))
             server.answer = { okJson("[]") }
             val signedIn = replayer.sync()
 
             // Then — A's write queued and went out under A
-            assertEquals(MutationOutcome.Queued, userAOutcome)
+            assertIs<MutationOutcome.Queued>(userAOutcome)
             assertEquals(1, signedIn.syncedCount)
             assertEquals(0, store.allPendingMutations().size)
         }

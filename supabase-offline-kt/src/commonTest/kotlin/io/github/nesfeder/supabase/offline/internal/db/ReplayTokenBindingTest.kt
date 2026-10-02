@@ -7,12 +7,12 @@ import io.github.jan.supabase.auth.user.UserInfo
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
@@ -21,6 +21,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -150,18 +151,18 @@ class ReplayTokenBindingTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         supabase.signInForTest("user-a")
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
         changeTheSessionWhenASendStarts { supabase.signInForTest("user-b") }
 
         // When — A writes; B signs in after the head was claimed, before the request is built
-        val outcome = builder.insertJson(rows("""[{"id":"a1"}]"""))
+        val outcome = builder.insert(rows("""[{"id":"a1"}]"""))
 
         // Then — the write stays queued as A's, nothing went out under B's token, and the send
         // this attempt recorded is cleared
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(emptyList(), postsCarrying("user-b"))
         assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.owner })
         assertFalse(store.hasUnconfirmedSend(store.allPendingMutations().single().id))
@@ -196,7 +197,7 @@ class ReplayTokenBindingTest {
     @Test
     fun a_token_naming_no_user_holds_its_users_queue_and_warns_once() = runTest {
         // Given — A's session, whose token names no user, and A's write queued
-        val logger = RecordingOfflineLogger()
+        val logger = RecordingLogSink()
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         supabase.auth.importSession(
             UserSession(
@@ -225,7 +226,7 @@ class ReplayTokenBindingTest {
         assertEquals(1, store.allPendingMutations().size)
         assertEquals(
             1,
-            logger.entriesAt(OfflineLogLevel.WARNING).count { "token" in it.message },
+            logger.entriesAt(EngineLogLevel.WARNING).count { "token" in it.message },
         )
     }
 

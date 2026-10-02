@@ -13,7 +13,6 @@ import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -22,6 +21,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -115,14 +115,14 @@ class IsDistinctOperatorTest {
         val mutationDao = FakeMutationDao()
         val store = newTestOfflineStore(mutationDao = mutationDao)
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = server.supabaseClient().postgrest.from("todos"),
                 store = store,
             )
 
         // When — the write is made offline, then the queue replays online
         val outcome =
-            builder.updateJson(
+            builder.update(
                 Json.parseToJsonElement("""{"done":true}"""),
                 MutationStrategy.QueueIfOffline,
             ) {
@@ -133,7 +133,7 @@ class IsDistinctOperatorTest {
             MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
 
         // Then — it was queued, and the replay carries the caller's own filter
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, synced)
         val replay = server.requests.last()
         assertEquals("PATCH", replay.method)

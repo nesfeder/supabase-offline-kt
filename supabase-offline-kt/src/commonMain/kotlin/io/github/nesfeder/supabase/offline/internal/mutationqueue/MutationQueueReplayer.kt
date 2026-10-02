@@ -8,13 +8,13 @@ import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.result.PostgrestResult
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
 import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.isPermanentMutationFailure
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
@@ -51,7 +51,7 @@ import kotlinx.serialization.json.JsonPrimitive
 internal class MutationQueueReplayer(
     private val store: OfflineStore,
     private val supabase: SupabaseClient,
-    private val engineLogger: EngineLogger = EngineLogger(null, OfflineLogLevel.INFO),
+    private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     private val remoteTableFor: (schema: String, table: String) -> RemoteTable = { schema, table ->
         SupabaseRemoteTable(supabase.postgrest.from(schema, table))
     },

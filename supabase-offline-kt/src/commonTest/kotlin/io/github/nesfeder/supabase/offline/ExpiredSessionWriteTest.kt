@@ -6,6 +6,7 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.TOKEN_ENDPOINT
@@ -46,18 +47,18 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
 
         // When
-        val inserted = builder.insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
-        val updated = builder.updateJson(patch()) { filter { eq("id", "k1") } }
+        val inserted = builder.insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val updated = builder.update(patch()) { filter { eq("id", "k1") } }
 
         // Then — both queued, as A's, and no request went out with a token it could not refresh
-        assertEquals(MutationOutcome.Queued, inserted)
-        assertEquals(MutationOutcome.Queued, updated)
+        assertIs<MutationOutcome.Queued>(inserted)
+        assertIs<MutationOutcome.Queued>(updated)
         assertEquals(listOf("user:user-a", "user:user-a"), mutationDao.inserted.map { it.owner })
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
     }
@@ -69,14 +70,14 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
 
         // When
         val outcome = runCatching {
-            builder.updateJson(patch()) {
+            builder.update(patch()) {
                 filter { eq("id", "k1") }
                 dryRun()
             }
@@ -95,16 +96,16 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
 
         // When
-        val inserted = builder.insertJson(rows("""[{"id":"k1","title":"Buy milk"}]"""))
+        val inserted = builder.insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // Then — queued, unsent, and not recorded as possibly on the server
-        assertEquals(MutationOutcome.Queued, inserted)
+        assertIs<MutationOutcome.Queued>(inserted)
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
         val queued = store.allPendingMutations().single()
         assertFalse(store.hasUnconfirmedSend(queued.id))

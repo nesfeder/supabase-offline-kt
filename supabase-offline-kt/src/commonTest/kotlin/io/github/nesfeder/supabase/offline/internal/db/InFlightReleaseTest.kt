@@ -4,10 +4,10 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilderImpl
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -78,13 +78,13 @@ class InFlightReleaseTest {
 
         // When — the app writes again
         val builder =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
                 queueIdentity = { QueueIdentity.Anonymous },
                 headSender = replayer,
             )
-        val later = builder.insertJson(rows("""[{"id":"k2","title":"Eggs"}]"""))
+        val later = builder.insert(rows("""[{"id":"k2","title":"Eggs"}]"""))
 
         // Then — it is sent at once, not queued behind a send that is no longer happening
         assertIs<MutationOutcome.Applied>(later)

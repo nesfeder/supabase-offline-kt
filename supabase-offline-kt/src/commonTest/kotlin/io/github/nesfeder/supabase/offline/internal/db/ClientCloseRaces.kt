@@ -7,13 +7,13 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.OfflineLogLevel
-import io.github.nesfeder.supabase.offline.SupabaseOfflineClient
-import io.github.nesfeder.supabase.offline.SupabaseOfflineConfig
+import io.github.nesfeder.supabase.offline.Offline
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingOfflineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
+import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
@@ -46,13 +46,12 @@ import okio.Path
 import okio.Path.Companion.toPath
 import okio.SYSTEM
 
-/** The platform factory, as the scenarios call it. */
-internal typealias OpenOfflineClient =
-    (SupabaseClient, SupabaseOfflineConfig) -> SupabaseOfflineClient
+/** The platform's open path, as the scenarios call it. */
+internal typealias OpenOfflineClient = (SupabaseClient, Offline.Config) -> Offline
 
 /**
- * `close()` racing the calls it must not close the database under, over a real database opened by a
- * platform factory. Both platform test classes run these; only opening the client differs.
+ * `close()` racing the calls it must not close the database under, over a real database opened by
+ * the platform's open path. Both platform test classes run these; only opening the client differs.
  */
 internal object ClientCloseRaces {
 
@@ -79,8 +78,9 @@ internal object ClientCloseRaces {
             val databaseDirectory = directory / "race-$iteration"
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
-            val logger = RecordingOfflineLogger()
-            val client = openClient(server.supabaseClient(), configIn(databaseDirectory, logger))
+            val logger = RecordingLogSink()
+            val client =
+                openClient(server.supabaseClient(logs = logger), configIn(databaseDirectory))
             fill(client, server)
 
             // When — a clear and close() race; either may start first, by up to a few milliseconds,
@@ -89,7 +89,7 @@ internal object ClientCloseRaces {
             val clearStartsFirst = iteration % 2 == 0
             val clear = async {
                 if (!clearStartsFirst) delay(lead)
-                runCatching { client.clearAllCache() }
+                runCatching { client.clearLocalData() }
             }
             val close = async {
                 if (clearStartsFirst) delay(lead)
@@ -150,12 +150,12 @@ internal object ClientCloseRaces {
             // Given — an online write on the wire, held at the server
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
-            val logger = RecordingOfflineLogger()
-            val client = openClient(server.supabaseClient(), configIn(directory, logger))
+            val logger = RecordingLogSink()
+            val client = openClient(server.supabaseClient(logs = logger), configIn(directory))
             val held = CompletableDeferred<Unit>()
             server.restHold.value = held
             val write = async {
-                runCatching { client.from(TABLE).insertJson(keylessRow(server.marker)) }
+                runCatching { client.from(TABLE).insert(keylessRow(server.marker)) }
             }
             server.restArrived.first { requests -> requests > 0 }
 
@@ -194,7 +194,7 @@ internal object ClientCloseRaces {
         val client = openClient(server.supabaseClient(), configIn(directory))
         fill(client, server)
         server.online.store(true)
-        val bucket = client.storage(BUCKET)
+        val bucket = client.storage.from(BUCKET)
         val pendingCount = client.pendingMutationCountFlow()
         val downloadsBefore = server.storageArrived.value
 
@@ -242,8 +242,9 @@ internal object ClientCloseRaces {
             val databaseDirectory = directory / "readers-$iteration"
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
-            val logger = RecordingOfflineLogger()
-            val client = openClient(server.supabaseClient(), configIn(databaseDirectory, logger))
+            val logger = RecordingLogSink()
+            val client =
+                openClient(server.supabaseClient(logs = logger), configIn(databaseDirectory))
             fill(client, server)
             server.online.store(true)
             val app = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -269,7 +270,7 @@ internal object ClientCloseRaces {
                 val outcome = runCatching {
                     var index = 0
                     while (true) {
-                        client.from(TABLE).insertJson(keylessRow("${server.marker}-${index++}"))
+                        client.from(TABLE).insert(keylessRow("${server.marker}-${index++}"))
                         yield()
                     }
                 }
@@ -305,7 +306,7 @@ internal object ClientCloseRaces {
 
     /**
      * The logout sequence an app runs, [iterations] times across every read strategy: a screen
-     * still observing a read, then `clearAllCache()` and `close()` back to back. The clear re-runs
+     * still observing a read, then `clearLocalData()` and `close()` back to back. The clear re-runs
      * the live read; the read ends with the closed error, nothing of the user is left, and the
      * database reopens at once.
      */
@@ -316,12 +317,13 @@ internal object ClientCloseRaces {
     ) = onRealThreads {
         repeat(iterations) { iteration ->
             // Given — a screen observing a read of one strategy
-            val strategy = FlowReadStrategy.entries[iteration % FlowReadStrategy.entries.size]
+            val strategy = everyFlowReadStrategy[iteration % everyFlowReadStrategy.size]
             val databaseDirectory = directory / "logout-$iteration"
             val server =
                 RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
-            val logger = RecordingOfflineLogger()
-            val client = openClient(server.supabaseClient(), configIn(databaseDirectory, logger))
+            val logger = RecordingLogSink()
+            val client =
+                openClient(server.supabaseClient(logs = logger), configIn(databaseDirectory))
             fill(client, server)
             // A network-first read needs the network to start; once it has, nothing reaches the
             // server
@@ -340,7 +342,7 @@ internal object ClientCloseRaces {
             server.online.store(false)
 
             // When — the app logs out
-            client.clearAllCache()
+            client.clearLocalData()
             client.close()
 
             // Then
@@ -363,16 +365,16 @@ internal object ClientCloseRaces {
     /**
      * Cached rows, a downloaded file and a write queued offline, each carrying the server's marker.
      */
-    private suspend fun fill(client: SupabaseOfflineClient, server: RecordingBackendServer) {
+    private suspend fun fill(client: Offline, server: RecordingBackendServer) {
         server.online.store(true)
         repeat(10) { index -> client.from(TABLE).select { filter { eq("id", index) } } }
-        client.storage(BUCKET).downloadAuthenticated("u-1/me.png") {}
+        client.storage.from(BUCKET).downloadAuthenticated("u-1/me.png") {}
         server.online.store(false)
-        client.from(TABLE).insertJson(keylessRow(server.marker))
+        client.from(TABLE).insert(keylessRow(server.marker))
     }
 
     /** Waits, bounded, until [client] refuses new calls: `close()` has begun. */
-    private suspend fun awaitRefusingCalls(client: SupabaseOfflineClient) {
+    private suspend fun awaitRefusingCalls(client: Offline) {
         withTimeout(5.seconds) {
             while (runCatching { client.from(TABLE) }.isSuccess) delay(1)
         }
@@ -384,14 +386,15 @@ internal object ClientCloseRaces {
         add(buildJsonObject { put("email", "$marker@example.com") })
     }
 
-    private fun configIn(directory: Path, logger: RecordingOfflineLogger? = null) =
-        SupabaseOfflineConfig(offlineStoragePath = directory, logger = logger)
+    private fun configIn(directory: Path): Offline.Config = Offline.createConfig {
+        dataDirectory = directory.toString()
+    }
 
     /**
      * What [logger] recorded at ERROR: a background failure the engine contained would show here.
      */
-    private fun errorsIn(logger: RecordingOfflineLogger): List<String> =
-        logger.entriesAt(OfflineLogLevel.ERROR).map { entry -> entry.message }
+    private fun errorsIn(logger: RecordingLogSink): List<String> =
+        logger.entriesAt(EngineLogLevel.ERROR).map { entry -> entry.message }
 
     /** Where [marker] can still be read: the database files and the cached files. */
     private fun markerLocations(directory: Path, marker: String): List<String> {

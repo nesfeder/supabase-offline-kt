@@ -14,7 +14,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
@@ -43,24 +42,26 @@ class SupabaseOfflineClientTest {
     }
 
     /**
-     * The one-argument `from(table)` reads the default schema from the PostgREST plugin before the
-     * engine's own guard runs, so without the plugin it fails with supabase-kt's own error (which
-     * also names the missing plugin), as the previous standalone engine asserted, rather than the
-     * engine's install hint. A later change is expected to route it through the same guard as
-     * `from(schema, table)`.
+     * The one-argument `from(table)` checks for the PostgREST plugin before it reads the default
+     * schema from it, so it fails with the same install hint as `from(schema, table)`, and so does
+     * a sync.
      */
     @Test
-    fun from_table_whenPostgrestNotInstalled_throws_before_the_engine_guard() = runTest {
+    fun from_table_and_sync_whenPostgrestNotInstalled_throw_the_same_helpful_error() = runTest {
         // Given — a client with no plugins
         val client = newTestOfflineClient(supabase = newTestSupabaseClient(plugins = {}))
 
         // When
-        val error = assertFailsWith<IllegalStateException> { client.from("todos") }
+        val fromTable = assertFailsWith<IllegalStateException> { client.from("todos") }
+        val sync = assertFailsWith<IllegalStateException> { client.syncAllPendingMutations() }
 
         // Then
-        val message = error.message.orEmpty()
-        assertTrue(message.contains("Plugin rest not installed or not of type Postgrest"), message)
-        assertFalse(message.contains("Postgrest plugin is not installed"))
+        listOf(fromTable, sync).forEach { error ->
+            assertTrue(
+                error.message.orEmpty().contains("Postgrest plugin is not installed"),
+                "$error",
+            )
+        }
     }
 
     @Test
@@ -69,7 +70,7 @@ class SupabaseOfflineClientTest {
         val client = newTestOfflineClient(supabase = newTestSupabaseClient())
 
         // When
-        val error = assertFailsWith<IllegalStateException> { client.storage("avatars") }
+        val error = assertFailsWith<IllegalStateException> { client.storage.from("avatars") }
 
         // Then
         assertTrue(error.message.orEmpty().contains("Storage plugin is not installed"))
@@ -90,7 +91,7 @@ class SupabaseOfflineClientTest {
             )
 
         // When
-        val bucket = client.storage("avatars")
+        val bucket = client.storage.from("avatars")
 
         // Then
         assertIs<OfflineBucketApi>(bucket)
@@ -130,7 +131,7 @@ class SupabaseOfflineClientTest {
         // Given — a write queued while the network is down
         val client = newTestOfflineClient(supabase = server.supabaseClient())
         server.answer = { connectivityFailure() }
-        client.from("todos").insertJson(ROWS)
+        client.from("todos").insert(ROWS)
 
         // When
         val total = client.pendingMutationCount()
@@ -147,7 +148,7 @@ class SupabaseOfflineClientTest {
         // Given — a write queued while the network is down, then the network returns
         val client = newTestOfflineClient(supabase = server.supabaseClient())
         server.answer = { connectivityFailure() }
-        client.from("todos").insertJson(ROWS)
+        client.from("todos").insert(ROWS)
         server.answer = { okJson("[]") }
         server.requests.clear()
 
@@ -170,8 +171,8 @@ class SupabaseOfflineClientTest {
                 coordinatorScope = idleCoroutineScope(),
             )
         server.answer = { connectivityFailure() }
-        client.from("todos").insertJson(ROWS)
-        client.from("projects").insertJson(ROWS)
+        client.from("todos").insert(ROWS)
+        client.from("projects").insert(ROWS)
         server.answer = { okJson("[]") }
         server.requests.clear()
 

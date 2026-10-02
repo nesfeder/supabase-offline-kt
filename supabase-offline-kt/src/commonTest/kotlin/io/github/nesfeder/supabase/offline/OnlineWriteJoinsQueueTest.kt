@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -12,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -30,13 +32,13 @@ class OnlineWriteJoinsQueueTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val builder =
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
         )
 
     private suspend fun rename(title: String): MutationOutcome =
-        builder.updateJson(patch(title), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
+        builder.update(patch(title), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
     @Test
     fun an_online_edit_behind_a_pending_offline_edit_reaches_the_server_last() = runTest {
@@ -69,7 +71,7 @@ class OnlineWriteJoinsQueueTest {
         val outcome = rename("B")
 
         // Then — the edit is queued behind A without reaching the server, and the overlay shows B
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(
             requestsBefore,
             server.requests.size,
@@ -85,7 +87,7 @@ class OnlineWriteJoinsQueueTest {
     fun an_online_delete_behind_a_pending_insert_of_the_same_row_does_not_resurrect_it() = runTest {
         // Given — offline, the user created row 7
         server.answer = { connectivityFailure() }
-        builder.insertJson(Json.parseToJsonElement("""[{"id":7,"title":"temp"}]""") as JsonArray)
+        builder.insert(Json.parseToJsonElement("""[{"id":7,"title":"temp"}]""") as JsonArray)
 
         // When — online, the user deletes it again, then the queue replays
         server.answer = { okJson("[]") }
@@ -101,11 +103,11 @@ class OnlineWriteJoinsQueueTest {
     fun an_online_write_waits_behind_a_pending_write_in_another_table() = runTest {
         // Given — another table has a pending write, this one has none
         server.answer = { connectivityFailure() }
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
                 delegate = server.supabaseClient().postgrest.from("other"),
                 store = store,
             )
-            .updateJson(patch("x"), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
+            .update(patch("x"), MutationStrategy.QueueIfOffline) { filter { eq("id", 1) } }
 
         // When
         server.answer = { okJson("[]") }
@@ -113,7 +115,7 @@ class OnlineWriteJoinsQueueTest {
         val outcome = rename("B")
 
         // Then — it waits its turn: the other table's write may be the row this one depends on
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(requestsBefore, server.requests.size)
     }
 
@@ -145,15 +147,15 @@ class OnlineWriteJoinsQueueTest {
                 coordinatorScope = backgroundScope,
             )
         server.answer = { connectivityFailure() }
-        client.from(TABLE).updateJson(patch("A")) { filter { eq("id", 1) } }
+        client.from(TABLE).update(patch("A")) { filter { eq("id", 1) } }
 
         // When — online again, a new edit joins the queue; nobody calls sync
         server.answer = { okJson("[]") }
-        val outcome = client.from(TABLE).updateJson(patch("B")) { filter { eq("id", 1) } }
+        val outcome = client.from(TABLE).update(patch("B")) { filter { eq("id", 1) } }
         store.pendingMutationCountFlow().first { pending -> pending == 0 }
 
         // Then — the engine replayed both, in order
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(
             listOf("""{"title":"A"}""", """{"title":"B"}"""),
             server.requests.filter { it.method == "PATCH" }.map { it.body }.takeLast(2),

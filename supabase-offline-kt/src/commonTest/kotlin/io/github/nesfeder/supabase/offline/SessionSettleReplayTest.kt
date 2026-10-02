@@ -52,7 +52,7 @@ class SessionSettleReplayTest {
             newTestOfflineClient(supabase = supabase, store = store, coordinatorScope = clientScope)
         supabase.signInForTest("user-a")
         server.answer = { connectivityFailure() }
-        client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"A's edit"}""")) {
+        client.from(TABLE).update(Json.parseToJsonElement("""{"title":"A's edit"}""")) {
             filter { eq("id", 1) }
         }
         supabase.auth.clearSession()
@@ -92,7 +92,7 @@ class SessionSettleReplayTest {
             supabase.signInForTest("user-a")
             clientScheduler.runCurrent()
             server.answer = { connectivityFailure() }
-            client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"A's edit"}""")) {
+            client.from(TABLE).update(Json.parseToJsonElement("""{"title":"A's edit"}""")) {
                 filter { eq("id", 1) }
             }
 
@@ -124,7 +124,7 @@ class SessionSettleReplayTest {
         supabase.signInForTest("user-a")
         clientScheduler.runCurrent()
         server.answer = { connectivityFailure() }
-        client.from(TABLE).updateJson(Json.parseToJsonElement("""{"title":"A's edit"}""")) {
+        client.from(TABLE).update(Json.parseToJsonElement("""{"title":"A's edit"}""")) {
             filter { eq("id", 1) }
         }
 

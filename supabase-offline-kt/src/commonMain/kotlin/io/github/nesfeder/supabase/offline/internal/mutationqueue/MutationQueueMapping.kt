@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.MutationOperation
+import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation as StoredOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -21,10 +23,10 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 internal fun mutationOperationOf(stored: String): MutationOperation? =
     when (stored) {
-        StoredOperation.INSERT -> MutationOperation.Insert
-        StoredOperation.UPSERT -> MutationOperation.Upsert
-        StoredOperation.UPDATE -> MutationOperation.Update
-        StoredOperation.DELETE -> MutationOperation.Delete
+        StoredOperation.INSERT -> MutationOperation.INSERT
+        StoredOperation.UPSERT -> MutationOperation.UPSERT
+        StoredOperation.UPDATE -> MutationOperation.UPDATE
+        StoredOperation.DELETE -> MutationOperation.DELETE
         else -> null
     }
 
@@ -59,7 +61,7 @@ internal fun StoredRejection.toRejectedMutation(
     json: Json,
     primaryKeys: PrimaryKeys,
 ): RejectedMutation {
-    val operation = mutationOperationOf(operation) ?: MutationOperation.Update
+    val operation = mutationOperationOf(operation) ?: MutationOperation.UPDATE
     val body = bodyOf(operation, bodyJson, json)
     return RejectedMutation(
         id = id,
@@ -86,7 +88,7 @@ internal fun StoredRejection.toRejectedMutation(
 
 /** A DELETE has no body; any other body that no longer parses is reported as absent. */
 private fun bodyOf(operation: MutationOperation, bodyJson: String, json: Json): JsonElement? {
-    if (operation == MutationOperation.Delete) return null
+    if (operation == MutationOperation.DELETE) return null
     return try {
         json.parseToJsonElement(bodyJson)
     } catch (_: IllegalArgumentException) {

@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -103,7 +104,7 @@ class LiveEvictionTest {
 
     @Test
     fun eviction_keeps_the_oldest_payload_while_a_reader_shows_it() = runTest {
-        FlowReadStrategy.entries.forEach { strategy ->
+        everyFlowReadStrategy.forEach { strategy ->
             // Given / When
             val (cached, shown) = evictWhileListAIsShown(strategy)
 

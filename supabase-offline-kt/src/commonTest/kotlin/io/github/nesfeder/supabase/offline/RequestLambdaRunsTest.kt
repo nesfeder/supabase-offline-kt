@@ -57,7 +57,7 @@ class RequestLambdaRunsTest {
         val sent = server.requests.size
 
         // When
-        items.select(readStrategy = ReadStrategy.CacheFirst(cacheDuration = 1.hours)) {
+        items.select(readStrategy = ReadStrategy.CacheFirst(maxAge = 1.hours)) {
             runs++
             filter { eq("id", 1) }
         }
@@ -100,7 +100,7 @@ class RequestLambdaRunsTest {
         items.select(readStrategy = ReadStrategy.NetworkOnly)
 
         // When
-        items.updateJson(update) {
+        items.update(update) {
             runs++
             filter { eq("id", 1) }
         }
@@ -115,7 +115,7 @@ class RequestLambdaRunsTest {
         items.select(readStrategy = ReadStrategy.NetworkOnly)
 
         // When
-        items.updateJson(update) {
+        items.update(update) {
             runs++
             filter { eq("id", 1) }
             select()
@@ -128,7 +128,7 @@ class RequestLambdaRunsTest {
     @Test
     fun an_insert_sent_at_once_runs_the_request_three_times() = runTest {
         // When
-        items.insertJson(rows) { runs++ }
+        items.insert(rows) { runs++ }
 
         // Then
         assertEquals(3, runs)
@@ -137,7 +137,7 @@ class RequestLambdaRunsTest {
     @Test
     fun an_upsert_sent_at_once_runs_the_request_three_times() = runTest {
         // When
-        items.upsertJson(rows) { runs++ }
+        items.upsert(rows) { runs++ }
 
         // Then
         assertEquals(3, runs)
@@ -161,7 +161,7 @@ class RequestLambdaRunsTest {
         online = false
 
         // When
-        items.updateJson(update) {
+        items.update(update) {
             runs++
             filter { eq("id", 1) }
         }
@@ -173,7 +173,7 @@ class RequestLambdaRunsTest {
     @Test
     fun an_online_only_write_runs_the_request_once() = runTest {
         // When
-        items.updateJson(update, mutationStrategy = MutationStrategy.OnlineOnly) {
+        items.update(update, mutationStrategy = MutationStrategy.OnlineOnly) {
             runs++
             filter { eq("id", 1) }
         }

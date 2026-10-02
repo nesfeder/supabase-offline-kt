@@ -250,7 +250,7 @@ class ReadShapeTest {
 
                 // Then — a clear error, never the list in the shape's place, and nothing sent
                 listOf(oneShot, reactive).forEach { failure ->
-                    assertIs<NoSuchElementException>(failure, "$name")
+                    assertIs<CacheMissException>(failure, "$name")
                     assertTrue(
                         failure.message.orEmpty().contains("the cache holds lists of rows"),
                         "$name: ${failure.message}",

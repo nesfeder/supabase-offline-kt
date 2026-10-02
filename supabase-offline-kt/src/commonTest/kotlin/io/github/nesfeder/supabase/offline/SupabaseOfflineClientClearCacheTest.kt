@@ -4,6 +4,7 @@
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
@@ -23,11 +24,11 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
- * Verifies [SupabaseOfflineClientImpl.clearAllCache] wipes downloaded storage files from disk (not
- * just the Room metadata rows), so identity-clearing flows leave no cached objects behind.
+ * Verifies [OfflineClient.clearLocalData] wipes downloaded storage files from disk (not just the
+ * Room metadata rows), so identity-clearing flows leave no cached objects behind.
  *
  * Runs against the real okio [FileSystem.SYSTEM] with a per-test temp base dir; the Supabase client
- * is a never-hit [MockEngine] stub since `clearAllCache` is a local-only operation.
+ * is a never-hit [MockEngine] stub since `clearLocalData` is a local-only operation.
  */
 class SupabaseOfflineClientClearCacheTest {
 
@@ -39,13 +40,13 @@ class SupabaseOfflineClientClearCacheTest {
     }
 
     @Test
-    fun clearAllCache_wipes_storage_directory_from_disk() = runTest {
+    fun clearLocalData_wipes_storage_directory_from_disk() = runTest {
         // Given a client whose offline cache has a downloaded storage file on disk
         val baseDir =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-clearcache-test-${Random.nextLong()}"
         createdDirs += baseDir
-        // A never-hit client with no plugins: clearAllCache is local-only.
+        // A never-hit client with no plugins: clearLocalData is local-only.
         val client =
             newTestOfflineClient(
                 supabase = newTestSupabaseClient(plugins = {}),
@@ -57,7 +58,7 @@ class SupabaseOfflineClientClearCacheTest {
         assertTrue(FileSystem.SYSTEM.exists(storageFile), "precondition: storage file on disk")
 
         // When the entire local cache is cleared (logout / account switch / account deletion)
-        client.clearAllCache()
+        client.clearLocalData()
 
         // Then the on-disk storage tree is gone
         assertFalse(
@@ -81,7 +82,7 @@ class SupabaseOfflineClientClearCacheTest {
             )
 
         // When
-        client.clearAllCache()
+        client.clearLocalData()
 
         // Then — one clear, not one per lock holder, and the scrub ran after its deletes
         assertEquals(1, cachedFileDao.clears)

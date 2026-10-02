@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 @file:OptIn(ExperimentalAbiValidation::class)
 
+import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.KotlinMultiplatform
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
@@ -14,6 +15,7 @@ import org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
 import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
 import org.gradle.plugins.signing.Sign
 import org.jetbrains.dokka.gradle.DokkaExtension
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation
 
@@ -67,6 +69,12 @@ private val abiExclusionMarkers: List<String> =
 
 pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
     extensions.configure<KotlinMultiplatformExtension> {
+        // An interface member with a body compiles to a JVM default method and nothing else. The
+        // default mode also emits a `$DefaultImpls` class per such interface, which puts a
+        // supertype's defaults (supabase-kt's `BucketApi` included) into this module's ABI.
+        targets.withType<KotlinMultiplatformAndroidLibraryTarget>().configureEach {
+            compilerOptions { jvmDefault.set(JvmDefaultMode.NO_COMPATIBILITY) }
+        }
         abiValidation {
             filters { exclude { annotatedWith.addAll(abiExclusionMarkers) } }
             // A target this machine cannot compile fails the record instead of being copied from

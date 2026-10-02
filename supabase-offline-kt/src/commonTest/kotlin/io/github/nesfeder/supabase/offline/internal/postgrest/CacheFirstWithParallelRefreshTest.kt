@@ -274,7 +274,7 @@ class CacheFirstWithParallelRefreshTest {
             // When: the fast ladder exhausts, then the network heals and an edge fires
             advanceTimeBy(5_000)
             runCurrent()
-            assertIs<RefreshState.InFlight>(states.first())
+            assertIs<RefreshState.Refreshing>(states.first())
             assertTrue(states.any { it is RefreshState.Stalled })
             failing = false
             wakeUps.emit(Unit)

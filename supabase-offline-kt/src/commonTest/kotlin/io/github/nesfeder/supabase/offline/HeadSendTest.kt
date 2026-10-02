@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
@@ -19,6 +20,7 @@ import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -47,7 +49,7 @@ class HeadSendTest {
             currentIdentity = { session },
         )
     private val builder =
-        OfflinePostgrestQueryBuilderImpl(
+        OfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
@@ -56,7 +58,7 @@ class HeadSendTest {
         )
 
     private suspend fun rename(title: String): MutationOutcome =
-        builder.updateJson(patch(title)) { filter { eq("id", 1) } }
+        builder.update(patch(title)) { filter { eq("id", 1) } }
 
     @Test
     fun a_refusal_at_the_head_is_thrown_and_the_write_leaves_the_queue() = runTest {
@@ -88,7 +90,7 @@ class HeadSendTest {
         val outcome = rename("A")
 
         // Then — queued, and nothing asked for a pass while offline
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, store.allPendingMutations().size)
         assertEquals(0, syncRequests)
     }
@@ -136,7 +138,7 @@ class HeadSendTest {
         first.await()
 
         // Then — one pass asked for by the queued write, one by the head once it landed
-        assertEquals(MutationOutcome.Queued, second)
+        assertIs<MutationOutcome.Queued>(second)
         assertEquals(2, syncRequests)
         assertEquals(1, store.allPendingMutations().size)
     }
@@ -146,7 +148,7 @@ class HeadSendTest {
         // Given — the write is made as user A, and the session is already user B when it would go
         // out
         val asUserA =
-            OfflinePostgrestQueryBuilderImpl(
+            OfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
                 queueIdentity = { USER_A },
@@ -156,10 +158,10 @@ class HeadSendTest {
         session = USER_B
 
         // When
-        val outcome = asUserA.updateJson(patch("A")) { filter { eq("id", 1) } }
+        val outcome = asUserA.update(patch("A")) { filter { eq("id", 1) } }
 
         // Then — it waits for A, unsent
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(0, server.requests.size)
         session = USER_A
         assertEquals(1, replayer.sync().syncedCount)
@@ -174,7 +176,7 @@ class HeadSendTest {
 
         // When
         val outcome =
-            builder.updateJson(patch("B"), MutationStrategy.OnlineOnly) { filter { eq("id", 1) } }
+            builder.update(patch("B"), MutationStrategy.OnlineOnly) { filter { eq("id", 1) } }
 
         // Then — it went straight out, ahead of the queued write
         assertEquals(MutationOutcome.Applied::class, outcome::class)
@@ -192,7 +194,7 @@ class HeadSendTest {
 
             // When — an update whose filter the queue cannot record exactly
             val outcome =
-                builder.updateJson(patch("B")) {
+                builder.update(patch("B")) {
                     filter {
                         or {
                             eq("id", 1)
@@ -278,7 +280,7 @@ class HeadSendTest {
         val outcome = rename("A")
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, store.allPendingMutations().size)
     }
 
@@ -291,7 +293,7 @@ class HeadSendTest {
         val outcome = rename("A")
 
         // Then
-        assertEquals(MutationOutcome.Queued, outcome)
+        assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(1, store.allPendingMutations().size)
     }
 

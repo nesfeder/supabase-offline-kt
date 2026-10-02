@@ -111,9 +111,11 @@ internal class RecordingPostgrestServer(
     /**
      * A supabase-kt client whose PostgREST requests reach this server. Automatic retries are off,
      * so a scripted failure surfaces on the first attempt.
+     *
+     * @param logs records what the offline plugin logs through the client, from INFO up.
      */
-    fun supabaseClient(): SupabaseClient =
-        newTestSupabaseClient(engine = engine) {
+    fun supabaseClient(logs: RecordingLogSink? = null): SupabaseClient =
+        newTestSupabaseClient(engine = engine, logs = logs) {
             install(Postgrest) { maxRetries = 0 }
         }
 

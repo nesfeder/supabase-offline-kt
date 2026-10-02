@@ -72,7 +72,7 @@ class OverlayLimitsTest {
         online = false
 
         // When — a row newer than every other is queued
-        items.insertJson(rows("""[{"id":9,"n":9}]"""))
+        items.insert(rows("""[{"id":9,"n":9}]"""))
 
         // Then — last on each page, each page past its limit
         assertEquals(
@@ -94,7 +94,7 @@ class OverlayLimitsTest {
         online = false
 
         // When
-        items.insertJson(rows("""[{"id":2,"title":"b"}]"""))
+        items.insert(rows("""[{"id":2,"title":"b"}]"""))
 
         // Then — no author, and `title`, not `heading`
         assertEquals(
@@ -111,7 +111,7 @@ class OverlayLimitsTest {
         online = false
 
         // When — `lt` on a number is left to the server
-        items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+        items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
             filter { lt("n", 5) }
         }
 
@@ -128,7 +128,7 @@ class OverlayLimitsTest {
             online = false
 
             // When
-            items.upsertJson(rows("""[{"key":"theme","value":"dark"}]"""))
+            items.upsert(rows("""[{"key":"theme","value":"dark"}]"""))
 
             // Then — keyed on `id`, which neither row has: a second row
             assertEquals(
@@ -145,7 +145,7 @@ class OverlayLimitsTest {
         online = false
 
         // When
-        items.upsertJson(rows("""[{"key":"theme","value":"dark"}]""")) { onConflict = "key" }
+        items.upsert(rows("""[{"key":"theme","value":"dark"}]""")) { onConflict = "key" }
 
         // Then
         assertEquals("""[{"key":"theme","value":"dark"}]""", cached())
@@ -160,7 +160,7 @@ class OverlayLimitsTest {
         online = false
 
         // When
-        items.upsertJson(rows("""[{"id":"x","list_id":"A"}]""")) { ignoreDuplicates = true }
+        items.upsert(rows("""[{"id":"x","list_id":"A"}]""")) { ignoreDuplicates = true }
 
         // Then — shown in A, though the server will keep x where it is
         assertEquals(
@@ -179,7 +179,7 @@ class OverlayLimitsTest {
 
         // When — online, x is marked done, and the server sends the whole row back
         writtenRows = """[{"id":"x","done":true}]"""
-        items.updateJson(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
+        items.update(Json.parseToJsonElement("""{"done":true}""") as JsonObject) {
             filter { eq("id", "x") }
             select()
         }
