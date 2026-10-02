@@ -10,7 +10,7 @@ supabase-offline-kt is a plugin for [supabase-kt](https://github.com/supabase-co
 for Kotlin Multiplatform apps on Android and iOS. An app installs it with `install(Offline) { … }`
 beside PostgREST and reaches it as `supabase.offline`, and `supabase.offline.from("todos")` takes
 supabase-kt's own verbs, overloads and request DSL. A read is answered from a cache on the device
-or from the server, as its read strategy says, and every answer the server gives refreshes the
+or from the server, as its read strategy says, and the server's answers to list reads refresh the
 cache. A write is saved to a mutation queue on the device first, sent at once when nothing of the
 same user waits ahead of it, and otherwise sent, in the order it was made, by a later replay pass,
 which the library starts by itself when the network comes back. Storage downloads are kept on disk
@@ -40,7 +40,7 @@ Two artifacts ship from this repository:
 
 | Artifact | Package | What it holds |
 | --- | --- | --- |
-| `io.github.nesfeder.supabase-offline:supabase-offline-kt` | `io.github.nesfeder.supabase.offline` | The plugin, and everything on this page but the last table |
+| `io.github.nesfeder.supabase-offline:supabase-offline-kt` | `io.github.nesfeder.supabase.offline` | The plugin, and every type on this page outside its testing section |
 | `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing` | `io.github.nesfeder.supabase.offline.testing` | The in-memory client and the factories for tests |
 
 Everything else lives under `io.github.nesfeder.supabase.offline.internal` and is not API. Four
@@ -97,7 +97,7 @@ The settings:
 | `AuthenticatedSessionOnly` | An empty response is written only when the session was signed in before and after the request; a response with rows is written signed out too, under the same exclusions. For an app that reads public rows signed out and must never see an empty signed-out answer replace them. |
 
 **Installing.** PostgREST is required: `from` throws `IllegalStateException` without it. Storage
-is needed only for `storage`. Auth is optional and changes one thing: with it, the cache belongs to
+is needed only for `storage`. Auth is optional. With it, the cache belongs to
 one user at a time and the mutation queue keeps each user's writes apart; without it, or with the
 app's own token provider, there is one identity for the life of the install, and an app whose own
 provider serves several users must clear local data itself when the user changes. On Android the
@@ -119,7 +119,7 @@ filter values, tokens or object paths; `DEBUG` may.
 | --- | --- | --- | --- |
 | `from(table)`, `from(schema, table)`, `get(table)`, `get(schema, table)` | A table's `OfflinePostgrestQueryBuilder`; `offline["todos"]` is `offline.from("todos")`. | A table of another schema is cached apart from the default schema's table of the same name. | `IllegalStateException` without PostgREST |
 | `class OfflinePostgrestQueryBuilder` | The offline counterpart of supabase-kt's `PostgrestQueryBuilder`, with its `postgrest`, `table` and `schema`. | Final, with an internal constructor. Each verb takes its offline choice as a named parameter with a default, before the trailing request lambda. | — |
-| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Only a list of rows is cached. `single()`, `maybeSingle()`, `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly` |
+| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Only a list of rows is cached. `single()`, `maybeSingle()`, `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer |
 | `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. Needs no Realtime channel. | `CacheMissException`, through the flow, under `CacheOnly` for a shape the cache never holds |
 
 A verb may run its `request` lambda more than once: a read once to learn its shape and once per
@@ -181,7 +181,8 @@ asked for a shape the cache never holds. No request was sent.
 | `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException` |
 | `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException` |
 
-Each returns a `MutationOutcome`, and `mutationStrategy` defaults to `QueueIfOffline`.
+Each returns a `MutationOutcome`, and `mutationStrategy` defaults to `QueueIfOffline`. An
+`OnlineOnly` write made while network access is off throws `NetworkDisabledException`.
 
 `MutationStrategy`:
 
@@ -621,9 +622,9 @@ queries it may reach, by negating that time, and their live readers fetch again.
 within its `maxAge`, and `NetworkFirst` and `CacheOnly` serve it within theirs.
 
 **Eviction.** After a response of 4 K characters or more, and after every 32nd response, the engine
-sums the payloads' length. Over the bound, it deletes the payloads fetched longest ago, ten at a time, down to 50 MB below the bound (or
-to the bound when it is 50 MB or less), never one of up to 500 queries with a live reader. The
-engine's own records are never counted or evicted.
+sums the payloads' length. Over the bound, it deletes the payloads fetched longest ago, ten at a
+time, down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up to
+500 queries with a live reader. The engine's own records are never counted or evicted.
 
 **Retries and refreshes.** A `NetworkFirst` read with a warm cache, and every reactive refresh, send
 their SELECT with supabase-kt's transport retries off, so a transport failure falls back at once; a
@@ -728,13 +729,13 @@ with its recorded outcome, and on every other way out.
 
 **The replay-token rule.** A queued write is sent with its owner's token or not at all. A
 request-pipeline phase placed just before the send, after supabase-kt has set the `Authorization`
-header, reads the owner the request carries. With Auth installed, it stops a PostgREST request
-whose token does not speak for that owner: a user's JWT must name the owner as `sub`, and an
-anonymous write must carry no user's token. It also stops a request whose pass was cancelled
-before it went out. The write then stays queued for its owner's next session, and the send record
-this attempt made is cleared, since nothing left the device. A token that does not name its own session's user holds that
-user's queue, and is reported once at `WARNING`. A PostgREST configured with its own `jwtToken` sends
-that token whoever is signed in, so it is not checked.
+header, reads the owner the request carries. With Auth installed, it stops a PostgREST request whose
+token does not speak for that owner: a user's JWT must name the owner as `sub`, and an anonymous
+write must carry no user's token. It also stops a request whose pass was cancelled before it went
+out. The write then stays queued for its owner's next session, and the send record this attempt made
+is cleared, since nothing left the device. A token that does not name its own session's user holds
+that user's queue, and is reported once at `WARNING`. A PostgREST configured with its own `jwtToken`
+sends that token whoever is signed in, so it is not checked.
 
 **The rejected list.** It is one bounded value in a reserved row of `object_cache`, read once and
 written whole under the queue lock. Moving a write onto it, deleting its row and clearing its send
