@@ -71,11 +71,25 @@ release.
   sent by itself either way.
 - On Android the library's manifest declares `android.permission.ACCESS_NETWORK_STATE`, for its
   connectivity monitor: it appears in the merged manifest of every app that uses the library.
+- A test builds its client as an app does, with `install(Offline) { inMemory(clock = …) }` from
+  `supabase-offline-kt-testing`; `buildInMemorySupabaseOfflineClient` is gone (see Removed). The
+  client no longer runs in the test's own scope: its background work runs on the library's, and a
+  failure there is logged, never thrown into the test.
+- `ReadStrategy.NetworkFirst`, `CacheFirst` and `CacheOnly` take a `Duration` only: the
+  constructors taking milliseconds are gone, and `NetworkFirst(null)` now compiles.
+- The iOS framework carries no Swift-only helpers and no SKIE-generated Swift (see Removed). Nothing
+  uses the framework yet: the Swift package is being rebuilt on a bridge of its own.
 - On Android, an interface member with a body compiles to a JVM default method only, so the
   `$DefaultImpls` classes are gone (`-jvm-default=no-compatibility`).
 
 ### Added
 
+- Built and tested against supabase-kt 3.8 (`supabase-bom` in the version catalog). Each minor
+  release of this library names exactly one supabase-kt minor: the artifact compiles supabase-kt's
+  inline functions into itself and implements its `BucketApi`, which gains members in minor
+  releases, so a range cannot be promised. When an app resolves another supabase-kt minor, the
+  plugin logs one warning when it is installed, naming both versions, and carries on; a patch
+  difference is no warning.
 - The `Offline` plugin for supabase-kt: `install(Offline) { … }` and `supabase.offline`, with its
   settings in `Offline.Config`: the two cache sizes, `dataDirectory`, `primaryKeys` (each table's
   key, `id` unless set; `primaryKey(table, columns)`), `responseTrust` (`ResponseTrust`, with the
@@ -157,12 +171,28 @@ release.
   keeps everything in memory, for tests.
 - A record of the public API of both artifacts, checked on every change, so the API cannot change
   without a reviewer seeing it.
+- `supabase-offline-kt-testing`: `Offline.Config.inMemory(clock)` keeps the plugin's cache,
+  mutation queue and Storage file cache in memory, writing nothing to disk, with every other setting
+  applied as in an app; the clock is the time the client sees. It watches no connectivity monitor,
+  so its network status is `UNKNOWN` until a test sets `networkAvailability` or calls
+  `disableNetwork()`, which is how a test takes it offline. Factories build the value types whose
+  constructors are internal, for an app's own test doubles: `appliedOutcome`, `queuedOutcome`,
+  `cachedFile`, `pendingMutation`, `stalledRefresh`, `querySnapshot`, `syncReport`, `syncStatus`,
+  `rejectedMutation`, `serverError`, and the exceptions `cacheMissException`,
+  `mutationNotQueueableException`, `networkDisabledException` and `syncFailedException`.
 - Published on Maven Central as `io.github.nesfeder.supabase-offline:supabase-offline-kt` and
   `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing`, for Android, `iosArm64` and
   `iosSimulatorArm64`, each with its sources, an HTML API reference and a signature on every file.
 
 ### Changed
 
+- Every public `suspend` function declares `@Throws(Throwable::class)`, so a framework that exports
+  the library hands Swift a failure as an error instead of ending the process. `close()`, which
+  overrides supabase-kt's, and the `syncStatus` property cannot declare it.
+- A reactive read's refresh that fails for a reason other than the network is logged at WARNING,
+  by type, each time it is tried again; it was retried silently.
+- okio is no longer an `api` dependency of the library: no public declaration names one of its
+  types. It still reaches an app, at the same version, through supabase-kt's Auth.
 - The Android artifact depends on `androidx.startup:startup-runtime` itself, at the version
   supabase-kt's Auth already brings, instead of reaching it through Auth.
 - A locally written row shows only in the cached lists whose filters it matches, leaves a list it
@@ -234,6 +264,16 @@ release.
   (`syncPendingMutations(table?): SyncReport`); the two-overload `pendingMutationCount()` /
   `pendingMutationCount(table)` and `pendingMutationCountFlow()` / `pendingMutationCountFlow(table)`
   (one member each, `table: String? = null`); and `OfflineReadResult` (`QuerySnapshot`).
+- `buildInMemorySupabaseOfflineClient` (`install(Offline) { inMemory() }`), and the millisecond
+  constructors of `ReadStrategy.NetworkFirst`, `CacheFirst` and `CacheOnly` (pass `maxAge` as a
+  `Duration`).
+- What the iOS framework carried for the old Swift layer: `SupabaseFactory` and its
+  `offlineClientKt`, `SwiftJson`, the `encodeToJsonString`, `encodeToJsonElement`,
+  `encodeListToJsonString` and `encodeListToJsonArray` helpers, `singleElementArray`, the fifteen
+  `…Kt` query and mutation helpers, the three `applySwiftOptions`, `ensureLocalFileUrl` and
+  `localFileUrlIfCached` (`ensureLocalPath` and `localPathIfCached` stay), and SKIE with the Swift
+  it generated. Nothing has consumed the framework, so no published user is affected; the Swift
+  package will be built on a bridge module of its own.
 - `NumericDeltaColumn`, and the `deltaColumns` parameter of the update verbs. A queued write
   replays exactly what was sent; a value that several devices change concurrently, such as a
   counter or a running total, is computed on the server from the facts clients write.

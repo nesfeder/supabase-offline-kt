@@ -187,6 +187,12 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     /** When set, the next [markSendUnconfirmed] fails, as a full disk would. */
     var failNextMarkSendUnconfirmed: Boolean = false
 
+    /**
+     * When set, the next [hasPendingOwnedBy] fails, as a corrupt page would: the read that asks
+     * whether an identity has writes queued.
+     */
+    var failNextHasPendingOwnedBy: Boolean = false
+
     /** When set, runs after [unconfirmedSendIds] read the rows and before it returns them. */
     var afterUnconfirmedSendIdsRead: (suspend () -> Unit)? = null
 
@@ -224,6 +230,18 @@ internal class FakeMutationDao : InMemoryMutationDao() {
             error("Scripted failure part-way through clearing")
         }
         super.deleteAll()
+    }
+
+    override suspend fun hasPendingOwnedBy(
+        owner: String,
+        includeOwnerless: Boolean,
+        beforeId: Long,
+    ): Boolean {
+        if (failNextHasPendingOwnedBy) {
+            failNextHasPendingOwnedBy = false
+            error("Scripted failure reading the queue")
+        }
+        return super.hasPendingOwnedBy(owner, includeOwnerless, beforeId)
     }
 
     override suspend fun unconfirmedSendIds(): List<Long> {

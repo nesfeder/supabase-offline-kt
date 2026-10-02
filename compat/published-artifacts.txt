@@ -52,7 +52,7 @@ supabase-offline-kt-android kotlin-module .aar!classes.jar!META-INF/io.github.ne
 supabase-offline-kt-android pom dependency androidx.room:room-runtime-android:2.8.4 scope=runtime
 supabase-offline-kt-android pom dependency androidx.sqlite:sqlite-bundled-android:2.6.2 scope=runtime
 supabase-offline-kt-android pom dependency androidx.startup:startup-runtime:1.2.0 scope=runtime
-supabase-offline-kt-android pom dependency com.squareup.okio:okio-jvm:3.17.0 scope=compile
+supabase-offline-kt-android pom dependency com.squareup.okio:okio-jvm:3.17.0 scope=runtime
 supabase-offline-kt-android pom dependency io.github.jan-tennert.supabase:auth-kt:(none) scope=compile
 supabase-offline-kt-android pom dependency io.github.jan-tennert.supabase:postgrest-kt:(none) scope=compile
 supabase-offline-kt-android pom dependency io.github.jan-tennert.supabase:storage-kt:(none) scope=compile
@@ -61,7 +61,6 @@ supabase-offline-kt-android pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.
 supabase-offline-kt-android pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0 scope=compile
 supabase-offline-kt-android pom dependency org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0 scope=compile
 supabase-offline-kt-android pom managed io.github.jan-tennert.supabase:bom:3.8.0 scope=import type=pom
-supabase-offline-kt-android variant androidApiElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-android variant androidApiElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
 supabase-offline-kt-android variant androidApiElements-published dependency io.github.jan-tennert.supabase:bom requires=3.8.0 [org.gradle.category=platform]
 supabase-offline-kt-android variant androidApiElements-published dependency io.github.jan-tennert.supabase:postgrest-kt (no version)

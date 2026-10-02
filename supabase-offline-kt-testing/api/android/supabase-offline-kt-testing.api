@@ -1,5 +1,32 @@
-public final class io/github/nesfeder/supabase/offline/testing/InMemorySupabaseOfflineClientKt {
-	public static final fun buildInMemorySupabaseOfflineClient (Lio/github/jan/supabase/SupabaseClient;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function0;)Lio/github/nesfeder/supabase/offline/Offline;
-	public static synthetic fun buildInMemorySupabaseOfflineClient$default (Lio/github/jan/supabase/SupabaseClient;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function0;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/Offline;
+public final class io/github/nesfeder/supabase/offline/testing/InMemoryKt {
+	public static final fun inMemory (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;)V
+	public static synthetic fun inMemory$default (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;ILjava/lang/Object;)V
+}
+
+public final class io/github/nesfeder/supabase/offline/testing/TestValuesKt {
+	public static final fun appliedOutcome (Lio/github/jan/supabase/postgrest/result/PostgrestResult;)Lio/github/nesfeder/supabase/offline/MutationOutcome$Applied;
+	public static final fun cacheMissException (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/CacheMissException;
+	public static synthetic fun cacheMissException$default (Ljava/lang/String;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/CacheMissException;
+	public static final fun cachedFile (Ljava/lang/String;Lkotlin/time/Instant;J)Lio/github/nesfeder/supabase/offline/CachedFile;
+	public static final fun mutationNotQueueableException (Ljava/lang/Throwable;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/MutationNotQueueableException;
+	public static synthetic fun mutationNotQueueableException$default (Ljava/lang/Throwable;Ljava/lang/String;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/MutationNotQueueableException;
+	public static final fun networkDisabledException (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/NetworkDisabledException;
+	public static synthetic fun networkDisabledException$default (Ljava/lang/String;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/NetworkDisabledException;
+	public static final fun pendingMutation (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;)Lio/github/nesfeder/supabase/offline/PendingMutation;
+	public static synthetic fun pendingMutation$default (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/PendingMutation;
+	public static final fun querySnapshot (Lio/github/jan/supabase/postgrest/result/PostgrestResult;ZLkotlin/time/Instant;ZLio/github/nesfeder/supabase/offline/RefreshState;)Lio/github/nesfeder/supabase/offline/QuerySnapshot;
+	public static synthetic fun querySnapshot$default (Lio/github/jan/supabase/postgrest/result/PostgrestResult;ZLkotlin/time/Instant;ZLio/github/nesfeder/supabase/offline/RefreshState;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/QuerySnapshot;
+	public static final fun queuedOutcome (Lio/github/nesfeder/supabase/offline/PendingMutation;)Lio/github/nesfeder/supabase/offline/MutationOutcome$Queued;
+	public static final fun rejectedMutation (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;Lio/github/nesfeder/supabase/offline/ServerError;Ljava/lang/String;Lkotlin/time/Instant;Z)Lio/github/nesfeder/supabase/offline/RejectedMutation;
+	public static synthetic fun rejectedMutation$default (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;Lio/github/nesfeder/supabase/offline/ServerError;Ljava/lang/String;Lkotlin/time/Instant;ZILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/RejectedMutation;
+	public static final fun serverError (ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/ServerError;
+	public static synthetic fun serverError$default (ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/ServerError;
+	public static final fun stalledRefresh (Ljava/lang/Throwable;)Lio/github/nesfeder/supabase/offline/RefreshState$Stalled;
+	public static final fun syncFailedException (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/String;Z)Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public static synthetic fun syncFailedException$default (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/String;ZILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public static final fun syncReport (ILjava/util/List;II)Lio/github/nesfeder/supabase/offline/SyncReport;
+	public static synthetic fun syncReport$default (ILjava/util/List;IIILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SyncReport;
+	public static final fun syncStatus (Lio/github/nesfeder/supabase/offline/NetworkStatus;IIZLkotlin/time/Instant;Ljava/lang/Throwable;)Lio/github/nesfeder/supabase/offline/SyncStatus;
+	public static synthetic fun syncStatus$default (Lio/github/nesfeder/supabase/offline/NetworkStatus;IIZLkotlin/time/Instant;Ljava/lang/Throwable;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SyncStatus;
 }
 

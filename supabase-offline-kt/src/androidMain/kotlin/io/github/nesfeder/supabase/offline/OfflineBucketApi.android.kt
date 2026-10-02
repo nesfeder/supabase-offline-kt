@@ -14,6 +14,7 @@ import java.io.File
  * @param isPublic whether to download through the public URL rather than the authenticated one.
  * @return the cached file, or `null` only when this bucket did not come from the offline client.
  */
+@Throws(Throwable::class)
 public suspend fun BucketApi.ensureLocalFile(
     objectPath: String,
     isPublic: Boolean = false,
@@ -30,6 +31,7 @@ public suspend fun BucketApi.ensureLocalFile(
  * @param isPublic whether to download through the public URL rather than the authenticated one.
  * @return the file's [Uri], or `null` only when this bucket did not come from the offline client.
  */
+@Throws(Throwable::class)
 public suspend fun BucketApi.ensureLocalUri(
     objectPath: String,
     isPublic: Boolean = false,
@@ -43,6 +45,7 @@ public suspend fun BucketApi.ensureLocalUri(
  * @return the file's [Uri], or `null` when nothing is cached or this bucket did not come from the
  *   offline client.
  */
+@Throws(Throwable::class)
 public suspend fun BucketApi.localUriIfCached(objectPath: String): Uri? {
     val offline = this as? OfflineBucketApi ?: return null
     return offline.cachedFile(objectPath)?.let { Uri.fromFile(File(it.path)) }

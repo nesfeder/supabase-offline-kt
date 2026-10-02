@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,20 +25,26 @@ internal fun engineExceptionHandler(engineLogger: EngineLogger?): CoroutineExcep
     }
 
 /**
- * A supervised engine scope on [Dispatchers.Default] carrying [engineExceptionHandler].
+ * A supervised engine scope carrying [engineExceptionHandler]: every scope the engine runs work in
+ * is made here. With a [parent] it is the parent's child, on the parent's dispatcher, so cancelling
+ * the parent stops it while cancelling it leaves the parent running; without one, it runs on
+ * [dispatcher].
  *
  * @param engineLogger where the handler logs.
+ * @param parent the scope it belongs to, or `null` for a scope of its own.
+ * @param dispatcher where a scope of its own runs; ignored with a [parent].
  */
-internal fun newEngineScope(engineLogger: EngineLogger?): CoroutineScope =
-    CoroutineScope(SupervisorJob() + Dispatchers.Default + engineExceptionHandler(engineLogger))
-
-/**
- * A supervised child of [parent] on [parent]'s dispatcher, carrying [engineExceptionHandler]:
- * cancelling it stops everything launched in it and leaves [parent] running.
- */
-internal fun childEngineScope(parent: CoroutineScope, engineLogger: EngineLogger?): CoroutineScope =
-    CoroutineScope(
-        parent.coroutineContext +
-            SupervisorJob(parent.coroutineContext[Job]) +
-            engineExceptionHandler(engineLogger)
-    )
+internal fun newEngineScope(
+    engineLogger: EngineLogger?,
+    parent: CoroutineScope? = null,
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
+): CoroutineScope =
+    if (parent == null) {
+        CoroutineScope(SupervisorJob() + dispatcher + engineExceptionHandler(engineLogger))
+    } else {
+        CoroutineScope(
+            parent.coroutineContext +
+                SupervisorJob(parent.coroutineContext[Job]) +
+                engineExceptionHandler(engineLogger)
+        )
+    }
