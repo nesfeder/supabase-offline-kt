@@ -174,7 +174,7 @@ internal object ClientCloseRaces {
             assertTrue(closed.isSuccess, "close() failed: ${closed.exceptionOrNull()}")
             val reopened = openClient(server.supabaseClient(), configIn(directory))
             assertEquals(0, reopened.pendingMutationCount(), "the accepted write stayed queued")
-            reopened.syncAllPendingMutations()
+            reopened.syncPendingMutations().syncedCount
             reopened.close()
             assertEquals(1, server.restWrites.load(), "the accepted write was sent again")
             assertEquals(emptyList(), errorsIn(logger), "errors were logged")

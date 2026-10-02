@@ -164,7 +164,7 @@ class UpsertOverlayTest {
 
         // When — it replays, and the cached query has not refreshed since
         server.recorder.answer = online
-        client.syncAllPendingMutations()
+        client.syncPendingMutations().syncedCount
 
         // Then
         val expected =

@@ -31,4 +31,10 @@ Every step from a Kotlin Multiplatform project to a first offline read and write
 
 ## Android manifest
 
+The library's manifest declares `android.permission.ACCESS_NETWORK_STATE`, for the connectivity
+monitor that tells it when the network comes back. It is merged into every app that uses the
+library, so it appears in your app's merged manifest and its store listing's permissions. Give
+`install(Offline) { networkAvailability = … }` your own signal and the monitor is not used; the
+permission is declared all the same.
+
 ## Next steps

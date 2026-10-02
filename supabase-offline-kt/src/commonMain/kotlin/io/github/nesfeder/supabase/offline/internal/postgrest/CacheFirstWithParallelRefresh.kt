@@ -3,6 +3,8 @@
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CancellationException
@@ -81,8 +83,10 @@ internal fun refreshBackoff(failures: Int): Duration =
  * ### State reporting
  * [onRefreshState] observes the refresh lifecycle: [RefreshState.Refreshing] at start,
  * [RefreshState.Stalled] once the fast ladder exhausts (carrying that attempt's cause), and
- * [RefreshState.Idle] on the first success. This is how the resolver surfaces per-query refresh
- * status in-band on `selectAsFlow`.
+ * [RefreshState.Idle] on the first success. A refresh that fails for want of a network known to be
+ * down ([networkAccess]) is [RefreshState.Paused] instead, and one made while network access is off
+ * waits for it, sending nothing. This is how the resolver surfaces per-query refresh status in-band
+ * on `selectAsFlow`.
  *
  * Cancellation-correct: real cancellation of the collecting coroutine rethrows immediately (via
  * [ensureActive] between attempts) rather than being folded into the retry loop, while a
@@ -96,6 +100,7 @@ internal fun refreshBackoff(failures: Int): Duration =
  * @param onRefreshState Callback invoked on each refresh lifecycle transition.
  * @param backoff Backoff schedule; injectable so tests can shrink or reshape delays.
  * @param refreshRequests Each emission after the first success runs the refresh again.
+ * @param networkAccess whether the network is known down, or access to it off.
  */
 internal fun <T> cacheFirstWithParallelRefresh(
     cache: Flow<T>,
@@ -104,6 +109,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
     onRefreshState: (RefreshState) -> Unit = {},
     backoff: (failures: Int) -> Duration = ::refreshBackoff,
     refreshRequests: Flow<Unit> = emptyFlow(),
+    networkAccess: NetworkAccess = NetworkAccess(),
 ): Flow<T> = channelFlow {
     // Forward cache emissions immediately — not gated on the network.
     launch {
@@ -123,6 +129,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
             wakeUps = wakeUps,
             onRefreshState = onRefreshState,
             backoff = backoff,
+            networkAccess = networkAccess,
         )
         refreshRequests.conflate().collect {
             refreshUntilSuccess(
@@ -130,6 +137,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
                 wakeUps = wakeUps,
                 onRefreshState = onRefreshState,
                 backoff = backoff,
+                networkAccess = networkAccess,
             )
         }
     }
@@ -142,17 +150,25 @@ internal fun <T> cacheFirstWithParallelRefresh(
  *
  * @param refresh The refresh operation to retry until it succeeds.
  * @param wakeUps Edge wake-ups that cancel the current backoff sleep.
- * @param onRefreshState Lifecycle callback ([RefreshState.Refreshing] / [RefreshState.Stalled] /
- *   [RefreshState.Idle]).
+ * @param onRefreshState Lifecycle callback ([RefreshState.Refreshing] / [RefreshState.Paused] /
+ *   [RefreshState.Stalled] / [RefreshState.Idle]).
  * @param backoff Backoff schedule keyed by consecutive-failure count.
+ * @param networkAccess whether the network is known down ([RefreshState.Paused] rather than a
+ *   failure), or access to it off (nothing is tried until it is back on).
  */
 internal suspend fun refreshUntilSuccess(
     refresh: suspend () -> Unit,
     wakeUps: Flow<Unit>,
     onRefreshState: (RefreshState) -> Unit,
     backoff: (failures: Int) -> Duration,
+    networkAccess: NetworkAccess = NetworkAccess(),
 ): Unit = coroutineScope {
-    onRefreshState(RefreshState.Refreshing)
+    var reported: RefreshState = RefreshState.Refreshing
+    val report = { state: RefreshState ->
+        reported = state
+        onRefreshState(state)
+    }
+    report(RefreshState.Refreshing)
     // Conflated so a burst of edges buys exactly one immediate re-attempt; buffered for the whole
     // loop lifetime so an edge that lands between attempts (not just during a sleep) is not missed.
     val bufferedWakeUps = Channel<Unit>(Channel.CONFLATED)
@@ -162,6 +178,12 @@ internal suspend fun refreshUntilSuccess(
     try {
         var failures = 0
         while (true) {
+            if (networkAccess.isDisabled) {
+                // Nothing is sent while network access is off: wait for it, paused, not failing
+                if (reported != RefreshState.Paused) report(RefreshState.Paused)
+                networkAccess.awaitEnabled()
+                report(RefreshState.Refreshing)
+            }
             val failure =
                 try {
                     refresh()
@@ -174,22 +196,27 @@ internal suspend fun refreshUntilSuccess(
                 }
 
             if (failure == null) {
-                onRefreshState(RefreshState.Idle)
+                report(RefreshState.Idle)
                 return@coroutineScope
             }
 
             failures++
-            if (failures == FAST_RETRY_COUNT) {
-                // The fast ladder exhausted: report the stall exactly once, then keep retrying on
-                // the capped schedule (state stays Stalled until a success flips it to Idle).
-                onRefreshState(RefreshState.Stalled(failure))
+            if (failure.isNetworkOrConnectivityFailure() && networkAccess.isKnownUnavailable) {
+                // The network is known down: waiting for it, not failing. Still retried on the
+                // capped schedule, as a monitor can be wrong
+                if (reported != RefreshState.Paused) report(RefreshState.Paused)
+            } else if (failures >= FAST_RETRY_COUNT && reported !is RefreshState.Stalled) {
+                // The fast ladder exhausted: report the stall once, then keep retrying on the
+                // capped schedule (state stays Stalled until a success flips it to Idle).
+                report(RefreshState.Stalled(failure))
             }
 
             // Interruptible backoff: wake early if an accelerator edge arrives, otherwise sleep out
             // the capped delay. A real cancellation propagates out of `receive()`.
-            withTimeoutOrNull(backoff(failures)) {
-                bufferedWakeUps.receive()
-            }
+            val wokenEarly =
+                withTimeoutOrNull(backoff(failures)) { bufferedWakeUps.receive() } != null
+            // The network came back: what follows is a refresh again, not a wait
+            if (wokenEarly && reported == RefreshState.Paused) report(RefreshState.Refreshing)
         }
     } finally {
         wakeUpCollector.cancel()

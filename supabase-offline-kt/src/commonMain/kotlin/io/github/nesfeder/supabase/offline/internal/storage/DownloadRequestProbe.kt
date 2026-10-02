@@ -36,9 +36,12 @@ internal fun renderImagePathOf(supabase: SupabaseClient): String =
  * built, nothing is recorded: the original's copy is served, and nothing is stored.
  *
  * @param renderImagePath the encoded path prefix of a transformed download, ending in `/`.
+ * @param beforeSend runs once the request is recorded, before it is sent; what it throws stops the
+ *   request, with the variant known.
  */
 internal class DownloadRequestProbe(
-    private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH
+    private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH,
+    private val beforeSend: () -> Unit = {},
 ) {
 
     /** What the probe saw of the request. */
@@ -64,7 +67,10 @@ internal class DownloadRequestProbe(
      */
     fun wrap(options: DownloadOptionBuilder.() -> Unit): DownloadOptionBuilder.() -> Unit = {
         options()
-        httpOverride { record(url.build()) }
+        httpOverride {
+            record(url.build())
+            beforeSend()
+        }
     }
 
     /**

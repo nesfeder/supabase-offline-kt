@@ -6,6 +6,7 @@ import io.github.jan.supabase.storage.UploadOptionBuilder
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.jan.supabase.storage.resumable.ResumableUpload
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -20,12 +21,15 @@ import kotlinx.coroutines.launch
  *
  * @param operationGate refuses new and continued uploads once the client is closed.
  * @param onUploadFinished drops the cached copies of an object, by bucket and path.
+ * @param networkAccess the client's network switch: while it is off, starting or continuing an
+ *   upload throws `NetworkDisabledException`. An upload already started is supabase-kt's own.
  */
 internal class InvalidatingResumableClient(
     private val delegate: ResumableClient,
     private val backgroundScope: CoroutineScope,
     private val operationGate: ClientOperationGate,
     private val onUploadFinished: suspend (bucketId: String, path: String) -> Unit,
+    private val networkAccess: NetworkAccess = NetworkAccess(),
 ) : ResumableClient {
 
     override suspend fun createOrContinueUpload(
@@ -35,6 +39,7 @@ internal class InvalidatingResumableClient(
         path: String,
         options: UploadOptionBuilder.() -> Unit,
     ): ResumableUpload = operationGate.call {
+        networkAccess.ensureEnabled()
         delegate
             .createOrContinueUpload(channel, source, size, path, options)
             .also(::invalidateWhenFinished)
@@ -44,7 +49,10 @@ internal class InvalidatingResumableClient(
         channelProducer: suspend (source: String, offset: Long) -> ByteReadChannel
     ): List<Deferred<ResumableUpload>> =
         operationGate
-            .call { delegate.continuePreviousUploads(channelProducer) }
+            .call {
+                networkAccess.ensureEnabled()
+                delegate.continuePreviousUploads(channelProducer)
+            }
             .onEach { pending ->
                 backgroundScope.launch {
                     val upload =

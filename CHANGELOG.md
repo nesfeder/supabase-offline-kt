@@ -20,11 +20,12 @@ release.
   `createSupabaseClient` and reach it as `supabase.offline`, where `createSupabaseOfflineClient(…)`
   returned a client; the settings of `SupabaseOfflineConfig` are the plugin's `Offline.Config`
   (`offlineStoragePath` is `dataDirectory`, a `String`). The old names are gone; see Removed.
-  supabase-kt closes the plugin with the client, after it has closed its HTTP client: a call made
-  in between, or one whose request had not gone out, ends as it would offline (a read the cache
-  can answer is answered from it, a write the mutation queue holds is `Queued`) or with the closed
-  error, never with a cancellation; a request already on the wire still answers. Call
-  `supabase.offline.close()` first to let the calls not yet sent go out.
+  supabase-kt closes the plugin with the client, once it has begun closing its HTTP client: a call
+  made in between, or one whose request had not gone out, is still sent (Ktor can send while its
+  client finishes closing), or ends as it would offline (a read the cache can answer is answered
+  from it, a write the mutation queue holds is `Queued`) or with the closed error, never with a
+  cancellation; a request already on the wire still answers. Call `supabase.offline.close()` first
+  to let the calls not yet sent go out.
 - Logging goes through supabase-kt's own: the plugin logs to the client's logging processor
   (`defaultLoggingFactory`) with the tag `Supabase-Offline`, at `Offline.Config.logLevel` or the
   client's `defaultLogLevel`. `OfflineLogger`, `OfflineLogLevel` and the `logger` and `minLogLevel`
@@ -48,6 +49,24 @@ release.
   instead of the failure itself or an `IOException`. `isNetworkOrConnectivityFailure()` is still
   `true` for it.
 - The testing hook's opt-in marker `InternalOfflineTestingApi` is `OfflineInternal`.
+- `syncPendingMutations(table: String? = null)` returns a `SyncReport` (what it sent, what the
+  server refused, what is still queued) in place of a count, and replaces
+  `syncAllPendingMutations()`. It no longer throws a failure that stopped the pass: the report says
+  what is still queued and `syncStatus.value.lastSyncError` why. When the library is sending the
+  same writes already, it waits for that and then sends what is left.
+- `pendingMutationCount` and `pendingMutationCountFlow` each take one `table: String? = null` in
+  place of two overloads: calls compile as before, compiled callers must be rebuilt. They, and the
+  new queue and rejected-list members, show the current user's writes only, and none while the
+  stored session cannot be read (they showed every user's then).
+- `selectAsFlow` emits a `QuerySnapshot` in place of `OfflineReadResult`, with `isFromCache`,
+  `fetchedAt` and `hasPendingMutations` beside `result` and `refresh`; it is no longer constructed
+  by an app.
+- `autoSync` is on by default and does what it says: the library sends queued writes by itself
+  when the session settles into a user with writes queued, and when the network comes back. Set
+  `autoSync = false` to leave those passes to the app; a write queued behind an earlier one is
+  sent by itself either way.
+- On Android the library's manifest declares `android.permission.ACCESS_NETWORK_STATE`, for its
+  connectivity monitor: it appears in the merged manifest of every app that uses the library.
 - A test builds its client as an app does, with `install(Offline) { inMemory(clock = …) }` from
   `supabase-offline-kt-testing`; `buildInMemorySupabaseOfflineClient` is gone (see Removed). The
   client no longer runs in the test's own scope: its background work runs on the library's, and a
@@ -70,15 +89,14 @@ release.
 - The `Offline` plugin for supabase-kt: `install(Offline) { … }` and `supabase.offline`, with its
   settings in `Offline.Config`: the two cache sizes, `dataDirectory`, `primaryKeys` (each table's
   key, `id` unless set; `primaryKey(table, columns)`), `responseTrust` (`ResponseTrust`, with the
-  earlier rule as `AuthenticatedSessionOnly`), `logLevel`, and `networkAvailability`, the app's own
-  connectivity signal, which wakes a reactive read's waiting refresh. `autoSync` is declared and
-  experimental (`@OfflineExperimental`): in this release it changes nothing. On Android the plugin
+  earlier rule as `AuthenticatedSessionOnly`), `logLevel`, `networkAvailability`, the app's own
+  connectivity signal in place of the library's monitor, and `autoSync`. On Android the plugin
   needs no `Context`: androidx.startup gives it the application's. The configuration is read once,
   when the client is created.
 - Offline-first PostgREST reads through supabase-kt. `supabase.offline.from(table).select { }`
   takes supabase-kt's own request builder and a `ReadStrategy` (`NetworkFirst`, `CacheFirst`,
-  `CacheOnly` or `NetworkOnly`). `selectAsFlow` emits an `OfflineReadResult` each time the cache or
-  the network answers, under a `FlowReadStrategy`.
+  `CacheOnly` or `NetworkOnly`). `selectAsFlow` emits a `QuerySnapshot` each time the cache or the
+  network answers, under a `FlowReadStrategy`.
 - `OfflinePostgrestQueryBuilder` has supabase-kt's verbs and overloads under its names (`insert`,
   `upsert` and `update` of JSON, of a value and of a list, the `update { set(…) }` DSL, `delete`)
   and its `table`, `schema` and `postgrest`; the offline choice is a named parameter before the
@@ -95,7 +113,8 @@ release.
   `MutationOutcome.isQueued`.
 - `rpc` on the plugin, network only, with a typed overload; `offline.storage.from(bucket)` and
   `offline.storage[bucket]`; a typed `applyServerRecord`, whose `primaryKeys` default to the table's
-  configured key.
+  configured key. `applyServerRecord` and `applyServerDelete` take a `schema`, for a table of a
+  schema other than the client's default.
 - `OfflineException`, open for new subclasses, with `CacheMissException`,
   `MutationNotQueueableException` and `NetworkDisabledException`; `httpStatusOrNull()`, which reads
   supabase-kt's and Ktor's errors, Storage's included.
@@ -106,9 +125,36 @@ release.
   a `MutationOutcome`: `Applied` with the server's response, or `Queued` when the write was recorded
   in the mutation queue to be sent later (`MutationStrategy.QueueIfOffline`, the default). Queued
   writes show in cached reads until they are sent.
-- `syncAllPendingMutations()` and `syncPendingMutations(table)` replay the current identity's queued
-  mutations in the order they were made. `pendingMutationCount()` and `pendingMutationCountFlow()`
-  report how many are waiting.
+- The mutation queue, observed and steered: `pendingMutations(table?)` (a flow of
+  `PendingMutation`), `pendingMutationCount(table?)` and `pendingMutationCountFlow(table?)`, and
+  `discardPendingMutation(id)`, the way out of a write the server keeps failing (it waits for a
+  send in flight, and what waited behind the write is then sent). `syncPendingMutations(table?)`
+  replays the current user's queued writes in the order they were made and returns a `SyncReport`
+  (`syncedCount`, `rejected`, `remainingCount`, and `alreadyOnServerCount` for an insert whose
+  earlier send had in fact arrived); it returns promptly when offline.
+- Refused writes: `rejectedMutations()`, a flow of the current user's persisted rejected list
+  (`RejectedMutation`, with the server's `ServerError` and `isRetryable`), with
+  `dismissRejectedMutation(id)` and `retryRejectedMutation(id)`; one user can never see, dismiss or
+  retry another's. A write sent at once that the server refuses still throws the server's error
+  to its caller: the list is for refusals found on replay.
+- `syncStatus`, a `StateFlow<SyncStatus>`: `network` (`NetworkStatus`: `UNKNOWN`, `ONLINE`,
+  `OFFLINE`, `DISABLED`), the current user's pending and rejected counts, `isSyncing`,
+  `lastSyncedAt`, and `lastSyncError`, a `SyncFailedException` that carries the status and code
+  but no row, filter value or token. The network is current as soon as the switch below returns;
+  the counts follow the queue shortly after each change.
+- `disableNetwork()` and `enableNetwork()`: while access is off, nothing is sent, reads are
+  answered from the cache, writes that may queue are queued, reactive reads are `Paused`, and
+  requests that must reach the server throw `NetworkDisabledException`, which
+  `isNetworkOrConnectivityFailure()` counts as offline. A new client starts with access on.
+- A connectivity monitor, on by default: Android's `ConnectivityManager` (a validated network
+  with internet) and the iOS path monitor. It is a hint, never a gate: it decides when the library
+  tries by itself and what `syncStatus.network` says, and a request the app makes is tried
+  whatever it says. It starts with the client and stops with `close()`.
+- `RefreshState.Paused`: a refresh that cannot reach a network known to be down waits for it,
+  instead of reading as `Stalled`, and runs again when the network comes back.
+- Provenance on one-shot reads: `PostgrestResult.isFromCache`, `fetchedAt` and
+  `hasPendingMutations`, as `QuerySnapshot` has them, carried in response headers PostgREST never
+  sends; a result from supabase-kt itself has none of them set.
 - Storage downloads cached on the device. `storage.from(bucket)` returns an `OfflineBucketApi` with
   `cachedFile` and `ensureCachedFile`, and Android and iOS functions return the cached file's
   location.
@@ -158,8 +204,12 @@ release.
   PostgREST serializer, so a custom `Json`, contextual serializers and `encodeDefaults` reach the
   server, and the mutation queue, as supabase-kt sends them; they used the library's own `Json`.
 - Offline, a `NetworkFirst` read with a warm cache answers at once instead of after supabase-kt's
-  retries; `NetworkFirstThenCache` with a warm cache shows it as `Stalled` and keeps fetching
-  instead of failing; a `CacheFirstThenNetwork` refresh reports `Stalled` after about 3.6 s.
+  retries; `NetworkFirstThenCache` with a warm cache shows it as `Stalled` (`Paused` when the
+  network is known to be down) and keeps fetching instead of failing; a `CacheFirstThenNetwork`
+  refresh reports `Stalled` after about 3.6 s, or `Paused` at once when the network is known to be
+  down.
+- After a sync pass stopped on a server's `Retry-After`, the library's own next pass waits at least
+  that long (at most an hour); a sync the app asks for is sent at once.
 - A slow collector of a `CacheFirstThenNetwork` read is handed the latest snapshot, not each one in
   turn, and never holds back the query's other collectors.
 - The request lambda passed to a read or a write may run more than once, so it must configure the
@@ -195,9 +245,12 @@ release.
   `upsertJson` and `updateJson` (`insert`, `upsert` and `update`); `insertWith`, `upsertWith` and
   `updateWith`, and the reified `insert`, `upsert` and `update` extensions (the typed members,
   which encode through `postgrest.serializer`); `storage(bucket)` (`storage.from(bucket)`);
-  `clearAllCache()` (`clearLocalData()`); `supabase` (`supabaseClient`); and `OfflineLogger` and
+  `clearAllCache()` (`clearLocalData()`); `supabase` (`supabaseClient`); `OfflineLogger` and
   `OfflineLogLevel`, with the iOS factory's `logger` and `minLogLevel` (supabase-kt's logging, at
-  `logLevel`).
+  `logLevel`); `syncAllPendingMutations()` and `syncPendingMutations(table): Int`
+  (`syncPendingMutations(table?): SyncReport`); the two-overload `pendingMutationCount()` /
+  `pendingMutationCount(table)` and `pendingMutationCountFlow()` / `pendingMutationCountFlow(table)`
+  (one member each, `table: String? = null`); and `OfflineReadResult` (`QuerySnapshot`).
 - `buildInMemorySupabaseOfflineClient` (`install(Offline) { inMemory() }`), and the millisecond
   constructors of `ReadStrategy.NetworkFirst`, `CacheFirst` and `CacheOnly` (pass `maxAge` as a
   `Duration`).

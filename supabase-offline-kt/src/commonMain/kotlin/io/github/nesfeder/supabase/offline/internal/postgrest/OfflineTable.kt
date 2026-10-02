@@ -18,8 +18,8 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.EngineJson
@@ -38,6 +38,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
@@ -112,6 +113,10 @@ internal class OfflineTable(
     private val operationGate: ClientOperationGate = ClientOperationGate(),
     /** The time a read compares a cached row's age with; see [QueryReader]. */
     private val clock: Clock = Clock.System,
+    /** Told when a write sent at once left its identity's queue empty. */
+    private val queueEmptied: () -> Unit = {},
+    /** Whether the network is known down, for a reactive read's refresh; see [QueryReader]. */
+    private val networkAccess: NetworkAccess = NetworkAccess(),
 ) {
 
     constructor(
@@ -136,8 +141,10 @@ internal class OfflineTable(
         operationGate: ClientOperationGate = ClientOperationGate(),
         readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
         clock: Clock = Clock.System,
+        queueEmptied: () -> Unit = {},
+        networkAccess: NetworkAccess = NetworkAccess(),
     ) : this(
-        delegate = SupabaseRemoteTable(delegate, readShapePostgrest),
+        delegate = SupabaseRemoteTable(delegate, readShapePostgrest, networkAccess),
         store = store,
         engineLogger = engineLogger,
         requestSession = requestSession,
@@ -149,6 +156,8 @@ internal class OfflineTable(
         headSender = headSender,
         operationGate = operationGate,
         clock = clock,
+        queueEmptied = queueEmptied,
+        networkAccess = networkAccess,
     )
 
     /** The table the requests target. */
@@ -174,6 +183,7 @@ internal class OfflineTable(
             trustPolicy = trustPolicy,
             liveQueries = liveQueries,
             wakeUps = wakeUps,
+            networkAccess = networkAccess,
         )
 
     /** A one-shot read, through the gate; see `OfflinePostgrestQueryBuilder.select`. */
@@ -188,7 +198,7 @@ internal class OfflineTable(
         columns: Columns = Columns.ALL,
         readStrategy: FlowReadStrategy = FlowReadStrategy.CacheFirstThenNetwork,
         request: SelectRequestBuilder.() -> Unit = {},
-    ): Flow<OfflineReadResult> {
+    ): Flow<QuerySnapshot> {
         // Every strategy one way: counted while collected, refused in band once closed, and ended
         // by close() however its collector is stuck
         return operationGate.callCollecting(
@@ -617,7 +627,7 @@ internal class OfflineTable(
 
             is MutationQueueReplayer.HeadSendOutcome.Sent -> {
                 engineLogger.debug { "$operationLabel $table response: ${sent.result.data}" }
-                requestPassIfPending(identity)
+                if (!requestPassIfPending(identity)) queueEmptied()
                 MutationOutcome.Applied(sent.result)
             }
 
@@ -692,9 +702,13 @@ internal class OfflineTable(
     /**
      * Asks for a pass when [identity] has mutations queued, which the head it just left held back.
      * Reads the owner index only, whatever other identities have queued.
+     *
+     * @return whether [identity] had mutations queued.
      */
-    private suspend fun requestPassIfPending(identity: QueueIdentity) {
-        if (store.hasPendingMutationsOf(identity.storedValue)) requestSync()
+    private suspend fun requestPassIfPending(identity: QueueIdentity): Boolean {
+        val pending = store.hasPendingMutationsOf(identity.storedValue)
+        if (pending) requestSync()
+        return pending
     }
 
     /**

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
-import io.github.nesfeder.supabase.offline.OfflineReadResult
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
+import io.github.nesfeder.supabase.offline.QuerySnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
@@ -48,7 +48,7 @@ internal class LiveQueries(
 
     /** What the shared upstream hands its collectors: a value, or the failure that ended it. */
     private sealed interface Emission {
-        class Value(val result: OfflineReadResult) : Emission
+        class Value(val result: QuerySnapshot) : Emission
 
         class Failure(val cause: Throwable) : Emission
     }
@@ -109,8 +109,8 @@ internal class LiveQueries(
     fun sharedReadFlow(
         table: String,
         cacheKey: String,
-        upstream: () -> Flow<OfflineReadResult>,
-    ): Flow<OfflineReadResult> = channelFlow {
+        upstream: () -> Flow<QuerySnapshot>,
+    ): Flow<QuerySnapshot> = channelFlow {
         val key = Key(table, cacheKey)
         val entry = acquire(key, upstream)
         // When the client closes, its scope — and with it this entry's sharing coroutine — is
@@ -144,14 +144,14 @@ internal class LiveQueries(
     }
         .conflate()
 
-    private suspend fun acquire(key: Key, upstream: () -> Flow<OfflineReadResult>): SharedEntry =
+    private suspend fun acquire(key: Key, upstream: () -> Flow<QuerySnapshot>): SharedEntry =
         sharedFlowsMutex.withLock {
             val entry =
                 sharedFlows.getOrPut(key) {
                     val entryScope = newEngineScope(engineLogger, parent = scope)
                     val shared =
                         upstream()
-                            .map<OfflineReadResult, Emission> { result -> Emission.Value(result) }
+                            .map<QuerySnapshot, Emission> { result -> Emission.Value(result) }
                             .catch { failure -> emit(Emission.Failure(failure)) }
                             .shareIn(
                                 scope = entryScope,

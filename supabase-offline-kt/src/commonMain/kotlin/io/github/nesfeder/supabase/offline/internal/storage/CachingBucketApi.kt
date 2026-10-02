@@ -24,6 +24,7 @@ import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.utils.io.ByteChannel
@@ -59,6 +60,8 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  *
  * @param engineLogger messages at INFO and above name the bucket, never the object path.
  * @param backgroundScope the client's own scope, which closing the client cancels.
+ * @param networkAccess the client's network switch: while it is off nothing is sent, a download is
+ *   answered from the cache, and every other call throws `NetworkDisabledException`.
  */
 @OptIn(OfflineInternal::class)
 internal class CachingBucketApi(
@@ -70,6 +73,7 @@ internal class CachingBucketApi(
     private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH,
     /** Where a streamed download writes its file. */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val networkAccess: NetworkAccess = NetworkAccess(),
 ) : OfflineBucketApi, BucketApi by delegate {
 
     override fun setHeader(name: String, value: String): OfflineBucketApi =
@@ -81,6 +85,7 @@ internal class CachingBucketApi(
             operationGate,
             renderImagePath,
             ioDispatcher,
+            networkAccess,
         )
 
     override val resumable: ResumableClient by lazy {
@@ -89,6 +94,7 @@ internal class CachingBucketApi(
             backgroundScope = backgroundScope,
             operationGate = operationGate,
             onUploadFinished = { bucketId, path -> cache.invalidateObject(bucketId, path) },
+            networkAccess = networkAccess,
         )
     }
 
@@ -116,6 +122,7 @@ internal class CachingBucketApi(
             val download =
                 try {
                     downloadToTemporaryFile(file, entryProvider = { entry }) { target ->
+                        networkAccess.ensureEnabled()
                         if (isPublic) delegate.downloadPublic(path, target) {}
                         else delegate.downloadAuthenticated(path, target) {}
                     }
@@ -205,7 +212,7 @@ internal class CachingBucketApi(
             ) -> ByteArray,
     ): ByteArray {
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
-        val probe = DownloadRequestProbe(renderImagePath)
+        val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
         val generation = cache.currentGeneration()
         val bytes =
             try {
@@ -234,10 +241,11 @@ internal class CachingBucketApi(
     ) {
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!isCacheableObjectPath(path) || !isCacheableBucketId(bucketId)) {
+            networkAccess.ensureEnabled()
             fetch(channel, options)
             return
         }
-        val probe = DownloadRequestProbe(renderImagePath)
+        val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
         val generation = cache.currentGeneration()
         val file = OwnedTemporaryFile()
         try {
@@ -547,6 +555,7 @@ internal class CachingBucketApi(
 
     override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
         operationGate.cancellableCall(backgroundScope) {
+            networkAccess.ensureEnabled()
             delegate.createSignedUploadUrl(path, upsert)
         }
 
@@ -556,6 +565,7 @@ internal class CachingBucketApi(
         builder: SignedUrlBuilder.() -> Unit,
     ): String =
         operationGate.cancellableCall(backgroundScope) {
+            networkAccess.ensureEnabled()
             delegate.createSignedUrl(path, expiresIn, builder)
         }
 
@@ -565,6 +575,7 @@ internal class CachingBucketApi(
         builder: SignedUrlsBuilder.() -> Unit,
     ): List<SignedUrl> =
         operationGate.cancellableCall(backgroundScope) {
+            networkAccess.ensureEnabled()
             delegate.createSignedUrls(expiresIn, paths, builder)
         }
 
@@ -578,19 +589,34 @@ internal class CachingBucketApi(
         prefix: String,
         filter: StorageListFilter.Files.() -> Unit,
     ): List<FileObject> =
-        operationGate.cancellableCall(backgroundScope) { delegate.list(prefix, filter) }
+        operationGate.cancellableCall(backgroundScope) {
+            networkAccess.ensureEnabled()
+            delegate.list(prefix, filter)
+        }
 
     override suspend fun info(path: String): FileObjectV2 =
-        operationGate.cancellableCall(backgroundScope) { delegate.info(path) }
+        operationGate.cancellableCall(backgroundScope) {
+            networkAccess.ensureEnabled()
+            delegate.info(path)
+        }
 
     override suspend fun exists(path: String): Boolean =
-        operationGate.cancellableCall(backgroundScope) { delegate.exists(path) }
+        operationGate.cancellableCall(backgroundScope) {
+            networkAccess.ensureEnabled()
+            delegate.exists(path)
+        }
 
     override suspend fun changePublicStatusTo(public: Boolean): Unit =
-        operationGate.cancellableCall(backgroundScope) { delegate.changePublicStatusTo(public) }
+        operationGate.cancellableCall(backgroundScope) {
+            networkAccess.ensureEnabled()
+            delegate.changePublicStatusTo(public)
+        }
 
     override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
-        operationGate.cancellableCall(backgroundScope) { delegate.purgeCache(path, options) }
+        operationGate.cancellableCall(backgroundScope) {
+            networkAccess.ensureEnabled()
+            delegate.purgeCache(path, options)
+        }
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
     private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T =
@@ -611,6 +637,8 @@ internal class CachingBucketApi(
         uncertain: suspend () -> Unit,
     ): T =
         operationGate.cancellableCall(backgroundScope) {
+            // Nothing leaves the device while network access is off; the cache is left as it is
+            networkAccess.ensureEnabled()
             val result =
                 try {
                     write()

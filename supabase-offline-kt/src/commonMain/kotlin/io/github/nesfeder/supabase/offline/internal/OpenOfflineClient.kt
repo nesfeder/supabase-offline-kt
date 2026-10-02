@@ -21,6 +21,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
@@ -30,6 +31,8 @@ import okio.SYSTEM
  * [OfflineClient.close] closes the database and releases the claim. A configured [databasePath]
  * brings along a database kept at [defaultDatabasePath] (see [moveDefaultDatabaseIfUnclaimed]).
  *
+ * @param platformNetworkAvailability the platform's connectivity monitor, used unless the
+ *   configuration names the app's own signal.
  * @throws IllegalStateException when another open client already uses the database or the
  *   directory.
  */
@@ -40,6 +43,7 @@ internal fun openOfflineClient(
     dataDirectory: Path,
     openDatabase: (databasePath: Path) -> OfflineDatabase,
     defaultDatabasePath: Path? = null,
+    platformNetworkAvailability: Flow<Boolean>? = null,
 ): OfflineClient {
     val engineLogger = supabase.engineLogger(config.logLevel)
     val openedPath =
@@ -77,6 +81,7 @@ internal fun openOfflineClient(
                 }
             },
             onStillClosing = registration::markStillClosing,
+            platformNetworkAvailability = platformNetworkAvailability,
         )
     } catch (failure: Throwable) {
         registration.release()
@@ -105,6 +110,8 @@ internal fun openOfflineClient(
  *   keeps them in memory.
  * @param markFileUsed records a use time on one of [fileSystem]'s files.
  * @param clock the time the client sees, beside the store's own.
+ * @param platformNetworkAvailability the platform's connectivity monitor, used unless
+ *   [Offline.Config.networkAvailability] is set; `null` for none.
  */
 internal fun Offline.Config.buildOfflineClient(
     supabase: SupabaseClient,
@@ -119,13 +126,14 @@ internal fun Offline.Config.buildOfflineClient(
     fileSystem: FileSystem = FileSystem.SYSTEM,
     markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
     clock: Clock = Clock.System,
+    platformNetworkAvailability: Flow<Boolean>? = null,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
         store = openStore(toQueryCacheLimits()),
         baseDirectoryProvider = { dataDirectory },
         engineLogger = engineLogger,
-        networkAvailability = networkAvailability,
+        networkAvailability = networkAvailability ?: platformNetworkAvailability,
         coordinatorScope = coordinatorScope ?: newEngineScope(engineLogger),
         fileCacheMaxBytes = fileCacheBoundOrNull(),
         prepareFileCacheDirectories = prepareFileCacheDirectories,

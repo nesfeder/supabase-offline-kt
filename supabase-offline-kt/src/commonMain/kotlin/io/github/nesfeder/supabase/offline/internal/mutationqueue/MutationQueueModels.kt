@@ -65,13 +65,26 @@ internal data class RejectedMutation(
  * @property remainingCount The current identity's writes still pending once the pass ended, within
  *   its scope (one table or every table). When the identity could not be told, every pending write.
  * @property stop Why the pass ended before the queue was empty, or `null` when it ran to the end.
+ * @property alreadyOnServerCount Of [syncedCount], the INSERTs whose rows the server already held:
+ *   an earlier send whose answer was lost had arrived.
  */
 internal data class SyncReport(
     val syncedCount: Int,
     val rejected: List<RejectedMutation>,
     val remainingCount: Int,
     val stop: SyncStop?,
-)
+    val alreadyOnServerCount: Int = 0,
+) {
+    /** This report and [later]'s, as one: counts summed, what remains and why from [later]. */
+    fun followedBy(later: SyncReport): SyncReport =
+        SyncReport(
+            syncedCount = syncedCount + later.syncedCount,
+            rejected = rejected + later.rejected,
+            remainingCount = later.remainingCount,
+            stop = later.stop,
+            alreadyOnServerCount = alreadyOnServerCount + later.alreadyOnServerCount,
+        )
+}
 
 /** Why a replay pass ended with writes still pending. */
 internal sealed interface SyncStop {
@@ -103,6 +116,9 @@ internal sealed interface SyncStop {
 
     /** Local data was cleared while the pass was running; nothing was sent after that. */
     data object LocalDataCleared : SyncStop
+
+    /** The app turned the client's network access off; nothing was sent. */
+    data object NetworkDisabled : SyncStop
 
     /**
      * A write could not go through for a reason that may pass — no connectivity, a `401`, `408`,

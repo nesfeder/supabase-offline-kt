@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
-import io.github.nesfeder.supabase.offline.OfflineReadResult
+import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.RefreshState
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -59,7 +59,7 @@ class LiveQueriesTest {
         val liveQueries = LiveQueries(scope)
         val shared =
             liveQueries.sharedReadFlow(TABLE, "todos?select=*") {
-                flow<OfflineReadResult> { throw IOException("database disk image is malformed") }
+                flow<QuerySnapshot> { throw IOException("database disk image is malformed") }
             }
 
         // When
@@ -83,7 +83,7 @@ class LiveQueriesTest {
                 // Given — a shared read whose upstream fails right after its first value
                 val dispatcher = if (attempt % 2 == 0) oneThread else Dispatchers.Default
                 val liveQueries = LiveQueries(CoroutineScope(scope.coroutineContext + dispatcher))
-                val values = mutableListOf<OfflineReadResult>()
+                val values = mutableListOf<QuerySnapshot>()
 
                 // When
                 val failure =
@@ -133,14 +133,20 @@ class LiveQueriesTest {
                                 .sharedReadFlow(TABLE, "todos?slow=$attempt") {
                                     flow {
                                         emit(
-                                            OfflineReadResult(
+                                            QuerySnapshot(
                                                 result = null,
+                                                isFromCache = true,
+                                                fetchedAt = null,
+                                                hasPendingMutations = false,
                                                 refresh = RefreshState.Refreshing,
                                             )
                                         )
                                         emit(
-                                            OfflineReadResult(
+                                            QuerySnapshot(
                                                 result = null,
+                                                isFromCache = true,
+                                                fetchedAt = null,
+                                                hasPendingMutations = false,
                                                 refresh = RefreshState.Idle,
                                             )
                                         )
@@ -170,7 +176,7 @@ class LiveQueriesTest {
             val liveQueries = LiveQueries(scope)
             val shared =
                 liveQueries.sharedReadFlow(TABLE, "todos?select=*") {
-                    flow<OfflineReadResult> { throw CancellationException(UPSTREAM_GAVE_UP) }
+                    flow<QuerySnapshot> { throw CancellationException(UPSTREAM_GAVE_UP) }
                 }
 
             // When
@@ -286,7 +292,14 @@ class LiveQueriesTest {
     private companion object {
         const val TABLE = "todos"
         const val CACHE_KEYS = 20
-        val RESULT = OfflineReadResult(result = null, refresh = RefreshState.Idle)
+        val RESULT =
+            QuerySnapshot(
+                result = null,
+                isFromCache = true,
+                fetchedAt = null,
+                hasPendingMutations = false,
+                refresh = RefreshState.Idle,
+            )
         const val FAILURE_ORDERINGS = 500
         const val MALFORMED = "database disk image is malformed"
         const val UPSTREAM_GAVE_UP = "the shared upstream gave up"

@@ -96,7 +96,7 @@ class QueuedUpdateJoinsListsTest {
 
             // When — it replays, before either list is fetched again
             online = true
-            client.syncAllPendingMutations()
+            client.syncPendingMutations().syncedCount
 
             // Then
             assertEquals("[]", cachedList(done = false))
