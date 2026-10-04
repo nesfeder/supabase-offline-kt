@@ -140,7 +140,10 @@ internal class QueryReader(
         // The probe's build of the request gives the cache slot too: the app's lambda runs once
         var built: CacheSlot? = null
         val shape =
-            delegate.shapeOf(columns, request) { builder -> built = cacheSlotOf(columns, builder) }
+            delegate.shapeOf(columns, request) { builder ->
+                requireOneValuePerTopLevelParameter(builder)
+                built = cacheSlotOf(columns, builder)
+            }
         val slot = built ?: cacheSlotOf(columns, request)
         val table = slot.table
         if (shape is ReadShape.Uncacheable) {
@@ -324,7 +327,10 @@ internal class QueryReader(
     ): Flow<QuerySnapshot> = flow {
         var built: CacheSlot? = null
         val shape =
-            delegate.shapeOf(columns, request) { builder -> built = cacheSlotOf(columns, builder) }
+            delegate.shapeOf(columns, request) { builder ->
+                requireOneValuePerTopLevelParameter(builder)
+                built = cacheSlotOf(columns, builder)
+            }
         if (shape is ReadShape.Uncacheable) {
             if (readStrategy == FlowReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
             engineLogger.debug {

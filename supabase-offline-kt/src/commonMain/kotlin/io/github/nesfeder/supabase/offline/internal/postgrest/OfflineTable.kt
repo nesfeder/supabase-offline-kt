@@ -352,14 +352,18 @@ internal class OfflineTable(
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
         engineLogger.debug { "UPDATE $table request body: $body" }
+        // Every build of it, the first included, refuses two values for one top-level parameter
+        val checkedRequest = refusingRepeatedParameters(request)
         // One build of the request serves its schema, its queue capture and the cache patch
-        val built = lazy { SelectRequestBuilder(delegate.schema, conversionMethod).apply(request) }
+        val built = lazy {
+            SelectRequestBuilder(delegate.schema, conversionMethod).apply(checkedRequest)
+        }
         return executeMutation(
             operationLabel = "UPDATE",
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
-            perform = { handle -> handle.update(body, request) },
+            perform = { handle -> handle.update(body, checkedRequest) },
             patchCache = { result, startedAtTick ->
                 // Asked for rows back, the response names every row the update changed, none when
                 // it is empty; each carrying its key is patched by it alone, in one pass
@@ -397,14 +401,18 @@ internal class OfflineTable(
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
         engineLogger.debug { "DELETE $table attempting network" }
+        // Every build of it, the first included, refuses two values for one top-level parameter
+        val checkedRequest = refusingRepeatedParameters(request)
         // One build of the request serves its schema, its queue capture and the cache patch
-        val built = lazy { SelectRequestBuilder(delegate.schema, conversionMethod).apply(request) }
+        val built = lazy {
+            SelectRequestBuilder(delegate.schema, conversionMethod).apply(checkedRequest)
+        }
         return executeMutation(
             operationLabel = "DELETE",
             table = table,
             mutationStrategy = mutationStrategy,
             writeSchema = { built.value.schema },
-            perform = { handle -> handle.delete(request) },
+            perform = { handle -> handle.delete(checkedRequest) },
             patchCache = { _, startedAtTick ->
                 patchFilteredWrite(
                     MutationOperation.DELETE,

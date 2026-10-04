@@ -51,6 +51,11 @@ import kotlinx.serialization.json.jsonArray
  *   one. Keep realtime calls on `supabase.from(table)`.
  * - **The typed `rpc`** is this library's extension on [Offline]: import
  *   `io.github.nesfeder.supabase.offline.rpc` in place of `io.github.jan.supabase.postgrest.rpc`.
+ * - **Two top-level filters on one column**, as in `filter { gte("age", 1); lte("age", 10) }`:
+ *   supabase-kt sends only the first, so a read, an update or a delete here throws
+ *   [IllegalArgumentException] before anything is sent or queued. Put them in one group, `filter {
+ *   and { gte("age", 1); lte("age", 10) } }`, which sends both. A second top-level `or` group, or a
+ *   text search after a filter on its column, replaces what came before, and is not caught.
  *
  * A verb may run its `request` lambda more than once: a read once to learn its shape and once per
  * request sent, a queueable write up to three times. The lambda must configure the same request
