@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
@@ -41,5 +42,18 @@ fun CoroutineScope.launchReporting(
         throw cancellation
     } catch (failure: Exception) {
         failures.report(failure)
+    }
+}
+
+/**
+ * This read, with its failure reported to [failures], to be shown as a message, instead of crashing
+ * the app: the read ends after its last value, so a screen built on it keeps what it last showed.
+ * Cancellation is not a failure, and an [Error] is not caught.
+ */
+fun <T> Flow<T>.reportingFailures(failures: FailureReports): Flow<T> = catch { failure ->
+    when (failure) {
+        is CancellationException -> throw failure
+        is Exception -> failures.report(failure)
+        else -> throw failure
     }
 }

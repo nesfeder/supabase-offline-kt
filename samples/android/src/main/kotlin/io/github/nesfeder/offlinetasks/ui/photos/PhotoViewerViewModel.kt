@@ -13,6 +13,7 @@ import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -42,7 +43,7 @@ sealed interface PhotoViewerMessage {
 /**
  * One photo, full screen, with its deletion.
  *
- * @param failures where a failed delete is reported, to be shown as a message.
+ * @param failures where a failed read or delete is reported, to be shown as a message.
  */
 class PhotoViewerViewModel(
     private val photoId: String,
@@ -57,7 +58,9 @@ class PhotoViewerViewModel(
 
     /** The screen's state. */
     val uiState: StateFlow<PhotoViewerUiState> =
-        combine(repository.allPhotos(), repository.syncStatus) { snapshot, status ->
+        combine(repository.allPhotos().reportingFailures(failures), repository.syncStatus) {
+                snapshot,
+                status ->
                 val photos = snapshot.value ?: return@combine PhotoViewerUiState.Loading
                 val photo = photos.firstOrNull { it.id == photoId }
                 if (photo == null) {

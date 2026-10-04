@@ -47,9 +47,10 @@ class TasksScreenTest {
         // Given — not signed in yet, and offline
         show(TasksUiState.NoSession(SyncHeadline.Offline(0), TaskFilter.All, isSigningIn = false))
 
-        // Then — the designed state, and nothing to add a task with
+        // Then — the designed state, nothing to add a task with, and no banner promising to save
         compose.onNodeWithText(text(R.string.tasks_no_session_title)).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.new_task), useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.status_offline)).assertDoesNotExist()
     }
 
     @Test

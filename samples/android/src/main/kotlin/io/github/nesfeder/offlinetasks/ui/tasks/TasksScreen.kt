@@ -211,8 +211,12 @@ fun TasksScreen(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 128.dp),
                 verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
             ) {
-                item(key = "banner") {
-                    SyncStatusBanner(state.headline, Modifier.padding(bottom = 8.dp))
+                // Before the first sign-in nothing can be changed, so no banner promises to save
+                // it.
+                if (state !is TasksUiState.NoSession) {
+                    item(key = "banner") {
+                        SyncStatusBanner(state.headline, Modifier.padding(bottom = 8.dp))
+                    }
                 }
                 item(key = "filter") { TaskFilterButtons(state.filter, onFilterChange) }
                 when (state) {

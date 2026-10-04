@@ -157,6 +157,7 @@
     <string name="sync_refresh_running">Asking the server…</string>
     <string name="sync_refresh_paused">Paused while offline</string>
     <string name="sync_refresh_stalled">Can’t reach the server — showing saved data</string>
+    <string name="sync_refresh_no_session">Waits for the first sign-in</string>
     <string name="sync_rejected">Refused changes</string>
     <string name="sync_rejected_none">Nothing refused</string>
     <string name="sync_rejected_none_body">If the server refuses a change made offline, it shows here.</string>
@@ -174,6 +175,7 @@
     <string name="sync_developer">Try it</string>
     <string name="sync_queue_invalid">Queue an invalid title</string>
     <string name="sync_queue_invalid_body">Adds a task with a blank title. Online, the server refuses it at once; offline, when it syncs.</string>
+    <string name="sync_queue_invalid_no_session">Needs a signed-in user: the app signs in the first time it reaches the internet.</string>
     <string name="sync_local_data">Local data</string>
     <string name="sync_clear">Clear local cache</string>
     <string name="sync_clear_body">Deletes what this device holds. The server’s copy stays.</string>

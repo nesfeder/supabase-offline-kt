@@ -58,10 +58,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -91,6 +91,9 @@ private const val OBJECT_PATH = "object_path"
 
 /** How many objects one Storage delete request names at most. */
 private const val STORAGE_DELETE_BATCH = 100
+
+/** How many photo rows one read of their object paths asks for. */
+private const val PATH_PAGE_SIZE = 1_000
 
 /**
  * [TaskRepository] over the library: every read is a live `selectAsFlow` query, every write goes
@@ -186,12 +189,48 @@ class OfflineTaskRepository(
         }
     }
 
-    override fun attachPhoto(taskId: String, photo: EncodedPhoto): Flow<PhotoUpload> = flow {
+    override fun attachPhoto(taskId: String, photo: EncodedPhoto): Flow<PhotoUpload> = channelFlow {
         // Storage writes are online-only: offline, fail at once rather than when the request does.
         if (!canReachNetwork()) throw NetworkUnavailableException()
         val userId = signedInUserId()
         val photoId = newId()
         val objectPath = photoObjectPath(userId, taskId, photoId)
+        // The file and its row together, in this repository's scope: a screen that closes between
+        // the two cannot leave a file with no row. Progress reaches the screen while it listens.
+        val attached = detached {
+            upload(objectPath, photo) { fraction -> trySend(PhotoUpload.Uploading(fraction)) }
+            val row =
+                NewTaskPhotoRow(
+                    id = photoId,
+                    userId = userId,
+                    taskId = taskId,
+                    objectPath = objectPath,
+                    width = photo.width,
+                    height = photo.height,
+                    createdAt = clock.now().toString(),
+                )
+            write(Tables.TASK_PHOTOS, TaskMutationOperation.Insert, taskTitle = null) {
+                offline.from(Tables.TASK_PHOTOS).insert(row)
+            }
+            TaskPhoto(
+                id = photoId,
+                userId = userId,
+                taskId = taskId,
+                objectPath = objectPath,
+                width = photo.width,
+                height = photo.height,
+                createdAt = Instant.parse(row.createdAt),
+            )
+        }
+        send(PhotoUpload.Attached(attached))
+    }
+
+    /** Uploads [photo] to [objectPath], handing [onProgress] the fraction sent so far. */
+    private suspend fun upload(
+        objectPath: String,
+        photo: EncodedPhoto,
+        onProgress: (Float) -> Unit,
+    ) {
         try {
             photoBucket
                 .uploadAsFlow(objectPath, photo.jpeg) {
@@ -201,11 +240,7 @@ class OfflineTaskRepository(
                 }
                 .collect { status ->
                     if (status is UploadStatus.Progress && status.contentLength > 0) {
-                        emit(
-                            PhotoUpload.Uploading(
-                                status.totalBytesSend.toFloat() / status.contentLength
-                            )
-                        )
+                        onProgress(status.totalBytesSend.toFloat() / status.contentLength)
                     }
                 }
         } catch (cancellation: CancellationException) {
@@ -213,32 +248,6 @@ class OfflineTaskRepository(
         } catch (failure: Exception) {
             throw failure.asStorageFailure(objectPath)
         }
-        val row =
-            NewTaskPhotoRow(
-                id = photoId,
-                userId = userId,
-                taskId = taskId,
-                objectPath = objectPath,
-                width = photo.width,
-                height = photo.height,
-                createdAt = clock.now().toString(),
-            )
-        write(Tables.TASK_PHOTOS, TaskMutationOperation.Insert, taskTitle = null) {
-            offline.from(Tables.TASK_PHOTOS).insert(row)
-        }
-        emit(
-            PhotoUpload.Attached(
-                TaskPhoto(
-                    id = photoId,
-                    userId = userId,
-                    taskId = taskId,
-                    objectPath = objectPath,
-                    width = photo.width,
-                    height = photo.height,
-                    createdAt = Instant.parse(row.createdAt),
-                )
-            )
-        )
     }
 
     override suspend fun deletePhoto(photo: TaskPhoto): TaskMutationOutcome = detached {
@@ -304,19 +313,19 @@ class OfflineTaskRepository(
     override suspend fun clearLocalData() {
         offline.clearLocalData()
         // A live read of an emptied cache waits to be asked again: ask now, so the server's rows
-        // come back without a pull to refresh. Offline, or on a failure, the next refresh does it.
-        if (canReachNetwork()) {
+        // come back without a pull to refresh. Offline, the next refresh does it.
+        if (!canReachNetwork()) return
+        try {
             for (table in listOf(Tables.TASKS, Tables.TASK_PHOTOS)) {
-                try {
-                    offline.from(table).select(readStrategy = ReadStrategy.NetworkOnly) {
-                        newestFirst()
-                    }
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (failure: Exception) {
-                    // The list stays as cleared until the next refresh; the clear itself is done.
+                offline.from(table).select(readStrategy = ReadStrategy.NetworkOnly) {
+                    newestFirst()
                 }
             }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            // The clear is done; the screens say why the lists did not come back.
+            throw failure.asReadFailure()
         }
     }
 
@@ -324,8 +333,11 @@ class OfflineTaskRepository(
         // A new anonymous user needs the server, so nothing is deleted or cleared without it.
         if (!canReachNetwork()) throw NetworkUnavailableException()
         detached {
-            session.userId.value?.let { deleteEverythingOf(it) }
+            val userId = session.userId.value
+            // Clearing first stops a replay already running, so no queued write can land after the
+            // deletes and leave a row for a user nobody can sign in as again.
             offline.clearLocalData()
+            userId?.let { deleteEverythingOf(it) }
             session.signInAsNewUser()
         }
     }
@@ -406,21 +418,37 @@ class OfflineTaskRepository(
             null
         }
 
-    /** The object paths of the photo rows whose [column] equals [value], asked of the server. */
-    private suspend fun photoPathsOnServer(column: String, value: String): List<String> =
-        try {
-            offline
-                .from(Tables.TASK_PHOTOS)
-                .select(Columns.list(OBJECT_PATH), readStrategy = ReadStrategy.NetworkOnly) {
-                    filter { eq(column, value) }
+    /**
+     * The object paths of the photo rows whose [column] equals [value], asked of the server a page
+     * at a time until a page comes back empty: a project answers at most its row limit (1,000
+     * unless changed) to one request, so one read could miss some.
+     */
+    private suspend fun photoPathsOnServer(column: String, value: String): List<String> {
+        val paths = mutableListOf<String>()
+        while (true) {
+            val from = paths.size.toLong()
+            val page =
+                try {
+                    offline
+                        .from(Tables.TASK_PHOTOS)
+                        .select(
+                            Columns.list(OBJECT_PATH),
+                            readStrategy = ReadStrategy.NetworkOnly,
+                        ) {
+                            filter { eq(column, value) }
+                            order(ID, Order.ASCENDING)
+                            range(from, from + PATH_PAGE_SIZE - 1)
+                        }
+                        .decodeList<ObjectPathRow>()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    throw failure.asReadFailure()
                 }
-                .decodeList<ObjectPathRow>()
-                .map { it.objectPath }
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
-            throw failure.asReadFailure()
+            paths += page.map { it.objectPath }
+            if (page.isEmpty()) return paths
         }
+    }
 
     /** Deletes the files at [paths] from the bucket, in batches; a missing file is no error. */
     private suspend fun deleteFiles(paths: List<String>) {
@@ -438,7 +466,7 @@ class OfflineTaskRepository(
     /** Deletes [userId]'s files, photo rows and tasks on the server, before that user is left. */
     private suspend fun deleteEverythingOf(userId: String) {
         deleteFiles(photoPathsOnServer(USER_ID, userId))
-        // Sent now or not at all: the queue is about to be cleared.
+        // Sent now or not at all: queued, they would outlive the user they are for.
         write(Tables.TASK_PHOTOS, TaskMutationOperation.Delete, taskTitle = null) {
             offline.from(Tables.TASK_PHOTOS).delete(
                 mutationStrategy = MutationStrategy.OnlineOnly
@@ -494,14 +522,14 @@ private fun PostgrestRequestBuilder.newestFirst() {
     order(CREATED_AT, Order.DESCENDING)
 }
 
-/** The snapshot before there is a session: nothing known, nothing being fetched. */
+/** The snapshot before there is a session: nothing known, and no refresh until there is a user. */
 private fun <T> nothingYet(): RowsSnapshot<T> =
     RowsSnapshot(
         value = null,
         isFromCache = true,
         fetchedAt = null,
         hasPendingMutations = false,
-        refresh = TaskRefreshState.Idle,
+        refresh = TaskRefreshState.Paused,
     )
 
 /** This snapshot in the app's terms, its rows decoded by [rows] when there are any. */

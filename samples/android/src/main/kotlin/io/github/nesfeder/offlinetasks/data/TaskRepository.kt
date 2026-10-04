@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.StateFlow
  *   [ServerUnreachableException] when the server does not answer.
  * - Photo uploads, downloads and deletes throw Storage's refusals as [PhotoStorageException], and
  *   fail at once with [NetworkUnavailableException] while the network is off.
+ * - A read whose rows cannot be read (a row the app cannot decode, a server that answers wrong)
+ *   fails its flow; it never turns into an empty list.
  *
  * Everything belongs to the signed-in user. Before there is a session, every read shows nothing
  * yet, and a call that needs the user's id throws [IllegalStateException]: the app offers none.
@@ -36,8 +38,9 @@ import kotlinx.coroutines.flow.StateFlow
  * planned for; the screens report every failure as a message, so none of them crashes the app.
  *
  * **Cancellation.** A call that has started a write finishes it even if its caller is cancelled: a
- * screen that closes mid-delete cannot leave a photo's file deleted and its row in place. The
- * caller only stops waiting for the result.
+ * screen that closes mid-delete cannot leave a photo's file deleted and its row in place, and one
+ * that closes mid-upload cannot leave a file with no row. The caller only stops waiting for the
+ * result.
  */
 interface TaskRepository {
     /** The user's tasks, newest first. */
@@ -155,13 +158,19 @@ interface TaskRepository {
     /**
      * Deletes everything this device holds: cached rows and files, queued and refused writes.
      * Online, the lists are then read again from the server.
+     *
+     * @throws NetworkUnavailableException when that read loses the network, and
+     *   [ServerUnreachableException] when the server does not answer it; the device is cleared
+     *   either way.
      */
     suspend fun clearLocalData()
 
     /**
-     * Starts again as a new anonymous user with no tasks: deletes the current user's own photo
-     * files and rows from the server, so nothing is left behind there, then clears local data,
-     * signs out and signs in again.
+     * Starts again as a new anonymous user with no tasks: clears local data, which stops a replay
+     * already running, then deletes the current user's own photo files and rows from the server, so
+     * nothing is left behind there, then signs out and signs in again. If a delete fails, its
+     * failure is thrown: the device is cleared, the server keeps what was not deleted yet, and the
+     * same user stays signed in, so Start over can be tried again.
      *
      * @throws NetworkUnavailableException while the network is off; nothing is deleted or cleared.
      */

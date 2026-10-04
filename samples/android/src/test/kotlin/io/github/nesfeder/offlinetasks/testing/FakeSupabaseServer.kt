@@ -23,6 +23,9 @@ import io.ktor.http.decodeURLPart
 import io.ktor.http.headersOf
 import java.io.IOException
 import kotlin.time.Clock
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -39,6 +42,9 @@ private const val BUCKET = "task-photos"
 
 /** The longest title the schema's check accepts. */
 private const val TITLE_LIMIT = 200
+
+/** The path every upload to the bucket is sent to, before the object's own path. */
+private const val UPLOAD_PREFIX = "/storage/v1/object/$BUCKET/"
 
 /**
  * The samples' Supabase project, faked on a Ktor [MockEngine] for one test: the `tasks` and
@@ -62,6 +68,18 @@ class FakeSupabaseServer {
 
     /** While false, every request fails at the transport, as it does with no network. */
     var isReachable: Boolean = true
+
+    /** The most rows one read returns, as a hosted project's row limit caps it. */
+    var maxRows: Int = 1_000
+
+    /**
+     * While set, an upload's answer waits for it once the file is stored, as a slow network would
+     * keep it: the file is in the bucket before the app hears so.
+     */
+    var holdUploadAnswers: CompletableDeferred<Unit>? = null
+
+    /** How many uploads are stored and waiting on [holdUploadAnswers]. */
+    val uploadsHeld: MutableStateFlow<Int> = MutableStateFlow(0)
 
     private val lock = Any()
 
@@ -94,15 +112,22 @@ class FakeSupabaseServer {
         synchronized(lock) { requests += "${request.method.value} $path" }
         if (!isReachable) throw IOException("network unreachable")
         val body = request.body.toByteArray()
-        return synchronized(lock) {
-            when {
-                path.startsWith("/rest/v1/") ->
-                    postgrest(request, path.removePrefix("/rest/v1/"), body)
-                path.startsWith("/storage/v1/") ->
-                    storage(request, path.removePrefix("/storage/v1/"), body)
-                else -> error("FakeSupabaseServer has no route for $path")
+        val response =
+            synchronized(lock) {
+                when {
+                    path.startsWith("/rest/v1/") ->
+                        postgrest(request, path.removePrefix("/rest/v1/"), body)
+                    path.startsWith("/storage/v1/") ->
+                        storage(request, path.removePrefix("/storage/v1/"), body)
+                    else -> error("FakeSupabaseServer has no route for $path")
+                }
             }
+        val hold = holdUploadAnswers
+        if (hold != null && request.method == HttpMethod.Post && path.startsWith(UPLOAD_PREFIX)) {
+            uploadsHeld.update { it + 1 }
+            hold.await()
         }
+        return response
     }
 
     private fun MockRequestHandleScope.postgrest(
@@ -244,9 +269,12 @@ class FakeSupabaseServer {
                 selected
                     .sortedBy { it[order[0]]?.jsonPrimitive?.contentOrNull }
                     .let { if (order.getOrNull(1) == "desc") it.reversed() else it }
+        val offset = request.url.parameters["offset"]?.toInt() ?: 0
+        val limit = minOf(request.url.parameters["limit"]?.toInt() ?: maxRows, maxRows)
+        val page = ordered.drop(offset).take(limit)
         val columns = request.url.parameters["select"]?.takeUnless { it == "*" }?.split(',')
-        return if (columns == null) ordered
-        else ordered.map { row -> JsonObject(row.filterKeys { it in columns }) }
+        return if (columns == null) page
+        else page.map { row -> JsonObject(row.filterKeys { it in columns }) }
     }
 
     /** A new row as the database stores it: `updated_at` set, defaults filled in. */

@@ -7,7 +7,9 @@ import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.platform.SessionState
+import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
+import io.github.nesfeder.offlinetasks.testing.awaitRejectedCount
 import io.github.nesfeder.offlinetasks.testing.awaitServerTasks
 import io.github.nesfeder.offlinetasks.testing.repositoryFixture
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
@@ -16,12 +18,15 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
 
 class TasksViewModelTest {
@@ -177,6 +182,45 @@ class TasksViewModelTest {
         // Then
         val message = assertIs<TasksMessage.Rejected>(viewModel.messages.first())
         assertEquals("23514", message.rejection.serverError?.code)
+    }
+
+    @Test
+    fun a_refusal_dismissed_before_the_screen_shows_it_is_not_announced() = runTest {
+        // Given — a refusal found on replay while the user is on another screen
+        val fixture = repositoryFixture(online = false)
+        val repository = fixture.repository
+        val viewModel = tasksViewModel(repository)
+        viewModel.uiState.first { it.headline is SyncHeadline.Offline }
+        repository.addTask(" ", notes = null)
+        fixture.goOnline()
+        val rejection = repository.rejectedMutations().first { it.isNotEmpty() }.single()
+
+        // When — dismissed on the Sync screen before the Tasks screen shows its messages
+        repository.dismissRejectedMutation(rejection.id)
+        repository.awaitRejectedCount(0)
+        testScheduler.runCurrent()
+
+        // Then — the announcement waiting for the screen is dropped
+        assertNull(withTimeoutOrNull(10.seconds) { viewModel.messages.first() })
+    }
+
+    @Test
+    fun a_failing_read_is_a_message_and_the_list_stays() = runTest {
+        // Given — the list loads, then its read fails
+        val failure = IllegalStateException("A row the app cannot read")
+        val repository =
+            FailingReadsTaskRepository(
+                repositoryFixture(seedSampleTasks = true).repository,
+                failure,
+            )
+        val viewModel = tasksViewModel(repository)
+
+        // When
+        viewModel.loaded()
+
+        // Then — reported for a message, not thrown, and the list still shows
+        assertEquals(failure, failures.reported.first())
+        assertEquals(3, assertIs<TasksUiState.Loaded>(viewModel.uiState.value).openTasks.size)
     }
 
     @Test

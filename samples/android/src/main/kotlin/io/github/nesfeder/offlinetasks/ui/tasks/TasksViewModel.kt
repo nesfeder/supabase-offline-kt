@@ -17,6 +17,7 @@ import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import io.github.nesfeder.offlinetasks.ui.status.SyncHeadline
 import io.github.nesfeder.offlinetasks.ui.status.syncHeadlineOf
 import io.github.nesfeder.offlinetasks.ui.status.withSyncedMoment
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.shareIn
@@ -98,7 +100,7 @@ sealed interface TasksMessage {
  * @param sessionState whether anyone is signed in: nothing can be shown or added before.
  * @param commitScope where deletions run; it outlives this ViewModel, so a task swiped away just
  *   before the screen goes is still deleted.
- * @param failures where a failed write or refresh is reported, to be shown as a message.
+ * @param failures where a failed read, write or refresh is reported, to be shown as a message.
  */
 class TasksViewModel(
     private val repository: TaskRepository,
@@ -115,15 +117,27 @@ class TasksViewModel(
     private val undoableDeletions = mutableSetOf<String>()
     private val messageChannel = Channel<TasksMessage>(Channel.BUFFERED)
 
+    /** The refused writes still on the list, so an announcement waiting unseen can be dropped. */
+    private val currentRejectionIds = MutableStateFlow<Set<Long>>(emptySet())
+
     private val snapshots: Flow<TaskListSnapshot> =
-        repository.tasks().shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+        repository
+            .tasks()
+            .reportingFailures(failures)
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
     private val headlines: Flow<SyncHeadline> =
         combine(repository.syncStatus, snapshots.map { it.refresh }, ::syncHeadlineOf)
             .withSyncedMoment()
 
-    /** One-off messages, each delivered once. */
-    val messages: Flow<TasksMessage> = messageChannel.receiveAsFlow()
+    /**
+     * One-off messages, each delivered once. A refusal announced while the screen was away is
+     * dropped if it has left the list since (dismissed, retried or cleared on the Sync screen).
+     */
+    val messages: Flow<TasksMessage> =
+        messageChannel.receiveAsFlow().filter { message ->
+            message !is TasksMessage.Rejected || message.rejection.id in currentRejectionIds.value
+        }
 
     /** The screen's state. */
     val uiState: StateFlow<TasksUiState> =
@@ -212,6 +226,7 @@ class TasksViewModel(
         viewModelScope.launchReporting(failures) {
             var seen: Set<Long>? = null
             repository.rejectedMutations().collect { rejections ->
+                currentRejectionIds.value = rejections.mapTo(HashSet()) { it.id }
                 val known = seen
                 if (known != null) {
                     rejections

@@ -17,6 +17,7 @@ import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,7 +62,7 @@ sealed interface SyncUiState {
  */
 class SyncViewModel(
     private val repository: TaskRepository,
-    sessionState: StateFlow<SessionState>,
+    private val sessionState: StateFlow<SessionState>,
     private val writeScope: CoroutineScope,
     private val failures: FailureReports,
 ) : ViewModel() {
@@ -69,21 +70,22 @@ class SyncViewModel(
 
     private val queue: Flow<QueueCounts> =
         combine(
-            repository.pendingMutationCount(Tables.TASKS),
-            repository.pendingMutationCount(Tables.TASK_PHOTOS),
+            repository.pendingMutationCount(Tables.TASKS).reportingFailures(failures),
+            repository.pendingMutationCount(Tables.TASK_PHOTOS).reportingFailures(failures),
             ::QueueCounts,
         )
 
     /** The screen's state. */
     val uiState: StateFlow<SyncUiState> =
         combine(
-                combine(repository.syncStatus, queue, repository.tasks().map { it.refresh }) {
-                    status,
-                    counts,
-                    refresh ->
+                combine(
+                    repository.syncStatus,
+                    queue,
+                    repository.tasks().map { it.refresh }.reportingFailures(failures),
+                ) { status, counts, refresh ->
                     Triple(status, counts, refresh)
                 },
-                repository.rejectedMutations(),
+                repository.rejectedMutations().reportingFailures(failures),
                 sessionState,
                 syncNow,
             ) { (status, counts, refresh), rejected, session, run ->
@@ -135,9 +137,11 @@ class SyncViewModel(
     /**
      * Adds a task whose title the server refuses, to show what a refused write looks like: online
      * it is refused at once and reported as a message; offline it is refused when it replays and
-     * listed under the refused changes.
+     * listed under the refused changes. Before there is a session there is no user to write it for,
+     * and the screen does not offer it.
      */
     fun queueInvalidTitle() {
+        if (sessionState.value != SessionState.SignedIn) return
         writeScope.launchReporting(failures) {
             repository.addTask(title = INVALID_TITLE, notes = null)
         }

@@ -11,8 +11,10 @@ import io.github.nesfeder.offlinetasks.data.RowsSnapshot
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.Task
+import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
 import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
+import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.testing.FakeSteppingClock
 import io.github.nesfeder.offlinetasks.testing.FakeSupabaseServer
@@ -27,10 +29,12 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -38,6 +42,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -307,19 +312,70 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
+    fun starting_over_finds_every_file_past_the_servers_row_limit() = runTest {
+        // Given — more photos on the server than one read returns
+        server.maxRows = 3
+        repository.addTask("Many photos", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        repeat(7) { repository.attachPhoto(task.id, EncodedPhoto(ByteArray(8), 1, 1)).toList() }
+        assertEquals(7, server.files.size)
+
+        // When
+        repository.startOver()
+
+        // Then — every file deleted, not only the first page's
+        assertTrue(server.files.isEmpty())
+        assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
+    }
+
+    @Test
+    fun a_photo_whose_screen_closes_after_the_upload_still_gets_its_row() = runTest {
+        // Given — a task, and an upload whose answer is held once the file is stored
+        repository.addTask("Closed too soon", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        val release = CompletableDeferred<Unit>()
+        server.holdUploadAnswers = release
+        val screen = scope.launch {
+            repository.attachPhoto(task.id, EncodedPhoto(ByteArray(8), 1, 1)).collect {}
+        }
+        withTimeout(WAIT) { server.uploadsHeld.first { it == 1 } }
+
+        // When — the screen goes before the app hears of the upload
+        screen.cancelAndJoin()
+        release.complete(Unit)
+
+        // Then — the file has its row
+        repository.allPhotos().awaitValue { it.size == 1 }
+        assertEquals(1, server.rows(Tables.TASK_PHOTOS).size)
+    }
+
+    @Test
+    fun clearing_local_data_says_when_the_lists_cannot_come_back() = runTest {
+        // Given — a task saved on the device, and a server that fails
+        repository.addTask("Kept on the server", notes = null)
+        repository.tasks().awaitValue { it.size == 1 }
+        server.isFailing = true
+
+        // When / Then — the clear is done, and the failed read is thrown
+        assertFailsWith<ServerUnreachableException> { repository.clearLocalData() }
+        assertNull(repository.cachedTasks())
+    }
+
+    @Test
     fun before_a_session_nothing_is_shown_and_nothing_is_asked() = runTest {
         // Given
         session.userId.value = null
 
-        // When
-        val snapshot = repository.tasks().first()
+        // When — the list read for a while, as a screen would
+        val shown = mutableListOf<TaskListSnapshot>()
+        withTimeoutOrNull(NO_REQUEST_WAIT) { repository.tasks().collect { shown += it } }
 
-        // Then
-        assertNull(snapshot.value)
+        // Then — one "nothing yet", and no request in all that time
+        assertNull(shown.single().value)
+        assertEquals(TaskRefreshState.Paused, shown.single().refresh)
         assertTrue(server.requests.none { it.contains("/rest/v1/") })
     }
 
-    /** The first non-null rows of this read that [matches], within a bounded wait. */
     /** A task row as the server stores it, for one the app did not make. */
     private fun serverOnlyTask(title: String): JsonObject = buildJsonObject {
         put("id", "00000000-0000-4000-8000-0000000000aa")
@@ -331,6 +387,7 @@ class OfflineTaskRepositoryTest {
         put("updated_at", "2026-10-01T08:00:00Z")
     }
 
+    /** The first non-null rows of this read that [matches], within a bounded wait. */
     private suspend fun <T> Flow<RowsSnapshot<List<T>>>.awaitValue(
         matches: (List<T>) -> Boolean
     ): List<T> = withTimeout(WAIT) { first { it.value?.let(matches) == true } }.value.orEmpty()
@@ -340,7 +397,16 @@ class OfflineTaskRepositoryTest {
         withTimeout(WAIT * 3) { body() }
     }
 
+    /** The tasks the device holds, or null when it holds none, without asking the server. */
+    private suspend fun OfflineTaskRepository.cachedTasks(): List<Task>? {
+        setNetworkEnabled(false)
+        return tasks().first().value.also { setNetworkEnabled(true) }
+    }
+
     private companion object {
         val WAIT = 10.seconds
+
+        /** How long a read is watched to show it sends nothing. */
+        val NO_REQUEST_WAIT = 1.seconds
     }
 }
