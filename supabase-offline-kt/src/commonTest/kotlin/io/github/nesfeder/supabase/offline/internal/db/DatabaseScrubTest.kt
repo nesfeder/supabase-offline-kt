@@ -9,9 +9,12 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
@@ -90,6 +93,34 @@ class DatabaseScrubTest {
         assertTrue(emptied, "the background never emptied the log")
         assertEquals(triesWhenEmptied, logTries)
         assertEquals(emptyList(), logs.entries.filter { it.level >= EngineLogLevel.WARNING })
+    }
+
+    @Test
+    fun a_clear_cancelled_while_it_waits_still_leaves_the_log_to_the_background() = runTest {
+        // Given — a read holds the log
+        var held = true
+        var emptied = false
+        val scrub =
+            DatabaseScrub(
+                scope = backgroundScope,
+                engineLogger = logs.asEngineLogger(),
+                rewrite = { false },
+                emptyLog = {
+                    emptied = !held
+                    emptied
+                },
+            )
+        scrub.rewriteAfterDelete()
+
+        // When — the clear's caller is cancelled during its wait, then the read ends
+        val clear = launch { scrub.finishSoon() }
+        advanceTimeBy(200.milliseconds)
+        clear.cancelAndJoin()
+        held = false
+        advanceTimeBy(10.seconds)
+
+        // Then — the background emptied the log all the same
+        assertTrue(emptied, "nothing emptied the log after the cancelled clear")
     }
 
     @Test
