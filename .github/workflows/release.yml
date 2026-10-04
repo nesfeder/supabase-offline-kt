@@ -1,37 +1,53 @@
 name: Release
 
-# Publishes VERSION_NAME (gradle.properties) to Maven Central and, on a real run, tags it, creates
-# the GitHub Release and opens the pull request that starts the next version. Started by hand on
-# main; RELEASING.md is the whole process, including what the owner does before and after.
+# Publishes VERSION_NAME (gradle.properties) to Maven Central and as the Swift package and, on a
+# real run, tags it, publishes the GitHub Release and the documentation site, and pushes the branch
+# that starts the next version. Started by hand on main; RELEASING.md is the whole process,
+# including what the owner does before and after.
 #
-#   verify    no side effects: the version's guards, the release check of the public contract
-#             against the last release tag, every check of both modules Linux can run, and the
-#             published-artifacts check; the summary names the commit being released
-#   publish   the `release` environment (its approval and its secrets): a dry run uploads a
-#             deployment to the Central Portal without releasing it and stops; a real run
-#             releases it and waits until Central says PUBLISHED
-#   finish    real runs only: the tag, the GitHub Release from the changelog, the Swift package
-#             (not set up yet), and the branch that starts the next version, with the link that
-#             opens its pull request in the summary (Actions may not open pull requests here)
+#   verify     no side effects: the version's guards, the release check of the public contract
+#              against the last release tag, every check of both modules Linux can run, and the
+#              published-artifacts check; the summary names the commit being released
+#   framework  macOS, GitHub-hosted, no secret and no environment: the Swift package's framework,
+#              built once from this commit with its privacy manifests, its header and
+#              required-reason checks, the Swift package's tests against it on a simulator, the
+#              public-API check, then zipped once; the zip is this run's artifact
+#   draft      real runs only, `contents: write` and nothing else: a draft GitHub Release holding
+#              that zip, before the approval. A draft is not public and creates no tag; it keeps
+#              the zip where Release resume can take it, so nothing is ever rebuilt
+#   publish    the `release` environment (its approval and its secrets): the Swift package's tree
+#              staged and checked first; a dry run then uploads a deployment to the Central Portal
+#              without releasing it and keeps the tree as an artifact; a real run releases the
+#              deployment, waits until Central says PUBLISHED, and only then pushes the Swift
+#              package and its tag to nesfeder/supabase-offline-swift with the deploy key
+#   finish     real runs only: this repository's tag, the draft GitHub Release published, and the
+#              branch that starts the next version, with the link that opens its pull request in
+#              the summary (Actions may not open pull requests here)
+#   docs       real runs only: the documentation site, built at the tag, on GitHub Pages
 #
-# Every job works on the run's own commit, github.sha. Nothing verify produces, which ran the build
-# and the tests (third-party code), reaches publish or finish: no output, no artifact, no cache.
+# Every job works on the run's own commit, github.sha. Nothing verify produces reaches a later job:
+# no output, no artifact, no cache. The framework job runs the build too, and the one thing it
+# hands on is the zip, as data: the jobs after it hash it, upload it and name its checksum, and
+# never open or run it.
 #
-# Maven Central goes first because it is the step most likely to fail and the one that cannot be
-# undone: until it says PUBLISHED nothing is public, and after it, only finish is left. If finish
-# fails, run `Release resume` (release-resume.yml) with the commit this run's summary names; never
-# run this workflow again for a version Central has published.
+# Order: Maven Central goes first because it is the step most likely to fail and the one that
+# cannot be undone. Until it says PUBLISHED nothing is public; then the Swift package's tag; then
+# this repository's tag and its GitHub Release, which makes the framework's URL public. If
+# anything after Central fails, run `Release resume` (release-resume.yml) with the commit this
+# run's summary names; never run this workflow again for a version Central has published.
 #
-# It runs on Linux: the iOS klibs cross-compile there, as CI's API record check proves on every
-# run. The iOS simulator suites ran on macOS in the release commit's own CI.
+# The Kotlin checks run on Linux: the iOS klibs cross-compile there, as CI's API record check
+# proves on every run. The framework needs macOS, and only a GitHub-hosted runner may build it.
 
 on:
   workflow_dispatch:
     inputs:
       dry_run:
         description: >-
-          Dry run: upload to the Central Portal without releasing, then stop. Inspect the deployment
-          in the Portal and drop it. Nothing is tagged.
+          Dry run: build and check everything, upload to the Central Portal without releasing,
+          keep the framework and the Swift package's tree as artifacts, then stop. Inspect the
+          deployment in the Portal and drop it. Nothing is tagged or pushed, and no release is
+          created.
         type: boolean
         default: true
 
@@ -109,12 +125,169 @@ jobs:
             echo "If Maven Central publishes $VERSION and a later step fails, run **Release resume** with this commit."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  publish:
-    name: Publish to Maven Central
+  framework:
+    name: Build the Swift package's framework
     needs: verify
     if: >-
       github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
       && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')
+    # GitHub's own macOS runner, never the self-hosted Mac, which must never see a release.
+    runs-on: macos-26
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      XCODE_VERSION: '26.6'
+      # Xcode for this job's processes only, as in CI's iOS job.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Check that this is a GitHub-hosted runner
+        if: runner.environment != 'github-hosted'
+        run: |
+          echo "::error::The release framework is built on GitHub's own runners only."
+          exit 1
+
+      # The run's own commit (github.sha), as every job of this workflow.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The whole output first: piping xcodebuild into `head` can abort it on the broken pipe.
+      - name: Check the Xcode version
+        run: |
+          output=$(xcodebuild -version)
+          version="${output%%$'\n'*}"
+          if [[ "$version" != "Xcode $XCODE_VERSION" ]]; then
+            echo "::error::Expected Xcode $XCODE_VERSION, found $version"
+            exit 1
+          fi
+
+      - name: Read the version
+        id: version
+        run: python3 scripts/release.py release-version --github-output "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # The release XCFramework on Apple's SQLite, with the privacy manifest in each slice, and the
+      # check that the required-reason APIs it references are the recorded ones, each declared.
+      - name: Build the release framework
+        run: python3 scripts/swift-release.py build --out "$RUNNER_TEMP/swift-release/built"
+
+      # The header of the device framework the build linked: the bridge's own names only, and the
+      # recorded contract the Swift package is written against.
+      - name: Check the framework's header
+        run: python3 scripts/check-bridge-header.py
+
+      # Zipped once, here; everything after this job takes these bytes.
+      - name: Zip the framework
+        run: >-
+          python3 scripts/swift-release.py zip
+          --framework "$RUNNER_TEMP/swift-release/built/SupabaseOfflineCore.xcframework"
+          --out "$RUNNER_TEMP/swift-release/SupabaseOfflineCore.xcframework.zip"
+
+      # The tests and the public-API check run against the zip's own contents, unzipped.
+      - name: Unzip the framework to test it
+        run: >-
+          ditto -x -k "$RUNNER_TEMP/swift-release/SupabaseOfflineCore.xcframework.zip"
+          "$RUNNER_TEMP/swift-release/tested"
+
+      - name: Check the unzipped framework's privacy manifests and required-reason APIs
+        run: >-
+          python3 scripts/swift-release.py check-required-reasons
+          --framework "$RUNNER_TEMP/swift-release/tested/SupabaseOfflineCore.xcframework"
+
+      - name: Create a simulator
+        run: bash .github/scripts/create-simulator.sh
+
+      # The Swift package's tests on that simulator against this framework, with every warning an
+      # error, then the check that its public API shows nothing of the framework underneath.
+      - name: Test the Swift package against the framework
+        run: >-
+          bash scripts/test-swift-package.sh
+          --framework "$RUNNER_TEMP/swift-release/tested/SupabaseOfflineCore.xcframework"
+          --simulator "$CI_SIMULATOR_UDID"
+          --derived-data "$RUNNER_TEMP/swift-derived-data"
+
+      # The tree the release would publish, from this commit and this zip, checked, and its
+      # manifest read by SwiftPM itself: the Linux jobs that publish it cannot run Swift.
+      - name: Stage the Swift package and read its manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          zip="$RUNNER_TEMP/swift-release/SupabaseOfflineCore.xcframework.zip"
+          tree="$RUNNER_TEMP/swift-release/package"
+          python3 scripts/swift-release.py publish --dry-run \
+            --zip "$zip" --version "$VERSION" --sha "$GITHUB_SHA" --out "$tree"
+          python3 scripts/swift-release.py read-manifest --tree "$tree" --zip "$zip"
+
+      - name: Name the framework in the summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          zip="$RUNNER_TEMP/swift-release/SupabaseOfflineCore.xcframework.zip"
+          {
+            echo "### The Swift package's framework"
+            echo
+            echo "\`SupabaseOfflineCore.xcframework.zip\` for $VERSION: $(stat -f %z "$zip") bytes, checksum \`$(python3 scripts/swift-release.py checksum "$zip")\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: swift-framework
+          path: ${{ runner.temp }}/swift-release/SupabaseOfflineCore.xcframework.zip
+          if-no-files-found: error
+          retention-days: 90
+
+  draft:
+    name: Stage the framework on a draft release
+    needs: framework
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # the draft GitHub Release and its asset; no tag, nothing public
+    steps:
+      # The run's own commit, for the release script and the changelog's section.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the version
+        id: version
+        run: python3 scripts/release.py release-version --github-output "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: swift-framework
+          path: ${{ runner.temp }}/swift-release
+
+      # A draft at this commit holding the zip, or nothing when it holds exactly this zip already.
+      # It refuses a published release, and a draft holding another build.
+      - name: Create the draft release with the framework
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: >-
+          python3 scripts/swift-release.py draft-release
+          --zip "$RUNNER_TEMP/swift-release/SupabaseOfflineCore.xcframework.zip"
+          --version "$VERSION" --sha "$GITHUB_SHA"
+
+  publish:
+    name: Publish to Maven Central and the Swift package
+    needs: [verify, framework, draft]
+    # draft runs on a real run only, so this says what the default would: verify and the framework
+    # passed, and the draft passed on a real run or was skipped on a dry run.
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main'
+      && !cancelled() && needs.verify.result == 'success' && needs.framework.result == 'success'
+      && (needs.draft.result == 'success') == !inputs.dry_run)
     runs-on: ubuntu-latest
     # A real run waits up to 45 minutes for Central to publish (SONATYPE_CLOSE_TIMEOUT_SECONDS).
     timeout-minutes: 75
@@ -127,12 +300,41 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read the version
+        id: version
+        run: python3 scripts/release.py release-version --github-output "$GITHUB_OUTPUT"
+
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '17'
 
       - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # The zip the framework job built, the one the draft release holds. It is only hashed here.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: swift-framework
+          path: ${{ runner.temp }}/swift-release
+
+      # Before anything is public: the tree the Swift package's repository will hold, rendered
+      # from this commit and that zip, and checked.
+      - name: Stage and check the Swift package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: >-
+          python3 scripts/swift-release.py publish --dry-run
+          --zip "$RUNNER_TEMP/swift-release/SupabaseOfflineCore.xcframework.zip"
+          --version "$VERSION" --sha "$GITHUB_SHA" --out "$RUNNER_TEMP/swift-package-staged"
+
+      - name: Keep the Swift package's tree (dry run)
+        if: inputs.dry_run
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: swift-package-tree
+          path: ${{ runner.temp }}/swift-package-staged
+          if-no-files-found: error
+          retention-days: 30
 
       # The secrets reach Gradle as project properties through the environment of this step only.
       # No configuration cache: its entry would hold the signing key on the runner's disk.
@@ -153,7 +355,8 @@ jobs:
             echo
             echo "The Central Portal holds deployment \`${deployment:-unknown}\`, uploaded without releasing it."
             echo "Open https://central.sonatype.com/publishing/deployments, wait for **VALIDATED**,"
-            echo "inspect its files, then **Drop** it. Nothing was tagged."
+            echo "inspect its files, then **Drop** it. Nothing was tagged or pushed, and no GitHub Release was created."
+            echo "The run's artifacts hold the Swift package's framework and the tree its repository would hold."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish and release on Maven Central
@@ -169,17 +372,45 @@ jobs:
           -PSONATYPE_CLOSE_TIMEOUT_SECONDS=2700
           --no-configuration-cache --stacktrace
 
+      # After Central says PUBLISHED, and only then: the Swift package's commit and tag. The deploy
+      # key reaches this step alone. It is written to a file only this user can read, used with
+      # host-key checking on against GitHub's pinned host keys, and removed by the next step
+      # whatever happens. The push never forces, and a tag that holds this tree already is left.
+      - name: Publish the Swift package
+        if: ${{ !inputs.dry_run }}
+        env:
+          SWIFT_PACKAGE_DEPLOY_KEY: ${{ secrets.SWIFT_PACKAGE_DEPLOY_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/swift-package-deploy-key"
+          known_hosts="$RUNNER_TEMP/github-known-hosts"
+          (umask 077 && printenv SWIFT_PACKAGE_DEPLOY_KEY > "$key")
+          chmod 600 "$key"
+          unset SWIFT_PACKAGE_DEPLOY_KEY
+          python3 scripts/swift-release.py known-hosts > "$known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts -o UpdateHostKeys=no"
+          python3 scripts/swift-release.py publish \
+            --zip "$RUNNER_TEMP/swift-release/SupabaseOfflineCore.xcframework.zip" \
+            --version "$VERSION" --sha "$GITHUB_SHA" --out "$RUNNER_TEMP/swift-package" \
+            --remote git@github.com:nesfeder/supabase-offline-swift.git
+
+      - name: Remove the deploy key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/swift-package-deploy-key"
+
       - name: Say what to do after a failed publish
         if: failure() && !inputs.dry_run
         env:
           SHA: ${{ github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           {
             echo "### The publish did not finish"
             echo
             echo "Look up the deployment at https://central.sonatype.com/publishing/deployments."
-            echo "- **PUBLISHED** (the wait timed out): the version is out. Run **Release resume** with \`$SHA\`."
-            echo "- **FAILED**, or none: nothing is public. Drop a failed deployment, fix the cause and run Release again."
+            echo "- **PUBLISHED** (the wait timed out, or the Swift package's step failed): the version is out. Run **Release resume** with \`$SHA\`."
+            echo "- **FAILED**, or none: nothing is public. Drop a failed deployment, delete the draft GitHub Release $VERSION (it holds this run's framework), fix the cause and run Release again."
             echo "- **PUBLISHING**: wait until it says PUBLISHED, then run **Release resume** with \`$SHA\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -191,6 +422,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write # the tag, the GitHub Release and the post-release branch
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       # The run's own commit (github.sha), as in publish. The pushes are this job's purpose, so the
       # checkout keeps its credentials.
@@ -210,17 +443,13 @@ jobs:
           SHA: ${{ github.sha }}
         run: python3 scripts/release.py push-tag --version "$VERSION" --sha "$SHA"
 
-      - name: Create the GitHub Release
+      # The draft the draft job made, with its notes and the framework, published for the tag: the
+      # framework's URL, which the Swift package's manifest names, is public from here on.
+      - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/release.py publish-github-release --version "$VERSION"
-
-      # A placeholder that does nothing. The Swift package's framework (a release asset) and its
-      # manifest (in the Swift package repository) are published here once the Swift distribution
-      # exists; until then there is nothing to publish.
-      - name: Publish the Swift package (not set up yet)
-        run: echo "The Swift package is not published by this workflow yet; nothing to do."
 
       # The branch is pushed and its pull request's link goes to the summary: GitHub Actions may
       # not open pull requests in this repository, so the owner opens it, and CI starts by itself.
@@ -228,3 +457,19 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/release.py push-post-release-branch --version "$VERSION"
+
+  # The documentation site at the tag, published to GitHub Pages by docs-publish.yml. It holds no
+  # release secret and cannot push; the Pages token and the OIDC token are the called workflow's.
+  docs:
+    name: Publish the documentation site
+    needs: finish
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (!inputs.dry_run)
+    permissions:
+      contents: read # the checkout at the tag the site is built from
+      pages: write # the called workflow's deploy job publishes the site to GitHub Pages
+      id-token: write # the OIDC token that deploy job exchanges with the Pages service
+    uses: $/.github/workflows/docs-publish.yml
+    with:
+      ref: refs/tags/${{ needs.finish.outputs.version }}

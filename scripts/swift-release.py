@@ -38,6 +38,10 @@ Commands (from the repository root):
       this tree, so a resume can run it again, and refuses a tag that holds anything else. main
       moves only for the highest version. The remote's access comes from the environment
       (GIT_SSH_COMMAND), never from this script.
+  read-manifest --tree DIR --zip ZIP
+      macOS only. Has SwiftPM read the staged tree's manifest (`swift package dump-package`), which
+      the Linux jobs that publish it cannot: it must hold the binary target at the archive's URL
+      with the zip's checksum, the two library targets and nothing else.
   check-tree --tree DIR --zip ZIP --version X.Y.Z
       The check publish runs: the tree holds Package.swift, README.md, LICENSE and Sources/ and
       nothing else, Sources/ only Swift files and privacy manifests, no symbolic link and no hidden
@@ -552,6 +556,38 @@ def tree_problems(tree: Path, version: str, archive_checksum: str) -> list[str]:
     return problems
 
 
+def dumped_manifest_problems(dump: dict, archive_checksum: str) -> list[str]:
+    """What is wrong with a published manifest as `swift package dump-package` reads it."""
+    targets = {target.get("name"): target for target in dump.get("targets") or []}
+    products = sorted(product.get("name") for product in dump.get("products") or [])
+    problems = []
+    if set(targets) != {FRAMEWORK, "SupabaseOffline", "SupabaseOfflineTesting"}:
+        problems.append(f"the targets are {sorted(targets)}")
+    if products != ["SupabaseOffline", "SupabaseOfflineTesting"]:
+        problems.append(f"the products are {products}")
+    core = targets.get(FRAMEWORK) or {}
+    if core.get("type") != "binary" or not str(core.get("url", "")).endswith(f"/releases/download/"
+                                                                             f"{dump.get('_version')}/{ASSET}"):
+        problems.append(f"{FRAMEWORK} is not the binary target at the archive's URL: {core}")
+    if core.get("checksum") != archive_checksum:
+        problems.append(f"{FRAMEWORK}'s checksum is {core.get('checksum')}, not the archive's {archive_checksum}")
+    return problems
+
+
+def read_manifest(tree: Path, archive: Path) -> str:
+    """Has SwiftPM read the staged manifest, and checks what it read."""
+    with tempfile.TemporaryDirectory() as directory:
+        dumped = run(["swift", "package", "dump-package", "--scratch-path", directory], cwd=tree)
+    dump = json.loads(dumped)
+    version = re.search(r'^let version = "([^"]+)"$', (tree / MANIFEST).read_text(encoding="utf-8"), re.MULTILINE)
+    dump["_version"] = version.group(1) if version else ""
+    problems = dumped_manifest_problems(dump, checksum(archive))
+    if problems:
+        raise ReleaseError("SwiftPM reads the staged manifest as:\n  " + "\n  ".join(problems))
+    return (f"SwiftPM reads the staged manifest: products {', '.join(product['name'] for product in dump['products'])};"
+            f" {FRAMEWORK} from {next(target for target in dump['targets'] if target['name'] == FRAMEWORK)['url']}.")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # The package's repository
 # ─────────────────────────────────────────────────────────────────────────────
@@ -709,13 +745,19 @@ let checksum = "0000000000000000000000000000000000000000000000000000000000000000
 
 let package = Package(
     name: "SupabaseOffline",
+    platforms: [.iOS(.v16)],
+    products: [
+        .library(name: "SupabaseOffline", targets: ["SupabaseOffline"]),
+        .library(name: "SupabaseOfflineTesting", targets: ["SupabaseOfflineTesting"]),
+    ],
     targets: [
         .binaryTarget(
             name: "SupabaseOfflineCore",
             url: "https://github.com/nesfeder/supabase-offline-kt/releases/download/\\(version)/SupabaseOfflineCore.xcframework.zip",
             checksum: checksum
         ),
-        .target(name: "SupabaseOffline", dependencies: ["SupabaseOfflineCore"]),
+        .target(name: "SupabaseOffline", dependencies: ["SupabaseOfflineCore"], resources: [.copy("PrivacyInfo.xcprivacy")]),
+        .target(name: "SupabaseOfflineTesting", dependencies: ["SupabaseOffline"]),
     ]
 )
 
@@ -945,6 +987,27 @@ def self_test() -> int:
         expect(refused(lambda: draft_release(root, archive, "0.1.0", sha), "published already"),
                "draft-release refuses a published release")
 
+        # SwiftPM's reading of the manifest.
+        good_dump = {"_version": "0.1.0", "products": [{"name": "SupabaseOffline"}, {"name": "SupabaseOfflineTesting"}],
+                     "targets": [{"name": FRAMEWORK, "type": "binary", "checksum": archive_checksum,
+                                  "url": "https://github.com/nesfeder/supabase-offline-kt/releases/download/0.1.0/" + ASSET},
+                                 {"name": "SupabaseOffline"}, {"name": "SupabaseOfflineTesting"}]}
+        expect(not dumped_manifest_problems(good_dump, archive_checksum), "SwiftPM's reading of a good manifest passes")
+        with_tests = json.loads(json.dumps(good_dump))
+        with_tests["targets"].append({"name": "SupabaseOfflineTests", "type": "test"})
+        expect(any("the targets are" in problem for problem in dumped_manifest_problems(with_tests, archive_checksum)),
+               "SwiftPM's reading of a manifest with a test target fails")
+        expect(any("not the archive's" in problem for problem in dumped_manifest_problems(good_dump, "1" * 64)),
+               "SwiftPM's reading of another checksum fails")
+        if shutil.which("swift") and sys.platform == "darwin":
+            try:
+                read = read_manifest(tree, archive)
+            except ReleaseError as error:
+                read = str(error)
+            expect(read.startswith("SwiftPM reads the staged manifest"), f"SwiftPM reads a staged manifest: {read}")
+        else:
+            print("skip read-manifest: SwiftPM for iOS packages is macOS's (the release's macOS job runs it)")
+
         # Required-reason APIs.
         found = referenced_apis(["_fstat", "_lstat$INODE64", "_OBJC_CLASS_$_NSUserDefaults", "_clock_gettime",
                                  "_NSFileModificationDate", "_OBJC_CLASS_$_NSProcessInfo"], {"standardUserDefaults"})
@@ -1025,6 +1088,9 @@ def main(argv: list[str]) -> int:
     target = published.add_mutually_exclusive_group(required=True)
     target.add_argument("--remote")
     target.add_argument("--dry-run", action="store_true")
+    dumped = commands.add_parser("read-manifest")
+    dumped.add_argument("--tree", required=True)
+    dumped.add_argument("--zip", required=True)
     checked = commands.add_parser("check-tree")
     checked.add_argument("--tree", required=True)
     checked.add_argument("--zip", required=True)
@@ -1057,6 +1123,8 @@ def main(argv: list[str]) -> int:
         elif arguments.command == "publish":
             print(publish(root, Path(arguments.zip), arguments.version, arguments.sha,
                           Path(arguments.out), None if arguments.dry_run else arguments.remote))
+        elif arguments.command == "read-manifest":
+            print(read_manifest(Path(arguments.tree), Path(arguments.zip)))
         elif arguments.command == "check-tree":
             problems = tree_problems(Path(arguments.tree), arguments.version, checksum(Path(arguments.zip)))
             if problems:
