@@ -11,6 +11,9 @@ import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -22,7 +25,8 @@ import kotlinx.serialization.json.contentOrNull
  * A stateful PostgREST server over a [RecordingPostgrestServer] that keeps rows per table and
  * enforces primary and foreign keys, answering a violation as PostgREST does. It understands what
  * replay sends, `POST`, `PATCH`, `DELETE` and `GET` scoped by `eq` filters, and answers anything
- * else `400`.
+ * else `400`. Requests are answered one at a time, and an insert asking for its rows back
+ * (`Prefer: return=representation`) is answered with the rows it wrote.
  *
  * @property primaryKey the primary-key column every table shares.
  * @property foreignKeys child table → the foreign key it must satisfy.
@@ -44,6 +48,12 @@ internal class FakeRelationalPostgrestServer(
 
     private val tables = mutableMapOf<String, MutableMap<String, JsonObject>>()
 
+    /** Held while a request is answered, so requests arriving at once see each other whole. */
+    private val answering = Mutex()
+
+    /** How long a `GET` waits before it is answered, as a slow server would; none by default. */
+    var answerDelayMillis: Long = 0L
+
     /**
      * When set and returning `true` for a request, the request's write is committed and then the
      * connection drops before the response arrives — a lost response.
@@ -59,7 +69,10 @@ internal class FakeRelationalPostgrestServer(
     /** The recording server underneath; its `requests` list everything received. */
     val recorder: RecordingPostgrestServer =
         RecordingPostgrestServer(
-            answer = { request -> handle(request) },
+            answer = { request ->
+                if (request.method == "GET" && answerDelayMillis > 0) delay(answerDelayMillis)
+                answering.withLock { handle(request) }
+            },
             engineDispatcher = engineDispatcher,
         )
 
@@ -114,6 +127,7 @@ internal class FakeRelationalPostgrestServer(
         val stored = tables.getOrPut(request.table) { mutableMapOf() }
         val staged = stored.toMutableMap()
         var written = 0
+        val writtenRows = mutableListOf<JsonObject>()
         for (element in body) {
             val row = element as JsonObject
             val foreignKey = foreignKeys[request.table]
@@ -134,13 +148,16 @@ internal class FakeRelationalPostgrestServer(
             val existing = staged[key]
             when {
                 existing == null || request.table in tablesWithoutUniqueKey -> {
-                    staged[if (existing == null) key else "$key-${staged.size + 1}"] =
-                        withKey(row, key)
+                    val inserted = withKey(row, key)
+                    staged[if (existing == null) key else "$key-${staged.size + 1}"] = inserted
+                    writtenRows += inserted
                     written++
                 }
                 "resolution=ignore-duplicates" in resolution -> Unit
                 "resolution=merge-duplicates" in resolution -> {
-                    staged[key] = JsonObject(existing + row)
+                    val merged = JsonObject(existing + row)
+                    staged[key] = merged
+                    writtenRows += merged
                     written++
                 }
                 else ->
@@ -155,7 +172,8 @@ internal class FakeRelationalPostgrestServer(
         stored.putAll(staged)
         val countHeader =
             if ("count=exact" in resolution) mapOf(CONTENT_RANGE to "*/$written") else emptyMap()
-        return okJson("[]", countHeader)
+        val returned = if ("return=representation" in resolution) JsonArray(writtenRows) else null
+        return okJson(returned?.toString() ?: "[]", countHeader)
     }
 
     private fun MockRequestHandleScope.update(request: RecordedRequest): HttpResponseData {

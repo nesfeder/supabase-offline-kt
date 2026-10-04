@@ -59,6 +59,12 @@ internal class RecordingStorageServer {
      */
     var gate: CompletableDeferred<Unit>? = null
 
+    /**
+     * When set, every download is refused with this status and Storage's error body for it, as a
+     * policy (`403`) or a fault (`500`) refuses one; the object stays stored.
+     */
+    var downloadRefusal: HttpStatusCode? = null
+
     /** Completed each time a request reaches the server (and before it waits on [gate]). */
     var requestArrived: CompletableDeferred<Unit> = CompletableDeferred()
 
@@ -179,6 +185,15 @@ internal class RecordingStorageServer {
         bucketAndPath: List<String>,
         transform: String?,
     ): HttpResponseData {
+        downloadRefusal?.let { status ->
+            return respond(
+                content =
+                    """{"statusCode":"${status.value}","error":"refused","message":"${status.description}"}""",
+                status = status,
+                headers =
+                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+        }
         val original =
             objects[bucketAndPath.joinToString("/")]
                 ?: return respond(
