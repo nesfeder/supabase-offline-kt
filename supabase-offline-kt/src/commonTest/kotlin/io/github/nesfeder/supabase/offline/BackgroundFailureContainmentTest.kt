@@ -192,8 +192,16 @@ class BackgroundFailureContainmentTest {
             )
         awaitLogged("IllegalStateException")
 
-        // Then — a request is still tried (the monitor is a hint), and nothing escaped
+        // Then — a request is still tried (the monitor is a hint), the status no longer says
+        // offline, so the library tries by itself again, and nothing escaped
         assertEquals(ROWS, client.from(TABLE).select().data)
+        val network =
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(WAIT) {
+                    client.syncStatus.first { status -> status.network == NetworkStatus.UNKNOWN }
+                }
+            }
+        assertEquals(NetworkStatus.UNKNOWN, network?.network, "${client.syncStatus.value}")
         assertEquals(emptyList(), uncaught.recorded())
         client.close()
     }

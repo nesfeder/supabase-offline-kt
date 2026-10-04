@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.network
 
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.NetworkStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -80,14 +81,25 @@ internal class NetworkAccess(private val source: Flow<Boolean>? = null) {
     /**
      * Watches [source] in [scope] until [scope] ends: a platform monitor registers when collection
      * starts and unregisters when [scope] is cancelled. [onReconnected] runs in that collection
-     * each time the monitor makes the network reachable again.
+     * each time the monitor makes the network reachable again. A source that fails tells nothing
+     * more: the status falls back to [NetworkStatus.UNKNOWN], which counts as reachable, so a
+     * monitor that broke while saying offline does not stop the library trying by itself; the
+     * failure is rethrown for [scope] to log.
      */
     fun watchIn(scope: CoroutineScope, onReconnected: suspend () -> Unit) {
         val watched = source ?: return
         scope.launch {
-            watched.collect { online ->
-                val monitored = if (online) NetworkStatus.ONLINE else NetworkStatus.OFFLINE
-                if (change { current -> current.copy(monitored = monitored) }) onReconnected()
+            try {
+                watched.collect { online ->
+                    val monitored = if (online) NetworkStatus.ONLINE else NetworkStatus.OFFLINE
+                    if (change { current -> current.copy(monitored = monitored) }) onReconnected()
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                if (change { current -> current.copy(monitored = NetworkStatus.UNKNOWN) })
+                    onReconnected()
+                throw failure
             }
         }
     }

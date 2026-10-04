@@ -499,7 +499,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * by itself: when it turns `true`, a reactive read's waiting refresh tries again at once
          * and, with [autoSync], queued writes are sent. While it is `false`, the library starts no
          * replay pass by itself, a refresh that cannot reach the network reports
-         * [RefreshState.Paused], and [SyncStatus.network] says [NetworkStatus.OFFLINE].
+         * [RefreshState.Paused], and [SyncStatus.network] says [NetworkStatus.OFFLINE]. A signal
+         * that fails is logged and no longer watched, and the network is then
+         * [NetworkStatus.UNKNOWN].
          */
         public var networkAvailability: Flow<Boolean>? = null
 

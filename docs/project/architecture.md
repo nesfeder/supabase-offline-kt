@@ -379,7 +379,9 @@ a connectivity failure, so code that handles being offline handles it too.
 **The monitor.** By default the library watches the platform: on Android `ConnectivityManager`,
 counting a network with internet that Android has validated (the library's manifest declares
 `ACCESS_NETWORK_STATE`, which appears in every app's merged manifest); on iOS, Network's path
-monitor. `networkAvailability` replaces it with the app's own signal. Either is a hint, never a
+monitor. `networkAvailability` replaces it with the app's own signal. A signal that fails stops being
+watched: the failure is logged, and the status falls back to `UNKNOWN`, which counts as reachable,
+so a monitor that broke while saying offline does not stop the library trying by itself. Either is a hint, never a
 gate: a request the app makes is always tried, because a monitor can be wrong either way. It decides
 only when the library tries by itself (no automatic pass runs while it says offline), what a
 waiting refresh reports, whether a sync returns at once rather than wait for an unsettled session,
@@ -916,10 +918,13 @@ the send lock; the file cache takes its lock; one transaction deletes every muta
 and every cached payload, the engine's own records included, and records the owner, the anonymous
 identity when nobody is signed in with Auth, and nobody otherwise, so a user's first use claims it.
 The queue's in-memory records are set to known-empty, so no later read writes an old one back. Then
-`VACUUM` rewrites the database and a `TRUNCATE` checkpoint empties its write-ahead log, tried for
-about a second while open reads hold it off and logged when they still do; the cache directories go
-last. Without
-Auth there is one identity and its cache is never dropped; only this call empties it.
+`VACUUM` rewrites the database and one `TRUNCATE` checkpoint, with the busy timeout at zero for its
+length, tries to empty its write-ahead log, and the cache directories go last. Only then are the
+locks let go: when an open read held the log, the clear tries again every 50 ms for at most a
+second, then leaves it to the client's scope, which tries with a wait doubling up to five seconds
+until the log is emptied, and `close()` tries once more before the database closes. The same path
+follows `dropCacheFor`. Without Auth there is one identity and its cache is never dropped; only this
+call empties it.
 
 ### Logging
 
