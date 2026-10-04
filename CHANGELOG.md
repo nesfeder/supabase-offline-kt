@@ -77,6 +77,18 @@ release.
   failure there is logged, never thrown into the test.
 - `ReadStrategy.NetworkFirst`, `CacheFirst` and `CacheOnly` take a `Duration` only: the
   constructors taking milliseconds are gone, and `NetworkFirst(null)` now compiles.
+- The Storage file helpers extend `OfflineBucketApi`, the bucket `offline.storage.from(…)` returns,
+  in place of supabase-kt's `BucketApi`: on Android `ensureLocalFile` returns a `File` and
+  `ensureLocalUri` a `Uri`, on iOS `ensureLocalPath` a `String`, none of them nullable any more, and
+  each takes `path` as the bucket's own members do. `localUriIfCached` and `localPathIfCached` are
+  `null` only when nothing is cached. On supabase-kt's own bucket they no longer compile, where
+  they returned `null`.
+- On iOS the database and the file cache live in `Library/Application Support` by default
+  (`supabase_offline.db` and `supabase_offline/`), not in `Documents`, which an app with file
+  sharing on shows in the Files app. A client that finds a database in `Documents` moves it, with
+  its unsent writes and its cached files, when it opens; while another client holds it, it stays
+  there and that client's claim fails the open, and when both places hold a database the one in
+  `Documents` is left and a warning logged.
 - The iOS framework carries no Swift-only helpers and no SKIE-generated Swift (see Removed). Nothing
   uses the framework yet: the Swift package is being rebuilt on a bridge of its own.
 - On Android, an interface member with a body compiles to a JVM default method only, so the
@@ -230,6 +242,9 @@ release.
   down.
 - After a sync pass stopped on a server's `Retry-After`, the library's own next pass waits at least
   that long (at most an hour); a sync the app asks for is sent at once.
+- The testing artifact pins the library to its own version: its published metadata carries a
+  strict constraint, so an app that resolves another version of the library beside it fails
+  dependency resolution instead of failing a test with a missing method.
 - A slow collector of a `CacheFirstThenNetwork` read is handed the latest snapshot, not each one in
   turn, and never holds back the query's other collectors.
 - The request lambda passed to a read or a write may run more than once, so it must configure the
@@ -263,8 +278,8 @@ release.
 
 - The ways in before the plugin, and the names the plugin's API replaced, with nothing deprecated
   left behind: `createSupabaseOfflineClient` (Android and iOS) and `SupabaseOfflineConfig` (install
-  the plugin and use `supabase.offline`; it opens the same database in the same place, so the cache
-  and unsent writes carry over); the `SupabaseOfflineClient` type (`Offline`); `insertJson`,
+  the plugin and use `supabase.offline`; it opens the same database, on iOS once it has moved from
+  `Documents` to `Library/Application Support`, so the cache and unsent writes carry over); the `SupabaseOfflineClient` type (`Offline`); `insertJson`,
   `upsertJson` and `updateJson` (`insert`, `upsert` and `update`); `insertWith`, `upsertWith` and
   `updateWith`, and the reified `insert`, `upsert` and `update` extensions (the typed members,
   which encode through `postgrest.serializer`); `storage(bucket)` (`storage.from(bucket)`);
