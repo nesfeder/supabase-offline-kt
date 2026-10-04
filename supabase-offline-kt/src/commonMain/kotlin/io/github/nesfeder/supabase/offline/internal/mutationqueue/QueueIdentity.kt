@@ -9,6 +9,8 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserSession
 import kotlin.io.encoding.Base64
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -72,6 +74,60 @@ internal suspend fun SupabaseClient.currentQueueIdentity(): QueueIdentity? {
     } catch (_: Exception) {
         // The stored session could not be read. Better to say "unknown" than to guess an owner.
         null
+    }
+}
+
+/**
+ * [currentQueueIdentity], read once per session status. While a stored session restores or
+ * refreshes, telling the identity reads the stored session, which every write would otherwise read
+ * again: here one read serves every caller of that status, one at a time. It is not bounded: past a
+ * bound the write's owner could not be told, and it would go out on the anon key while the session
+ * restores.
+ */
+internal class QueueIdentityReader(
+    /** The session status now, or `null` without the Auth plugin. */
+    private val sessionStatus: () -> SessionStatus?,
+    /** Reads the stored session. */
+    private val loadStoredSession: suspend () -> UserSession?,
+) {
+
+    /** The reader of [supabase]'s Auth plugin, or of no session model without one. */
+    constructor(
+        supabase: SupabaseClient
+    ) : this(
+        sessionStatus = { supabase.pluginManager.getPluginOrNull(Auth)?.sessionStatus?.value },
+        loadStoredSession = {
+            supabase.pluginManager.getPluginOrNull(Auth)?.sessionManager?.loadSession()
+        },
+    )
+
+    /** Taken by the one read of the stored session in progress. */
+    private val readLock = Mutex()
+
+    /** The status the identity was read for, and what it was; guarded by [readLock]. */
+    private var remembered: Pair<SessionStatus, QueueIdentity?>? = null
+
+    /** The identity a write made now is queued for, or `null` when it cannot be told. */
+    suspend fun current(): QueueIdentity? {
+        val status = sessionStatus() ?: return QueueIdentity.Anonymous
+        if (status is SessionStatus.Authenticated || status is SessionStatus.NotAuthenticated)
+            return queueIdentityFor(status) { null }
+        return readLock.withLock {
+            remembered?.let { (rememberedStatus, identity) ->
+                if (rememberedStatus == status) return@withLock identity
+            }
+            val identity =
+                try {
+                    queueIdentityFor(status) { loadStoredSession() }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    // Not remembered: the next write reads the stored session again
+                    return@withLock null
+                }
+            remembered = status to identity
+            identity
+        }
     }
 }
 

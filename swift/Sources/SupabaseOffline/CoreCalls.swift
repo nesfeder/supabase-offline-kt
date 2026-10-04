@@ -430,14 +430,15 @@ func logCategory(forTag tag: String) -> String {
 }
 
 /// `text` without the names of the runtime under the package: package-qualified type names are
-/// cut to the type's own name, and the runtime's and the core's own names become "core".
+/// cut to the type's own name, and the words naming the runtime or the layer under the package
+/// become "library", so no error text or log line names either.
 func redactingRuntimeNames(_ text: String) -> String {
     text
         .replacing(qualifiedRuntimeName, with: "")
-        .replacing(runtimeWord, with: "core")
+        .replacing(runtimeWord, with: "library")
 }
 
-/// A dotted package prefix of the runtime's or its libraries' type names, such as `kotlinx.coroutines.`.
+/// A dotted package prefix of the runtime's or its libraries' type names, such as a coroutine library's.
 nonisolated(unsafe) private let qualifiedRuntimeName =
     /\b(?:kotlinx?|io\.ktor|io\.github\.jan|io\.github\.nesfeder|okio|androidx)(?:\.[a-z][A-Za-z0-9_]*)*\./
 

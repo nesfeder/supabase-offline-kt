@@ -172,8 +172,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * The current user's are the writes made under their session, and those queued with no user
      * recorded that they may take over; never another user's. While the stored session cannot be
-     * read, the list is empty. A collection live at [close] completes; collected after [close], the
-     * flow fails with [IllegalStateException].
+     * read, the list is empty. A collection live at [close] completes, so `first()` on one that has
+     * not emitted yet throws [NoSuchElementException] (`firstOrNull()` returns `null`); collected
+     * after [close], the flow fails with [IllegalStateException].
      *
      * @param table the table, or `null` for every table.
      * @return the flow of lists.
@@ -192,7 +193,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
 
     /**
      * [pendingMutationCount] as the queue changes; a value is emitted only when it differs from the
-     * last. A collection live at [close] completes; collected after [close], the flow fails with
+     * last. A collection live at [close] completes, so `first()` on one that has not emitted yet
+     * throws [NoSuchElementException]; collected after [close], the flow fails with
      * [IllegalStateException].
      *
      * @param table the table, or `null` for every table.
@@ -227,7 +229,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * A write sent at once, because nothing of the user was queued ahead of it, that the server
      * refuses is not listed: its caller gets the server's error, as from supabase-kt. A collection
-     * live at [close] completes; collected after [close], the flow fails with
+     * live at [close] completes, so `first()` on one that has not emitted yet throws
+     * [NoSuchElementException]; collected after [close], the flow fails with
      * [IllegalStateException].
      *
      * @return the flow of lists.
@@ -265,9 +268,10 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * connection, a `401`, `408`, `429` or `5xx`) stops it with every remaining write still queued,
      * so no write overtakes an earlier one; it is not thrown, and [SyncStatus.lastSyncError] says
      * what it was. A write the server refuses for good (another `4xx`) goes to [rejectedMutations],
-     * and the pass goes on. For a single table, a `403` or `409` on a write with an earlier write
-     * of the user pending in another table is held rather than rejected: that earlier write may be
-     * the row it depends on.
+     * and the pass goes on. For a single table, the pass stops at the first write that has an
+     * earlier write of the user still queued in another table, which may be the row it depends on:
+     * no write is sent ahead of an earlier one, and [SyncReport.heldBehindOtherTablesCount] counts
+     * what it held back.
      *
      * When the library is sending the same writes at that moment, by itself or for another call,
      * this waits for it to let go and then sends what is left, so it returns only once nothing more
@@ -287,9 +291,11 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * changes: one value to draw a sync banner from. See [SyncStatus] for when each part is
      * current.
      *
-     * The same flow whether or not the client is open, and it never throws. At [close] it takes one
-     * last value, with [SyncStatus.isSyncing] `false`, and changes no more; read after [close], it
-     * holds that value.
+     * It follows the queue from the moment the client opens, so shortly after, its counts include
+     * the writes an earlier run left queued, whether or not the app has read it yet. The same flow
+     * whether or not the client is open, and it never throws. At [close] it takes one last value,
+     * with [SyncStatus.isSyncing] `false`, and changes no more; read after [close], it holds that
+     * value.
      */
     public val syncStatus: StateFlow<SyncStatus>
 
@@ -300,7 +306,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * sends nothing, and a Storage download is answered from the file cache. A request that must
      * reach the server (a [ReadStrategy.NetworkOnly] read, a [MutationStrategy.OnlineOnly] write,
      * an [rpc], a Storage call other than a download) throws [NetworkDisabledException]. A request
-     * already on the wire still answers.
+     * already on the wire still answers, and so does a resumable upload created or paused while
+     * access was on: it sends its chunks until it ends.
      *
      * [SyncStatus.network] is [NetworkStatus.DISABLED] as soon as this returns. The switch is not
      * kept: a new client starts with network access on. Calling it again changes nothing.
@@ -386,11 +393,17 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * A replay pass in progress is cancelled first, and nothing queued is sent once clearing has
      * begun. A write already on the wire is neither applied to the cache nor queued when it
      * answers. A Storage download in flight may hand its bytes to its caller, or fail, but is not
-     * written back. The database is rewritten without the deleted rows, and its write-ahead log is
-     * emptied unless open reads hold the log's checkpoint off for about a second, which is logged;
-     * the old pages then stay in the log until its next checkpoint.
+     * written back.
      *
-     * The client stays usable afterwards.
+     * Keeping the deleted rows out of the database's files is best effort. The database is
+     * rewritten without them, and its write-ahead log, which still holds them, is emptied once no
+     * open read holds it: this waits up to a second for such reads, and when one outlasts that the
+     * library empties the log as soon as the read ends, and once more at [close]. It never fails
+     * the clear, and never waits longer.
+     *
+     * The client stays usable afterwards. A live read open through the clear fetches again, as it
+     * does when the cache passes to another identity: at once online, and once the network is back
+     * offline, [RefreshState.Paused] meanwhile.
      *
      * @throws IllegalStateException when the client is closed.
      */
@@ -429,8 +442,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * Every call returns once the database is released, or after 10 seconds of real time at most,
      * even under a test's virtual clock. Past that, the database is released as soon as the last of
      * those calls finishes; until then, a new client on it fails with an error saying it is still
-     * closing. Safe to call more than once, and from inside a collector of one of the plugin's
-     * flows.
+     * closing. It never throws: a failure closing the database is logged, and the database is
+     * released all the same. Safe to call more than once, and from inside a collector of one of the
+     * plugin's flows.
      */
     override suspend fun close()
 
@@ -485,9 +499,12 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * The signal is a hint, never a gate: a request is tried whenever the app makes one,
          * whatever it says, because monitors are wrong both ways. It decides when the library tries
          * by itself: when it turns `true`, a reactive read's waiting refresh tries again at once
-         * and, with [autoSync], queued writes are sent. While it is `false`, a refresh that cannot
-         * reach the network reports [RefreshState.Paused], and [SyncStatus.network] says
-         * [NetworkStatus.OFFLINE].
+         * and, with [autoSync], queued writes are sent. While it is `false`, the library's own
+         * passes stop after one fails for want of a connection, until it turns `true`, the session
+         * settles anew or the app calls [syncPendingMutations], so a wrong signal costs one failed
+         * attempt; a refresh that cannot reach the network reports [RefreshState.Paused]; and
+         * [SyncStatus.network] says [NetworkStatus.OFFLINE]. A signal that fails or ends is no
+         * longer watched (a failure is logged), and the network is then [NetworkStatus.UNKNOWN].
          */
         public var networkAvailability: Flow<Boolean>? = null
 
@@ -495,12 +512,16 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * Whether the plugin sends queued writes by itself, without the app calling
          * [syncPendingMutations]. `true` by default.
          *
-         * When `true`, it sends them when the session settles into a user with writes queued, and
-         * when the network comes back. `false` stops those two; the app then calls
+         * When `true`, it sends them when the session settles into a user with writes queued, when
+         * the network comes back, and, for a client without Auth (whose session is settled from the
+         * start), once when the client opens with writes an earlier run left queued. The first two
+         * end at once any wait a failed pass left before the next, though never before a server's
+         * `Retry-After` has passed. `false` stops all three; the app then calls
          * [syncPendingMutations] itself. Either way, a write queued behind an earlier one of the
          * same user is sent by itself once that one is, as is what a sent, refused or discarded
          * write leaves queued, and a retried rejection: a write made online would otherwise wait
-         * for the app with nothing to show for it.
+         * for the app with nothing to show for it. While the monitor says offline, the library
+         * makes one failed attempt by itself, then waits for the network, the session or the app.
          */
         public var autoSync: Boolean = true
 

@@ -714,7 +714,7 @@ jobs:
       # The Swift package, on the self-hosted runner only, never on a hosted Mac: the core framework
       # it wraps, built here, then its tests on this job's simulator with every warning an error,
       # and the check that its public API shows nothing of the core (scripts/test-swift-package.sh).
-      # xcodebuild writes in the job's folder; SwiftPM's one link in ~ is the snapshot's exclusion.
+      # xcodebuild writes in the job's folder; SwiftPM's one link in ~ is recorded by its target.
       - name: Build the core framework for the Swift package
         if: env.IOS_RUNNER == 'local'
         run: >-

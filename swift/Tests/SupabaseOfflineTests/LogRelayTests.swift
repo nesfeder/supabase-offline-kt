@@ -31,10 +31,10 @@ struct LogRelayTests {
     }
 
     @Test(arguments: [
-        ("A bridge call failed unexpectedly (IllegalStateException)", "A core call failed unexpectedly (IllegalStateException)"),
+        ("A bridge call failed unexpectedly (IllegalStateException)", "A library call failed unexpectedly (IllegalStateException)"),
         ("Refused (kotlinx.coroutines.JobCancellationException)", "Refused (JobCancellationException)"),
         ("io.github.jan.supabase.exceptions.HttpRequestException: offline", "HttpRequestException: offline"),
-        ("Kotlin/Native runtime: KONAN", "core/Native runtime: core"),
+        ("Kotlin/Native runtime: KONAN", "library/Native runtime: library"),
         ("The bridges table was read", "The bridges table was read"),
     ])
     func messagesNameNoRuntime(message: String, redacted: String) {
@@ -68,7 +68,7 @@ struct LogRelayTests {
         #expect(marked != nil)
         #expect(marked?.category == "Offline")
         #expect(marked?.level == .error)
-        #expect(marked?.composedMessage == "A core call failed unexpectedly (IllegalStateException) \(marker)")
+        #expect(marked?.composedMessage == "A library call failed unexpectedly (IllegalStateException) \(marker)")
         for line in lines {
             let text = "\(line.category) \(line.composedMessage)".lowercased()
             #expect(!text.contains("kotlin") && !text.contains("bridge"), "\(line.composedMessage)")

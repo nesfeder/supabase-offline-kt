@@ -24,11 +24,13 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.update
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -65,7 +67,7 @@ internal class PatchWrites(private val json: Json) {
  * Reads served with the mutations a cached payload does not hold laid over it: the current
  * identity's pending ones, and replayed ones newer than the payload. Rows other queries hold, read
  * with the same projection, stand in for rows a mutation brings in, found through each table's key
- * index. Builds the overlay a patch runs, too. Holds no lock.
+ * index. Builds the overlay a patch runs, too. Owns the [TableSnapshotLocks].
  *
  * @param queryCacheDao the object cache, whose write counts say when a key index is stale.
  * @param identityProvider the current identity's stored value, or `null` when it cannot be told.
@@ -84,6 +86,41 @@ internal class QueryOverlay(
     private val identityChanges: Flow<Any?>,
     private val engineLogger: EngineLogger,
 ) {
+
+    /** Make a read of a table's payload and its mutations one step; see [holdingReadersOf]. */
+    private val snapshotLocks = TableSnapshotLocks()
+
+    /**
+     * Runs [change], which changes [table]'s cached payloads and its queued mutations, as one step
+     * for the table's readers: each reads the table before it or after it, never in between.
+     */
+    suspend fun <T> holdingReadersOf(table: String, change: suspend () -> T): T =
+        snapshotLocks.of(table).withLock { change() }
+
+    /**
+     * [table]'s queued mutations and the payload cached for [cacheKey], read as one step: no change
+     * made under [holdingReadersOf] lands between them. The mutations first, so a payload write
+     * that retires a replayed mutation after it is never read with the mutation already gone.
+     */
+    private suspend fun readTogether(table: String, cacheKey: String): TableSnapshot =
+        snapshotLocks.of(table).withLock {
+            val unconfirmedSends = mutationQueue.unconfirmedSends()
+            val mutations = mutationQueue.tableMutationsNow(table)
+            TableSnapshot(unconfirmedSends, mutations, queryCacheDao.get(table, cacheKey))
+        }
+
+    /**
+     * What [readTogether] read of a table.
+     *
+     * @property unconfirmedSends the mutations whose send may have reached the server.
+     * @property mutations the table's mutation rows.
+     * @property row the payload cached for the query, or `null` for none.
+     */
+    private class TableSnapshot(
+        val unconfirmedSends: Set<Long>,
+        val mutations: MutationQueue.TableMutations,
+        val row: CachedQueryRow?,
+    )
 
     /**
      * Overlays the current identity's pending mutations of [table] onto a fresh network
@@ -117,6 +154,31 @@ internal class QueryOverlay(
     }
 
     /**
+     * The payload cached for [table]/[cacheKey] with the identity's mutations it does not hold laid
+     * over it, read in one step with them; `null` when none is cached, the cache is not the current
+     * identity's, or [serves] refuses the payload's fetch stamp.
+     */
+    suspend fun cachedPayloadOverlaid(
+        table: String,
+        cacheKey: String,
+        shape: QueryShape? = null,
+        serves: (updatedAt: Long) -> Boolean = { true },
+    ): OverlaidCachedPayload? {
+        if (isReservedTable(table) || !ownership.cacheServesCurrentIdentity()) return null
+        val snapshot = readTogether(table, cacheKey)
+        val stored = snapshot.row?.takeIf { cached -> serves(cached.updatedAt) } ?: return null
+        val overlaid =
+            overlayCachedPayloadReporting(
+                table = table,
+                cacheKey = cacheKey,
+                cachedJson = stored.payload,
+                shape = shape,
+                readWithIt = snapshot,
+            )
+        return OverlaidCachedPayload(overlaid, stored.updatedAt)
+    }
+
+    /**
      * Overlays the identity's pending mutations, and synced ones newer than [cachedJson], onto that
      * cached payload; says whether a pending one changed a row it shows.
      *
@@ -128,21 +190,40 @@ internal class QueryOverlay(
         cacheKey: String?,
         cachedJson: String,
         shape: QueryShape? = null,
+    ): ServedOverlay = overlayCachedPayloadReporting(table, cacheKey, cachedJson, shape, null)
+
+    /**
+     * [overlayCachedPayloadReporting], with the queue's records as [readWithIt] read them with the
+     * payload, or as they are now when it is `null`.
+     */
+    private suspend fun overlayCachedPayloadReporting(
+        table: String,
+        cacheKey: String?,
+        cachedJson: String,
+        shape: QueryShape?,
+        readWithIt: TableSnapshot?,
     ): ServedOverlay {
         if (isReservedTable(table)) return ServedOverlay(cachedJson, hasPendingMutations = false)
         if (cacheKey != null && shape != null)
             queryCache.queryShapes.remember(table, cacheKey, shape, persist = true)
         val visible =
-            mutationQueue.visibleTo(identityProvider(), mutationQueue.mutationsOfTable(table))
+            mutationQueue.visibleTo(
+                identityProvider(),
+                readWithIt?.mutations?.rows ?: mutationQueue.mutationsOfTable(table),
+            )
         // The stored payload's coverage, read only when a synced mutation may be held by it
         val syncedThrough =
             if (cacheKey == null || visible.all { mutation -> mutation.syncedAtMs == null }) 0L
+            else if (readWithIt != null) readWithIt.row?.syncedThrough ?: 0L
             else queryCacheDao.get(table, cacheKey)?.syncedThrough ?: 0L
         val all = visible.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
         if (all.isEmpty()) return ServedOverlay(cachedJson, hasPendingMutations = false)
 
         val admission = cacheKey?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
-        return overlayFor(admission, mutationQueue.unconfirmedSends())
+        return overlayFor(
+                admission,
+                readWithIt?.unconfirmedSends ?: mutationQueue.unconfirmedSends(),
+            )
             .overlayReportingChanges(
                 cachedJson,
                 all,
@@ -165,70 +246,91 @@ internal class QueryOverlay(
 
     /**
      * The cached payload of [table]/[cacheKey] with the current identity's mutations overlaid, as
-     * it changes, or `null` while nothing is known. Each carries its fetch time, staleness and
-     * whether a pending mutation changed a shown row; with no payload, mutations are overlaid onto
-     * an empty list, and another identity's cache counts as none.
+     * it changes, each paired with the value [alongside] held when it was read; `null` while
+     * nothing is known. Each carries its fetch time, staleness and whether a pending mutation
+     * changed a shown row; with no payload, mutations are overlaid onto an empty list, and another
+     * identity's cache counts as none.
+     *
+     * Every change of the payload, the table's mutations, the session or [alongside] reads all of
+     * them again, as one view: [alongside] first, then the cache's owner, then the mutations and
+     * the payload together ([readTogether]). So an emission never pairs a payload with mutations,
+     * an owner or a value of [alongside] it was not current with, whatever order the changes arrive
+     * in.
+     *
+     * @param alongside a value its writer publishes after writing the payload it describes, such as
+     *   a refresh's progress.
      */
-    fun servedPayloadFlow(
+    fun <T> servedPayloadFlow(
         table: String,
         cacheKey: String,
-        shape: QueryShape? = null,
-    ): Flow<ServedPayload?> {
-        if (isReservedTable(table)) return flowOf(null)
+        shape: QueryShape?,
+        alongside: StateFlow<T>,
+    ): Flow<Pair<ServedPayload?, T>> {
+        if (isReservedTable(table)) return alongside.map { value -> null to value }
         return flow {
-            // A payload received before the cache was emptied may reach this reader after the new
-            // owner does: until what it receives matches the database, the database is read
-            var trustedEmptiedCount = ownership.record.emptiedCount()
-            var last: OverlaidInputs? = null
-            var lastOverlaid: ServedOverlay? = null
-            combine(
-                    queryCacheDao
-                        .observe(table, cacheKey)
-                        .map { row -> row?.let(::StoredRow) }
-                        .distinctUntilChanged(),
-                    mutationQueue.mutationsOfTableFlow(table),
-                    identityChanges,
-                ) { stored, tableMutations, _ ->
-                    // Owner first: the count moves before it, so a new owner comes with a new count
-                    val served = ownership.cacheServesCurrentIdentity()
-                    val emptiedCount = ownership.record.emptiedCount()
-                    val current =
-                        if (emptiedCount == trustedEmptiedCount) {
-                            stored
-                        } else {
-                            queryCacheDao.get(table, cacheKey)?.let(::StoredRow).also { read ->
-                                if (read == stored) trustedEmptiedCount = emptiedCount
-                            }
-                        }
-                    val servedRow = current.takeIf { served }
-                    val inputs =
-                        OverlaidInputs(
-                            servedRow?.content,
-                            mutationQueue.visibleTo(identityProvider(), tableMutations.rows),
-                        )
-                    if (inputs != last) {
-                        lastOverlaid =
-                            overlaidOrNull(
-                                table,
-                                cacheKey,
-                                shape,
-                                inputs.stored,
-                                inputs.mutations,
-                                tableMutations::bodyOf,
-                            )
-                        last = inputs
-                    }
-                    lastOverlaid?.let { overlay ->
-                        ServedPayload(
-                            payload = overlay.payload,
-                            fetchedAtMillis = servedRow?.let { row -> fetchedAtOf(row.updatedAt) },
-                            isStale = servedRow == null || isStaleStamp(servedRow.updatedAt),
-                            hasPendingMutations = overlay.hasPendingMutations,
-                        )
-                    }
-                }
-                .distinctUntilChanged()
-                .collect { payload -> emit(payload) }
+            val reader = LiveOverlay(table, cacheKey, shape)
+            // The view as the read starts; each source then emits once on subscription, so a
+            // change in between is read too
+            emit(reader.read(alongside))
+            merge(
+                    // Room tells every payload's readers of any payload's write: only a change of
+                    // this one is a reason to read again
+                    queryCacheDao.observe(table, cacheKey).distinctUntilChanged().map {},
+                    mutationQueue.mutationChangesOf(table),
+                    identityChanges.map {},
+                    alongside.map {},
+                )
+                .conflate()
+                .collect { emit(reader.read(alongside)) }
+        }
+            .distinctUntilChanged()
+    }
+
+    /**
+     * One live reader's overlay of [table]/[cacheKey]: the view it last read, and the overlay it
+     * built for it, built again only when the view changed.
+     */
+    private inner class LiveOverlay(
+        private val table: String,
+        private val cacheKey: String,
+        private val shape: QueryShape?,
+    ) {
+        private var last: OverlaidInputs? = null
+        private var lastOverlaid: ServedOverlay? = null
+
+        /** Reads the view now, in the order [servedPayloadFlow] states, and serves it. */
+        suspend fun <T> read(alongside: StateFlow<T>): Pair<ServedPayload?, T> {
+            val value = alongside.value
+            val identity = identityProvider()
+            val served = ownership.cacheServesCurrentIdentity()
+            val snapshot = readTogether(table, cacheKey)
+            val servedRow = snapshot.row?.takeIf { served }?.let(::StoredRow)
+            val inputs =
+                OverlaidInputs(
+                    servedRow?.content,
+                    mutationQueue.visibleTo(identity, snapshot.mutations.rows),
+                    snapshot.unconfirmedSends,
+                )
+            if (inputs != last) {
+                lastOverlaid =
+                    overlaidOrNull(
+                        table,
+                        cacheKey,
+                        shape,
+                        inputs,
+                        snapshot.mutations::bodyOf,
+                    )
+                last = inputs
+            }
+            val payload = lastOverlaid?.let { overlay ->
+                ServedPayload(
+                    payload = overlay.payload,
+                    fetchedAtMillis = servedRow?.let { stored -> fetchedAtOf(stored.updatedAt) },
+                    isStale = servedRow == null || isStaleStamp(servedRow.updatedAt),
+                    hasPendingMutations = overlay.hasPendingMutations,
+                )
+            }
+            return payload to value
         }
     }
 
@@ -243,33 +345,36 @@ internal class QueryOverlay(
     }
 
     /**
-     * What a reader's overlay is a function of: the payload it is served, `null` for none, and the
-     * mutations of its table visible to the identity, in order.
+     * What a reader's overlay is a function of: the payload it is served, `null` for none, the
+     * mutations of its table visible to the identity, in order, and the sends that may have reached
+     * the server.
      */
     private data class OverlaidInputs(
         val stored: StoredPayload?,
         val mutations: List<MutationRow>,
+        val unconfirmedSends: Set<Long>,
     )
 
     /**
-     * [overlaidPayloadFlow]'s value for [stored], the payload the current identity is served
-     * (`null` for none), with those of [mutations] it does not hold overlaid.
+     * [servedPayloadFlow]'s overlay of [inputs]: the payload the current identity is served (`null`
+     * for none), with those of its mutations the payload does not hold.
      */
     private suspend fun overlaidOrNull(
         table: String,
         cacheKey: String,
         shape: QueryShape?,
-        stored: StoredPayload?,
-        mutations: List<MutationRow>,
+        inputs: OverlaidInputs,
         bodyOf: (MutationRow) -> JsonElement,
     ): ServedOverlay? {
+        val stored = inputs.stored
         // A live query's shape is known for as long as it is read; it is written once a payload
         // exists
         if (shape != null)
             queryCache.queryShapes.remember(table, cacheKey, shape, persist = stored != null)
         val cachedJson = stored?.payload
         val syncedThrough = stored?.syncedThrough ?: 0L
-        val applicable = mutations.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
+        val applicable =
+            inputs.mutations.filter { mutation -> belongsOnPayload(mutation, syncedThrough) }
         if (applicable.isEmpty())
             return cachedJson?.let { json -> ServedOverlay(json, hasPendingMutations = false) }
         val overlaid =
@@ -277,7 +382,7 @@ internal class QueryOverlay(
                     cachedJson ?: EMPTY_JSON_ARRAY,
                     applicable,
                     admissionOf(table, cacheKey, shape),
-                    mutationQueue.unconfirmedSends(),
+                    inputs.unconfirmedSends,
                     sameSelectRowsFor(table, cacheKey, shape, applicable, ownJson = cachedJson),
                     bodyOf,
                 )
@@ -525,8 +630,8 @@ internal class QueryOverlay(
             ?: QueryAdmission.EVERY_ROW
 
     /**
-     * The overlay for a query with [admission], de-duplicating by key the rows the server may
-     * already hold.
+     * The overlay a read runs for a query with [admission], de-duplicating by key the rows the
+     * server may already hold.
      */
     private fun overlayFor(
         admission: QueryAdmission,
@@ -639,16 +744,16 @@ internal class QueryOverlay(
         }
     }
 
+    /** The upsert-rule columns of [mutation]; see [conflictColumnsOf]. */
+    private fun conflictColumnsOf(mutation: MutationRow): List<String> =
+        conflictColumnsOf(mutation, primaryKeys)
+
     /**
      * Whether the server may already hold [mutation]'s rows — it replayed, or its send may have
      * reached the server — so a payload's row with the same key may be the mutation's own.
      */
     private fun isSyncedOrUnconfirmed(mutation: MutationRow, unconfirmedSends: Set<Long>): Boolean =
         mutation.syncedAtMs != null || mutation.id in unconfirmedSends
-
-    /** The upsert-rule columns of [mutation]; see [conflictColumnsOf]. */
-    private fun conflictColumnsOf(mutation: MutationRow): List<String> =
-        conflictColumnsOf(mutation, primaryKeys)
 
     /** Forgets every table's key index, after the cache was emptied. */
     fun forgetKeyIndexes() {

@@ -311,22 +311,8 @@ class OfflineTaskRepository(
     }
 
     override suspend fun clearLocalData() {
+        // An open list fetches again by itself, once the network allows
         offline.clearLocalData()
-        // A live read of an emptied cache waits to be asked again: ask now, so the server's rows
-        // come back without a pull to refresh. Offline, the next refresh does it.
-        if (!canReachNetwork()) return
-        try {
-            for (table in listOf(Tables.TASKS, Tables.TASK_PHOTOS)) {
-                offline.from(table).select(readStrategy = ReadStrategy.NetworkOnly) {
-                    newestFirst()
-                }
-            }
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
-            // The clear is done; the screens say why the lists did not come back.
-            throw failure.asReadFailure()
-        }
     }
 
     override suspend fun startOver() {
@@ -574,7 +560,7 @@ private fun SyncStatus.toAppSyncStatus(): AppSyncStatus =
         rejectedMutationCount = rejectedMutationCount,
         isSyncing = isSyncing,
         lastSyncedAt = lastSyncedAt,
-        lastSyncError = lastSyncError,
+        lastSyncError = lastSyncError?.asSyncFailure(),
     )
 
 private fun SyncReport.toTaskSyncReport(): TaskSyncReport =

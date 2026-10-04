@@ -160,5 +160,6 @@ supabase-swift never matches, because Storage's refusals arrive as `OfflineError
 
 | Swift | Kotlin | Same / reason |
 | --- | --- | --- |
-| `SnapshotStrategy` (`cacheFirstThenNetwork`, `networkFirstThenCache`, `cacheOnly`) | `FlowReadStrategy` (the same cases) | "Flow" is a Kotlin type: a Swift name with it would be a sign of what is underneath. The cases are the same |
+| `SequenceReadStrategy` (`cacheFirstThenNetwork`, `networkFirstThenCache`, `cacheOnly`) | `FlowReadStrategy` (the same cases) | A Kotlin `Flow` is a Swift sequence, in names too ("Flow" would be a sign of what is underneath); the cases are the same |
+| `selectAsSequence` | `selectAsFlow` | As above |
 | `QuerySnapshot.result` | `QuerySnapshot.result` | Same; it holds the decoded rows |

@@ -13,6 +13,10 @@ import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.bridge.BridgeError
 import io.github.nesfeder.supabase.offline.bridge.BridgeErrorKind
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
+import io.ktor.client.engine.darwin.DarwinHttpRequestException
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.network.sockets.SocketTimeoutException
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.ResponseException
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
@@ -221,24 +225,65 @@ private fun serverFieldsError(
     )
 
 /**
- * A transport failure. supabase-kt's message quotes the request's URL, filter values included, so
- * only the transport's own reason after it is kept.
+ * A transport failure, in the library's own words. The transport's text quotes the request's URL
+ * with its query and filter values, so none of it is kept: only a reason from [transportReason].
  */
 private fun connectivityError(failure: Throwable, type: String): BridgeError {
-    val reason =
-        if (failure is HttpRequestException) {
-            failure.message?.substringAfter(TRANSPORT_REASON_MARKER, missingDelimiterValue = "")
-        } else {
-            null
-        }
-    val message =
-        if (reason.isNullOrBlank()) "The request could not reach the server ($type)"
-        else "The request could not reach the server: $reason"
+    val reason = transportReason(failure)
+    val message = if (reason == null) CONNECTIVITY_MESSAGE else "$CONNECTIVITY_MESSAGE ($reason)"
     return bridgeError(BridgeErrorKind.CONNECTIVITY, message, type, isConnectivityFailure = true)
 }
 
-/** What supabase-kt's `HttpRequestException` message puts before the transport's own reason. */
+/** What every transport failure says. */
+private const val CONNECTIVITY_MESSAGE = "The request could not reach the server"
+
+/**
+ * Why the request failed, from a fixed vocabulary: `timed out`, or the platform error's domain and
+ * code (such as `NSURLErrorDomain -1009`); `null` when neither can be told.
+ */
+internal fun transportReason(failure: Throwable): String? {
+    var current: Throwable? = failure
+    while (current != null) {
+        when (current) {
+            is HttpRequestTimeoutException,
+            is ConnectTimeoutException,
+            is SocketTimeoutException -> return TIMED_OUT
+            is DarwinHttpRequestException ->
+                return platformReason(current.origin.domain, current.origin.code)
+        }
+        current = current.cause
+    }
+    // supabase-kt keeps only the transport's text, after its own sentence that quotes the URL.
+    val transportText =
+        (failure as? HttpRequestException)
+            ?.message
+            ?.substringAfter(TRANSPORT_REASON_MARKER, missingDelimiterValue = "") ?: return null
+    if (transportText.startsWith(TIMEOUT_TEXT)) return TIMED_OUT
+    val platformError = PLATFORM_ERROR.find(transportText) ?: return null
+    return platformReason(platformError.groupValues[1], platformError.groupValues[2].toLong())
+}
+
+/** A platform error's domain and code as a reason, or `null` for a domain that is not a name. */
+private fun platformReason(domain: String?, code: Long): String? =
+    domain?.takeIf { PLATFORM_DOMAIN.matches(it) }?.let { "$it $code" }
+
+/** The reason a timed-out request gives. */
+private const val TIMED_OUT = "timed out"
+
+/** What supabase-kt's `HttpRequestException` message puts before the transport's own text. */
 private const val TRANSPORT_REASON_MARKER = "failed with message: "
+
+/** How Ktor's request timeout begins its text. */
+private const val TIMEOUT_TEXT = "Request timeout has expired"
+
+/** The start of the Darwin engine's text: an `NSError`'s domain and code, then its description. */
+private val PLATFORM_ERROR =
+    Regex(
+        """^Exception in http request: Error Domain=([A-Za-z][A-Za-z0-9_.]{0,63}) Code=(-?\d{1,9})\b"""
+    )
+
+/** An error domain's shape: an identifier, such as `NSURLErrorDomain`. */
+private val PLATFORM_DOMAIN = Regex("""[A-Za-z][A-Za-z0-9_.]{0,63}""")
 
 /** PostgREST's `details`, as text: a string as it is, anything else as JSON. */
 private fun JsonElement.asDetailsText(): String? =

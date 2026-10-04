@@ -31,7 +31,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -211,20 +210,21 @@ class MutationQueueAcrossCloseTest {
                     cachedFileDao = storage,
                     mutationDao = mutations,
                     coordinatorScope = idleCoroutineScope(),
-                    closeWait = 5.seconds,
+                    closeWait = IDLE_CLOSE_WAIT,
                 )
             first.from(TABLE).insert(KEYLESS_ROW)
 
-            // When — a pass has it on the wire when the client closes, and the answer arrives while
-            // close() waits
+            // When — a pass has it on the wire when the client closes, and the answer arrives after
             online.store(true)
-            callerScope.async { runCatching { first.syncPendingMutations().syncedCount } }
+            val pass = callerScope.async {
+                runCatching { first.syncPendingMutations().syncedCount }
+            }
             withContext(Dispatchers.Default) {
                 withTimeout(5.seconds) { while (committed.load() == 0) delay(5) }
             }
-            val closing = callerScope.async(start = CoroutineStart.UNDISPATCHED) { first.close() }
+            first.close()
             held.complete(Unit)
-            withContext(Dispatchers.Default) { withTimeout(5.seconds) { closing.await() } }
+            withContext(Dispatchers.Default) { withTimeout(5.seconds) { pass.await() } }
             val reopened =
                 newTestOfflineClient(
                     supabase = server.supabaseClient(),
