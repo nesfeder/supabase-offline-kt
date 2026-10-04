@@ -74,9 +74,8 @@ private val DownloadStatusCheckInstallation =
  * exception the Storage plugin makes of that response, which is what its bytes download throws. The
  * response is read whole first, so its connection is released. A redirect the client follows passes
  * through, and the answer it leads to is checked in turn; one from https to plain http is refused,
- * as the bytes download refuses it. An HTTP retry plugin the app installed,
- * or a Ktor bearer-auth refresh on `401`, sits further from the engine, and sees the failure as an
- * exception.
+ * as the bytes download refuses it. An HTTP retry plugin the app installed, or a Ktor bearer-auth
+ * refresh on `401`, sits further from the engine, and sees the failure as an exception.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installDownloadStatusCheck() {
