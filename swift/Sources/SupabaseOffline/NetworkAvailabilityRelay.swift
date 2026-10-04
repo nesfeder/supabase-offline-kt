@@ -7,7 +7,8 @@ import SupabaseOfflineCore
 enum NetworkAvailabilityRelay {
 
     /// Once the client opens, makes its stream with `makeReports` and reads it into the engine until
-    /// the stream ends or the client closes, which finishes the stream.
+    /// the stream ends or the client closes, which finishes the stream. A stream that ends by itself
+    /// is reported as reachable, so a signal that stops cannot hold the client offline.
     ///
     /// The engine's sync-status subscription ends when the client closes, by ``SupabaseOfflineClient/close()``
     /// or by a dropped client's background close, so watching it ends the relay without a hook in
@@ -20,6 +21,9 @@ enum NetworkAvailabilityRelay {
                 group.addTask {
                     for await isAvailable in reports {
                         reference.client.setNetworkAvailable(available: isAvailable)
+                    }
+                    if !Task.isCancelled {
+                        reference.client.setNetworkAvailable(available: true)
                     }
                 }
                 group.addTask {

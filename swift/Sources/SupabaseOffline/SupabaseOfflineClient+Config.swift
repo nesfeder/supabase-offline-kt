@@ -20,8 +20,9 @@ extension SupabaseOfflineClient {
         /// user's cached rows and queued writes from another's: a sync that starts once this returns
         /// another user's token sends the last user's queued writes with that token. So call
         /// ``SupabaseOfflineClient/clearLocalData()`` before this can return another user's token,
-        /// most simply at sign-out (after ``SupabaseOfflineClient/syncPendingMutations(table:)`` if
-        /// those writes should still be sent). Signing out and back in as the same user needs nothing.
+        /// most simply at sign-out. If the signed-in user's queued writes should still be sent, call
+        /// ``SupabaseOfflineClient/syncPendingMutations(table:)`` before signing out, while this still
+        /// returns their token. Signing out and back in as the same user needs nothing.
         public var accessToken: (@Sendable () async throws -> String?)?
 
         /// The directory for the local database and cached files, created when missing; `nil` for
@@ -37,17 +38,20 @@ extension SupabaseOfflineClient {
         /// Makes the app's own connectivity signal, `true` while online, in place of the system's
         /// path monitor, which the client watches when this is `nil`.
         ///
-        /// The closure is called once when the client opens. The stream it returns is that client's
-        /// alone, and is finished when the client closes; when it ends by itself, its last value
-        /// stays in force. Until its first value the network reads as ``NetworkStatus/unknown``.
+        /// The closure is called once, off the main actor, after the client has opened (never when
+        /// the open fails); keep it quick, and return a new stream on each call, since a stream is
+        /// read by one client. The client finishes the stream when it closes. Until the stream's
+        /// first value the network reads as ``NetworkStatus/unknown``; once the stream ends by
+        /// itself, the network counts as reachable again (``NetworkStatus/online``), so a signal that
+        /// stops can never hold the client offline.
         ///
         /// A hint, never a gate: while it says offline the client still tries every request the app
         /// makes, and ``SupabaseOfflineClient/disableNetwork()`` is the switch that stops requests. It
         /// decides when the client tries by itself (a reconnection starts a sync pass with
         /// ``autoSync``), what a waiting refresh reports, and ``SyncStatus/network``. While it says
         /// offline the client's own passes still run until one fails for want of a connection; after
-        /// that, queued writes wait for the signal to stop saying offline, for the session to settle
-        /// anew, or for the app's own ``SupabaseOfflineClient/syncPendingMutations(table:)``.
+        /// that, queued writes wait for the signal to stop saying offline, or for the app's own
+        /// ``SupabaseOfflineClient/syncPendingMutations(table:)``.
         public var networkAvailability: (@Sendable () -> AsyncStream<Bool>)?
 
         /// Whether queued writes are sent by themselves when the network comes back.

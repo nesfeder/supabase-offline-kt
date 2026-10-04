@@ -96,7 +96,7 @@ struct NetworkAvailabilityTests {
 
         // Then the next has a live signal of its own
         #expect(await eventually { network.streamCount == 2 })
-        #expect(network.endedStreamCount == 1)
+        #expect(await eventually { network.endedStreamCount == 1 })
         network.report(false)
         #expect(await eventually { second.syncStatus.value.network == .offline })
         network.report(true)
@@ -104,21 +104,28 @@ struct NetworkAvailabilityTests {
         try await second.close()
     }
 
-    @Test func aStreamThatEndsLeavesItsLastValueInForce() async throws {
-        // Given a client told the device is offline
+    @Test func aStreamThatEndsCountsAsReachableAndQueuedWritesGoOut() async throws {
+        // Given a client told the device is offline, with a write queued against an unreachable server
         let network = FakeNetworkAvailability()
-        let client = SupabaseOfflineClient.inMemory(config: .init(networkAvailability: network.makeStream))
+        let server = RecordingFakeServer { _ in .noConnection }
+        let client = SupabaseOfflineClient.inMemory(
+            config: .init(networkAvailability: network.makeStream),
+            server: server.server
+        )
         #expect(await eventually { network.streamCount == 1 })
         network.report(false)
         #expect(await eventually { client.syncStatus.value.network == .offline })
+        #expect(try await client.from("todos").insert(Self.tea).execute().isQueued)
 
-        // When the app's stream ends by itself
+        // When the server is back and the app's stream ends by itself
+        server.answer { _ in .status(201) }
         network.finish()
-        #expect(await eventually { network.endedStreamCount == 1 })
-        try await Task.sleep(for: .milliseconds(200))
 
-        // Then its last report stands
-        #expect(client.syncStatus.value.network == .offline)
+        // Then the client no longer holds itself offline: the network reads reachable and the
+        // write is sent by itself
+        #expect(await eventually { client.syncStatus.value.network == .online })
+        #expect(await eventually { server.requests(withMethod: "POST").count == 2 })
+        #expect(await eventually { client.syncStatus.value.pendingMutationCount == 0 })
         try await client.close()
     }
 }

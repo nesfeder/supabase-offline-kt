@@ -13,9 +13,10 @@ public struct SyncReport: Sendable, Hashable {
     /// now on the rejected list.
     public let rejected: [RejectedMutation]
 
-    /// The writes still queued when the call returned: more than zero when the network could not
-    /// be reached or the server failed in a way that may pass (``SyncStatus/lastSyncError`` says
-    /// why), or when writes wait behind other tables (``heldBehindOtherTablesCount``).
+    /// The writes still queued when the call returned, of the table synced or of every table: more
+    /// than zero when network access is off, the network could not be reached, or the server failed
+    /// in a way that may pass (``SyncStatus/lastSyncError`` says why), or when writes wait behind
+    /// other tables (``heldBehindOtherTablesCount``).
     public let remainingCount: Int
 
     /// Of ``syncedCount``, the inserts whose rows the server already held, because an earlier send

@@ -18,8 +18,7 @@ public struct SyncStatus: Sendable {
     /// The current user's entries on the rejected list.
     public let rejectedMutationCount: Int
 
-    /// Whether a sync pass is sending, started by the app or by the client; `false` while a pass
-    /// waits for the session to settle.
+    /// Whether a sync pass is sending, started by the app or by the client.
     public let isSyncing: Bool
 
     /// When a pass, or a write sent at once, last left the current user's queue empty, by the
