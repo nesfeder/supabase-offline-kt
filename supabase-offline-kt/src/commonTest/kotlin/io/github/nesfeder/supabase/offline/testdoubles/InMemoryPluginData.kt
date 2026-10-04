@@ -3,11 +3,13 @@
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.nesfeder.supabase.offline.Offline
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.buildOfflineClient
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
+import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineScope
 import okio.Path
 import okio.Path.Companion.toPath
@@ -19,6 +21,8 @@ import okio.Path.Companion.toPath
  *
  * @param mutationDao the mutation queue's table; pass one to read what the client queued.
  * @param coordinatorScope the parent of the client's own scope; see [newTestOfflineClient].
+ * @param closeWait how long `close()` waits for calls in flight; shorten it with an idle
+ *   [coordinatorScope], whose work never ends.
  * @param dataDirectory where the Storage file cache keeps its files; by default a directory nothing
  *   is written to.
  */
@@ -28,6 +32,7 @@ internal fun Offline.Config.openInMemory(
     mutationDao: MutationDao = FakeMutationDao(),
     coordinatorScope: CoroutineScope? = null,
     dataDirectory: Path = IN_MEMORY_TEST_DIRECTORY,
+    closeWait: Duration = OfflineClient.CLOSE_WAIT,
 ) {
     openLocalData = { supabase, config ->
         config.buildOfflineClient(
@@ -39,6 +44,7 @@ internal fun Offline.Config.openInMemory(
             dataDirectory = dataDirectory,
             prepareFileCacheDirectories = false,
             coordinatorScope = coordinatorScope,
+            closeWait = closeWait,
         )
     }
 }

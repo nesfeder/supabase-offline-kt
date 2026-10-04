@@ -18,8 +18,8 @@ import kotlinx.serialization.json.Json
 
 /**
  * A write whose filter the mutation queue cannot record exactly is sent directly, and fails
- * offline. The refusal is logged at ERROR without the filter's values — which can be personal data
- * — and the detail, values included, only at DEBUG.
+ * offline. Being offline is not a fault, so the refusal is logged at INFO, without the filter's
+ * values — which can be personal data — and the detail, values included, only at DEBUG.
  */
 class RefusedCaptureLogTest {
 
@@ -44,6 +44,10 @@ class RefusedCaptureLogTest {
         // Then
         val visible = logger.entries.filter { it.level >= EngineLogLevel.INFO }.map { it.message }
         assertTrue(visible.any { "cannot be captured exactly" in it }, "got $visible")
+        assertTrue(
+            logger.entries.none { it.level > EngineLogLevel.INFO },
+            "logged above INFO: ${logger.entries}",
+        )
         assertTrue(visible.none { EMAIL in it }, "a filter value reached a visible log: $visible")
         assertTrue(logger.entriesAt(EngineLogLevel.DEBUG).any { EMAIL in it.message })
     }

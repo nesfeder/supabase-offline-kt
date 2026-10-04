@@ -56,6 +56,10 @@ EXCLUDED=(
     'Library/Caches'
     'Library/Group Containers'
     'Library/Application Scripts'
+    # Applications the machine's user runs, on their own schedule: the browser's state, and the
+    # documents an editor saves by itself. The job starts no application that writes in either.
+    'Library/Safari'
+    'Library/Autosave Information'
     # macOS services that write on their own schedule: Shortcuts, Siri suggestions, Wallet,
     # HomeKit, the energy daemon, on-device intelligence and translation, and Google's updater.
     'Library/Shortcuts'

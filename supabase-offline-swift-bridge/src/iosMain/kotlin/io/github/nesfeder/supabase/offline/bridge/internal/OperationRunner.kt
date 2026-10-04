@@ -44,9 +44,9 @@ internal class OperationRunner(
         )
 
     /**
-     * Where completions run: never on the caller's thread, even when the answer is known at once (a
-     * closed client, a handle cancelled before its call started). Never cancelled, so an answer
-     * still goes after close.
+     * Where completions run: never inside the call that takes them, even when the answer is known
+     * at once (a closed client, a handle cancelled before its call started). Never cancelled, so an
+     * answer still goes after close.
      */
     private val answerScope: CoroutineScope =
         CoroutineScope(
