@@ -8,8 +8,8 @@ import SupabaseOfflineCore
 /// A download goes to the network first and is kept in the client's file cache; when the network
 /// fails, the cached copy answers. Every other operation reaches the server: uploads, updates,
 /// moves, copies and removals are never queued, fail at once offline, and drop the cached copies
-/// they make stale. Signed URLs, listings, ``info(path:)`` and ``exists(path:)`` always ask the
-/// server.
+/// they make stale (a move carries its source's copy to the destination). Signed URLs, listings,
+/// ``info(path:)`` and ``exists(path:)`` always ask the server.
 ///
 /// An object name that cannot be mapped onto a file safely (a leading `/`, an empty, `.` or `..`
 /// segment, a `\` or a control character) downloads uncached, and so does one holding `%`, `?` or
@@ -32,7 +32,8 @@ public struct OfflineBucketApi: Sendable {
     /// Uploads `data` as a new object at `path`.
     ///
     /// Online only: offline it fails with ``OfflineError/Code/connectivity`` and is never queued.
-    /// The bytes are not cached; the next download fetches them. Data over 2 GiB is refused with
+    /// The bytes are not cached, and an upload over a cached object drops its copy; the next
+    /// download fetches them. Empty data, and data of 2 GiB or more, is refused with
     /// ``OfflineError/Code/invalidRequest`` before anything is sent.
     @discardableResult
     public func upload(_ path: String, data: Data, options: UploadOptions = UploadOptions()) async throws -> FileUploadResponse {
@@ -44,8 +45,10 @@ public struct OfflineBucketApi: Sendable {
         }
     }
 
-    /// Replaces the object at `path` with `data`; online only, as ``upload(_:data:options:)`` is,
-    /// and the cached copy is dropped.
+    /// Replaces the object at `path` with `data`, dropping its cached copy.
+    ///
+    /// Online only, and refuses empty data and data of 2 GiB or more, as
+    /// ``upload(_:data:options:)`` does.
     @discardableResult
     public func update(_ path: String, data: Data, options: UploadOptions = UploadOptions()) async throws -> FileUploadResponse {
         let optionsText = try options.coreText()
@@ -57,7 +60,10 @@ public struct OfflineBucketApi: Sendable {
     }
 
     /// Uploads `data` to `path` through a signed upload URL's `token`, from
-    /// ``createSignedUploadURL(path:upsert:)``; online only.
+    /// ``createSignedUploadURL(path:upsert:)``.
+    ///
+    /// Online only, and refuses empty data and data of 2 GiB or more, as
+    /// ``upload(_:data:options:)`` does.
     @discardableResult
     public func uploadToSignedURL(
         _ path: String,
@@ -82,7 +88,7 @@ public struct OfflineBucketApi: Sendable {
     }
 
     /// Moves the object at `source` to `destination`, in this bucket or `destinationBucket`;
-    /// online only, and the cached copies of both paths are dropped.
+    /// online only. The source's cached copy moves with it, replacing any copy at the destination.
     public func move(from source: String, to destination: String, destinationBucket: String? = nil) async throws {
         try await client.connection.call { core, complete in
             core.storage.moveObject(bucket: bucketId, from: source, to: destination, destinationBucket: destinationBucket) {
@@ -92,7 +98,7 @@ public struct OfflineBucketApi: Sendable {
     }
 
     /// Copies the object at `source` to `destination`, in this bucket or `destinationBucket`;
-    /// online only, and the destination's cached copy is dropped.
+    /// online only. The destination's cached copy is dropped; the source's stays.
     public func copy(from source: String, to destination: String, destinationBucket: String? = nil) async throws {
         try await client.connection.call { core, complete in
             core.storage.doCopyObject(bucket: bucketId, from: source, to: destination, destinationBucket: destinationBucket) {
@@ -125,12 +131,16 @@ public struct OfflineBucketApi: Sendable {
                 expiresInSeconds: Int64(expiresIn),
                 imageTransform: transformText
             ) { answer, failure in
-                complete(coreResult(answer, failure) { try storageURL(requiredValue($0)) })
+                complete(coreResult(answer, failure) { try CoreURL.parse(requiredValue($0)) })
             }
         }
     }
 
     /// URLs that download the objects at `paths` for `expiresIn` seconds, one per path.
+    ///
+    /// A path Storage cannot sign (an object that does not exist, say) fails the whole call with
+    /// ``OfflineError/Code/decoding``, whose message names the path's position in `paths`
+    /// (`$[1]` for the second).
     public func createSignedURLs(paths: [String], expiresIn: Int) async throws -> [SignedURL] {
         try await client.connection.call { core, complete in
             core.storage.createSignedUrls(bucket: bucketId, paths: paths, expiresInSeconds: Int64(expiresIn)) {
@@ -143,7 +153,8 @@ public struct OfflineBucketApi: Sendable {
     /// The URL anyone can download the object at `path` from, when the bucket is public; nothing
     /// is sent.
     ///
-    /// `async` only because it waits for the client to finish opening.
+    /// The URL comes from the opened client: the call waits for the client to finish opening, and
+    /// after ``SupabaseOfflineClient/close()`` it throws ``OfflineError/Code/clientClosed``.
     public func publicURL(path: String) async throws -> URL {
         let answer = try await client.connection.openedClient().client.storage.publicUrl(bucket: bucketId, path: path)
         return try storageURL(answer)
@@ -151,7 +162,8 @@ public struct OfflineBucketApi: Sendable {
 
     /// The URL that downloads the object at `path` with the user's session; nothing is sent.
     ///
-    /// `async` only because it waits for the client to finish opening.
+    /// The URL comes from the opened client: the call waits for the client to finish opening, and
+    /// after ``SupabaseOfflineClient/close()`` it throws ``OfflineError/Code/clientClosed``.
     public func authenticatedURL(path: String) async throws -> URL {
         let answer = try await client.connection.openedClient().client.storage.authenticatedUrl(bucket: bucketId, path: path)
         return try storageURL(answer)
@@ -251,16 +263,8 @@ extension CachedFile {
     }
 }
 
-/// `text`, a URL the core built or Storage signed, as a `URL`.
-private func storageURL(_ text: String) throws -> URL {
-    guard let url = URL(string: text) else {
-        throw OfflineError(code: .decoding, message: "Storage answered with a URL that could not be read")
-    }
-    return url
-}
-
 /// The URL in a synchronous answer of the core, or the failure it carries.
 private func storageURL(_ answer: BridgeStringResult) throws -> URL {
     if let failure = answer.error { throw OfflineError.thrown(for: failure) }
-    return try storageURL(requiredValue(answer.value))
+    return try CoreURL.parse(requiredValue(answer.value))
 }

@@ -81,6 +81,7 @@ struct StorageTests {
 
         // Then
         #expect(error?.code == .invalidRequest)
+        #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
         #expect(storage.requests.values.isEmpty)
         try await client.close()
     }
@@ -105,11 +106,13 @@ struct StorageTests {
         try await client.close()
     }
 
-    @Test(arguments: [400, 403, 404, 500])
-    func aDownloadStorageRefusesIsThrownWithItsStatusAndNeverCached(status: Int) async throws {
+    @Test(arguments: ScriptedStorageRefusal.realistic)
+    func aDownloadStorageRefusesIsThrownWithStoragesStatusCodeAndMessageAndNeverCached(
+        refusal: ScriptedStorageRefusal
+    ) async throws {
         // Given
         let storage = FakeStorageServer()
-        storage.answer { _ in FakeStorageServer.refusal(status: status) }
+        storage.answer { _ in FakeStorageServer.refusal(refusal) }
         let client = Self.makeClient(storage)
         let bucket = client.storage.from("avatars")
 
@@ -119,18 +122,42 @@ struct StorageTests {
 
         // Then
         #expect(error?.code == .server)
-        #expect(error?.httpStatus == status)
-        #expect(error?.serverError?.message.isEmpty == false)
+        #expect(error?.httpStatus == refusal.status)
+        #expect(error?.serverError?.code == refusal.code)
+        #expect(error?.serverError?.message == refusal.message)
+        #expect(error?.message == refusal.message)
+        #expect(error?.serverError?.details == nil)
         #expect(error?.isNetworkOrConnectivityFailure == false)
+        #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
         #expect(cached == nil)
         try await client.close()
     }
 
-    @Test(arguments: [400, 403, 404, 500])
-    func ensureCachedFileThrowsAStorageRefusalWithItsStatusAndCachesNothing(status: Int) async throws {
+    @Test func aRefusalStorageDidNotWordIsTheStatusAlone() async throws {
+        // Given a gateway's page in place of Storage's answer
+        let storage = FakeStorageServer()
+        storage.answer { _ in .status(502, headers: ["Content-Type": "text/html"], body: Data("<html>Bad gateway</html>".utf8)) }
+        let client = Self.makeClient(storage)
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.storage.from("avatars").upload("a.png", data: FakeStorageServer.photo)
+        }
+
+        // Then
+        #expect(error?.code == .server)
+        #expect(error?.httpStatus == 502)
+        #expect(error?.serverError?.code == nil)
+        #expect(error?.message == "The server answered 502")
+        #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
+        try await client.close()
+    }
+
+    @Test(arguments: ScriptedStorageRefusal.realistic)
+    func ensureCachedFileThrowsAStorageRefusalWithItsStatusAndCachesNothing(refusal: ScriptedStorageRefusal) async throws {
         // Given
         let storage = FakeStorageServer()
-        storage.answer { _ in FakeStorageServer.refusal(status: status) }
+        storage.answer { _ in FakeStorageServer.refusal(refusal) }
         let client = Self.makeClient(storage)
         let bucket = client.storage.from("avatars")
 
@@ -139,7 +166,8 @@ struct StorageTests {
             let error = await #expect(throws: OfflineError.self) { try await bucket.ensureCachedFile(path: "a.png") }
             let cached = try await bucket.cachedFile(path: "a.png")
             #expect(error?.code == .server)
-            #expect(error?.httpStatus == status)
+            #expect(error?.httpStatus == refusal.status)
+            #expect(error?.serverError?.code == refusal.code)
             #expect(cached == nil)
         }
         try await client.close()
@@ -163,6 +191,66 @@ struct StorageTests {
         #expect(afterFailure == FakeStorageServer.photo)
         #expect(notFound?.httpStatus == 404)
         #expect(cached == nil)
+        try await client.close()
+    }
+
+    @Test func aPublicDownloadGoesThroughThePublicURL() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+
+        // When
+        let bytes = try await client.storage.from("avatars").download(path: "p.png", isPublic: true)
+
+        // Then
+        #expect(bytes == FakeStorageServer.publicPhoto)
+        #expect(storage.requests.values.map(\.storagePath) == ["object/public/avatars/p.png"])
+        try await client.close()
+    }
+
+    @Test func writesOverCachedObjectsDropTheirCopiesAndAMoveCarriesItsCopy() async throws {
+        // Given six cached objects
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+        let archive = client.storage.from("archive")
+        for name in ["uploaded.png", "updated.png", "removed.png", "moved.png", "source.png", "copied-over.png"] {
+            _ = try await bucket.ensureCachedFile(path: name)
+        }
+
+        // When each is written over through the bucket
+        try await bucket.upload("uploaded.png", data: Data("new".utf8), options: .init(upsert: true))
+        try await bucket.update("updated.png", data: Data("new".utf8))
+        try await bucket.remove(paths: ["removed.png"])
+        try await bucket.move(from: "moved.png", to: "arrived.png", destinationBucket: "archive")
+        try await bucket.copy(from: "source.png", to: "copied-over.png")
+
+        // Then a write drops the copy it made stale, and a move carries its source's copy along
+        #expect(try await bucket.cachedFile(path: "uploaded.png") == nil)
+        #expect(try await bucket.cachedFile(path: "updated.png") == nil)
+        #expect(try await bucket.cachedFile(path: "removed.png") == nil)
+        #expect(try await bucket.cachedFile(path: "moved.png") == nil)
+        #expect(try await archive.cachedFile(path: "arrived.png")?.sizeBytes == FakeStorageServer.photo.count)
+        #expect(try await bucket.cachedFile(path: "copied-over.png") == nil)
+        #expect(try await bucket.cachedFile(path: "source.png") != nil)
+        try await client.close()
+    }
+
+    @Test func emptyDataIsRefusedBeforeAnythingIsSent() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+
+        // When
+        let upload = await #expect(throws: OfflineError.self) { try await bucket.upload("folder/.placeholder", data: Data()) }
+        let update = await #expect(throws: OfflineError.self) { try await bucket.update("folder/.placeholder", data: Data()) }
+
+        // Then
+        #expect(upload?.code == .invalidRequest)
+        #expect(update?.code == .invalidRequest)
+        #expect(!(readableTexts(of: upload) + readableTexts(of: update)).contains(where: namesTheRuntime))
+        #expect(storage.requests.values.isEmpty)
         try await client.close()
     }
 
@@ -212,6 +300,7 @@ struct StorageTests {
         for error in errors {
             #expect(error?.code == .connectivity)
             #expect(error?.isNetworkOrConnectivityFailure == true)
+            #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
         }
         #expect(storage.requests.values.count == writes.count)
         #expect(try await client.rawPendingMutationCount() == 0)
@@ -253,7 +342,7 @@ struct StorageTests {
 
         // When
         try await bucket.remove(paths: ["a.png", "b.png"])
-        try await bucket.move(from: "a.png", to: "b.png")
+        try await bucket.move(from: "a.png", to: "b.png", destinationBucket: "archive")
         try await bucket.copy(from: "b.png", to: "c.png", destinationBucket: "archive")
 
         // Then
@@ -261,7 +350,10 @@ struct StorageTests {
         #expect(requests.map(\.method) == ["DELETE", "POST", "POST"])
         #expect(try requests[0].storageJSONBody() == ["prefixes": ["a.png", "b.png"]])
         #expect(requests[1].storagePath == "object/move")
-        #expect(try requests[1].storageJSONBody() == ["bucketId": "avatars", "sourceKey": "a.png", "destinationKey": "b.png"])
+        #expect(
+            try requests[1].storageJSONBody()
+                == ["bucketId": "avatars", "sourceKey": "a.png", "destinationKey": "b.png", "destinationBucket": "archive"]
+        )
         #expect(requests[2].storagePath == "object/copy")
         #expect(
             try requests[2].storageJSONBody()
@@ -283,6 +375,7 @@ struct StorageTests {
 
         // Then
         #expect(error?.code == .invalidRequest)
+        #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
         #expect(storage.requests.values.isEmpty)
         try await client.close()
     }
@@ -363,8 +456,8 @@ struct StorageTests {
         let filter = OfflineBucketApi.StorageListFilter(
             limit: 10,
             offset: 20,
-            search: "a",
-            sortBy: .init(column: "name", order: .desc)
+            sortBy: .init(column: "name", order: .desc),
+            search: "a"
         )
 
         // When
@@ -407,19 +500,41 @@ struct StorageTests {
         try await client.close()
     }
 
-    @Test func aListingStorageCannotReadThrows() async throws {
+    @Test func aListingStorageCannotReadIsADecodingFailureInPlainWords() async throws {
         // Given a listing whose object has no name
         let storage = FakeStorageServer()
-        storage.answer { _ in .json(#"[{"id":"object-1"}]"#) }
+        storage.answer { _ in .json(#"[{"id":"secret-object"}]"#) }
         let client = Self.makeClient(storage)
 
         // When
         let error = await #expect(throws: OfflineError.self) { try await client.storage.from("avatars").list() }
 
         // Then
-        withKnownIssue("The core reports a Storage answer it cannot read as unexpected rather than decoding") {
-            #expect(error?.code == .decoding)
+        #expect(error?.code == .decoding)
+        #expect(error?.message.hasPrefix("The server's answer could not be read") == true)
+        #expect(error?.message.contains("secret") == false)
+        #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
+        try await client.close()
+    }
+
+    @Test func aPathStorageCannotSignFailsTheBatchNamingItsPosition() async throws {
+        // Given a batch whose second path Storage cannot sign
+        let storage = FakeStorageServer()
+        storage.answer { _ in
+            .json(#"[{"error":null,"signedURL":"/object/sign/avatars/a.png?token=a","path":"a.png"},"#
+                + #"{"error":"Either the object does not exist or you do not have access to it","signedURL":null,"path":"b.png"}]"#)
         }
+        let client = Self.makeClient(storage)
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.storage.from("avatars").createSignedURLs(paths: ["a.png", "b.png"], expiresIn: 60)
+        }
+
+        // Then
+        #expect(error?.code == .decoding)
+        #expect(error?.message.contains("$[1].signedURL") == true)
+        #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
         try await client.close()
     }
 
@@ -429,8 +544,10 @@ struct StorageTests {
         // Given a download Storage has not answered
         let storage = FakeStorageServer()
         let answered = Gate()
+        let answers = RecordingList<Bool>()
         storage.answer { _ in
             await answered.wait()
+            answers.append(true)
             return .status(200, body: FakeStorageServer.photo)
         }
         let client = Self.makeClient(storage)
@@ -445,6 +562,8 @@ struct StorageTests {
         // Then
         #expect(throws: CancellationError.self) { try result.get() }
         await answered.open()
+        #expect(await eventually { !answers.values.isEmpty })
+        try await Task.sleep(for: .milliseconds(300))
         #expect(try await bucket.cachedFile(path: "a.png") == nil)
         try await client.close()
     }
@@ -459,10 +578,14 @@ struct StorageTests {
         // When
         let download = await #expect(throws: OfflineError.self) { try await bucket.download(path: "a.png") }
         let cached = await #expect(throws: OfflineError.self) { try await bucket.cachedFile(path: "a.png") }
+        let publicURL = await #expect(throws: OfflineError.self) { try await bucket.publicURL(path: "a.png") }
+        let authenticatedURL = await #expect(throws: OfflineError.self) { try await bucket.authenticatedURL(path: "a.png") }
 
-        // Then
+        // Then the URL builders too, as they read the opened client
         #expect(download?.code == .clientClosed)
         #expect(cached?.code == .clientClosed)
+        #expect(publicURL?.code == .clientClosed)
+        #expect(authenticatedURL?.code == .clientClosed)
         #expect(storage.requests.values.isEmpty)
     }
 }

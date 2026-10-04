@@ -151,12 +151,12 @@ extension OfflineBucketApi {
         /// The sort; `nil` for Storage's default.
         public var sortBy: SortBy?
 
-        /// A filter with the values given.
-        public init(limit: Int? = nil, offset: Int? = nil, search: String? = nil, sortBy: SortBy? = nil) {
+        /// A filter with the values given, in supabase-swift's order.
+        public init(limit: Int? = nil, offset: Int? = nil, sortBy: SortBy? = nil, search: String? = nil) {
             self.limit = limit
             self.offset = offset
-            self.search = search
             self.sortBy = sortBy
+            self.search = search
         }
 
         /// This filter as the core reads it.

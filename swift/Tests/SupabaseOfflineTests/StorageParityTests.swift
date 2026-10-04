@@ -39,6 +39,7 @@ struct StorageParityTests {
         try await db.storage.from("photos").upload(path, data: jpeg)
         try await db.storage.from("photos").update(path, data: jpeg, options: .init(contentType: "image/jpeg", upsert: true))
         let files = try await db.storage.from("photos").list(path: "folder")
+        _ = try await db.storage.from("photos").list(path: "folder", options: .init(limit: 10, offset: 0, sortBy: .init(column: "name"), search: "a"))
         let info = try await db.storage.from("photos").info(path: path)
         let exists = try await db.storage.from("photos").exists(path: path)
         let signed: URL = try await db.storage.from("photos").createSignedURL(path: path, expiresIn: 3600)

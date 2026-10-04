@@ -21,7 +21,8 @@ public struct CachedFile: Sendable, Hashable {
     /// The copy's size in bytes.
     public let sizeBytes: Int
 
-    /// The copy as a file URL, for APIs that take one.
+    /// The copy as a file URL, for APIs that take one; from the testing product's in-memory client,
+    /// a URL of no file on disk.
     public var url: URL {
         URL(filePath: path, directoryHint: .notDirectory)
     }

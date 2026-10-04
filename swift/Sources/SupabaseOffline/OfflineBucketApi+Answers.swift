@@ -45,7 +45,8 @@ extension OfflineBucketApi {
     /// One object's signed download URL, from ``OfflineBucketApi/createSignedURLs(paths:expiresIn:)``.
     public struct SignedURL: Sendable, Hashable {
 
-        /// Storage's reason it could not sign this path, when it could not.
+        /// A note Storage sent with this path's URL, when it sent one. A path Storage cannot sign
+        /// at all fails the whole call instead (see ``OfflineBucketApi/createSignedURLs(paths:expiresIn:)``).
         public let error: String?
 
         /// The URL, which downloads the object until it expires.
@@ -166,12 +167,12 @@ extension OfflineBucketApi.UploadSignedURL {
     /// The core's answer `text`, `{"url", "path", "token"}`.
     init(coreText text: String) throws {
         let answer = try RowCoding.decode(Answer.self, from: text)
-        self.init(url: answer.url, path: answer.path, token: answer.token)
+        try self.init(url: CoreURL.parse(answer.url), path: answer.path, token: answer.token)
     }
 
     /// The answer as the core writes it.
     private struct Answer: Decodable {
-        let url: URL
+        let url: String
         let path: String
         let token: String
     }
@@ -182,14 +183,14 @@ extension OfflineBucketApi.SignedURL {
     /// The core's answer `text`, a JSON array of `{"error", "signedURL", "path"}`.
     static func list(coreText text: String) throws -> [Self] {
         try RowCoding.decode([Answer].self, from: text).map {
-            Self(error: $0.error, signedURL: $0.signedURL, path: $0.path)
+            try Self(error: $0.error, signedURL: CoreURL.parse($0.signedURL), path: $0.path)
         }
     }
 
-    /// One URL as the core writes it.
+    /// One URL as the core writes it: the object's name in it unencoded.
     private struct Answer: Decodable {
         let error: String?
-        let signedURL: URL
+        let signedURL: String
         let path: String
     }
 }

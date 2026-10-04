@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 import Foundation
 import SupabaseOfflineTesting
+import Testing
 import os
 @testable import SupabaseOffline
 
@@ -100,8 +101,54 @@ final class FakeStorageServer: Sendable {
 
     /// Storage's refusal with `status`, as it words one.
     static func refusal(status: Int) -> FakeServer.Response {
-        .json(#"{"statusCode":"\#(status)","error":"refused","message":"Refused with \#(status)"}"#, status: status)
+        refusal(ScriptedStorageRefusal(status: status, code: "refused", message: "Refused with \(status)"))
     }
+
+    /// Storage's refusal `refusal`, in Storage's JSON.
+    static func refusal(_ refusal: ScriptedStorageRefusal) -> FakeServer.Response {
+        .json(
+            #"{"statusCode":"\#(refusal.status)","error":"\#(refusal.code)","message":"\#(refusal.message)"}"#,
+            status: refusal.status
+        )
+    }
+}
+
+/// One refusal Storage sends: its status, its error code and its message.
+struct ScriptedStorageRefusal: Sendable, CustomTestStringConvertible {
+
+    /// The HTTP status.
+    let status: Int
+
+    /// Storage's error code, such as `not_found`.
+    let code: String
+
+    /// Storage's message.
+    let message: String
+
+    /// Refusals as Storage words them.
+    static let realistic = [
+        ScriptedStorageRefusal(status: 400, code: "InvalidKey", message: "Invalid key: a b"),
+        ScriptedStorageRefusal(status: 403, code: "Unauthorized", message: "new row violates row-level security policy"),
+        ScriptedStorageRefusal(status: 404, code: "not_found", message: "Object not found"),
+        ScriptedStorageRefusal(status: 409, code: "Duplicate", message: "The resource already exists"),
+    ]
+
+    var testDescription: String { "\(status) \(code)" }
+}
+
+/// Whether `text` names an exception or error type, or a package or word of the runtime and
+/// libraries under the package, which a Swift caller must never read.
+func namesTheRuntime(_ text: String) -> Bool {
+    text.contains(/\b[A-Z][A-Za-z0-9]*(?:Exception|Error)\b/)
+        || text.contains(/(?i)\b(?:kotlin|kotlinx|konan|ktor|okio|androidx|bridge)\b/)
+        || text.contains(/io\.github\.|StorageErrorResponse|Json[A-Z]/)
+}
+
+/// Every text `error` carries a caller can read: its message, description and the server's fields.
+func readableTexts(of error: OfflineError?) -> [String] {
+    guard let error else { return [] }
+    return [error.message, error.description]
+        + [error.serverError?.message, error.serverError?.details, error.serverError?.hint].compactMap { $0 }
 }
 
 extension FakeServer.Request {
