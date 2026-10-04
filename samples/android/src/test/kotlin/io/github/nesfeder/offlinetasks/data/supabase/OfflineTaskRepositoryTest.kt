@@ -101,6 +101,25 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
+    fun offline_a_task_never_opened_before_is_read_from_the_cached_lists() = runTest {
+        // Given — the lists loaded online, then the network switched off
+        repository.addTask("Opened offline", notes = "first time")
+        val listed = repository.tasks().awaitValue { it.size == 1 }.single()
+        repository.allPhotos().awaitValue { it.isEmpty() }
+        repository.setNetworkEnabled(false)
+        val sentBefore = server.requests.size
+
+        // When — a task and its photos read for the first time
+        val task = repository.task(listed.id).awaitValue { it.isNotEmpty() }.single()
+        val photos = repository.photos(listed.id).awaitValue { true }
+
+        // Then — answered from the device, with nothing sent
+        assertEquals("first time", task.notes)
+        assertTrue(photos.isEmpty())
+        assertEquals(sentBefore, server.requests.size)
+    }
+
+    @Test
     fun a_write_refused_at_once_is_thrown_with_the_servers_error_and_not_kept() = runTest {
         // When
         val refused =

@@ -44,8 +44,8 @@ interface TaskRepository {
     fun tasks(): Flow<TaskListSnapshot>
 
     /**
-     * The task with [id], as a select filtered on it returns it: a list of at most one row, empty
-     * once the device or the server says it does not exist.
+     * The task with [id], as [tasks] holds it: a list of at most one row, empty once the device or
+     * the server says it does not exist.
      */
     fun task(id: String): Flow<TaskListSnapshot>
 

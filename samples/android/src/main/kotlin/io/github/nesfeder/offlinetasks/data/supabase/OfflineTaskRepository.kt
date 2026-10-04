@@ -118,56 +118,20 @@ class OfflineTaskRepository(
             .map { it.toAppSyncStatus() }
             .stateIn(scope, SharingStarted.Eagerly, offline.syncStatus.value.toAppSyncStatus())
 
-    override fun tasks(): Flow<TaskListSnapshot> = whileSignedIn {
-        combine(
-            offline.from(Tables.TASKS).selectAsFlow { order(CREATED_AT, Order.DESCENDING) },
-            pendingRowIds(Tables.TASKS),
-        ) { snapshot, pending ->
-            snapshot.toRowsSnapshot { result ->
-                // A task still queued is listed after the server's rows; show it where it sorts.
-                result.decodeList<TaskRow>().map { it.toTask(pending) }.sortedByCreationDesc()
-            }
-        }
+    override fun tasks(): Flow<TaskListSnapshot> = taskList { it }
+
+    // The list's query, not one filtered on the id: each query is cached on its own, and offline a
+    // query never fetched has nothing to show, while the list is fetched as the app starts.
+    override fun task(id: String): Flow<TaskListSnapshot> = taskList { tasks ->
+        tasks.filter { it.id == id }
     }
 
-    override fun task(id: String): Flow<TaskListSnapshot> = whileSignedIn {
-        combine(
-            offline.from(Tables.TASKS).selectAsFlow { filter { eq(ID, id) } },
-            pendingRowIds(Tables.TASKS),
-        ) { snapshot, pending ->
-            snapshot.toRowsSnapshot { result ->
-                result.decodeList<TaskRow>().map { it.toTask(pending) }
-            }
-        }
+    // The query of allPhotos(), for the same reason as task(): one cached list serves every task.
+    override fun photos(taskId: String): Flow<PhotoListSnapshot> = photoList { photos ->
+        photos.filter { it.taskId == taskId }.sortedBy { it.createdAt }
     }
 
-    override fun photos(taskId: String): Flow<PhotoListSnapshot> = whileSignedIn {
-        combine(
-            offline.from(Tables.TASK_PHOTOS).selectAsFlow { photosOfTask(taskId) },
-            pendingRowIds(Tables.TASK_PHOTOS),
-        ) { snapshot, pending ->
-            snapshot.toRowsSnapshot { result ->
-                result
-                    .decodeList<TaskPhotoRow>()
-                    .map { it.toTaskPhoto(pending) }
-                    .sortedBy { it.createdAt }
-            }
-        }
-    }
-
-    override fun allPhotos(): Flow<PhotoListSnapshot> = whileSignedIn {
-        combine(
-            offline.from(Tables.TASK_PHOTOS).selectAsFlow { order(CREATED_AT, Order.DESCENDING) },
-            pendingRowIds(Tables.TASK_PHOTOS),
-        ) { snapshot, pending ->
-            snapshot.toRowsSnapshot { result ->
-                result
-                    .decodeList<TaskPhotoRow>()
-                    .map { it.toTaskPhoto(pending) }
-                    .sortedByDescending { it.createdAt }
-            }
-        }
-    }
+    override fun allPhotos(): Flow<PhotoListSnapshot> = photoList { it }
 
     override suspend fun addTask(title: String, notes: String?): TaskMutationOutcome {
         val row =
@@ -322,7 +286,7 @@ class OfflineTaskRepository(
             // The same query as tasks(): its answer replaces that query's cached rows, and every
             // reader of it sees them.
             offline.from(Tables.TASKS).select(readStrategy = ReadStrategy.NetworkOnly) {
-                order(CREATED_AT, Order.DESCENDING)
+                newestFirst()
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -350,6 +314,34 @@ class OfflineTaskRepository(
             session.signInAsNewUser()
         }
     }
+
+    /** The user's tasks, newest first, as [shown] passes them on. */
+    private fun taskList(shown: (List<Task>) -> List<Task>): Flow<TaskListSnapshot> =
+        whileSignedIn {
+            combine(
+                offline.from(Tables.TASKS).selectAsFlow { newestFirst() },
+                pendingRowIds(Tables.TASKS),
+            ) { snapshot, pending ->
+                snapshot.toRowsSnapshot { result ->
+                    // A task still queued is listed after the server's rows; show it where it sorts.
+                    shown(result.decodeList<TaskRow>().map { it.toTask(pending) }.newestFirst())
+                }
+            }
+        }
+
+    /** The user's photos, newest first, as [shown] passes them on. */
+    private fun photoList(shown: (List<TaskPhoto>) -> List<TaskPhoto>): Flow<PhotoListSnapshot> =
+        whileSignedIn {
+            combine(
+                offline.from(Tables.TASK_PHOTOS).selectAsFlow { newestFirst() },
+                pendingRowIds(Tables.TASK_PHOTOS),
+            ) { snapshot, pending ->
+                snapshot.toRowsSnapshot { result ->
+                    val photos = result.decodeList<TaskPhotoRow>().map { it.toTaskPhoto(pending) }
+                    shown(photos.sortedByDescending { it.createdAt })
+                }
+            }
+        }
 
     /**
      * [read] while there is a session; before, one snapshot that knows nothing and sends nothing.
@@ -390,8 +382,9 @@ class OfflineTaskRepository(
         try {
             offline
                 .from(Tables.TASK_PHOTOS)
-                .select(readStrategy = ReadStrategy.CacheOnly()) { photosOfTask(taskId) }
+                .select(readStrategy = ReadStrategy.CacheOnly()) { newestFirst() }
                 .decodeList<TaskPhotoRow>()
+                .filter { it.taskId == taskId }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (missing: CacheMissException) {
@@ -478,10 +471,12 @@ class OfflineTaskRepository(
 /** A photo row read for its file alone. */
 @Serializable private data class ObjectPathRow(@SerialName(OBJECT_PATH) val objectPath: String)
 
-/** The filter and order of one task's photos, oldest first: one query, so one cached result. */
-private fun PostgrestRequestBuilder.photosOfTask(taskId: String) {
-    filter { eq(TASK_ID, taskId) }
-    order(CREATED_AT, Order.ASCENDING)
+/**
+ * The one order every list is read in, newest first. Each query is cached apart, so every read of a
+ * table asks the same query and shares one cached list.
+ */
+private fun PostgrestRequestBuilder.newestFirst() {
+    order(CREATED_AT, Order.DESCENDING)
 }
 
 /** The snapshot before there is a session: nothing known, nothing being fetched. */
@@ -512,7 +507,8 @@ private fun RefreshState.toTaskRefreshState(): TaskRefreshState =
         is RefreshState.Stalled -> TaskRefreshState.Stalled(cause)
     }
 
-private fun List<Task>.sortedByCreationDesc(): List<Task> = sortedByDescending { it.createdAt }
+/** These tasks newest first, as the server orders the list. */
+private fun List<Task>.newestFirst(): List<Task> = sortedByDescending { it.createdAt }
 
 /** The `id` values in the row keys of these queued writes. */
 private fun List<PendingMutation>.rowIds(): Set<String> =

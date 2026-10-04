@@ -140,7 +140,7 @@
     <string name="network_disabled">Offline (simulated)</string>
     <string name="network_disabled_body">This app’s network is switched off. Everything else on the device is online.</string>
     <string name="sync_simulate_offline">Simulate offline</string>
-    <string name="sync_simulate_offline_body">Cuts this app off from the server, as airplane mode would.</string>
+    <string name="sync_simulate_offline_body">Cuts this app off from the server, as airplane mode would, until you switch it back or the app restarts.</string>
     <string name="sync_queue">Changes waiting</string>
     <string name="sync_queue_empty">Nothing waiting</string>
     <string name="sync_queue_by_table">Tasks: %1$d · Photos: %2$d</string>
