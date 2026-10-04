@@ -370,7 +370,9 @@ to `commonTest` only while `supabase-bom` is 3.8 or later. The canary moves the 
 and runs those tests every Monday. A name the common tests share with them, such as a list of extra
 read shapes, has a 3.6 answer in `src/commonSupabaseKt36Test`. When the pin reaches 3.8 or later,
 the condition in `supabase-offline-kt/build.gradle.kts` goes: the 3.8 directory's files move into
-`commonTest`, and the 3.6 directory is deleted.
+`commonTest`, and the 3.6 directory is deleted. So does `CHARACTERS_SENT_UNENCODED` in the Storage
+cache's name rules, empty from 3.8 on, which keeps object names supabase-kt 3.6 sends unencoded out
+of the cache.
 
 Other Gradle dependencies arrive as grouped minor and patch updates, and a new major version as a
 pull request of its own. The Android sample's libraries (Compose, Material 3, Navigation 3 and
