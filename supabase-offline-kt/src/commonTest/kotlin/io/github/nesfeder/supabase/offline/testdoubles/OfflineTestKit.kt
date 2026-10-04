@@ -213,7 +213,8 @@ internal suspend fun TestStore.recordQueryShape(
  *   failure to [engineLogger] instead of failing the test; build that logger from a
  *   [RecordingLogSink] to see one.
  * @param scrubDatabase what `clearLocalData` runs after its transaction, as the platforms' open
- *   paths wire the database's scrub.
+ *   paths wire the database's rewrite; it says whether the write-ahead log was emptied.
+ * @param emptyWriteAheadLog the later tries at the write-ahead log when the rewrite left it.
  * @param closeWait how long `close()` waits for calls in flight. Shorten it for a client whose
  *   background work can never run (see [idleCoroutineScope]): its `close()` always waits it out.
  * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
@@ -236,7 +237,8 @@ internal fun newTestOfflineClient(
     engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     onClose: () -> Unit = {},
     coordinatorScope: CoroutineScope = newEngineScope(engineLogger),
-    scrubDatabase: suspend () -> Unit = {},
+    scrubDatabase: suspend () -> Boolean = { true },
+    emptyWriteAheadLog: suspend () -> Boolean = { true },
     closeWait: Duration = OfflineClient.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
@@ -256,6 +258,7 @@ internal fun newTestOfflineClient(
         engineLogger = engineLogger,
         coordinatorScope = coordinatorScope,
         scrubDatabase = scrubDatabase,
+        emptyWriteAheadLog = emptyWriteAheadLog,
         onClose = onClose,
         closeWait = closeWait,
         onStillClosing = onStillClosing,

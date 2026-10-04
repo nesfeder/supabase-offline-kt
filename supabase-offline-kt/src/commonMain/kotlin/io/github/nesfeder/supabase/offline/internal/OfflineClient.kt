@@ -34,6 +34,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.buildCacheComponents
 import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
+import io.github.nesfeder.supabase.offline.internal.db.DatabaseScrub
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
@@ -151,9 +152,12 @@ internal class OfflineClient(
     prepareFileCacheDirectories: Boolean = false,
     /**
      * Rewrites the database without the rows [clearLocalData] deleted, so none can be read back
-     * from its files. The factories pass the database's own; the in-memory tables have no files.
+     * from its files, and tries once to empty its write-ahead log: whether it did. The factories
+     * pass the database's own; the in-memory tables have no files.
      */
-    private val scrubDatabase: suspend () -> Unit = {},
+    scrubDatabase: suspend () -> Boolean = { true },
+    /** Tries once, waiting for no read, to empty the database's write-ahead log: whether it did. */
+    emptyWriteAheadLog: suspend () -> Boolean = { true },
     /** Releases what the factory opened — the database and its registration — on [close]. */
     private val onClose: () -> Unit = {},
     /**
@@ -329,6 +333,18 @@ internal class OfflineClient(
     /** Clears local data, or drops the caches for a new owner, in the one lock order. */
     private val localData: LocalData = components.localData
 
+    /**
+     * Keeps what a clear or a cache drop deleted out of the database's files: outside the locks and
+     * in the background when a read holds the log, and once more at [close].
+     */
+    private val databaseScrub =
+        DatabaseScrub(
+            scope = clientScope,
+            engineLogger = engineLogger,
+            rewrite = scrubDatabase,
+            emptyLog = emptyWriteAheadLog,
+        )
+
     /** The Storage file cache every bucket of this client shares. */
     private val fileCache =
         StorageFileCache(
@@ -502,9 +518,10 @@ internal class OfflineClient(
         mutationQueueReplayer.holdingSends {
             fileCache.clear {
                 localData.dropCacheFor(identity.storedValue)
-                scrubDatabase()
+                databaseScrub.rewriteAfterDelete()
             }
         }
+        databaseScrub.finishSoon()
         engineLogger.info {
             "The session settled into another identity; the cache was emptied for it"
         }
@@ -935,7 +952,8 @@ internal class OfflineClient(
      * flight; the file cache's lock; the queue's and the clear lock, and innermost the cache-owner
      * record's, around [LocalData.clearLocalData]'s one transaction. Signed out, that transaction
      * records the emptied cache as nobody's; a user's first use claims it, so no user id is written
-     * back by the clear. The scrub runs after that transaction, and the cache files go last.
+     * back by the clear. The rewrite runs after that transaction, the cache files go last, and what
+     * an open read held off is finished outside the locks; see [DatabaseScrub].
      */
     override suspend fun clearLocalData(): Unit = operationGate.call {
         val owner =
@@ -946,9 +964,10 @@ internal class OfflineClient(
         mutationQueueReplayer.clearLocalData {
             fileCache.clear {
                 localData.clearLocalData(owner)
-                scrubDatabase()
+                databaseScrub.rewriteAfterDelete()
             }
         }
+        databaseScrub.finishSoon()
         // The writes an earlier failure held back are gone with it
         publishStatus { status -> status.copy(lastSyncError = null) }
     }
@@ -982,14 +1001,25 @@ internal class OfflineClient(
     }
 
     /**
-     * Waits until the client's work and every call have ended, then releases the database, once.
+     * Waits until the client's work and every call have ended, then finishes a clear's rewrite and
+     * releases the database, once. A failure to close it is logged, never thrown: the claim is
+     * released either way, and [close] cannot fail its caller.
      */
     private suspend fun releaseOnceIdle() {
         clientScope.coroutineContext.job.join()
         operationGate.awaitNoCallsInFlight()
         if (!releasing.compareAndSet(expect = false, update = true)) return released.await()
         try {
+            // Whatever cancels this wait, the database is still closed after it
+            withContext(NonCancellable) { databaseScrub.finishBeforeClose() }
             onClose()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.error {
+                "Closing the offline database failed (${failure::class.simpleName}); " +
+                    "it was released"
+            }
         } finally {
             released.complete(Unit)
         }

@@ -78,7 +78,10 @@ class SupabaseOfflineClientClearCacheTest {
             newTestOfflineClient(
                 supabase = newTestSupabaseClient(plugins = {}),
                 cachedFileDao = cachedFileDao,
-                scrubDatabase = { rowsLeftAtScrub = cachedFileDao.all().size },
+                scrubDatabase = {
+                    rowsLeftAtScrub = cachedFileDao.all().size
+                    true
+                },
             )
 
         // When
