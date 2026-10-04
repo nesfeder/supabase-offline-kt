@@ -87,7 +87,7 @@ internal class RequestShape(
 /** The filters, modifiers, count and response shape of [description]. */
 internal fun readRequestShape(description: DescriptionObject): RequestShape =
     RequestShape(
-        filters = readFilterNodes(description, "filters"),
+        filters = readFilterNodes(description, "filters", isTopLevel = true),
         modifiers = description.objects("modifiers").map(::readModifier),
         count = readCount(description),
         single = description.boolean("single", default = false),

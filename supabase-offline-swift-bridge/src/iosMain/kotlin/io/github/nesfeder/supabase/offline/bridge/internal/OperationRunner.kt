@@ -44,6 +44,18 @@ internal class OperationRunner(
         )
 
     /**
+     * Where completions run: never on the caller's thread, even when the answer is known at once (a
+     * closed client, a handle cancelled before its call started). Never cancelled, so an answer
+     * still goes after close.
+     */
+    private val answerScope: CoroutineScope =
+        CoroutineScope(
+            SupervisorJob() +
+                Dispatchers.Default +
+                CoroutineExceptionHandler { _, failure -> report(failure, "An answer") }
+        )
+
+    /**
      * Called inside every call, before its work, with the call's name: the fault-injection tests
      * make it throw to prove each path turns a failure into a value. Always `null` in production.
      */
@@ -79,7 +91,8 @@ internal class OperationRunner(
         completion: (T?, BridgeError?) -> Unit,
         work: suspend () -> T,
     ): BridgeCancellable {
-        val delivery = OneTimeDelivery(completion) { report(it, "The completion of $operation") }
+        val delivery =
+            OneTimeDelivery(completion, ::postAnswer) { report(it, "The completion of $operation") }
         if (clientClosing()) {
             delivery.deliver(null, clientClosedError())
             return BridgeCancellable(null, ::reportCancelFailure)
@@ -122,7 +135,7 @@ internal class OperationRunner(
         values: () -> Flow<T>,
     ): BridgeCancellable {
         val delivery =
-            OneTimeDelivery<Unit>({ _, error -> onCompletion(error) }) {
+            OneTimeDelivery<Unit>({ _, error -> onCompletion(error) }, ::postAnswer) {
                 report(it, "The completion of $operation")
             }
         if (clientClosing()) {
@@ -223,6 +236,16 @@ internal class OperationRunner(
         }
     }
 
+    /** Runs [answer] on [answerScope]; should that fail, here, rather than lose it. */
+    private fun postAnswer(answer: () -> Unit) {
+        try {
+            answerScope.launch { answer() }
+        } catch (failure: Throwable) {
+            report(failure, "Posting an answer")
+            answer()
+        }
+    }
+
     /** Reports a failure inside a cancel handle. */
     private fun reportCancelFailure(failure: Throwable) {
         report(failure, "Cancelling a call")
@@ -230,11 +253,12 @@ internal class OperationRunner(
 }
 
 /**
- * Hands a completion its answer once: later answers are dropped, and a completion that throws is
- * reported through [reportFailure] rather than let through.
+ * Hands a completion its answer once, through [post]: later answers are dropped, and a completion
+ * that throws is reported through [reportFailure] rather than let through.
  */
 private class OneTimeDelivery<T>(
     private val completion: (T?, BridgeError?) -> Unit,
+    private val post: (answer: () -> Unit) -> Unit,
     private val reportFailure: (Throwable) -> Unit,
 ) {
     /** Whether the answer has been handed over. */
@@ -243,10 +267,12 @@ private class OneTimeDelivery<T>(
     /** Hands over [value] or [error], unless an answer already went. */
     fun deliver(value: T?, error: BridgeError?) {
         if (!delivered.compareAndSet(expectedValue = false, newValue = true)) return
-        try {
-            completion(value, error)
-        } catch (failure: Throwable) {
-            reportFailure(failure)
+        post {
+            try {
+                completion(value, error)
+            } catch (failure: Throwable) {
+                reportFailure(failure)
+            }
         }
     }
 }

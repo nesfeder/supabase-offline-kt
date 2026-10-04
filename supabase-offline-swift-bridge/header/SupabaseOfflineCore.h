@@ -324,7 +324,8 @@ __attribute__((swift_name("BridgeClient")))
  * Calls a database function on the server. Network only: never cached, never queued.
  *
  * @param call the call's description (function, method, filters), as JSON text.
- * @param arguments the function's arguments, a JSON object as text, or `null` for none.
+ * @param arguments the function's arguments, a JSON object as text, or `null` for none. A call
+ *   by GET or HEAD takes none: it fails with [BridgeErrorKind.INVALID_REQUEST].
  */
 - (SOCBridgeCancellable *)rpcCall:(NSString *)call arguments:(NSString * _Nullable)arguments completion:(void (^)(SOCBridgeQueryResult * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("rpc(call:arguments:completion:)")));
 
@@ -580,7 +581,10 @@ __attribute__((swift_name("BridgeHttpResponder")))
 /** Answers as a request that never reached the server: the client reads it as offline. */
 - (void)failWithoutConnectionMessage:(NSString *)message __attribute__((swift_name("failWithoutConnection(message:)")));
 
-/** Answers with an HTTP response. */
+/**
+ * Answers with an HTTP response. A body over [Int.MAX_VALUE] bytes fails the request instead,
+ * as a transport failure naming the size.
+ */
 - (void)respondStatus:(int32_t)status headers:(NSDictionary<NSString *, NSString *> *)headers body:(NSData *)body __attribute__((swift_name("respond(status:headers:body:)")));
 @end
 

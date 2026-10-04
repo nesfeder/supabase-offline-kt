@@ -10,7 +10,8 @@ of the library, supabase-kt, Ktor, okio or kotlinx. The check fails when the hea
 
   1. declares or names a class, protocol or category that the allow-list does not hold
      (supabase-offline-swift-bridge/header/allowed-names.txt: one name, glob or `Class (Category)`
-     per line);
+     per line), or a `…Kt` class, the facade of a file's public top-level functions, whatever the
+     allow-list says;
   2. exports a suspend function: a method with a `completionHandler:` block;
   3. exports a function that throws: a method with an `error:` out-parameter;
   4. differs from the recorded header, supabase-offline-swift-bridge/header/SupabaseOfflineCore.h,
@@ -110,7 +111,9 @@ def problems(header: str, allow_list: str, recorded: Optional[str]) -> List[str]
     if not names:
         found.append("the header declares no type: it is not a framework header")
     for name in sorted(names):
-        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in globs):
+        if name.endswith("Kt"):
+            found.append(f"{name}: a file's public top-level functions; make them members")
+        elif not any(fnmatch.fnmatchcase(name, pattern) for pattern in globs):
             found.append(f"{name}: not on the allow-list; the header must not export it")
     for category in sorted(categories - allowed_categories):
         found.append(f"{category}: a category not on the allow-list")
@@ -213,6 +216,12 @@ SELF_TEST_CASES: Tuple[Tuple[str, str, Optional[str], bool], ...] = (
         True,
     ),
     ("a kotlinx protocol", CLEAN + "@protocol SOCKotlinx_coroutines_coreJob\n@end\n", None, True),
+    (
+        "a top-level function's facade class the allow-list matches",
+        CLEAN + "@interface SOCBridgeValuesKt : SOCBase\n@end\n",
+        None,
+        True,
+    ),
     (
         "a protocol with methods that adopts another",
         CLEAN + "@protocol SOCKotlinx_coroutines_coreFlow <SOCBridgeLogSink>\n@required\n- (void)a;\n@end\n",
