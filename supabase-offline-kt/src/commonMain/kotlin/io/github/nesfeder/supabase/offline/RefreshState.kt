@@ -27,7 +27,8 @@ public sealed interface RefreshState {
      * The refresh keeps failing. The read keeps showing the rows it has, and the refresh is still
      * tried, at most a minute apart.
      *
-     * @property cause the last failure.
+     * @property cause the failure that stalled the refresh; a later, different one does not replace
+     *   it.
      */
     @ConsistentCopyVisibility
     public data class Stalled internal constructor(public val cause: Throwable) : RefreshState

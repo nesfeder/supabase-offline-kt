@@ -15,7 +15,9 @@ cache. A write is saved to a mutation queue on the device first, sent at once wh
 same user waits ahead of it, and otherwise sent, in the order it was made, by a later replay pass,
 which the library starts by itself when the network comes back. Storage downloads are kept on disk
 and served from there offline. A write returns a `MutationOutcome` rather than the server's result,
-because a queued write has none yet: that is the one difference at the call site. Each minor
+because a queued write has none yet: that is the one difference in what a call returns, and a few
+call shapes need an edit (see [Moving a call from supabase-kt](#moving-a-call-from-supabase-kt)).
+Each minor
 release is built and tested against exactly one supabase-kt minor, this one against 3.8.
 
 ```kotlin
@@ -53,9 +55,14 @@ rules hold across every table below and are not repeated in them:
   be sent and the library does not answer it from the cache or the queue, the caller gets
   supabase-kt's own exception (`PostgrestRestException`, `RestException`, `HttpRequestException`)
   unchanged. The "Throws" columns list only what the library adds.
-- **`@Throws(Throwable::class)`.** Every public `suspend` function declares it, so a framework that
-  exports the library to Swift hands a failure over as an error instead of ending the process.
-  `close()`, which overrides supabase-kt's, cannot declare one.
+- **`@Throws(Throwable::class)`.** Every `suspend` function the library declares carries it, so a
+  framework that exports the library to Swift hands a failure over as an error instead of ending
+  the process. An override cannot declare its own: `close()`, which overrides supabase-kt's, has
+  none, and neither have the `BucketApi` members an `OfflineBucketApi` inherits
+  (`downloadAuthenticated`, `downloadPublic`, `upload`, `list` and the rest), which keep
+  supabase-kt's declarations. Through such a framework, an offline bucket's download that throws
+  (offline with nothing cached, or with network access off) ends the app unless the caller's own
+  bridge catches around it.
 - **Value types have internal constructors.** `QuerySnapshot`, `PendingMutation`,
   `RejectedMutation`, `ServerError`, `SyncReport`, `SyncStatus`, `CachedFile`, the two
   `MutationOutcome` cases, `RefreshState.Stalled` and the exceptions are built by the library, so
@@ -162,7 +169,7 @@ Each field is true of its own emission, so a change to any of them emits.
 | `Idle` | No refresh is running or waiting: the last one succeeded, or the read does not refresh. |
 | `Refreshing` | A refresh is running, or is about to be tried again soon after a failure. |
 | `Paused` | The refresh waits for the network, which the library knows to be unavailable. Nothing is failing. |
-| `Stalled(cause)` | The refresh keeps failing; `cause` is the last failure. It is still tried, at most a minute apart. |
+| `Stalled(cause)` | The refresh keeps failing; `cause` is the failure that stalled it, and a later, different failure does not replace it. It is still tried, at most a minute apart. |
 
 A one-shot read carries the same provenance as three extension properties on `PostgrestResult`:
 `isFromCache`, `fetchedAt: Instant?` and `hasPendingMutations`. The library stamps them in
@@ -385,7 +392,7 @@ the server. An object path that cannot be mapped safely onto a file (a leading `
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. The database is rewritten so nothing deleted can be read back from its files. The client stays usable. | — |
+| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. The database is rewritten without the deleted rows and its write-ahead log emptied, unless open reads hold the log's checkpoint off for about a second: then the old pages stay in the log until its next checkpoint, and a warning is logged. The client stays usable. | — |
 | `applyServerRecord(table, record: JsonObject, primaryKeys = null, schema = null)`; reified `applyServerRecord(table, record: T, …)` | Applies a row the server reports, such as a Realtime INSERT or UPDATE record, to every cached query of the table. | The cached row with the same key is replaced, and a query that admits the row gains it. A record without its whole key is logged and dropped. `primaryKeys = null` is the table's configured key. | — |
 | `applyServerDelete(table, oldRecord, primaryKeys = null, schema = null)` | Removes a row the server reports deleted from every cached query of the table. | As `applyServerRecord`. | — |
 | `rpc(function, request)`, `rpc(function, parameters: JsonObject, request)`; reified `rpc(function, parameters: T, request)` | Calls a database function, as `supabase.postgrest.rpc` does. | Network only: never cached, never queued, since a function may change data. | `NetworkDisabledException` while access is off; `IllegalStateException` without PostgREST |
@@ -540,24 +547,26 @@ The client's parts:
 | `NetworkAccess` | The connectivity signal and the app's switch. |
 | `StorageFileCache` | The Storage files, shared by every bucket the client hands out (`CachingBucketApi`). |
 
-The cache and the queue are seven components over the Room database, each owning one job and at
-most one lock; a thin internal facade forwards the rest of the engine's calls to them.
+The cache and the queue are seven components over the Room database, each owning one job and its
+own locks.
 
 | Component | Owns | Lock |
 | --- | --- | --- |
 | `CacheFreshness` | The watermarks that say whether a response or a cache write is still current: each table's last local write, and when local data was last cleared or the cache dropped. | The clear lock |
 | `CacheOwnership` | Whose the query cache and the file cache are, and whether the current identity may read or write them; asked on every cache read and write. | The owner record's, always last |
-| `MutationQueue` | The queue's rows and the records beside them: enqueue, the head checks, a send's outcome, rejection, retry, discard, the counts and lists the app is shown, the send record, the sync sequence, the rejected list, and retiring replayed writes. | The queue lock |
-| `QueryCache` | The cached queries: writing a response behind its guards, reading, observing and deleting payloads, size eviction, and each query's shape record. | The per-table write locks, and the eviction lock |
+| `MutationQueue` | The queue's rows and the records beside them: enqueue, the head checks, a send's outcome, rejection, retry, discard, the counts and lists the app is shown, the send record, the sync sequence, the rejected list, and retiring replayed writes. | The queue lock, and a read lock per table that its readers share |
+| `QueryCache` | The cached queries: writing a response behind its guards, reading, observing and deleting payloads, size eviction, and each query's shape record. | The per-table write locks, the eviction lock, and the query-shape records' own |
 | `QueryOverlay` | Every read served with the writes its payload does not hold laid over it, and the key indexes that find rows other queries hold. | None |
 | `CachePatcher` | Patching an online write into its table's cached queries, and marking stale the queries a write may have changed but cannot be patched into. | None of its own |
 | `LocalData` | Clearing local data, and dropping the cache for a new owner, in one transaction each. | None of its own |
 
 ### The lock order
 
-Outermost first: the replayer's send lock, then the file cache's lock (taken by clears and drops
-only), then a table's write lock, then the queue lock, then the clear lock, then the owner record's
-and the query-shape records' own locks. A clear or a drop takes no table lock: a write that holds
+Outermost first: the replayer's send lock, then the file cache's lock, then a table's write lock,
+then the queue lock, then the clear lock, then the owner record's and the query-shape records' own
+locks. Every commit, eviction, move and invalidation of a file takes the file cache's lock too, but
+only a clear or a drop holds it while taking the store's locks; its other users take none of them
+under it. A clear or a drop takes no table lock: a write that holds
 one checks the watermarks under the clear lock instead. The eviction lock and the queue's per-table
 read locks are taken with none of these held. No lock is held across a request: the send lock
 covers choosing a write and recording its outcome, and the queue lock short sections of database
@@ -607,9 +616,11 @@ changes, borrowing a row only from a query read with the same select list and em
 DELETE removes provable matches. A queued row is appended past a list's order and limit. A write
 that fails part-way is undone from a journal and reported once, and the rest still show.
 
-**Freshness ticks.** Every request reads a tick from a monotonic clock before it goes out, and every
-local write advances its table's watermark. A response whose request started before the table's
-last local write is refused, since it cannot describe that write, and the reader asks again. One
+**Freshness ticks.** Every request reads a tick from a monotonic clock before it goes out. Every
+write that changes the cache itself (an online write's patch, a replayed write, an emptied table)
+advances its table's watermark, and a clear or a drop moves its own. A queued write moves none: the
+overlay lays it over whatever response lands. A response whose request started before its table's
+watermark is refused, since it cannot describe that write, and the reader asks again. One
 whose request started before a clear is refused and not asked again, since it may carry the cleared
 session's token; one that started before the cache was dropped for a new owner is asked again once
 the cache is that owner's.
@@ -841,7 +852,9 @@ the send lock; the file cache takes its lock; one transaction deletes every muta
 and every cached payload, the engine's own records included, and records the owner, the anonymous
 identity when nobody is signed in with Auth, and nobody otherwise, so a user's first use claims it.
 The queue's in-memory records are set to known-empty, so no later read writes an old one back. Then
-`VACUUM` and a `TRUNCATE` checkpoint rewrite the database, and the cache directories go last. Without
+`VACUUM` rewrites the database and a `TRUNCATE` checkpoint empties its write-ahead log, tried for
+about a second while open reads hold it off and logged when they still do; the cache directories go
+last. Without
 Auth there is one identity and its cache is never dropped; only this call empties it.
 
 ### Logging
@@ -895,7 +908,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-09-28 | Rejected writes are a persisted list, not an event stream. | An event is lost whenever nothing listens, which is when rejections happen. |
 | 2026-09-28 | A built-in connectivity monitor, with the app's own flow as an override; a hint, never a gate (2026-10-02). | Without one, the Kotlin library and the Swift package would behave differently out of the box; as a gate, a wrong monitor strands writes, while as a hint it costs one failed attempt. |
 | 2026-09-28 | A second client on an open database throws. | Two clients on one database can send the same write twice. |
-| 2026-09-28 | Clearing local data leaves nothing recoverable from the files. | After a clear, the previous user's rows could still be read from the write-ahead log. |
+| 2026-09-28 | Clearing local data rewrites the database and empties its write-ahead log, so the deleted rows cannot be read from the files. | After a clear, the previous user's rows could still be read from the write-ahead log. |
 | 2026-09-28 | Nothing internal is visible to a consumer. | Only what is documented is API: internal code lives in internal packages, and a check in CI enforces it. |
 | 2026-09-28 | One tested supabase-kt minor per release, with a weekly canary (2026-09-30) and a warning at install (2026-10-02). | The artifact compiles supabase-kt's inline functions into itself, implements its `BucketApi` by delegation and matches its filter operators exhaustively, so a range of minors cannot be promised. |
 | 2026-09-28 | Before 1.0, a patch changes nothing in the contract; a supabase-kt minor or a schema version is a minor release. | No change should alter what a version promises without anyone noticing. |
@@ -926,26 +939,23 @@ The decisions that shaped the API and the engine, with the date each was settled
 
 ## Guarantees and limits
 
-What the library promises:
+What the library promises, each with the tests that pin it:
 
-- A user's queued writes are sent in the order they were made, across tables; none overtakes an
-  earlier one of the same user. Only an `OnlineOnly` write and a write the queue cannot hold go
-  around the queue.
-- A queued write is sent with its owner's token or not at all.
-- Nothing transient drops a write. A write leaves the queue only when the server accepts it, refuses
-  it for good (or the schema-cache bound is reached), or the app discards it or clears local data.
-- A keyed INSERT whose send may have reached the server is never inserted twice.
-- A read the cache answers sends no request.
-- A response that started before a local write, a clear or a change of owner never lands in the
-  cache.
-- With Auth, one user's cached rows and files are never served to another.
-- After `clearLocalData()`, nothing deleted can be read back from the database's files.
-- One database is open in one client at a time.
-- `close()` returns within 10 seconds of real time, a clear that has begun completes, and a write
-  whose answer arrives during it is applied and never sent again.
-- A failure in the library's background work never crashes the process, and the library writes
-  nothing to the console.
-- Logs at `INFO` and above carry no rows, filter values, tokens or object paths.
+| Promise | Pinned by |
+| --- | --- |
+| A user's queued writes are sent in the order they were made, across tables, and none overtakes an earlier one of the same user. The one exception is `syncPendingMutations(table)`, which sends that table's writes ahead of earlier ones in other tables, holding back only a `403` or `409` there. `OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so they go around the queue. | `WriteAheadOrderTest`, `MutationQueueReplayOrderTest`, `OnlineWriteJoinsQueueTest`, `HeadSendTest` |
+| With Auth installed, a queued write is sent with its owner's token or not at all. A PostgREST configured with its own `jwtToken` is not checked. | `ReplayTokenBindingTest`, `ReplayOwnerCheckTest`, `PerIdentityQueueTest` |
+| No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest` |
+| On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
+| Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
+| A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `OfflineStoreStaleRefreshWatermarkTest`, `OfflineStoreCacheOwnerTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
+| With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `OfflineStoreCacheOwnerTest` |
+| After `clearLocalData()`, the deleted rows cannot be read back from the database's files once its write-ahead log is checkpointed: at once when no open read holds the checkpoint off, and otherwise at the next checkpoint, with a warning logged. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest` |
+| Within one process, one database is open in one client at a time. | `OfflinePluginAndroidTest`, `OfflinePluginIosTest`, `IosClientLifecycleTest` |
+| `close()` returns within 10 seconds of real time, a clear that has begun completes, and a write whose answer arrives during it is applied and never sent again. | `SupabaseOfflineClientCloseTest`, `PluginCloseRaceAndroidTest`, `PluginCloseRaceIosTest`, `ClientCloseRaceAndroidTest`, `ClientCloseRaceIosTest`, `MutationQueueAcrossCloseTest` |
+| A failure in the library's background work never crashes the process. | `BackgroundFailureContainmentTest` |
+| The library writes nothing to the console itself; its messages go only where supabase-kt's logging sends them. | `scripts/check-no-console.py`, in CI |
+| Logs at `INFO` and above carry no rows, filter values, server messages or object paths. | `LogPrivacyTest`, `OfflineMutationQueueDecisionTest`, `OfflineBucketApiDownloadTest` |
 
 What it does not do yet, or does only so far:
 
@@ -957,7 +967,8 @@ What it does not do yet, or does only so far:
 | An upload does not seed the file cache, so a file uploaded just before going offline is not available offline. | 0.2.0 |
 | An INSERT whose key the server makes is inserted twice when its response is lost and it replays. Give rows their ids on the device. | No change planned |
 | A replayed UPSERT, UPDATE or DELETE overwrites a change another writer made between the lost response and the replay. | No change planned |
-| A queued UPDATE or DELETE whose filter the engine cannot evaluate changes nothing on screen until it is sent and the list fetched again; a queued row is appended past a list's order and limit. | No change planned |
+| A queued UPDATE or DELETE whose filter the engine cannot evaluate changes nothing on screen until it is sent and the list fetched again. | No change planned |
+| A queued row is appended past a list's order and limit, on every page it matches. | 0.2.0 |
 | A JSON `null` reads as SQL `NULL` for `is`, which is wrong for a `jsonb` column holding the JSON value `null`. | No change planned |
 | A list that also asks for a count is never cached, so a paginated screen with a total has no offline data. | No change planned |
 | Once a table has 1,000 newer replayed writes, a list cached before them and never fetched again stops showing the oldest. | No change planned |
