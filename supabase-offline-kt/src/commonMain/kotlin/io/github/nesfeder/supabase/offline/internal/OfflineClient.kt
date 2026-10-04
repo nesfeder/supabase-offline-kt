@@ -31,11 +31,10 @@ import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
-import io.github.nesfeder.supabase.offline.internal.cache.TableWriteLocks
+import io.github.nesfeder.supabase.offline.internal.cache.buildCacheComponents
 import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
@@ -271,108 +270,67 @@ internal class OfflineClient(
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
 
-    /*
-     * The cache and the mutation queue, built bottom up; [LocalData] states their lock order. The
-     * watermarks, the queue and the query cache are internal for the engine's tests.
-     */
-
-    /** The cached queries' table, every write to it counted. */
-    private val countingQueryCacheDao = PayloadWriteCountingDao(queryCacheDao)
-
-    /** The watermarks and the clear lock. */
-    internal val freshness = CacheFreshness(monotonicTick)
-
-    /** Whose the caches are: one identity's at a time with the Auth plugin, for good without. */
-    private val cacheOwnership =
-        CacheOwnership(
-            queryCacheDao = countingQueryCacheDao,
+    /** The cache and the mutation queue, built bottom up over the database's tables. */
+    private val components =
+        buildCacheComponents(
+            queryCacheDao = queryCacheDao,
             cachedFileDao = cachedFileDao,
-            json = EngineJson,
-            isCacheOwnedPerIdentity = authPluginOrNull() != null,
+            mutationDao = mutationDao,
+            queryCacheLimits = queryCacheLimits,
+            nowMillis = rowClock,
+            monotonicTick = monotonicTick,
+            primaryKeys = primaryKeys,
             identityProvider = ::overlayIdentityValue,
+            identityChanges = sessionChanges(),
+            isCacheOwnedPerIdentity = authPluginOrNull() != null,
+            ownerlessMutationsAreAnonymous = authPluginOrNull() == null,
+            engineLogger = engineLogger,
+            liveCacheKeysOf = liveQueries::liveCacheKeysOf,
+            allLiveCacheKeys = liveQueries::allLiveCacheKeys,
+            onQueriesMarkedStale = { table, cacheKeys ->
+                liveQueries.requestRefresh(table, cacheKeys)
+            },
             onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) },
         )
 
-    /** The per-table write locks the query cache, the patch and retirement share. */
-    private val tableWriteLocks = TableWriteLocks()
+    /*
+     * The parts the client calls. The three internal ones are not private for one test each, which
+     * no public call can drive deterministically.
+     */
 
-    /** The mutation queue; the overlay and the counts show the current session's writes only. */
-    internal val mutationQueue =
-        MutationQueue(
-            mutationDao = mutationDao,
-            queryCacheDao = countingQueryCacheDao,
-            json = EngineJson,
-            nowMillis = rowClock,
-            freshness = freshness,
-            tableWriteLocks = tableWriteLocks,
-            primaryKeys = primaryKeys,
-            identityProvider = ::overlayIdentityValue,
-            identityChanges = sessionChanges(),
-            ownerlessMutationsAreAnonymous = authPluginOrNull() == null,
-            liveCacheKeysOf = liveQueries::liveCacheKeysOf,
-            engineLogger = engineLogger,
-        )
+    /**
+     * The watermarks and the clear lock. `ClearLocalDataDuringWritesTest` reads the tick a response
+     * started at, to race it against a clear.
+     */
+    internal val freshness: CacheFreshness = components.freshness
 
-    /** The cached queries. */
-    internal val queryCache =
-        QueryCache(
-            queryCacheDao = countingQueryCacheDao,
-            queryCacheLimits = queryCacheLimits,
-            json = EngineJson,
-            nowMillis = rowClock,
-            freshness = freshness,
-            ownership = cacheOwnership,
-            mutationQueue = mutationQueue,
-            tableWriteLocks = tableWriteLocks,
-            allLiveCacheKeys = liveQueries::allLiveCacheKeys,
-        )
+    /** Whose the caches are: one identity's at a time with the Auth plugin, for good without. */
+    private val cacheOwnership: CacheOwnership = components.cacheOwnership
+
+    /**
+     * The mutation queue; the overlay and the counts show the current session's writes only.
+     * `ClearLocalDataDuringWritesTest` queues writes on it and reads its rejected list around a
+     * clear.
+     */
+    internal val mutationQueue: MutationQueue = components.mutationQueue
+
+    /**
+     * The cached queries. `ClearLocalDataDuringWritesTest` caches a response through it during a
+     * clear, and `QueryShapeRecordsTest` reads its query-shape records.
+     */
+    internal val queryCache: QueryCache = components.queryCache
 
     /** The reads served with the queued mutations laid over them. */
-    private val queryOverlay =
-        QueryOverlay(
-            queryCacheDao = countingQueryCacheDao,
-            json = EngineJson,
-            queryCache = queryCache,
-            mutationQueue = mutationQueue,
-            ownership = cacheOwnership,
-            primaryKeys = primaryKeys,
-            identityProvider = ::overlayIdentityValue,
-            identityChanges = sessionChanges(),
-            engineLogger = engineLogger,
-        )
+    private val queryOverlay: QueryOverlay = components.queryOverlay
 
     /**
      * Patches an online write into the cached queries; a query it marks stale fetches again if
      * live.
      */
-    private val cachePatcher =
-        CachePatcher(
-            queryCacheDao = countingQueryCacheDao,
-            json = EngineJson,
-            nowMillis = rowClock,
-            freshness = freshness,
-            ownership = cacheOwnership,
-            queryCache = queryCache,
-            queryOverlay = queryOverlay,
-            primaryKeys = primaryKeys,
-            liveCacheKeysOf = liveQueries::liveCacheKeysOf,
-            onQueriesMarkedStale = { table, cacheKeys ->
-                liveQueries.requestRefresh(table, cacheKeys)
-            },
-        )
+    private val cachePatcher: CachePatcher = components.cachePatcher
 
     /** Clears local data, or drops the caches for a new owner, in the one lock order. */
-    private val localData =
-        LocalData(
-            queryCacheDao = countingQueryCacheDao,
-            cachedFileDao = cachedFileDao,
-            mutationDao = mutationDao,
-            freshness = freshness,
-            ownership = cacheOwnership,
-            mutationQueue = mutationQueue,
-            queryCache = queryCache,
-            queryOverlay = queryOverlay,
-        )
+    private val localData: LocalData = components.localData
 
     /** The Storage file cache every bucket of this client shares. */
     private val fileCache =

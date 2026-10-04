@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
-import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
+import io.github.nesfeder.supabase.offline.internal.cache.CacheComponents
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.CacheOwnership
 import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
@@ -11,7 +11,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.LocalData
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
-import io.github.nesfeder.supabase.offline.internal.cache.TableWriteLocks
+import io.github.nesfeder.supabase.offline.internal.cache.buildCacheComponents
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
@@ -39,9 +39,9 @@ import kotlinx.serialization.json.JsonElement
 import okio.Path
 
 /**
- * The cache and mutation-queue components over one set of tables, wired as [OfflineClient] wires
- * its own; built by [newTestStore]. Its members after the components are test helpers, built on
- * what production uses.
+ * The cache and mutation-queue components over one set of tables, wired by [buildCacheComponents]
+ * as [OfflineClient]'s own are; built by [newTestStore]. Its members after the components are test
+ * helpers, built on what production uses.
  *
  * @param identityProvider the identity whose queued writes the overlay and counts show, or `null`
  *   for every identity's.
@@ -70,98 +70,50 @@ internal class TestStore(
     onCacheNotServed: () -> Unit,
 ) {
 
-    /** The cached queries' table, every write to it counted, as the components write it. */
-    val queryCacheDao: PayloadWriteCountingDao = PayloadWriteCountingDao(queryCacheDao)
-
-    /** The watermarks and the clear lock. */
-    val freshness: CacheFreshness = CacheFreshness(monotonicTick)
-
-    /** Whose the caches are. */
-    val cacheOwnership: CacheOwnership =
-        CacheOwnership(
-            queryCacheDao = this.queryCacheDao,
+    /** The components, which this store copies into its fields. */
+    private val components: CacheComponents =
+        buildCacheComponents(
+            queryCacheDao = queryCacheDao,
             cachedFileDao = cachedFileDao,
-            json = EngineJson,
-            isCacheOwnedPerIdentity = isCacheOwnedPerIdentity,
+            mutationDao = mutationDao,
+            queryCacheLimits = queryCacheLimits,
+            nowMillis = nowMillis,
+            monotonicTick = monotonicTick,
+            primaryKeys = primaryKeys,
             identityProvider = identityProvider,
+            identityChanges = identityChanges,
+            isCacheOwnedPerIdentity = isCacheOwnedPerIdentity,
+            ownerlessMutationsAreAnonymous = ownerlessMutationsAreAnonymous,
+            engineLogger = engineLogger,
+            liveCacheKeysOf = liveCacheKeysOf,
+            allLiveCacheKeys = allLiveCacheKeys,
+            onQueriesMarkedStale = onQueriesMarkedStale,
             onCacheNotServed = onCacheNotServed,
         )
 
-    /** The per-table write locks the query cache, the patch and retirement share. */
-    private val tableWriteLocks = TableWriteLocks()
+    /** The cached queries' table, every write to it counted, as the components write it. */
+    val queryCacheDao: PayloadWriteCountingDao = components.queryCacheDao
+
+    /** The watermarks and the clear lock. */
+    val freshness: CacheFreshness = components.freshness
+
+    /** Whose the caches are. */
+    val cacheOwnership: CacheOwnership = components.cacheOwnership
 
     /** The mutation queue. */
-    val mutationQueue: MutationQueue =
-        MutationQueue(
-            mutationDao = mutationDao,
-            queryCacheDao = this.queryCacheDao,
-            json = EngineJson,
-            nowMillis = nowMillis,
-            freshness = freshness,
-            tableWriteLocks = tableWriteLocks,
-            primaryKeys = primaryKeys,
-            identityProvider = identityProvider,
-            identityChanges = identityChanges,
-            ownerlessMutationsAreAnonymous = ownerlessMutationsAreAnonymous,
-            liveCacheKeysOf = liveCacheKeysOf,
-            engineLogger = engineLogger,
-        )
+    val mutationQueue: MutationQueue = components.mutationQueue
 
     /** The cached queries. */
-    val queryCache: QueryCache =
-        QueryCache(
-            queryCacheDao = this.queryCacheDao,
-            queryCacheLimits = queryCacheLimits,
-            json = EngineJson,
-            nowMillis = nowMillis,
-            freshness = freshness,
-            ownership = cacheOwnership,
-            mutationQueue = mutationQueue,
-            tableWriteLocks = tableWriteLocks,
-            allLiveCacheKeys = allLiveCacheKeys,
-        )
+    val queryCache: QueryCache = components.queryCache
 
     /** The reads served with the queued mutations laid over them. */
-    val queryOverlay: QueryOverlay =
-        QueryOverlay(
-            queryCacheDao = this.queryCacheDao,
-            json = EngineJson,
-            queryCache = queryCache,
-            mutationQueue = mutationQueue,
-            ownership = cacheOwnership,
-            primaryKeys = primaryKeys,
-            identityProvider = identityProvider,
-            identityChanges = identityChanges,
-            engineLogger = engineLogger,
-        )
+    val queryOverlay: QueryOverlay = components.queryOverlay
 
     /** Patches an online write into the cached queries. */
-    val cachePatcher: CachePatcher =
-        CachePatcher(
-            queryCacheDao = this.queryCacheDao,
-            json = EngineJson,
-            nowMillis = nowMillis,
-            freshness = freshness,
-            ownership = cacheOwnership,
-            queryCache = queryCache,
-            queryOverlay = queryOverlay,
-            primaryKeys = primaryKeys,
-            liveCacheKeysOf = liveCacheKeysOf,
-            onQueriesMarkedStale = onQueriesMarkedStale,
-        )
+    val cachePatcher: CachePatcher = components.cachePatcher
 
     /** Clears local data, or drops the caches for a new owner. */
-    val localData: LocalData =
-        LocalData(
-            queryCacheDao = this.queryCacheDao,
-            cachedFileDao = cachedFileDao,
-            mutationDao = mutationDao,
-            freshness = freshness,
-            ownership = cacheOwnership,
-            mutationQueue = mutationQueue,
-            queryCache = queryCache,
-            queryOverlay = queryOverlay,
-        )
+    val localData: LocalData = components.localData
 
     /* ──────────── Test helpers that read this store's tables and wiring ──────────── */
 

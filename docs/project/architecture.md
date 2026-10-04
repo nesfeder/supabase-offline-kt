@@ -489,7 +489,8 @@ lambda, so supabase-kt's call shapes resolve unchanged. These need an edit:
 ### The components
 
 The plugin forwards every call to one internal `OfflineClient`, which builds the parts below over
-the database's tables and owns their lifecycle. Calls go downward. The cache reports back up only
+the database's tables and owns their lifecycle. One function, `buildCacheComponents`, wires the
+cache and queue parts, for the client and for the engine's tests alike. Calls go downward. The cache reports back up only
 through callbacks the client wires in: which queries are live, which went stale, who the current
 identity is, and a cache another identity owns. The client also builds the public types it hands
 out.
