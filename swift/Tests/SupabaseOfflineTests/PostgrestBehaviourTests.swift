@@ -510,6 +510,27 @@ struct PostgrestBehaviourTests {
         try await client.close()
     }
 
+    @Test func aTokenWithALineBreakFailsWithoutQuotingItsHeader() async throws {
+        // Given an access token that ends in a line break, which no HTTP header may carry
+        let server = RecordingFakeServer(rows: "[]")
+        let token = "eyJhbGciOi.secret-token-tail\n"
+        let client = SupabaseOfflineClient.inMemory(config: .init(accessToken: { token }), server: server.server)
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.from("todos").select(readStrategy: .networkOnly).execute()
+        }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
+        let message = error?.message ?? ""
+        #expect(!message.contains("Bearer"), "\(message)")
+        #expect(!message.contains("secret"), "\(message)")
+        #expect(!message.contains("eyJ"), "\(message)")
+        #expect(server.requests.values.isEmpty)
+        try await client.close()
+    }
+
     // MARK: - Embedded columns
 
     @Test func twoConditionsOnAnEmbeddedColumnAreSentInThatTablesOwnGroup() async throws {

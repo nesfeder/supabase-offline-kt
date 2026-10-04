@@ -98,8 +98,7 @@ enum PostgrestFilterText {
     /// The bounds of `(lower,upper)`, the one range form the core sends.
     static func range(of text: String) throws(FilterTextError) -> FilterNode.ConditionValue {
         let refusal = FilterTextError(
-            message: "A range is written (lower,upper), with exclusive bounds, the one form this build sends; "
-                + "\"\(text)\" is not"
+            message: "A range is written (lower,upper), with exclusive bounds, the one form this build sends"
         )
         guard let bounds = try? listElements(of: text, opening: "(", closing: ")"), bounds.count == 2 else {
             throw refusal
@@ -113,7 +112,7 @@ enum PostgrestFilterText {
     static func listElements(of text: String, opening: Character, closing: Character) throws(FilterTextError) -> [String] {
         var reader = FilterTextReader(text)
         guard reader.read(opening) else {
-            throw FilterTextError(message: "Expected a list in \(opening)\(closing), not \"\(text)\"")
+            throw FilterTextError(message: "Expected a list in \(opening)\(closing)")
         }
         var elements: [String] = []
         if !reader.read(closing) {
@@ -163,10 +162,10 @@ struct FilterTextReader {
         return true
     }
 
-    /// An error naming what was expected and where.
+    /// An error naming what was expected and how far into the text, never quoting the text.
     func unexpected(_ expected: String) -> FilterTextError {
-        let rest = isAtEnd ? "the end" : "\"\(String(characters[position...]))\""
-        return FilterTextError(message: "Expected \(expected) at \(rest)")
+        let place = isAtEnd ? "at the end of the filter text" : "at character \(position + 1) of the filter text"
+        return FilterTextError(message: "Expected \(expected) \(place)")
     }
 
     /// `[not.]name[(argument)]`, stopping before the `.` that leads to the value.

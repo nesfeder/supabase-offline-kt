@@ -219,6 +219,12 @@ struct FilterDescriptionTests {
         }
         #expect(error?.code == .invalidRequest)
         #expect(error?.message.contains("(lower,upper)") == true)
+        #expect(error?.message.contains("[1,5)") == false)
+        let unreadable = #expect(throws: OfflineError.self) {
+            try client.from("todos").select().or("done.eq.true,zqx").descriptionText()
+        }
+        #expect(unreadable?.code == .invalidRequest)
+        #expect(unreadable?.message.contains("zqx") == false)
     }
 
     // MARK: - The rest of a description

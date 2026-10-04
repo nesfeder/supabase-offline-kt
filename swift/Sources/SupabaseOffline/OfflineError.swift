@@ -99,7 +99,8 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
     /// What failed.
     public let code: Code
 
-    /// What happened, in words; it never quotes a token, nor a request's URL or values.
+    /// What happened, in words. The library's own messages never quote a token, nor a request's URL
+    /// or values; a server's text is passed on as the server wrote it.
     public let message: String
 
     /// The server's refusal: set for ``Code/server``, and for a ``Code/syncFailed`` the server
