@@ -171,6 +171,46 @@ class ChannelDownloadStatusTest {
         assertEquals(0, bytesLeftIn(channel).size)
     }
 
+    @Test
+    fun a_redirected_download_caches_the_bytes_it_is_sent_to() = runTest {
+        // Given — Storage answers each object's download with a redirect to where its bytes are,
+        // and nothing is cached
+        server.objects["$BUCKET/$REDIRECT_TARGET"] = CONTENT
+        val paths = listOf(PATH, "u/second.jpg", "u/third.jpg")
+        paths.forEach { path -> server.redirects["$BUCKET/$path"] = "$BUCKET/$REDIRECT_TARGET" }
+        val channel = ByteChannel(autoFlush = true)
+
+        // When — the app asks for a cached file, downloads one into a channel and one as bytes
+        val cached = bucket.ensureCachedFile(paths[0])
+        bucket.downloadAuthenticated(paths[1], channel) {}
+        val bytes = bucket.downloadAuthenticated(paths[2]) {}
+
+        // Then — every variant follows the redirect, and the cache holds the bytes it led to
+        assertContentEquals(CONTENT, contentOf(cached.path))
+        assertContentEquals(CONTENT, receivedBytes(channel))
+        assertContentEquals(CONTENT, contentOf(assertNotNull(bucket.cachedFile(paths[1])).path))
+        assertContentEquals(CONTENT, bytes)
+    }
+
+    @Test
+    fun a_redirect_to_a_missing_object_throws_what_the_bytes_download_throws() = runTest {
+        // Given — Storage redirects the object's download to a path that holds nothing
+        server.redirects["$BUCKET/$PATH"] = "$BUCKET/$REDIRECT_TARGET"
+        val bytesFailure = failureOf { bucket.downloadAuthenticated(PATH) {} }
+        val channel = ByteChannel(autoFlush = true)
+
+        // When — the app downloads it into a channel and asks for the cached file
+        val channelFailure = failureOf { bucket.downloadAuthenticated(PATH, channel) {} }
+        val ensureFailure = failureOf { bucket.ensureCachedFile(PATH) }
+
+        // Then — the bytes download's not-found from both; no bytes, nothing cached
+        assertIs<NotFoundRestException>(bytesFailure)
+        assertSameFailure(bytesFailure, channelFailure)
+        assertSameFailure(bytesFailure, ensureFailure)
+        assertEquals(0, bytesLeftIn(channel).size)
+        assertNull(bucket.cachedFile(PATH))
+    }
+
     private suspend fun failureOf(call: suspend () -> Unit): Throwable =
         assertNotNull(runCatching { call() }.exceptionOrNull(), "the call returned")
 
@@ -179,6 +219,9 @@ class ChannelDownloadStatusTest {
         assertEquals((expected as RestException).statusCode, (actual as RestException).statusCode)
         assertEquals(expected.error, actual.error)
     }
+
+    private fun contentOf(cachedPath: String): ByteArray =
+        FileSystem.SYSTEM.read(cachedPath.toPath()) { readByteArray() }
 
     private suspend fun receivedBytes(channel: ByteChannel): ByteArray =
         channel.readRemaining().readByteArray()
@@ -193,6 +236,7 @@ class ChannelDownloadStatusTest {
         const val BUCKET = "photos"
         const val PATH = "u/photo.jpg"
         const val NAME_SENT_UNENCODED = "u/photo?1.jpg"
+        const val REDIRECT_TARGET = "objects/real-photo.jpg"
         val CONTENT = "the photo's bytes".encodeToByteArray()
     }
 }

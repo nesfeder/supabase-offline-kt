@@ -8,8 +8,12 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.storage.Storage
 import io.ktor.client.call.save
+import io.ktor.client.plugins.HttpRedirect
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.plugin
+import io.ktor.client.plugins.pluginOrNull
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSuccess
 import io.ktor.util.AttributeKey
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -39,6 +43,16 @@ private object CheckedDownloadKey : CoroutineContext.Key<CheckedDownload>
 internal suspend fun <T> checkingDownloadStatus(download: suspend () -> T): T =
     withContext(CheckedDownload) { download() }
 
+/** The statuses Ktor's `HttpRedirect` follows for a download's `GET`. */
+private val FOLLOWED_REDIRECTS: Set<HttpStatusCode> =
+    setOf(
+        HttpStatusCode.MovedPermanently,
+        HttpStatusCode.Found,
+        HttpStatusCode.SeeOther,
+        HttpStatusCode.TemporaryRedirect,
+        HttpStatusCode.PermanentRedirect,
+    )
+
 /** Set on a client's HTTP client once the download status check is installed. */
 private val DownloadStatusCheckInstallation =
     AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.DownloadStatusCheck")
@@ -47,8 +61,10 @@ private val DownloadStatusCheckInstallation =
  * Installs, once per client with the Storage plugin, an interceptor next to the engine that fails a
  * download made through [checkingDownloadStatus] whose response is not a success: with the
  * exception the Storage plugin makes of that response, which is what its bytes download throws. The
- * response is read whole first, so its connection is released. An HTTP retry plugin the app
- * installed sits further from the engine, and sees the failure as an exception.
+ * response is read whole first, so its connection is released. A redirect the client follows passes
+ * through, and the answer it leads to is checked in turn. An HTTP retry plugin the app installed,
+ * or a Ktor bearer-auth refresh on `401`, sits further from the engine, and sees the failure as an
+ * exception.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installDownloadStatusCheck() {
@@ -57,11 +73,17 @@ internal fun SupabaseClient.installDownloadStatusCheck() {
     val installation =
         client.attributes.computeIfAbsent(DownloadStatusCheckInstallation) { AtomicBoolean(false) }
     if (!installation.compareAndSet(expectedValue = false, newValue = true)) return
+    val followsRedirects = client.pluginOrNull(HttpRedirect) != null
     client.plugin(HttpSend).intercept { request ->
         val call = execute(request)
+        val status = call.response.status
+        if (currentCoroutineContext()[CheckedDownloadKey] == null || status.isSuccess())
+            return@intercept call
+        // Not the answer: HttpRedirect, further from the engine, asks again, back through here
         if (
-            currentCoroutineContext()[CheckedDownloadKey] == null ||
-                call.response.status.isSuccess()
+            followsRedirects &&
+                status in FOLLOWED_REDIRECTS &&
+                call.response.headers[HttpHeaders.Location] != null
         )
             return@intercept call
         val saved = call.save()

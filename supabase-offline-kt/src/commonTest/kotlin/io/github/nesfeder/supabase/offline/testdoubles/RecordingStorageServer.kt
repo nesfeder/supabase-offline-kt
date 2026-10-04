@@ -65,6 +65,12 @@ internal class RecordingStorageServer {
      */
     var downloadRefusal: HttpStatusCode? = null
 
+    /**
+     * Downloads Storage answers with a redirect: the `bucket/path` key to the `bucket/path` the
+     * `302`'s `Location` names, as a proxy or CDN in front of Storage may.
+     */
+    val redirects: MutableMap<String, String> = mutableMapOf()
+
     /** Completed each time a request reaches the server (and before it waits on [gate]). */
     var requestArrived: CompletableDeferred<Unit> = CompletableDeferred()
 
@@ -85,8 +91,23 @@ internal class RecordingStorageServer {
         if (!online) throw IOException("network unreachable")
         val segments =
             request.url.encodedPath.removePrefix("/").split('/').map { it.decodeURLPart() }
+        val redirect =
+            redirects.entries.firstOrNull { (from, _) ->
+                request.url.encodedPath.endsWith("/$from")
+            }
         // storage/v1/<kind...>/<bucket>/<path...>
         when {
+            redirect != null ->
+                respond(
+                    content = "",
+                    status = HttpStatusCode.Found,
+                    headers =
+                        headersOf(
+                            HttpHeaders.Location,
+                            request.url.toString().replace(redirect.key, redirect.value),
+                        ),
+                )
+
             segments.take(4) == listOf("storage", "v1", "upload", "resumable") ->
                 resumable(request.method.value, segments.drop(4).firstOrNull(), request)
 
