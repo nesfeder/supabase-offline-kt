@@ -23,6 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import okio.FileSystem
@@ -102,6 +103,8 @@ internal fun openOfflineClient(
  * @param emptyWriteAheadLog tries once, waiting for no read, to empty the write-ahead log.
  * @param onClose releases what the opener opened, when the client closes.
  * @param onStillClosing told when a close returns before the release.
+ * @param closeWait how long a close waits for calls in flight; a test whose client work never runs
+ *   shortens it.
  * @param fileSystem where the Storage file cache keeps its files: the device's disk unless a test
  *   keeps them in memory.
  * @param markFileUsed records a use time on one of [fileSystem]'s files.
@@ -123,6 +126,7 @@ internal fun Offline.Config.buildOfflineClient(
     emptyWriteAheadLog: suspend () -> Boolean = { true },
     onClose: () -> Unit = {},
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
+    closeWait: Duration = OfflineClient.CLOSE_WAIT,
     fileSystem: FileSystem = FileSystem.SYSTEM,
     markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
     clock: Clock = Clock.System,
@@ -145,6 +149,7 @@ internal fun Offline.Config.buildOfflineClient(
         emptyWriteAheadLog = emptyWriteAheadLog,
         onClose = onClose,
         onStillClosing = onStillClosing,
+        closeWait = closeWait,
         primaryKeys = primaryKeysByTable(),
         responseTrust = responseTrustPolicy(),
         config = this,

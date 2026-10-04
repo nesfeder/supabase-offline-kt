@@ -21,6 +21,7 @@ import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -142,6 +143,7 @@ class PluginCloseTest {
                     openInMemory(
                         mutationDao = store.mutationDao,
                         coordinatorScope = idleCoroutineScope(),
+                        closeWait = 100.milliseconds,
                     )
                 }
             }
