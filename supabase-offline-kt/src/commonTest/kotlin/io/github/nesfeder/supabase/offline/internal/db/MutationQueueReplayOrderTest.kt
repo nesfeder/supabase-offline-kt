@@ -104,7 +104,10 @@ class MutationQueueReplayOrderTest {
         // Then — nothing after the failure is sent, and both writes stay queued
         assertEquals(0, synced)
         assertEquals(listOf(TASKS), server.requests.map { it.table })
-        assertEquals(listOf(TASKS, PHOTOS), store.allPendingMutations().map { it.table })
+        assertEquals(
+            listOf(TASKS, PHOTOS),
+            store.mutationQueue.allPendingMutations().map { it.table },
+        )
     }
 
     @Test
@@ -148,7 +151,10 @@ class MutationQueueReplayOrderTest {
         replayer.syncTable(table = PHOTOS)
 
         // Then — the photo is held for a later sweep, not dropped
-        assertEquals(listOf(TASKS, PHOTOS), store.allPendingMutations().map { it.table })
+        assertEquals(
+            listOf(TASKS, PHOTOS),
+            store.mutationQueue.allPendingMutations().map { it.table },
+        )
 
         // And — the next full sweep delivers both, parent first
         val synced = replayer.syncAllTables()
@@ -169,7 +175,10 @@ class MutationQueueReplayOrderTest {
         replayer.syncTable(table = PHOTOS)
 
         // Then
-        assertEquals(listOf(TASKS, PHOTOS), store.allPendingMutations().map { it.table })
+        assertEquals(
+            listOf(TASKS, PHOTOS),
+            store.mutationQueue.allPendingMutations().map { it.table },
+        )
     }
 
     private fun row(vararg pairs: Pair<String, String>): JsonObject = buildJsonObject {

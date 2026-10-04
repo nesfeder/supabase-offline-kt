@@ -132,7 +132,7 @@ class OnlineWriteJoinsQueueTest {
 
             // Then — applied, overlaid, and gone from the queue
             assertEquals(MutationOutcome.Applied::class, outcome::class)
-            assertEquals(0, store.allPendingMutations().size)
+            assertEquals(0, store.mutationQueue.allPendingMutations().size)
             assertEquals(
                 """[{"id":1,"title":"B"}]""",
                 queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload,

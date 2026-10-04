@@ -57,7 +57,7 @@ class ReplayTokenBindingTest {
 
     /** Queues a keyed INSERT for [owner] without sending it, as a write made offline is. */
     private suspend fun queueFor(owner: String, id: String) {
-        store.enqueueOwnedBy(owner) {
+        store.mutationQueue.enqueueOwnedBy(owner) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"$id"}]"""))
         }
     }
@@ -84,8 +84,15 @@ class ReplayTokenBindingTest {
         assertEquals(emptyList(), postsCarrying("user-b"))
         assertEquals(SyncStop.SessionChanged, report.stop)
         assertEquals(0, report.syncedCount)
-        assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.owner })
-        assertFalse(store.hasUnconfirmedSend(store.allPendingMutations().single().id))
+        assertEquals(
+            listOf("user:user-a"),
+            store.mutationQueue.allPendingMutations().map { it.owner },
+        )
+        assertFalse(
+            store.mutationQueue.hasUnconfirmedSend(
+                store.mutationQueue.allPendingMutations().single().id
+            )
+        )
 
         // When — A signs in again and a pass runs
         supabase.signInForTest("user-a")
@@ -95,7 +102,7 @@ class ReplayTokenBindingTest {
         assertEquals(1, later.syncedCount)
         assertEquals(listOf("""[{"id":"a1"}]"""), postsCarrying("user-a"))
         assertEquals(listOf<String?>("return=minimal"), writePrefers())
-        assertEquals(emptyList(), store.allPendingMutations())
+        assertEquals(emptyList(), store.mutationQueue.allPendingMutations())
     }
 
     @Test
@@ -104,8 +111,8 @@ class ReplayTokenBindingTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         supabase.signInForTest("user-a")
         queueFor("user:user-a", id = "a1")
-        val id = store.allPendingMutations().single().id
-        store.markSendUnconfirmed(id)
+        val id = store.mutationQueue.allPendingMutations().single().id
+        store.mutationQueue.markSendUnconfirmed(id)
         val replayer = newTestMutationQueueReplayer(store = store, supabase = supabase)
         changeTheSessionWhenASendStarts { supabase.signInForTest("user-b") }
 
@@ -114,7 +121,7 @@ class ReplayTokenBindingTest {
 
         // Then — the earlier send's record is kept
         assertEquals(SyncStop.SessionChanged, report.stop)
-        assertTrue(store.hasUnconfirmedSend(id))
+        assertTrue(store.mutationQueue.hasUnconfirmedSend(id))
 
         // When — A is back
         supabase.signInForTest("user-a")
@@ -142,7 +149,7 @@ class ReplayTokenBindingTest {
         // Then — A's write did not go out on the anon key; it waits for A
         assertTrue(server.requests.isEmpty(), "sent: ${server.requests}")
         assertEquals(SyncStop.SessionChanged, report.stop)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -164,8 +171,15 @@ class ReplayTokenBindingTest {
         // this attempt recorded is cleared
         assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(emptyList(), postsCarrying("user-b"))
-        assertEquals(listOf("user:user-a"), store.allPendingMutations().map { it.owner })
-        assertFalse(store.hasUnconfirmedSend(store.allPendingMutations().single().id))
+        assertEquals(
+            listOf("user:user-a"),
+            store.mutationQueue.allPendingMutations().map { it.owner },
+        )
+        assertFalse(
+            store.mutationQueue.hasUnconfirmedSend(
+                store.mutationQueue.allPendingMutations().single().id
+            )
+        )
 
         // When — A is back
         supabase.signInForTest("user-a")
@@ -191,7 +205,7 @@ class ReplayTokenBindingTest {
         // Then — the anonymous write did not go out under B's token
         assertEquals(emptyList(), postsCarrying("user-b"))
         assertEquals(SyncStop.SessionChanged, report.stop)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -223,7 +237,7 @@ class ReplayTokenBindingTest {
         // Then — nothing sent and the write still queued, and one WARN says why
         assertTrue(stops.all { it == SyncStop.SessionChanged }, "$stops")
         assertTrue(server.requests.isEmpty(), "${server.requests}")
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
         assertEquals(
             1,
             logger.entriesAt(EngineLogLevel.WARNING).count { "token" in it.message },

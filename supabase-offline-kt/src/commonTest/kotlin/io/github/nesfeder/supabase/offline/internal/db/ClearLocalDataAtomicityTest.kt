@@ -32,7 +32,7 @@ class ClearLocalDataAtomicityTest {
     @Test
     fun a_clear_that_fails_part_way_does_not_hand_one_users_mutations_to_the_next() = runTest {
         // Given — user A's pending edit, and a clear that fails part-way
-        store.enqueueOwnedBy(USER_A.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(USER_A.storedValue) {
             enqueueUpdate(
                 TABLE,
                 Json.parseToJsonElement("""{"title":"A's private edit"}"""),
@@ -70,7 +70,7 @@ class ClearLocalDataAtomicityTest {
 
         // When — the write reaches the mutation queue
         val outcome =
-            store.enqueueOwnedBy(USER_A.storedValue, startedAtTick) {
+            store.mutationQueue.enqueueOwnedBy(USER_A.storedValue, startedAtTick) {
                 enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"stale"}"""), byId("1"))
             }
 

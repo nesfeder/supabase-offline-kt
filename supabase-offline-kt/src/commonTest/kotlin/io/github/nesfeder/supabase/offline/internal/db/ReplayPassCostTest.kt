@@ -27,7 +27,7 @@ class ReplayPassCostTest {
     fun a_pass_reads_the_whole_queue_a_constant_number_of_times() = runTest {
         // Given — 200 queued mutations of one identity
         repeat(QUEUED) { index ->
-            store.enqueueOwnedBy(USER.storedValue) {
+            store.mutationQueue.enqueueOwnedBy(USER.storedValue) {
                 enqueueUpdate(
                     TABLE,
                     Json.parseToJsonElement("""{"title":"$index"}"""),

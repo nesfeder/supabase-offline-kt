@@ -105,7 +105,7 @@ class MutationQueueReplayerTest {
             remoteTable.recordedInsertBodies.size,
             "only the first mutation was attempted",
         )
-        val pending = store.pendingMutationsForTable(table)
+        val pending = store.mutationQueue.pendingMutationsForTable(table)
         assertEquals(
             listOf("""[{"n":"a"}]""", """[{"n":"b"}]"""),
             pending.map { it.bodyJson },
@@ -144,7 +144,7 @@ class MutationQueueReplayerTest {
         assertEquals(0, store.pendingMutationCount())
         assertEquals(
             listOf(403),
-            store.rejectedList.rejections().map { it.serverError?.status },
+            store.mutationQueue.rejectedList.rejections().map { it.serverError?.status },
         )
     }
 
@@ -336,7 +336,7 @@ class MutationQueueReplayerTest {
         assertEquals(0, synced)
         assertEquals(0, remoteTable.recordedDeleteCount, "unfiltered DELETE must never execute")
         assertEquals(0, store.pendingMutationCount(), "the legacy null-filter row leaves the queue")
-        assertEquals(1, store.rejectedList.rejections().size)
+        assertEquals(1, store.mutationQueue.rejectedList.rejections().size)
     }
 
     @Test

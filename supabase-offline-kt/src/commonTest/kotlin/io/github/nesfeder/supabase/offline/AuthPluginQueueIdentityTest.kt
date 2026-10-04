@@ -92,7 +92,7 @@ class AuthPluginQueueIdentityTest {
             // Then — A's write queued and went out under A
             assertIs<MutationOutcome.Queued>(userAOutcome)
             assertEquals(1, signedIn.syncedCount)
-            assertEquals(0, store.allPendingMutations().size)
+            assertEquals(0, store.mutationQueue.allPendingMutations().size)
         }
 
     private fun jwt(subject: String): String {

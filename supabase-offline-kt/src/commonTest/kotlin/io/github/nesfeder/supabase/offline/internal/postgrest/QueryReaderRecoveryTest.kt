@@ -1012,7 +1012,10 @@ class QueryReaderRecoveryTest {
                         )
                     },
             )
-            store.markMutationSynced(id = mutationDao.inserted.single().id, table = "plans")
+            store.mutationQueue.recordReplayed(
+                id = mutationDao.inserted.single().id,
+                table = "plans",
+            )
 
             // When: the next SELECT comes back RLS-shaped empty and the cache refuses it
             serverRows = "[]"

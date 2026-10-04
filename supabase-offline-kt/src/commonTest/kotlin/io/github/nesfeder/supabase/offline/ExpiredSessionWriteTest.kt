@@ -107,8 +107,8 @@ class ExpiredSessionWriteTest {
         // Then — queued, unsent, and not recorded as possibly on the server
         assertIs<MutationOutcome.Queued>(inserted)
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
-        val queued = store.allPendingMutations().single()
-        assertFalse(store.hasUnconfirmedSend(queued.id))
+        val queued = store.mutationQueue.allPendingMutations().single()
+        assertFalse(store.mutationQueue.hasUnconfirmedSend(queued.id))
 
         // And — with A's session good again it replays as the plain INSERT it is
         assertEquals("return=minimal", replayedPreferOnceSignedIn(server, supabase))
@@ -117,10 +117,10 @@ class ExpiredSessionWriteTest {
     @Test
     fun online_a_replay_whose_refresh_is_refused_is_kept_as_never_sent() = runTest {
         // Given — A's INSERT queued and never sent; A's session expired, its refresh refused
-        store.enqueueOwnedBy("user:user-a") {
+        store.mutationQueue.enqueueOwnedBy("user:user-a") {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        val queued = store.allPendingMutations().single()
+        val queued = store.mutationQueue.allPendingMutations().single()
         val server =
             RecordingPostgrestServer(answer = { request -> answerRefusingRefresh(request) })
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
@@ -132,7 +132,7 @@ class ExpiredSessionWriteTest {
         // Then — the pass stops before sending, and the write is not recorded as possibly sent
         assertIs<SyncStop.TransientFailure>(report.stop)
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
-        assertFalse(store.hasUnconfirmedSend(queued.id))
+        assertFalse(store.mutationQueue.hasUnconfirmedSend(queued.id))
 
         // And
         assertEquals("return=minimal", replayedPreferOnceSignedIn(server, supabase))

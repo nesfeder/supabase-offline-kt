@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.MutationOperation as MutationQueueOperation
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
@@ -56,7 +57,10 @@ class MutationIdAndSyncReportTest {
 
         // Then
         assertTrue(second > first)
-        assertEquals(listOf(first, second), restarted.allPendingMutations().map { it.id })
+        assertEquals(
+            listOf(first, second),
+            restarted.mutationQueue.allPendingMutations().map { it.id },
+        )
     }
 
     @Test
@@ -90,7 +94,7 @@ class MutationIdAndSyncReportTest {
         // When
         val pending =
             store.pendingMutationsFlow(null).first().mapNotNull { row ->
-                row.toPendingMutation(store.json, DefaultPrimaryKeys)
+                row.toPendingMutation(EngineJson, DefaultPrimaryKeys)
             }
 
         // Then

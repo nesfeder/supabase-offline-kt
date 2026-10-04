@@ -40,8 +40,8 @@ class QueueChangesReachLiveReadersTest {
             assertEquals("""[{"id":1,"title":"server"},{"id":2,"title":"queued"}]""", shown.value)
 
             // When
-            store.rejectMutation(
-                store.allPendingMutations().single { it.id == id },
+            store.mutationQueue.rejectMutation(
+                store.mutationQueue.allPendingMutations().single { it.id == id },
                 "refused",
                 null,
             )
@@ -56,8 +56,8 @@ class QueueChangesReachLiveReadersTest {
             // Given — a rejected write, and a reader showing the table without it
             store.queryCache.cacheResponse(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
             val id = store.enqueueInsert(TABLE, rows("""[{"id":2,"title":"queued"}]"""))
-            store.rejectMutation(
-                store.allPendingMutations().single { it.id == id },
+            store.mutationQueue.rejectMutation(
+                store.mutationQueue.allPendingMutations().single { it.id == id },
                 "refused",
                 null,
             )
@@ -65,7 +65,7 @@ class QueueChangesReachLiveReadersTest {
             assertEquals(SERVER_ROWS, shown.value)
 
             // When
-            store.retryRejectedMutation(id, null)
+            store.mutationQueue.retryRejectedMutation(id, null)
 
             // Then
             assertEquals("""[{"id":1,"title":"server"},{"id":2,"title":"queued"}]""", shown.value)
@@ -87,7 +87,7 @@ class QueueChangesReachLiveReadersTest {
             assertEquals("""[{"id":1,"title":"server"},{"title":"keyless"}]""", shown.value)
 
             // When — it replays, and a refresh started after the replay brings its row back
-            store.markMutationSynced(id, TABLE)
+            store.mutationQueue.recordReplayed(id, TABLE)
             store.queryCache.cacheResponse(
                 TABLE,
                 CACHE_KEY,

@@ -135,7 +135,7 @@ class PersistedNamesTest {
     @Test
     fun a_rejected_list_is_written_with_these_keys() = runTest {
         // Given / When — an entry with every field set
-        store.rejectedList.addRejection(
+        store.mutationQueue.rejectedList.addRejection(
             StoredRejection(
                 id = 7,
                 table = "todos",
@@ -177,7 +177,7 @@ class PersistedNamesTest {
     fun the_count_of_dropped_rejections_is_written_under_this_key() = runTest {
         // Given / When — one more rejection than the list keeps
         repeat(MAX_REJECTED_MUTATIONS + 1) { index ->
-            store.rejectedList.addRejection(
+            store.mutationQueue.rejectedList.addRejection(
                 StoredRejection(
                     id = index + 1L,
                     table = "t",
@@ -200,10 +200,10 @@ class PersistedNamesTest {
     @Test
     fun a_mutations_owner_is_stored_as_these_values() = runTest {
         // Given / When — one write by a user, one by nobody signed in
-        store.enqueueOwnedBy(QueueIdentity.User("user-a").storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.User("user-a").storedValue) {
             enqueueDelete(table = "todos", filter = null)
         }
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueDelete(table = "todos", filter = null)
         }
 
@@ -221,8 +221,8 @@ class PersistedNamesTest {
                 filter = null,
             )
         }
-        store.markMutationSynced(id = 1, table = "todos")
-        store.markMutationSynced(id = 2, table = "todos")
+        store.mutationQueue.recordReplayed(id = 1, table = "todos")
+        store.mutationQueue.recordReplayed(id = 2, table = "todos")
 
         // When
         store.queryCache.cacheResponse(
@@ -246,9 +246,9 @@ class PersistedNamesTest {
         )
 
         // When — its send starts, and later it replays
-        store.markSendUnconfirmed(1)
+        store.mutationQueue.markSendUnconfirmed(1)
         val started = mutationDao.inserted.single().sendUnconfirmed
-        store.markMutationSynced(1, "todos")
+        store.mutationQueue.recordReplayed(1, "todos")
 
         // Then — the row's `send_unconfirmed` column holds it, and no reserved row does
         assertTrue(started)
@@ -262,7 +262,7 @@ class PersistedNamesTest {
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
 
         // When
-        store.rejectedList.rejections()
+        store.mutationQueue.rejectedList.rejections()
 
         // Then
         assertEquals(

@@ -59,7 +59,7 @@ class SchemaCacheMissTest {
         assertEquals(1, missed.remainingCount)
         assertEquals(1, after.syncedCount)
         assertEquals("return=minimal", server.requests.last().prefer)
-        assertFalse(store.hasUnconfirmedSend(id))
+        assertFalse(store.mutationQueue.hasUnconfirmedSend(id))
     }
 
     @Test
@@ -80,7 +80,7 @@ class SchemaCacheMissTest {
 
         // Then — the caller is told it is queued, and it waits for the cache
         assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
         assertEquals(1, mutationDao.inserted.single().schemaCacheMisses)
     }
 
@@ -149,10 +149,10 @@ class SchemaCacheMissTest {
     }
 
     private suspend fun enqueueInsert(): Long {
-        store.enqueueOwnedBy(null) {
+        store.mutationQueue.enqueueOwnedBy(null) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        return store.allPendingMutations().single().id
+        return store.mutationQueue.allPendingMutations().single().id
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

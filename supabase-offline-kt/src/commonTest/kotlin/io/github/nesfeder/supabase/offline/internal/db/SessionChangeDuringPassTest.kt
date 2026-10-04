@@ -51,7 +51,7 @@ class SessionChangeDuringPassTest {
         assertEquals(1, server.requests.size, "requests sent: ${server.requests.map { it.body }}")
         assertEquals(
             listOf("""{"title":"2"}""", """{"title":"3"}"""),
-            store.allPendingMutations().map { it.bodyJson },
+            store.mutationQueue.allPendingMutations().map { it.bodyJson },
         )
     }
 

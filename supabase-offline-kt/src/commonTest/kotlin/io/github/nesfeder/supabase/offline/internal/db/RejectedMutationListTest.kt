@@ -103,8 +103,11 @@ class RejectedMutationListTest {
             newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
         // Then
-        assertEquals(listOf(id), restarted.rejectedList.rejections().map { it.id })
-        assertEquals(422, restarted.rejectedList.rejections().single().serverError?.status)
+        assertEquals(listOf(id), restarted.mutationQueue.rejectedList.rejections().map { it.id })
+        assertEquals(
+            422,
+            restarted.mutationQueue.rejectedList.rejections().single().serverError?.status,
+        )
     }
 
     @Test
@@ -203,7 +206,7 @@ class RejectedMutationListTest {
         replayer.sync()
 
         // Then — the oldest five went first
-        val ids = store.rejectedList.rejections().map { it.id }
+        val ids = store.mutationQueue.rejectedList.rejections().map { it.id }
         assertEquals(MAX_REJECTED_MUTATIONS, ids.size)
         assertEquals((6L..105L).toList(), ids)
     }
@@ -220,8 +223,8 @@ class RejectedMutationListTest {
 
         // Then
         assertTrue(dismissed)
-        assertEquals(emptyList(), store.rejectedList.rejections())
-        assertEquals(emptyList(), store.rejectedList.rejectionsFlow().first())
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejectionsFlow().first())
     }
 
     @Test
@@ -233,7 +236,8 @@ class RejectedMutationListTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"title":"second"}]"""))
 
         // When — the app fixed the cause and retries it
-        val newId = assertNotNull(store.retryRejectedMutation(rejectedId, identity = null))
+        val newId =
+            assertNotNull(store.mutationQueue.retryRejectedMutation(rejectedId, identity = null))
         server.answer = { okJson("[]") }
         val report = replayer.sync()
 
@@ -244,7 +248,7 @@ class RejectedMutationListTest {
             listOf("""[{"title":"second"}]""", """[{"title":"first"}]"""),
             server.requests.takeLast(2).map { it.body },
         )
-        assertEquals(emptyList(), store.rejectedList.rejections())
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
     }
 
     @Test
@@ -255,7 +259,7 @@ class RejectedMutationListTest {
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
 
         // When
-        val rejections = store.rejectedList.rejections()
+        val rejections = store.mutationQueue.rejectedList.rejections()
 
         // Then — read as a fresh list, the old payload kept under its own key, and said at ERROR
         assertEquals(emptyList(), rejections)
@@ -281,8 +285,8 @@ class RejectedMutationListTest {
 
         // Then — the pass stopped with the write still queued rather than losing it
         assertIs<SyncStop.TransientFailure>(report.stop)
-        assertEquals(1, store.allPendingMutations().size)
-        assertEquals(emptyList(), store.rejectedList.rejections())
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

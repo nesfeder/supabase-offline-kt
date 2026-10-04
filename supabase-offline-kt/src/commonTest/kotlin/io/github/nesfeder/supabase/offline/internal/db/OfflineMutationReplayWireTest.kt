@@ -311,7 +311,10 @@ class OfflineMutationReplayWireTest {
         // Then — nothing after the failure is sent; both writes stay queued for a retry
         assertEquals(0, synced)
         assertEquals(listOf(FAILING_TABLE), server.requests.map { it.table })
-        assertEquals(listOf(FAILING_TABLE, TABLE), store.allPendingMutations().map { it.table })
+        assertEquals(
+            listOf(FAILING_TABLE, TABLE),
+            store.mutationQueue.allPendingMutations().map { it.table },
+        )
     }
 
     private fun write(

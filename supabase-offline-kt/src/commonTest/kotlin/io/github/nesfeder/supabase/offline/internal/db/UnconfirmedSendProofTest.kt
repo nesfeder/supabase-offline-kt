@@ -115,7 +115,11 @@ class UnconfirmedSendProofTest {
         // Then — something answered, so the send stays possibly delivered
         assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(2, attempts)
-        assertTrue(store.hasUnconfirmedSend(store.allPendingMutations().single().id))
+        assertTrue(
+            store.mutationQueue.hasUnconfirmedSend(
+                store.mutationQueue.allPendingMutations().single().id
+            )
+        )
     }
 
     @Test
@@ -225,7 +229,7 @@ class UnconfirmedSendProofTest {
     @Test
     fun a_replay_that_never_connected_clears_its_record() = runTest {
         // Given — a queued keyed INSERT whose first replay cannot connect
-        store.enqueueOwnedBy(null) {
+        store.mutationQueue.enqueueOwnedBy(null) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val server =
@@ -247,7 +251,7 @@ class UnconfirmedSendProofTest {
     @Test
     fun a_replay_answered_by_postgrest_own_503_clears_its_record() = runTest {
         // Given
-        store.enqueueOwnedBy(null) {
+        store.mutationQueue.enqueueOwnedBy(null) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val server =
@@ -288,7 +292,7 @@ class UnconfirmedSendProofTest {
     fun an_insert_this_build_queued_and_never_sent_is_still_refused_as_a_duplicate_after_a_relaunch() =
         runTest {
             // Given — another row already has the id of an insert that was queued and never sent
-            store.enqueueOwnedBy(null) {
+            store.mutationQueue.enqueueOwnedBy(null) {
                 enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
             }
             val server = FakeRelationalPostgrestServer()
@@ -308,7 +312,7 @@ class UnconfirmedSendProofTest {
         // Given — an insert refused as a duplicate, then a new launch
         val server = FakeRelationalPostgrestServer()
         server.seed(TABLE, row("""{"id":"k1","title":"someone else's"}"""))
-        store.enqueueOwnedBy(null) {
+        store.mutationQueue.enqueueOwnedBy(null) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val refused =
@@ -319,7 +323,7 @@ class UnconfirmedSendProofTest {
         val next = relaunch()
 
         // When — the app retries it first thing
-        next.retryRejectedMutation(refused.id, identity = null)
+        next.mutationQueue.retryRejectedMutation(refused.id, identity = null)
         val report =
             newTestMutationQueueReplayer(store = next, supabase = server.supabaseClient()).sync()
 

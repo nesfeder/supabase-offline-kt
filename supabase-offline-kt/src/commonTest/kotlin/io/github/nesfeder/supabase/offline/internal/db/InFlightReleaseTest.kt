@@ -46,7 +46,7 @@ class InFlightReleaseTest {
     @Test
     fun a_store_failure_during_a_pass_does_not_stop_the_passes_after_it() = runTest {
         // Given — a queued keyed INSERT, and a disk that fails the write recording its send, once
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         mutationDao.failNextMarkSendUnconfirmed = true
@@ -69,7 +69,7 @@ class InFlightReleaseTest {
     @Test
     fun a_store_failure_during_a_pass_does_not_hold_back_later_writes_at_the_head() = runTest {
         // Given — a pass that met a failing disk
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         mutationDao.failNextMarkSendUnconfirmed = true
@@ -95,7 +95,7 @@ class InFlightReleaseTest {
     fun a_pass_cancelled_while_its_request_is_on_the_wire_does_not_stop_the_next() = runTest {
         // Given — a queued write whose first send is on the wire when its caller gives up; the pass
         // finishes that request, which then fails without an answer
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val onTheWire = CompletableDeferred<Unit>()
@@ -156,7 +156,7 @@ class InFlightReleaseTest {
      * only then lets the server accept it.
      */
     private suspend fun TestScope.cancelPassThenAccept(body: String) {
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows(body))
         }
         val onTheWire = CompletableDeferred<Unit>()

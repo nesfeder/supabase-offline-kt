@@ -91,7 +91,7 @@ class ClearLocalDataDuringWritesTest {
         sweep.join()
 
         // Then — the pass was stopped before it could record the outgoing user's write on the list
-        assertEquals(emptyList(), store.rejectedList.rejections())
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
         assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
     }
 

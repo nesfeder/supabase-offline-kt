@@ -47,7 +47,7 @@ internal class ReservedRowsDatabaseScenarios(
                     )
                 Triple(
                     reopened.readShippedFixtureContents(),
-                    store.rejectedList.rejections(),
+                    store.mutationQueue.rejectedList.rejections(),
                     reopened.pendingOwners(),
                 )
             } finally {
@@ -213,7 +213,7 @@ internal class ReservedRowsDatabaseScenarios(
                 )
 
             // When
-            store.adoptOwnerlessMutations("user:user-a")
+            store.mutationQueue.adoptOwnerlessMutations("user:user-a")
         } finally {
             database.close()
         }
@@ -232,9 +232,12 @@ internal class ReservedRowsDatabaseScenarios(
             )
             assertEquals(
                 listOf(1L, 2L, 3L, 4L),
-                store.pendingMutationsOf("user:user-a").map { row -> row.id },
+                store.mutationQueue.pendingMutationsOf("user:user-a").map { row -> row.id },
             )
-            assertEquals(emptyList(), store.pendingMutationsOf("user:user-b").map { row -> row.id })
+            assertEquals(
+                emptyList(),
+                store.mutationQueue.pendingMutationsOf("user:user-b").map { row -> row.id },
+            )
         } finally {
             reopened.close()
         }
@@ -253,7 +256,8 @@ internal class ReservedRowsDatabaseScenarios(
             val mutationDao = database.mutationDao()
             val store =
                 newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
-            val (rejectedRow, _) = store.rejectedList.rejectedRowWith(add = ON_DISK_REJECTION)
+            val (rejectedRow, _) =
+                store.mutationQueue.rejectedList.rejectedRowWith(add = ON_DISK_REJECTION)
 
             // When — a transaction that writes the rejection and deletes the write, then fails
             val failure = runCatching {
@@ -332,7 +336,7 @@ internal class ReservedRowsDatabaseScenarios(
                 reopened.readShippedFixtureContents(),
             )
             assertEquals(ON_DISK_PENDING_OWNERS, reopened.pendingOwners())
-            assertEquals(listOf(ON_DISK_REJECTION), store.rejectedList.rejections())
+            assertEquals(listOf(ON_DISK_REJECTION), store.mutationQueue.rejectedList.rejections())
         } finally {
             reopened.close()
         }

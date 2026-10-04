@@ -35,8 +35,8 @@ class RejectionCrashWindowTest {
             table = NOTES,
             body = Json.parseToJsonElement("""[{"id":"n1","title":"x"}]""") as JsonArray,
         )
-        val pending = store.allPendingMutations().single()
-        store.rejectedList.addRejection(
+        val pending = store.mutationQueue.allPendingMutations().single()
+        store.mutationQueue.rejectedList.addRejection(
             StoredRejection(
                 id = pending.id,
                 table = NOTES,
@@ -57,21 +57,21 @@ class RejectionCrashWindowTest {
 
         // Then — it is not still reported as rejected
         assertEquals(0, store.pendingMutationCount())
-        assertEquals(emptyList(), store.rejectedList.rejections().map { it.id })
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections().map { it.id })
     }
 
     @Test
     fun a_rejection_left_by_a_crash_is_cleared_when_the_write_is_accepted_at_the_head() = runTest {
         // Given — a queued write with a stale rejected entry of the same id
         val id =
-            (store.enqueueOwnedBy(USER) {
+            (store.mutationQueue.enqueueOwnedBy(USER) {
                     enqueueInsert(
                         table = NOTES,
                         body = Json.parseToJsonElement("""[{"id":"n1"}]""") as JsonArray,
                     )
                 } as EnqueueOutcome.Queued)
                 .id
-        store.rejectedList.addRejection(
+        store.mutationQueue.rejectedList.addRejection(
             StoredRejection(
                 id = id,
                 table = NOTES,
@@ -100,7 +100,7 @@ class RejectionCrashWindowTest {
 
         // Then
         assertIs<MutationQueueReplayer.HeadSendOutcome.Sent>(outcome)
-        assertEquals(emptyList(), store.rejectedList.rejections().map { it.id })
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections().map { it.id })
     }
 
     private fun acceptedResult(): PostgrestResult = postgrestResultOf("[]", newTestPostgrest())

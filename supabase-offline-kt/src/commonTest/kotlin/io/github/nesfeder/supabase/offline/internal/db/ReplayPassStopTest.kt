@@ -36,7 +36,7 @@ class ReplayPassStopTest {
         // is recorded: after the mutation was claimed, before the request is built
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         supabase.signInForTest("user-a")
-        store.enqueueOwnedBy("user:user-a") {
+        store.mutationQueue.enqueueOwnedBy("user:user-a") {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"a1"}]"""))
         }
         val replayer = newTestMutationQueueReplayer(store = store, supabase = supabase)
@@ -50,8 +50,8 @@ class ReplayPassStopTest {
         // Then — nothing reached the server; the insert is queued with no record of a send
         assertTrue(pass.isCancelled)
         assertTrue(server.requests.isEmpty(), "sent: ${server.requests}")
-        val pending = store.allPendingMutations().single()
-        assertFalse(store.hasUnconfirmedSend(pending.id))
+        val pending = store.mutationQueue.allPendingMutations().single()
+        assertFalse(store.mutationQueue.hasUnconfirmedSend(pending.id))
 
         // When — the next pass
         mutationDao.onMarkSendUnconfirmed = null

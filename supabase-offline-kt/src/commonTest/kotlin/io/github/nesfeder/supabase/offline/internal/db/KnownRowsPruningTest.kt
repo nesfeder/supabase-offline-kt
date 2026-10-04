@@ -438,8 +438,8 @@ class KnownRowsPruningTest {
                 repeat(1 + random.nextInt(7)) {
                     val id = queue(store, random.write(keys))
                     when (random.nextInt(8)) {
-                        0 -> store.markMutationSynced(id, TABLE)
-                        1 -> if (store.markSendUnconfirmed(id)) unconfirmed += id
+                        0 -> store.mutationQueue.recordReplayed(id, TABLE)
+                        1 -> if (store.mutationQueue.markSendUnconfirmed(id)) unconfirmed += id
                     }
                 }
                 val all = mutationDao.allForTable(TABLE)

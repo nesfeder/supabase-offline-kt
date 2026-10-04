@@ -41,7 +41,7 @@ class SyncedRetirementScopeTest {
         tick = 10L
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         tick = 20L
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // When — only the "all tasks" query refreshes, and brings back server state including X
         tick = 30L
@@ -53,7 +53,7 @@ class SyncedRetirementScopeTest {
             payload = """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
             requestStartedAtTick = requestStartedAtTick,
         )
-        store.retireCoveredSyncedMutations(TABLE, requestStartedAtTick)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE, requestStartedAtTick)
 
         // Then — list L's cached payload predates X, so its overlay still shows the user's write
         val listL = store.overlaidPayloadFlow(TABLE, LIST_L).first()
@@ -68,7 +68,7 @@ class SyncedRetirementScopeTest {
         tick = 10L
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         tick = 20L
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // When — both queries refresh after the replay
         for (cacheKey in listOf(ALL, LIST_L)) {
@@ -81,7 +81,7 @@ class SyncedRetirementScopeTest {
                 payload = """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
                 requestStartedAtTick = requestStartedAtTick,
             )
-            store.retireCoveredSyncedMutations(TABLE, requestStartedAtTick)
+            store.mutationQueue.retireCoveredSyncedMutations(TABLE, requestStartedAtTick)
         }
 
         // Then — nothing needs the overlay any more

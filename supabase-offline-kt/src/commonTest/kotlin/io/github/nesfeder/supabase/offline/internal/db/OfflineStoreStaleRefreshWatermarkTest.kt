@@ -275,7 +275,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — reconnect drains the queue and the replay succeeds
         tick = 20L
-        store.markMutationSynced(id = queued.id, table = "projects")
+        store.mutationQueue.recordReplayed(id = queued.id, table = "projects")
 
         // And — the refresh that was already in flight returns the pre-replay server state
         tick = 30L
@@ -373,9 +373,9 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // And — the queue drains in the gap before the resolver retires synced mutations
         tick = 20L
-        store.markMutationSynced(id = queued.id, table = "projects")
+        store.mutationQueue.recordReplayed(id = queued.id, table = "projects")
         tick = 25L
-        store.retireCoveredSyncedMutations("projects", requestStartedAtTick)
+        store.mutationQueue.retireCoveredSyncedMutations("projects", requestStartedAtTick)
 
         // Then — retirement is refused. The cached payload predates the replay, so dropping the
         // mutation row here would erase the write from the cache and the overlay at once.
@@ -393,7 +393,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val store = buildStore(queryCacheDao, mutationDao = mutationDao, tick = { tick })
         store.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
-        store.markMutationSynced(id = queued.id, table = "projects")
+        store.mutationQueue.recordReplayed(id = queued.id, table = "projects")
 
         // When — a refresh issued afterwards brings back server state that already includes it
         tick = 20L
@@ -405,7 +405,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
             payload = bothProjects,
             requestStartedAtTick = requestStartedAtTick,
         )
-        store.retireCoveredSyncedMutations("projects", requestStartedAtTick)
+        store.mutationQueue.retireCoveredSyncedMutations("projects", requestStartedAtTick)
 
         // Then — the ordinary retirement still happens; the queue does not grow without bound
         assertEquals(emptyList(), mutationDao.inserted)

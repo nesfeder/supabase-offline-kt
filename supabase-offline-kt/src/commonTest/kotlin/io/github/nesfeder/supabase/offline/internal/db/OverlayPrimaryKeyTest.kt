@@ -35,7 +35,7 @@ class OverlayPrimaryKeyTest {
             table = TABLE,
             body = rows("""[{"id":"x","title":"from the server"}]"""),
         )
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // Then
         assertEquals(

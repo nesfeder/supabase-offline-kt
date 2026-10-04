@@ -47,7 +47,7 @@ class UnreadableRejectedMutationListTest {
         // Then — the refusal is recorded on a fresh list, the next write went out, and the old
         // payload was kept aside rather than discarded
         assertEquals(1, report.syncedCount)
-        assertEquals(1, store.rejectedList.rejections().size)
+        assertEquals(1, store.mutationQueue.rejectedList.rejections().size)
         assertTrue(queryCacheDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
     }
 

@@ -53,7 +53,7 @@ class ReservedRowsTest {
                     ),
             )
         store.queueOwnedWrite("user:user-a")
-        store.rejectedList.addRejection(rejection(id = 1))
+        store.mutationQueue.rejectedList.addRejection(rejection(id = 1))
         queryCacheDao.seedPayload(
             "todos",
             "todos",
@@ -79,7 +79,7 @@ class ReservedRowsTest {
     fun reserved_rows_are_never_returned_by_a_read() = runTest {
         // Given
         val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
-        store.rejectedList.addRejection(rejection(id = 1))
+        store.mutationQueue.rejectedList.addRejection(rejection(id = 1))
 
         // When / Then — no read path serves them, even asked for them by name
         assertNull(store.getPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
@@ -99,7 +99,7 @@ class ReservedRowsTest {
     fun reserved_rows_are_never_touched_by_a_write_or_an_overlay() = runTest {
         // Given
         val store = newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
-        store.rejectedList.addRejection(rejection(id = 1))
+        store.mutationQueue.rejectedList.addRejection(rejection(id = 1))
         val before = queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY)
 
         // When / Then — every write path refuses the reserved table
@@ -144,15 +144,15 @@ class ReservedRowsTest {
         // Given
         val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
         store.queueOwnedWrite("user:user-a")
-        store.rejectedList.addRejection(rejection(id = 1))
+        store.mutationQueue.rejectedList.addRejection(rejection(id = 1))
 
         // When
         store.localData.clearLocalData()
 
         // Then
         assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
-        assertEquals(emptyList(), store.rejectedList.rejections())
-        assertEquals(emptySet(), store.unconfirmedSends())
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
+        assertEquals(emptySet(), store.mutationQueue.unconfirmedSends())
     }
 
     @Test
@@ -161,7 +161,7 @@ class ReservedRowsTest {
         val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
 
         // When
-        store.rejectedList.addRejection(rejection(id = 1))
+        store.mutationQueue.rejectedList.addRejection(rejection(id = 1))
         store.queueOwnedWrite("user:user-a")
 
         // Then — a later build can tell which format it is reading

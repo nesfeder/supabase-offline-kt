@@ -134,7 +134,7 @@ class OfflineStoreQueueAndCacheTest {
     fun applyAllMutationsForOfflineFallback_includesSyncedMutations() = runTest {
         // Given — a write that has already synced
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // When
         val fresh = store.overlayPendingOnResponse(TABLE, CACHE_KEY, "[]")
@@ -294,7 +294,7 @@ class OfflineStoreQueueAndCacheTest {
         store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
 
         // When
-        store.deleteMutation(mutationDao.inserted.first().id)
+        store.mutationQueue.abandonSentMutation(mutationDao.inserted.first().id)
 
         // Then
         assertEquals(2, store.pendingMutationCount())
@@ -308,7 +308,7 @@ class OfflineStoreQueueAndCacheTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
 
         // When
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // Then — kept, but not pending
         assertEquals(0, store.pendingMutationCount())
@@ -322,11 +322,11 @@ class OfflineStoreQueueAndCacheTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
         store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
         val (synced, _, otherTable) = mutationDao.inserted
-        store.markMutationSynced(id = synced.id, table = TABLE)
-        store.markMutationSynced(id = otherTable.id, table = OTHER_TABLE)
+        store.mutationQueue.recordReplayed(id = synced.id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = otherTable.id, table = OTHER_TABLE)
 
         // When
-        store.retireCoveredSyncedMutations(TABLE)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE)
 
         // Then
         assertEquals(
@@ -345,7 +345,7 @@ class OfflineStoreQueueAndCacheTest {
             // When
             store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
             store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
-            store.markMutationSynced(id = mutationDao.inserted.first().id, table = TABLE)
+            store.mutationQueue.recordReplayed(id = mutationDao.inserted.first().id, table = TABLE)
             collector.cancel()
 
             // Then
@@ -371,7 +371,7 @@ class OfflineStoreQueueAndCacheTest {
             store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
             store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
             store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
-            store.markMutationSynced(id = mutationDao.inserted.first().id, table = TABLE)
+            store.mutationQueue.recordReplayed(id = mutationDao.inserted.first().id, table = TABLE)
             collector.cancel()
 
             // Then — the other table's write does not re-emit this table's count

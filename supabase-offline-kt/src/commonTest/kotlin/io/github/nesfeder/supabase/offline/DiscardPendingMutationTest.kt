@@ -67,7 +67,7 @@ class DiscardPendingMutationTest {
             else okJson("[]")
         }
         val stuck = replayer.sync()
-        val poison = store.allPendingMutations().first()
+        val poison = store.mutationQueue.allPendingMutations().first()
 
         // When
         val discarded = replayer.discardPendingMutation(poison.id, session)
@@ -78,7 +78,7 @@ class DiscardPendingMutationTest {
         assertTrue(discarded)
         assertEquals(1, report.syncedCount)
         assertEquals("""{"title":"fine"}""", server.requests.last().body)
-        assertEquals(0, store.allPendingMutations().size)
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -92,7 +92,10 @@ class DiscardPendingMutationTest {
         )
 
         // When
-        replayer.discardPendingMutation(store.allPendingMutations().single().id, session)
+        replayer.discardPendingMutation(
+            store.mutationQueue.allPendingMutations().single().id,
+            session,
+        )
 
         // Then
         assertEquals(
@@ -108,11 +111,14 @@ class DiscardPendingMutationTest {
 
         // When — user B tries to discard it
         val discarded =
-            replayer.discardPendingMutation(store.allPendingMutations().single().id, USER_B)
+            replayer.discardPendingMutation(
+                store.mutationQueue.allPendingMutations().single().id,
+                USER_B,
+            )
 
         // Then
         assertFalse(discarded)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -130,7 +136,10 @@ class DiscardPendingMutationTest {
 
         // When
         val discarded =
-            replayer.discardPendingMutation(store.allPendingMutations().single().id, session)
+            replayer.discardPendingMutation(
+                store.mutationQueue.allPendingMutations().single().id,
+                session,
+            )
         release.complete(Unit)
 
         // Then — too late: it is already going out

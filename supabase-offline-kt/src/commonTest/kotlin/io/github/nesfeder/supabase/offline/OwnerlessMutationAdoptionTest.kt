@@ -46,7 +46,7 @@ class OwnerlessMutationAdoptionTest {
         // Then — untouched and unsent
         assertEquals(0, signedOut.syncedCount)
         assertEquals(emptyList(), server.requests.map { it.body })
-        assertEquals(listOf(null), store.allPendingMutations().map { it.owner })
+        assertEquals(listOf(null), store.mutationQueue.allPendingMutations().map { it.owner })
     }
 
     @Test

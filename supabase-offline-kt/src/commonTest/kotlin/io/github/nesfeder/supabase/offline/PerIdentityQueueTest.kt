@@ -63,7 +63,7 @@ class PerIdentityQueueTest {
 
         // Then — A's write is queued, not refused because the anonymous one is pending
         assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(2, store.allPendingMutations().size)
+        assertEquals(2, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -83,7 +83,7 @@ class PerIdentityQueueTest {
         assertEquals(listOf("""[{"title":"A's note"}]"""), sentBodies().drop(sentBefore))
         assertEquals(
             listOf("""[{"title":"anonymous note"}]"""),
-            store.allPendingMutations().map { it.bodyJson },
+            store.mutationQueue.allPendingMutations().map { it.bodyJson },
         )
     }
 
@@ -101,7 +101,7 @@ class PerIdentityQueueTest {
 
         // Then
         assertEquals(1, report.syncedCount)
-        assertEquals(0, store.allPendingMutations().size)
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test

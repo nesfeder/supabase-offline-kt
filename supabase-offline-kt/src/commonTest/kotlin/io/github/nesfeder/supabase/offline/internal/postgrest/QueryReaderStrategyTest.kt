@@ -147,7 +147,7 @@ class QueryReaderStrategyTest {
         answerWith(NETWORK_DATA)
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":2,"name":"pending"}]"""))
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":3,"name":"synced"}]"""))
-        store.markMutationSynced(id = mutationDao.inserted.last().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.last().id, table = TABLE)
 
         // When
         val result = resolver(backgroundScope).select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
@@ -165,7 +165,7 @@ class QueryReaderStrategyTest {
         // Given — a cache older than a write that has since synced
         store.queryCache.cacheResponse(TABLE, cacheKey(), CACHED_DATA)
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":3,"name":"synced"}]"""))
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
         failNetwork()
 
         // When

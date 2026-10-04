@@ -44,7 +44,7 @@ class SyncedOverlayScopeTest {
         tick = 10L
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         tick = 20L
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // When — only ALL refreshes, and the server's rows include x
         tick = 30L
@@ -56,7 +56,7 @@ class SyncedOverlayScopeTest {
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
             requestStartedAtTick = started,
         )
-        store.retireCoveredSyncedMutations(TABLE, started)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE, started)
 
         // Then — ALL shows x once, and L (fetched before the replay) still shows it
         assertEquals(
@@ -77,7 +77,7 @@ class SyncedOverlayScopeTest {
         tick = 10L
         store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
         tick = 20L
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // When — another device renamed it to C; ALL refreshes and brings back C
         tick = 30L
@@ -89,7 +89,7 @@ class SyncedOverlayScopeTest {
             """[{"id":"a","list_id":"L","title":"C"}]""",
             requestStartedAtTick = started,
         )
-        store.retireCoveredSyncedMutations(TABLE, started)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE, started)
 
         // Then — ALL shows the server's C
         assertEquals(
@@ -116,7 +116,7 @@ class SyncedOverlayScopeTest {
                 filter = byId("a"),
             )
             tick = 20L
-            store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+            store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
             tick = 30L
             val started = store.freshness.tickNow()
             tick = 40L
@@ -148,7 +148,7 @@ class SyncedOverlayScopeTest {
         // shows
         queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
         val replayer =
             newTestMutationQueueReplayer(
                 store = store,
@@ -161,7 +161,7 @@ class SyncedOverlayScopeTest {
         val afterForward = mutationDao.inserted.size
         clock -= 4 * ONE_DAY_MS
         replayer.sync()
-        store.retireCoveredSyncedMutations(TABLE)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE)
         val afterBack = mutationDao.inserted.size
 
         // Then — kept while the query needs it, whatever the clock says
@@ -181,7 +181,7 @@ class SyncedOverlayScopeTest {
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
             requestStartedAtTick = started,
         )
-        store.retireCoveredSyncedMutations(TABLE, started)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE, started)
 
         // Then — it is retired: every cached query holds it
         assertEquals(0, mutationDao.inserted.size)
@@ -193,11 +193,11 @@ class SyncedOverlayScopeTest {
         queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
         repeat(RETAINED_BOUND + 1) { index ->
             val id = store.enqueueInsert(TABLE, rows("""[{"id":"x$index","list_id":"L"}]"""))
-            store.markMutationSynced(id = id, table = TABLE)
+            store.mutationQueue.recordReplayed(id = id, table = TABLE)
         }
 
         // When
-        store.retireCoveredSyncedMutations(TABLE)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE)
 
         // Then — the oldest went; the newest stay for the query that needs them
         val kept = mutationDao.inserted.map { row -> row.bodyJson }
@@ -217,7 +217,7 @@ class SyncedOverlayScopeTest {
         store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
         tick = 20L
         mutationDao.inserted.forEach { mutation ->
-            store.markMutationSynced(id = mutation.id, table = TABLE)
+            store.mutationQueue.recordReplayed(id = mutation.id, table = TABLE)
         }
         tick = 30L
         val started = store.freshness.tickNow()
@@ -228,7 +228,7 @@ class SyncedOverlayScopeTest {
             """[{"id":"a","title":"C"},{"id":"srv","title":"keyless"}]""",
             requestStartedAtTick = started,
         )
-        store.retireCoveredSyncedMutations(TABLE, started)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE, started)
         val beforeRestart = store.overlaidPayloadFlow(TABLE, ALL).first()
 
         // When — the app starts again an hour later
@@ -252,7 +252,7 @@ class SyncedOverlayScopeTest {
         // Given — a replayed update a cached query showed, and then that query's payload dropped
         queryCacheDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
         store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
         store.deleteTablePayload(TABLE, ORPHAN)
 
         // When — a pass runs, with nothing left to send
@@ -277,9 +277,9 @@ class SyncedOverlayScopeTest {
         )
 
         // When — x replays, and both sweeps run before L's first payload arrives
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
-        store.retireCoveredSyncedMutations(TABLE)
-        store.retireUnneededSyncedMutations()
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.retireCoveredSyncedMutations(TABLE)
+        store.mutationQueue.retireUnneededSyncedMutations()
 
         // Then — L still shows x
         assertEquals(

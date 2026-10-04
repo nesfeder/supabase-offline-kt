@@ -70,7 +70,7 @@ class QueueOwnershipTest {
         assertEquals(null, report.stop)
         assertEquals(0, report.syncedCount)
         assertEquals(0, report.remainingCount)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -101,7 +101,7 @@ class QueueOwnershipTest {
 
         // Then — B's write is queued as B's, and A's stays A's
         assertIs<MutationOutcome.Queued>(outcome)
-        val pending = store.allPendingMutations()
+        val pending = store.mutationQueue.allPendingMutations()
         assertEquals(listOf(USER_A.storedValue, USER_B.storedValue), pending.map { it.owner })
     }
 
@@ -170,12 +170,16 @@ class QueueOwnershipTest {
         // Given — user A's write was rejected
         writeOffline("A's note")
         server.answer = { okJson("[]") }
-        val id = store.allPendingMutations().single().id
-        store.rejectMutation(store.allPendingMutations().single(), "refused", serverError = null)
+        val id = store.mutationQueue.allPendingMutations().single().id
+        store.mutationQueue.rejectMutation(
+            store.mutationQueue.allPendingMutations().single(),
+            "refused",
+            serverError = null,
+        )
 
         // When / Then
-        assertEquals(null, store.retryRejectedMutation(id, USER_B.storedValue))
-        assertTrue(store.retryRejectedMutation(id, USER_A.storedValue) != null)
+        assertEquals(null, store.mutationQueue.retryRejectedMutation(id, USER_B.storedValue))
+        assertTrue(store.mutationQueue.retryRejectedMutation(id, USER_A.storedValue) != null)
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

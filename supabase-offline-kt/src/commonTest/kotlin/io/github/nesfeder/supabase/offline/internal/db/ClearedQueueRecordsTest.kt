@@ -29,12 +29,12 @@ class ClearedQueueRecordsTest {
         val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
         val id =
             store.enqueueInsert("todos", Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray)
-        store.markSendUnconfirmed(id)
+        store.mutationQueue.markSendUnconfirmed(id)
 
         // When — cleared, then read the way the overlay and the counts read them
         store.localData.clearLocalData()
-        val unconfirmed = store.unconfirmedSends()
-        val rejections = store.rejectedList.rejections()
+        val unconfirmed = store.mutationQueue.unconfirmedSends()
+        val rejections = store.mutationQueue.rejectedList.rejections()
 
         // Then — every record reads empty, and nothing was written back
         assertTrue(unconfirmed.isEmpty() && rejections.isEmpty())
@@ -49,7 +49,7 @@ class ClearedQueueRecordsTest {
         val writer = newTestOfflineStore(mutationDao = mutationDao)
         val id =
             writer.enqueueInsert("todos", Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray)
-        writer.markSendUnconfirmed(id)
+        writer.mutationQueue.markSendUnconfirmed(id)
         val store = newTestOfflineStore(mutationDao = mutationDao)
         val parked = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
@@ -57,7 +57,7 @@ class ClearedQueueRecordsTest {
             parked.complete(Unit)
             release.await()
         }
-        val firstRead = async { store.unconfirmedSends() }
+        val firstRead = async { store.mutationQueue.unconfirmedSends() }
         parked.await()
 
         // When — the clear runs while that read is parked, and then the read finishes
@@ -67,6 +67,9 @@ class ClearedQueueRecordsTest {
         firstRead.await()
 
         // Then — the record still reads as the clear left it
-        assertTrue(store.unconfirmedSends().isEmpty(), "read the values from before the clear")
+        assertTrue(
+            store.mutationQueue.unconfirmedSends().isEmpty(),
+            "read the values from before the clear",
+        )
     }
 }

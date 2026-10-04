@@ -64,7 +64,7 @@ class OfflineStoreCacheOwnerTest {
         queryCacheDao.seedPayload(TABLE, CACHE_KEY, ROWS)
         store.recordQueryShape(TABLE, CACHE_KEY, persist = true) {}
         store.addStorage("avatars", "me.png", "/data/storage/avatars/me.png".toPath(), 3, null)
-        store.enqueueOwnedBy(USER_A) {
+        store.mutationQueue.enqueueOwnedBy(USER_A) {
             enqueueInsert(table = TABLE, body = Json.parseToJsonElement(ROWS) as JsonArray)
         }
         val queueRowsBefore =
@@ -104,7 +104,7 @@ class OfflineStoreCacheOwnerTest {
                     requestStartedAtTick = startedAtTick,
                 )
             val enqueued =
-                store.enqueueOwnedBy(USER_A, startedAtTick) {
+                store.mutationQueue.enqueueOwnedBy(USER_A, startedAtTick) {
                     enqueueInsert(table = TABLE, body = Json.parseToJsonElement(ROWS) as JsonArray)
                 }
 
