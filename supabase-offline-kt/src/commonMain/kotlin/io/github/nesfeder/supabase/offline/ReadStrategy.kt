@@ -8,9 +8,9 @@ import kotlin.time.Duration
  * Where a one-shot `select` takes its rows from: the server, the device's cache, or one and then
  * the other.
  *
- * Only a list of rows is cached. A read of another shape (`single()`, `maybeSingle()`, `head`, a
- * `count`, `csv()`, `geojson()`, `stripNulls()`, `explain()`) goes to the server under every
- * strategy but [CacheOnly].
+ * Only a list of rows is cached. A read of another shape (`single()`, `maybeSingle()` from
+ * supabase-kt 3.8, `head`, a `count`, `csv()`, `geojson()`, `stripNulls()`, `explain()`) goes to
+ * the server under every strategy but [CacheOnly].
  */
 public sealed interface ReadStrategy {
 

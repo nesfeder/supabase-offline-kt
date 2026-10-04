@@ -9,21 +9,17 @@ import io.github.jan.supabase.auth.MemoryCodeVerifierCache
 import io.github.jan.supabase.auth.MemorySessionManager
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
-import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
-import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -33,24 +29,20 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
-import kotlin.test.fail
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 
 /**
- * Reads whose response is not a JSON array of rows — `single()`, `maybeSingle()`, `head`, a
- * `count`, `csv()`, `geojson()`, `stripNulls()` and `explain()` — bypass the cache: they go to the
- * network, their response is not stored, they never share the slot of the list read with the same
- * filters, and offline they fail as a network-only read does.
+ * Reads whose response is not a JSON array of rows — `single()`, `maybeSingle()` (supabase-kt 3.8
+ * on), `head`, a `count`, `csv()`, `geojson()`, `stripNulls()` and `explain()` — bypass the cache:
+ * they go to the network, their response is not stored, they never share the slot of the list read
+ * with the same filters, and offline they fail as a network-only read does.
  */
 class ReadShapeTest {
 
     private var online = true
-    private var noRowForOne = false
     private val server =
         RecordingPostgrestServer(
             answer = { request ->
@@ -59,12 +51,6 @@ class ReadShapeTest {
                 when {
                     request.method == "HEAD" ->
                         respond("", HttpStatusCode.OK, headersOf("Content-Range", "*/2"))
-                    accept.startsWith(OBJECT) && noRowForOne ->
-                        postgrestError(
-                            HttpStatusCode.NotAcceptable,
-                            code = "PGRST116",
-                            message = "no rows",
-                        )
                     accept.startsWith(OBJECT) -> okJson(ONE_ROW)
                     // The client adds its own media types after the one the read asks for
                     accept.startsWith(CSV) ->
@@ -98,20 +84,12 @@ class ReadShapeTest {
 
     /** Each read shape the cache cannot hold, with what the server answers it. */
     private val shapes: List<Triple<String, SelectRequestBuilder.() -> Unit, String>> =
-        listOf(
+        listOf<Triple<String, SelectRequestBuilder.() -> Unit, String>>(
             Triple(
                 "single",
                 {
                     filter { eq("list_id", "A") }
                     single()
-                },
-                ONE_ROW,
-            ),
-            Triple(
-                "maybeSingle",
-                {
-                    filter { eq("list_id", "A") }
-                    maybeSingle()
                 },
                 ONE_ROW,
             ),
@@ -164,7 +142,7 @@ class ReadShapeTest {
                 },
                 PLAN_BODY,
             ),
-        )
+        ) + maybeSingleReadShapes(oneRow = ONE_ROW)
 
     private val listOfA: SelectRequestBuilder.() -> Unit = { filter { eq("list_id", "A") } }
 
@@ -301,52 +279,6 @@ class ReadShapeTest {
                     )
                 }
             }
-    }
-
-    @Test
-    fun maybe_single_with_no_row_returns_the_empty_result_at_once_while_restoring() = runTest {
-        // Given — a session still restoring, and no row for the filter
-        noRowForOne = true
-        val dispatcher = StandardTestDispatcher(testScheduler)
-        val restoring =
-            newTestSupabaseClient(engine = server.engine) {
-                coroutineDispatcher = dispatcher
-                install(Postgrest) { maxRetries = 0 }
-                install(Auth) {
-                    sessionManager =
-                        FakeHeldSessionManager(
-                            UserSession(
-                                accessToken = testJwt("u-1"),
-                                refreshToken = "r",
-                                expiresIn = 3600,
-                                tokenType = "bearer",
-                            )
-                        )
-                    codeVerifierCache = MemoryCodeVerifierCache()
-                    autoLoadFromStorage = true
-                    alwaysAutoRefresh = false
-                    enableLifecycleCallbacks = false
-                }
-            }
-        val reader =
-            newTestOfflineClient(
-                supabase = restoring,
-                queryCacheDao = queryCacheDao,
-                coordinatorScope = idleCoroutineScope(),
-            )
-
-        // When
-        val read =
-            reader.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) {
-                filter { eq("id", 404) }
-                maybeSingle()
-            }
-
-        // Then — upstream's empty result, from one request, with no wait for the session
-        assertEquals("", read.data)
-        assertEquals(1, server.requests.size)
-        assertEquals(0L, currentTime)
-        if (queryCacheDao.rowsOf(TABLE).isNotEmpty()) fail("the empty result was stored")
     }
 
     /**

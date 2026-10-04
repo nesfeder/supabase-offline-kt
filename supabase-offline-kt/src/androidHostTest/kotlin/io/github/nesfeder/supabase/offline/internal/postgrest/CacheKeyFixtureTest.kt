@@ -12,19 +12,27 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Pins the cache key of every query in `cache-key-fixture.json`: the key a network read's response
- * is stored under, read back from the query cache. Apps hold warm caches under these keys.
+ * is stored under, read back from the query cache. Apps hold warm caches under these keys. A query
+ * naming a call the pinned supabase-kt minor lacks ([callsMissingFromPinnedSupabaseKt]) is pinned
+ * from the minor that has it on.
  */
 class CacheKeyFixtureTest {
 
     @Test
     fun every_fixture_query_is_stored_under_its_recorded_key() = runTest {
         // Given
-        val cases = CacheKeyFixture.cases()
+        val cases =
+            CacheKeyFixture.cases().filterNot { case ->
+                case.request.namesAnyCall(callsMissingFromPinnedSupabaseKt)
+            }
 
         // When
         val mismatches = cases.mapNotNull { case ->
@@ -86,3 +94,9 @@ internal suspend fun storedCacheKeyOf(case: CacheKeyFixtureCase): String {
     check(rows.size == 1) { "${case.name} stored ${rows.size} rows" }
     return rows.single().cacheKey
 }
+
+/** Whether this call list, or a call nested in it (an `or` group's), is named one of [names]. */
+private fun JsonElement.namesAnyCall(names: Set<String>): Boolean =
+    this is JsonArray &&
+        ((firstOrNull() as? JsonPrimitive)?.takeIf { it.isString }?.content in names ||
+            any { element -> element.namesAnyCall(names) })

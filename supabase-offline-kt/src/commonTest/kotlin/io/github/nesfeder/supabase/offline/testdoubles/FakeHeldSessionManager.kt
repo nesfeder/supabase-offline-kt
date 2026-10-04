@@ -3,7 +3,6 @@
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.auth.SessionManager
-import io.github.jan.supabase.auth.exception.NoSessionFoundException
 import io.github.jan.supabase.auth.user.UserSession
 import kotlinx.coroutines.CompletableDeferred
 
@@ -28,7 +27,7 @@ internal class FakeHeldSessionManager(
 
     override suspend fun loadSession(): UserSession {
         if (loads++ == 0 || holdsEveryLoad) released.await()
-        return stored ?: throw NoSessionFoundException()
+        return stored ?: throw noStoredSession()
     }
 
     override suspend fun saveSession(session: UserSession) = Unit

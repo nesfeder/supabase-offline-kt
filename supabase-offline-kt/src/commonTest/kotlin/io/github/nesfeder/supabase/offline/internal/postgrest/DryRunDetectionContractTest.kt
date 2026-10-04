@@ -30,36 +30,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 /**
- * Pins the upstream behaviour the dry-run probe depends on, so a supabase-kt change breaks this
- * test rather than silently letting a dry run into the queue: `dryRun()` is visible only as
- * `tx=rollback` in the `Prefer` header of the outgoing PostgREST request. Also pins that the probe
- * touches nothing but PostgREST writes — supabase-kt refreshes an expired session inline, in the
- * same coroutine, and that request must go through.
+ * Pins that the dry-run probe touches nothing but PostgREST writes — supabase-kt refreshes an
+ * expired session inline, in the same coroutine, and that request must go through. That supabase-kt
+ * 3.8's `dryRun()` shows only as `tx=rollback` in the `Prefer` header is pinned by
+ * `DryRunPreferHeaderContractTest`.
  */
 class DryRunDetectionContractTest {
 
     private val server = RecordingPostgrestServer()
-    private val handle = SupabaseRemoteTable(server.supabaseClient().postgrest.from("todos"))
-
-    @Test
-    fun a_dry_run_is_told_apart_from_a_write_without_sending_either() = runTest {
-        // Given
-        val body = Json.parseToJsonElement("""{"title":"x"}""")
-
-        // When
-        val dryRun = handle.classify {
-            handle.update(body) {
-                filter { eq("id", 1) }
-                dryRun()
-            }
-        }
-        val write = handle.classify { handle.update(body) { filter { eq("id", 1) } } }
-
-        // Then — both classified, and nothing reached the server
-        assertEquals(DryRunVerdict.DryRun, dryRun)
-        assertEquals(DryRunVerdict.NotDryRun, write)
-        assertTrue(server.requests.isEmpty())
-    }
 
     @Test
     fun a_request_that_is_not_a_postgrest_write_passes_a_short_circuiting_probe() = runTest {

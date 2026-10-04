@@ -92,12 +92,55 @@ different supabase-kt minor can fail at runtime even when your app compiles.
 
 | supabase-offline-kt | supabase-kt |
 | --- | --- |
-| Unreleased | 3.8.0 |
+| Unreleased | 3.6.0 |
 
 Each release renames the `Unreleased` row to its version, and the release workflow refuses a
 version without its row. Moving to a new supabase-kt minor is a minor release of
 supabase-offline-kt, even when nothing else changes, because it changes which supabase-kt your app
 must use. A supabase-kt patch can arrive in a patch release.
+
+### Why 3.6, not 3.8
+
+supabase-kt 3.7.0 and 3.8.0 carry two Realtime defects, as upstream describes them:
+
+- A heartbeat tick can race `disconnect()` and throw from a coroutine with no exception handler,
+  which ends the app's process on Android.
+- `phx_leave` and `access_token` messages are sent with `join_ref: null`, a Phoenix protocol
+  violation.
+
+Both fixes are merged upstream and not yet released. This library never uses Realtime, but it
+declares supabase-kt through its BOM, so its pin sets an app's whole supabase-kt, Realtime
+included. The pin moves to the first supabase-kt release that contains both fixes. Ktor and
+kotlinx.coroutines are held at the versions supabase-kt 3.6.0 was released with (3.4.3 and
+1.10.2), so adopting the library does not move your app past them.
+
+**What an app on supabase-kt 3.6 does not have.**
+
+- supabase-kt 3.8 API: `dryRun()`, `maybeSingle()`, the `isdistinct` filter operator
+  (`FilterOperator.ISDISTINCT`), and `purgeCache` / `purgeBucketCache`.
+- On 3.6, write a dry run by adding the header yourself: `headers.append("Prefer", "tx=rollback")`
+  in the request block. The library reads every `Prefer` value, so such a write is never queued.
+- Storage object names containing `%`, `?` or `#`. supabase-kt 3.6.0 puts the name in the URL as
+  written: a `%` fails the request, and a `?` or `#` can fetch a different object (`x?y.png`
+  fetches `x`). The library downloads such a name as supabase-kt does but never caches it or
+  serves it from the cache, and `ensureCachedFile` refuses it. Keep such characters out of object
+  names until the pin moves.
+
+**What an app on supabase-kt 3.6 inherits from it.**
+
+- The first request after supabase-kt refreshes an expired token goes out with the old token and
+  fails once with `401` (fixed in 3.7.0). A replayed write that meets it stays queued and is sent
+  again on a later pass; an app's own call sees the `401`.
+- When the server refuses a sign-out, supabase-kt 3.6 keeps the local session (fixed in 3.7.0).
+
+**An app that asks for supabase-kt 3.7 or 3.8 itself** gets it: Gradle picks the higher version,
+so the library's pin is a floor, not a ceiling.
+
+- The plugin logs one warning when it is installed, naming both versions.
+- On 3.8, `purgeCache` called on a bucket from `supabase.offline.storage` fails, on Android as an
+  `AbstractMethodError` when it is called, and on iOS as an `IrLinkageError`. The library was
+  built against a `BucketApi` without that member. Call `purgeCache` on supabase-kt's own bucket
+  instead (`supabase.storage.from(…)`).
 
 Every Monday a scheduled job looks for a newer supabase-kt minor, builds this library against it,
 runs its Android host tests, and reports the result in one issue labelled
