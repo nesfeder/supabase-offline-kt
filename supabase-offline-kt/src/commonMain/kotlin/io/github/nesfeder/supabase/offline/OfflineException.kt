@@ -13,10 +13,12 @@ public abstract class OfflineException internal constructor(message: String, cau
     Exception(message, cause)
 
 /**
- * A read that may use only the device's cache found nothing there for it: a
- * [ReadStrategy.CacheOnly] or [FlowReadStrategy.CacheOnly] read of a query that is not cached, or
- * cached rows older than its `maxAge`, or of a shape the cache never holds (`single()`, a count,
- * `csv()`, …). No request was sent.
+ * A read that may use only the device's cache found nothing there for it. No request was sent.
+ *
+ * A one-shot [ReadStrategy.CacheOnly] read throws it for a query that is not cached, for cached
+ * rows older than its `maxAge`, and for a shape the cache never holds (`single()`, a count,
+ * `csv()`, …). A reactive [FlowReadStrategy.CacheOnly] read fails with it only for such a shape:
+ * for a query that is not cached it emits a snapshot whose rows are `null`.
  */
 public class CacheMissException internal constructor(message: String) :
     OfflineException(message, null)

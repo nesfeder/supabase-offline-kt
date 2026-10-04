@@ -113,6 +113,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * @param table the table or view.
      * @return the table's builder.
+     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
     public operator fun get(table: String): OfflinePostgrestQueryBuilder = from(table)
 
@@ -122,6 +123,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param schema the schema.
      * @param table the table or view.
      * @return the table's builder.
+     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
     public operator fun get(schema: String, table: String): OfflinePostgrestQueryBuilder =
         from(schema, table)
@@ -337,8 +339,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param table the table.
      * @param record the row as the server sent it.
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
-     *   as [Config.primaryKeys] gives it (`id` unless configured, and for a table of another
-     *   schema).
+     *   as [Config.primaryKeys] gives it: `id` unless configured there.
      * @param schema the table's schema, or `null` for the client's default schema.
      * @throws IllegalStateException when the client is closed.
      */
@@ -360,8 +361,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param table the table.
      * @param oldRecord the deleted row's values, carrying at least its key.
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
-     *   as [Config.primaryKeys] gives it (`id` unless configured, and for a table of another
-     *   schema).
+     *   as [Config.primaryKeys] gives it: `id` unless configured there.
      * @param schema the table's schema, or `null` for the client's default schema.
      * @throws IllegalStateException when the client is closed.
      */
@@ -464,7 +464,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * The directory for everything the plugin keeps on the device: the database
          * (`supabase_offline.db`) and the Storage file cache. `null`, the default, keeps them where
          * the platform's convention puts them: the database in the app's database directory and the
-         * files under `<filesDir>/supabase_offline` on Android, both under `Documents` on iOS.
+         * files under `<filesDir>/supabase_offline` on Android, both under `Library/Application
+         * Support` on iOS. On iOS a database found in `Documents`, where an earlier default kept
+         * it, is first moved to the default location with its files.
          *
          * When the directory has no database yet and the default location has one, the first client
          * moves it here, unsent writes included; when it cannot, the default one stays in use and a
@@ -505,8 +507,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         public var autoSync: Boolean = true
 
         /**
-         * Each table's primary-key columns, by table name in the client's default schema. A table
-         * not named here has the key `id`.
+         * Each table's primary-key columns, by table name: the name alone for a table in the
+         * client's default schema, `schema.table` for one in another schema. A table not named here
+         * has the key `id`.
          *
          * The key is how the cache recognises a row: where a queued or applied upsert lands, which
          * row a server record replaces, and which rows a queued write reports in
@@ -518,7 +521,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         /**
          * Sets [table]'s primary key to [columns], in [primaryKeys].
          *
-         * @param table the table, in the client's default schema.
+         * @param table the table: its name in the client's default schema, `schema.table` in
+         *   another.
          * @param columns the key's columns, in any order; at least one.
          * @throws IllegalArgumentException when [columns] is empty.
          */

@@ -14,8 +14,9 @@ public sealed interface FlowReadStrategy {
      * Emits the cached rows at once, and refreshes them from the server in parallel.
      *
      * A refresh that fails leaves the cached rows on screen and is retried for as long as the flow
-     * is collected, backing off to one attempt a minute; it is tried again sooner when the session
-     * is restored. Each emission's [RefreshState] says how the refresh stands.
+     * is collected, backing off to one attempt a minute; it is tried again at once when the session
+     * settles or the network comes back. Each emission's [RefreshState] says how the refresh
+     * stands.
      */
     public data object CacheFirstThenNetwork : FlowReadStrategy
 

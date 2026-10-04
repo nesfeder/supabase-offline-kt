@@ -33,7 +33,9 @@ import kotlinx.serialization.json.JsonObject
 /**
  * The outcome of a write the server applied, as a test double of the app's own returns it.
  *
- * @param result the server's response.
+ * @param result the server's response: `PostgrestResult(data, Headers.Empty, supabase.postgrest)`,
+ *   with `supabase` a client built on a Ktor `MockEngine`, since supabase-kt's `Postgrest` needs a
+ *   client with an engine.
  */
 @OptIn(OfflineInternal::class)
 public fun appliedOutcome(result: PostgrestResult): MutationOutcome.Applied =
@@ -124,7 +126,8 @@ public fun stalledRefresh(cause: Throwable): RefreshState.Stalled = ValueConstru
 /**
  * One emission of a reactive read, as `selectAsFlow` hands one out.
  *
- * @param result the rows, or `null` while nothing is known for the query.
+ * @param result the rows, or `null` while nothing is known for the query; build one as for
+ *   [appliedOutcome].
  * @param isFromCache whether the rows are the device's copy.
  * @param fetchedAt when they were fetched, or `null` while nothing is cached.
  * @param hasPendingMutations whether a queued write changed a row shown.
