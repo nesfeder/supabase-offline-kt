@@ -8,7 +8,7 @@ import Testing
 
 /// Reads and writes on the in-memory client against a fake server: the real cache, overlay and
 /// mutation queue, seen through the Swift chain.
-struct PostgrestBehaviourTests {
+struct PostgrestBehaviorTests {
 
     /// The two rows the server holds.
     private static let serverRows = #"[{"id":1,"title":"Milk","done":false},{"id":2,"title":"Eggs","done":true}]"#
@@ -180,7 +180,7 @@ struct PostgrestBehaviourTests {
         try await client.close()
     }
 
-    @Test func cancellingAReadThrowsCancellationAndLeavingALiveReadEndsItsSubscription() async throws {
+    @Test func cancelingAReadThrowsCancellationAndLeavingALiveReadEndsItsSubscription() async throws {
         // Given a server that holds every request until the test lets it go
         let gate = Gate()
         let server = RecordingFakeServer { _ in
@@ -189,7 +189,7 @@ struct PostgrestBehaviourTests {
         }
         let client = SupabaseOfflineClient.inMemory(server: server.server)
 
-        // When a one-shot read is cancelled while the server holds it
+        // When a one-shot read is canceled while the server holds it
         let reading = Task { try await client.from("todos").select().execute([TodoRow].self) }
         #expect(await eventually { server.requests.values.count == 1 })
         reading.cancel()
@@ -211,7 +211,7 @@ struct PostgrestBehaviourTests {
         try await client.close()
     }
 
-    @Test func cancellingTheTaskOfALiveReadEndsItsSubscription() async throws {
+    @Test func cancelingTheTaskOfALiveReadEndsItsSubscription() async throws {
         // Given
         let client = SupabaseOfflineClient.inMemory(server: RecordingFakeServer(rows: Self.serverRows).server)
         let ends = RecordingList<String?>()

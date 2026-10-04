@@ -129,7 +129,7 @@ enum PostgrestFilterText {
     }
 }
 
-/// Reads PostgREST filter text left to right; every `read` consumes only what it recognises.
+/// Reads PostgREST filter text left to right; every `read` consumes only what it recognizes.
 struct FilterTextReader {
 
     /// The text's characters.
