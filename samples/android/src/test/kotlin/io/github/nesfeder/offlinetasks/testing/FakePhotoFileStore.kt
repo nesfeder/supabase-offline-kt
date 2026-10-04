@@ -3,7 +3,7 @@
 package io.github.nesfeder.offlinetasks.testing
 
 import io.github.nesfeder.offlinetasks.data.PhotoFile
-import io.github.nesfeder.offlinetasks.data.PhotoFileStore
+import io.github.nesfeder.offlinetasks.data.inmemory.PhotoFileStore
 import kotlin.time.Clock
 
 /** A [PhotoFileStore] in memory: file names to their bytes, with the paths it would have used. */

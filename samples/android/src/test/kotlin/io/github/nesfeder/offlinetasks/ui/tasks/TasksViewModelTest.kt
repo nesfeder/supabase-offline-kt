@@ -6,6 +6,7 @@ import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskRepository
+import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
 import io.github.nesfeder.offlinetasks.testing.awaitServerTasks
 import io.github.nesfeder.offlinetasks.testing.repositoryFixture
@@ -16,6 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
@@ -27,6 +29,7 @@ class TasksViewModelTest {
     @get:Rule val mainDispatcher = MainDispatcherRule()
 
     private val failures = FailureReports()
+    private val signedIn = MutableStateFlow<SessionState>(SessionState.SignedIn)
 
     @Test
     fun the_tasks_load_split_into_open_and_done() = runTest {
@@ -42,6 +45,19 @@ class TasksViewModelTest {
         assertTrue(state.openTasks.none { it.isDone })
         assertEquals(3, state.openCount)
         assertEquals(SyncHeadline.UpToDate, state.headline)
+    }
+
+    @Test
+    fun before_a_session_there_is_nothing_to_show_or_add() = runTest {
+        // Given — the first launch, not signed in yet
+        signedIn.value = SessionState.SigningIn
+        val viewModel = tasksViewModel(repositoryFixture(seedSampleTasks = true).repository)
+
+        // When
+        val state = viewModel.uiState.first { it is TasksUiState.NoSession }
+
+        // Then — the no-session state, while the network is there to sign in with
+        assertTrue(assertIs<TasksUiState.NoSession>(state).isSigningIn)
     }
 
     @Test
@@ -201,7 +217,12 @@ class TasksViewModelTest {
     }
 
     private fun TestScope.tasksViewModel(repository: TaskRepository) =
-        TasksViewModel(repository, commitScope = backgroundScope, failures = failures)
+        TasksViewModel(
+            repository,
+            sessionState = signedIn,
+            commitScope = backgroundScope,
+            failures = failures,
+        )
 
     /** The first loaded state that [matches]. */
     private suspend fun TasksViewModel.loaded(

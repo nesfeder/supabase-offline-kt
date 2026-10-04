@@ -113,23 +113,6 @@ class SyncViewModelTest {
     }
 
     @Test
-    fun the_in_memory_server_can_be_made_to_fail() = runTest {
-        // Given
-        val repository = repositoryFixture().repository
-        val viewModel = syncViewModel(repository)
-
-        // When
-        viewModel.setServerOutage(true)
-        viewModel.setStorageFailing(true)
-
-        // Then
-        assertEquals(
-            ServerFaultState(isServerOutage = true, isStorageFailing = true),
-            viewModel.ready { it.serverFaults?.isStorageFailing == true }.serverFaults,
-        )
-    }
-
-    @Test
     fun a_failed_sync_now_is_a_message_and_the_button_comes_back() = runTest {
         // Given — a replay that fails
         val failure = ServerUnreachableException()

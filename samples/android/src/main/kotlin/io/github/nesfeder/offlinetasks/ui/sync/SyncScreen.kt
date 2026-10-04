@@ -66,8 +66,6 @@ fun SyncRoute(viewModel: SyncViewModel = viewModel(factory = SyncViewModel.Facto
                 onDismiss = viewModel::dismiss,
                 onRetry = viewModel::retry,
                 onQueueInvalidTitle = viewModel::queueInvalidTitle,
-                onServerOutage = viewModel::setServerOutage,
-                onStorageFailing = viewModel::setStorageFailing,
                 onClearLocalData = viewModel::clearLocalData,
                 onStartOver = viewModel::startOver,
             ),
@@ -81,8 +79,6 @@ class SyncActions(
     val onDismiss: (RejectedTaskMutation) -> Unit,
     val onRetry: (RejectedTaskMutation) -> Unit,
     val onQueueInvalidTitle: () -> Unit,
-    val onServerOutage: (Boolean) -> Unit,
-    val onStorageFailing: (Boolean) -> Unit,
     val onClearLocalData: () -> Unit,
     val onStartOver: () -> Unit,
 )
@@ -125,7 +121,7 @@ fun SyncScreen(state: SyncUiState, actions: SyncActions, modifier: Modifier = Mo
             queueGroup(ready, actions)
             refreshGroup(ready)
             rejectedGroup(ready, actions)
-            developerGroup(ready, actions)
+            developerGroup(actions)
             localDataGroup(onConfirm = { confirming = it })
             aboutGroup(ready)
         }
@@ -312,43 +308,16 @@ private fun LazyListScope.rejectedGroup(state: SyncUiState.Ready, actions: SyncA
     }
 }
 
-private fun LazyListScope.developerGroup(state: SyncUiState.Ready, actions: SyncActions) {
+private fun LazyListScope.developerGroup(actions: SyncActions) {
     groupTitle("developer", R.string.sync_developer)
-    val faults = state.serverFaults
-    val count = if (faults == null) 1 else 3
     item(key = "queue-invalid") {
         SegmentedListItem(
             onClick = actions.onQueueInvalidTitle,
-            shapes = ListItemDefaults.segmentedShapes(index = 0, count = count),
+            shapes = ListItemDefaults.segmentedShapes(index = 0, count = 1),
             leadingContent = { Icon(painterResource(R.drawable.ic_science), null) },
             supportingContent = { Text(stringResource(R.string.sync_queue_invalid_body)) },
         ) {
             Text(stringResource(R.string.sync_queue_invalid))
-        }
-    }
-    if (faults == null) return
-    item(key = "server-outage") {
-        SegmentedListItem(
-            checked = faults.isServerOutage,
-            onCheckedChange = actions.onServerOutage,
-            shapes = ListItemDefaults.segmentedShapes(index = 1, count = count),
-            leadingContent = { Icon(painterResource(R.drawable.ic_dns), null) },
-            trailingContent = { Switch(checked = faults.isServerOutage, onCheckedChange = null) },
-            supportingContent = { Text(stringResource(R.string.sync_server_outage_body)) },
-        ) {
-            Text(stringResource(R.string.sync_server_outage))
-        }
-    }
-    item(key = "storage-failing") {
-        SegmentedListItem(
-            checked = faults.isStorageFailing,
-            onCheckedChange = actions.onStorageFailing,
-            shapes = ListItemDefaults.segmentedShapes(index = 2, count = count),
-            leadingContent = { Icon(painterResource(R.drawable.ic_hide_image), null) },
-            trailingContent = { Switch(checked = faults.isStorageFailing, onCheckedChange = null) },
-            supportingContent = { Text(stringResource(R.string.sync_storage_failing_body)) },
-        ) {
-            Text(stringResource(R.string.sync_storage_failing))
         }
     }
 }
@@ -382,27 +351,17 @@ private fun LazyListScope.aboutGroup(state: SyncUiState.Ready) {
     item(key = "session") {
         InfoRow(
             index = 0,
-            count = 2,
+            count = 1,
             icon = R.drawable.ic_account_circle,
             headline = stringResource(R.string.sync_session),
             supporting =
                 stringResource(
                     when (state.session) {
-                        SessionState.NotConfigured -> R.string.sync_session_not_configured
                         SessionState.SigningIn -> R.string.sync_session_signing_in
                         SessionState.SignedIn -> R.string.sync_session_signed_in
                         is SessionState.Failed -> R.string.sync_session_failed
                     }
                 ),
-        )
-    }
-    item(key = "storage") {
-        InfoRow(
-            index = 1,
-            count = 2,
-            icon = R.drawable.ic_database,
-            headline = stringResource(R.string.sync_data_source),
-            supporting = stringResource(R.string.sync_data_source_in_memory),
         )
     }
 }

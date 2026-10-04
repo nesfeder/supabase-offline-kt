@@ -4,6 +4,9 @@ package io.github.nesfeder.offlinetasks.data
 
 import kotlin.time.Instant
 
+/** The private bucket every photo lives in, as the samples' schema creates it. */
+const val PHOTOS_BUCKET: String = "task-photos"
+
 /** The largest file the `task-photos` bucket accepts: 5 MB. */
 const val PHOTO_MAX_BYTES: Int = 5 * 1024 * 1024
 
@@ -35,32 +38,20 @@ sealed interface PhotoUpload {
     data class Attached(val photo: TaskPhoto) : PhotoUpload
 }
 
-/** Photo files kept on this device, by file name. It knows nothing about Android. */
-interface PhotoFileStore {
-    /** Saves [bytes] as [fileName], replacing any file of that name. */
-    suspend fun write(fileName: String, bytes: ByteArray): PhotoFile
-
-    /** The file called [fileName], or null when it is not on this device. */
-    suspend fun find(fileName: String): PhotoFile?
-
-    /** Deletes [fileName] if it exists. */
-    suspend fun delete(fileName: String)
-
-    /** Deletes every file. */
-    suspend fun deleteAll()
-}
-
 /** The request needs the server, and the network is off or unavailable. */
-class NetworkUnavailableException : Exception("The network is unavailable")
+class NetworkUnavailableException(cause: Throwable? = null) :
+    Exception("The network is unavailable", cause)
 
-/** The network is up but the server does not answer. */
-class ServerUnreachableException : Exception("The server could not be reached")
+/** The network is up but the server does not answer, or answers with an error. */
+class ServerUnreachableException(cause: Throwable? = null) :
+    Exception("The server could not be reached", cause)
 
 /** A photo's file is in neither the device's cache nor the bucket. */
 class PhotoNotFoundException(objectPath: String) : Exception("No file at $objectPath")
 
 /** Storage refused a request: an upload, a download or a delete. [status] is its HTTP status. */
-class PhotoStorageException(val status: Int, message: String) : Exception(message)
+class PhotoStorageException(val status: Int, message: String, cause: Throwable? = null) :
+    Exception(message, cause)
 
 /** A picked image could not be read or decoded, so there is nothing to upload. */
 class PhotoUnreadableException(cause: Throwable) : Exception("The image could not be read", cause)

@@ -186,7 +186,12 @@ fun TasksScreen(
                 scrollBehavior = scrollBehavior,
             )
         },
-        floatingActionButton = { NewTaskButton(listState.isScrollingUp(), onNewTask) },
+        // A task needs its user's id, so New task waits for a session.
+        floatingActionButton = {
+            if (state !is TasksUiState.NoSession) {
+                NewTaskButton(listState.isScrollingUp(), onNewTask)
+            }
+        },
         snackbarHost = { AppSnackbarHost() },
     ) { padding ->
         val pullState = rememberPullToRefreshState()
@@ -211,6 +216,7 @@ fun TasksScreen(
                 }
                 item(key = "filter") { TaskFilterButtons(state.filter, onFilterChange) }
                 when (state) {
+                    is TasksUiState.NoSession -> item(key = "no-session") { NoSession(state) }
                     is TasksUiState.NoDataYet -> item(key = "no-data-yet") { NoDataYet(state) }
                     is TasksUiState.Loaded ->
                         if (state.openTasks.isEmpty() && state.doneTasks.isEmpty()) {
@@ -403,6 +409,20 @@ private fun LazyListScope.taskSection(
                 ),
         )
     }
+}
+
+@Composable
+private fun NoSession(state: TasksUiState.NoSession) {
+    EmptyState(
+        icon = if (state.isSigningIn) R.drawable.ic_account_circle else R.drawable.ic_cloud_off,
+        title = stringResource(R.string.tasks_no_session_title),
+        body =
+            stringResource(
+                if (state.isSigningIn) R.string.tasks_no_session_signing_in_body
+                else R.string.tasks_no_session_offline_body
+            ),
+        isLoading = state.isSigningIn,
+    )
 }
 
 @Composable

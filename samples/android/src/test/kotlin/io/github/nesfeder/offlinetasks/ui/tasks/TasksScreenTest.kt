@@ -43,6 +43,16 @@ class TasksScreenTest {
     }
 
     @Test
+    fun before_a_session_there_is_no_new_task_button() {
+        // Given — not signed in yet, and offline
+        show(TasksUiState.NoSession(SyncHeadline.Offline(0), TaskFilter.All, isSigningIn = false))
+
+        // Then — the designed state, and nothing to add a task with
+        compose.onNodeWithText(text(R.string.tasks_no_session_title)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.new_task), useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
     fun an_empty_list_invites_a_first_task() {
         // Given — the server answered with no tasks
         show(loaded(open = emptyList(), done = emptyList()))

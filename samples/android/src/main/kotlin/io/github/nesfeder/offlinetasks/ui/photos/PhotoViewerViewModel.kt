@@ -83,8 +83,9 @@ class PhotoViewerViewModel(
      * viewer stays. The repository finishes a delete it has started even if the viewer closes.
      */
     fun delete() {
+        val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
         viewModelScope.launchReporting(failures) {
-            repository.deletePhoto(photoId)
+            repository.deletePhoto(showing.photo)
             messageChannel.send(PhotoViewerMessage.Deleted)
         }
     }

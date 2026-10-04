@@ -10,21 +10,27 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
+import io.github.nesfeder.offlinetasks.data.UserSession
+import io.github.nesfeder.supabase.offline.NetworkStatus
+import io.github.nesfeder.supabase.offline.Offline
+import io.github.nesfeder.supabase.offline.offline
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
  * The one [SupabaseClient] of the app, for the project in `local.properties`, or null when its URL
- * or key is missing (as on CI). Postgrest, Storage and Auth, as the library needs.
+ * or key is missing (as on CI). Auth, PostgREST and Storage, then the offline plugin, installed
+ * last so that no plugin after it can fail once it has claimed its database.
  */
 fun createSampleSupabaseClient(url: String, publishableKey: String): SupabaseClient? {
     if (url.isBlank() || publishableKey.isBlank()) return null
@@ -34,14 +40,13 @@ fun createSampleSupabaseClient(url: String, publishableKey: String): SupabaseCli
         install(Auth)
         install(Postgrest)
         install(Storage)
+        // The defaults: the platform's connectivity monitor, automatic replay, `id` as each key.
+        install(Offline)
     }
 }
 
 /** Where the app's anonymous session stands. */
 sealed interface SessionState {
-    /** The app has no project URL or key, so it has no backend. */
-    data object NotConfigured : SessionState
-
     /** Restoring a saved session, or signing in. */
     data object SigningIn : SessionState
 
@@ -55,42 +60,54 @@ sealed interface SessionState {
 /**
  * Signs the app in anonymously the first time it runs, and again whenever it finds itself signed
  * out: the schema refuses every request without a signed-in user. Supabase keeps the session on the
- * device, so a returning user stays the same user.
+ * device, so a returning user stays the same user, offline too.
  */
-class AnonymousSession(
-    private val client: SupabaseClient?,
-    private val scope: CoroutineScope,
-    private val internetAvailability: Flow<Boolean>,
-) {
+class AnonymousSession(private val supabase: SupabaseClient, private val scope: CoroutineScope) :
+    UserSession {
+
+    private val auth = supabase.auth
     private val failure = MutableStateFlow<Throwable?>(null)
 
-    /** The session's state, for the Sync screen. */
+    /** The session's state, for the Tasks and Sync screens. */
     val state: StateFlow<SessionState> =
-        client?.let { supabase ->
-            combine(supabase.auth.sessionStatus, failure) { status, error ->
-                    when (status) {
-                        is SessionStatus.Authenticated -> SessionState.SignedIn
-                        // A session that could not refresh offline is still this user's.
-                        is SessionStatus.RefreshFailure -> SessionState.SignedIn
-                        SessionStatus.Initializing -> SessionState.SigningIn
-                        is SessionStatus.NotAuthenticated ->
-                            error?.let { SessionState.Failed(it) } ?: SessionState.SigningIn
-                    }
+        combine(auth.sessionStatus, failure) { status, error ->
+                when (status) {
+                    is SessionStatus.Authenticated -> SessionState.SignedIn
+                    // A session that could not refresh offline is still this user's.
+                    is SessionStatus.RefreshFailure -> SessionState.SignedIn
+                    SessionStatus.Initializing -> SessionState.SigningIn
+                    is SessionStatus.NotAuthenticated ->
+                        error?.let { SessionState.Failed(it) } ?: SessionState.SigningIn
                 }
-                .stateIn(scope, SharingStarted.Eagerly, SessionState.SigningIn)
-        } ?: MutableStateFlow(SessionState.NotConfigured).asStateFlow()
+            }
+            .stateIn(scope, SharingStarted.Eagerly, SessionState.SigningIn)
 
-    /** Signs in now if needed, and each time the internet comes back while signed out. */
+    override val userId: StateFlow<String?> =
+        auth.sessionStatus
+            .map { auth.currentUserOrNull()?.id }
+            .stateIn(scope, SharingStarted.Eagerly, auth.currentUserOrNull()?.id)
+
+    /** Signs in now if needed, and each time the network comes back while signed out. */
     fun start() {
-        val auth = client?.auth ?: return
         scope.launch {
             auth.awaitInitialization()
-            internetAvailability.filter { it }.collect { signInIfSignedOut() }
+            // The library's view of the network: its monitor, or "Simulate offline" switched on.
+            supabase.offline.syncStatus
+                .map { it.network == NetworkStatus.ONLINE || it.network == NetworkStatus.UNKNOWN }
+                .distinctUntilChanged()
+                .filter { it }
+                .collect { signInIfSignedOut() }
         }
     }
 
+    override suspend fun signInAsNewUser() {
+        auth.signOut()
+        auth.signInAnonymously()
+        failure.value = null
+        userId.first { it != null }
+    }
+
     private suspend fun signInIfSignedOut() {
-        val auth = client?.auth ?: return
         if (auth.currentSessionOrNull() != null) return
         try {
             auth.signInAnonymously()
