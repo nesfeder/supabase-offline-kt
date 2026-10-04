@@ -47,8 +47,10 @@ import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -645,7 +647,17 @@ internal class OfflineTable(
         val sent =
             try {
                 headSender.sendAtHead(queued.id, identity, performOnline) { result ->
-                    direct.overlay(result)
+                    // The patch and the write leaving the queue are one step for the table's live
+                    // readers, which would otherwise see the row twice, or not at all, in between
+                    withContext(NonCancellable) {
+                        queryOverlay.holdingReadersOf(table) {
+                            try {
+                                direct.overlay(result)
+                            } finally {
+                                mutationQueue.completeSentMutation(queued.id)
+                            }
+                        }
+                    }
                 }
             } catch (cancellation: CancellationException) {
                 // Cancelled on the wire: whether the server got it is not known, so it stays

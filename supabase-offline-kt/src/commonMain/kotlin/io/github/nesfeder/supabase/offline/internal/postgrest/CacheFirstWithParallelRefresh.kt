@@ -101,6 +101,7 @@ internal fun refreshBackoff(failures: Int): Duration =
  * @param backoff Backoff schedule; injectable so tests can shrink or reshape delays.
  * @param refreshRequests Each emission after the first success runs the refresh again.
  * @param networkAccess whether the network is known down, or access to it off.
+ * @param isWaiting see [refreshUntilSuccess].
  */
 internal fun <T> cacheFirstWithParallelRefresh(
     cache: Flow<T>,
@@ -110,6 +111,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
     backoff: (failures: Int) -> Duration = ::refreshBackoff,
     refreshRequests: Flow<Unit> = emptyFlow(),
     networkAccess: NetworkAccess = NetworkAccess(),
+    isWaiting: (Exception) -> Boolean = { false },
 ): Flow<T> = channelFlow {
     // Forward cache emissions immediately — not gated on the network.
     launch {
@@ -130,6 +132,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
             onRefreshState = onRefreshState,
             backoff = backoff,
             networkAccess = networkAccess,
+            isWaiting = isWaiting,
         )
         refreshRequests.conflate().collect {
             refreshUntilSuccess(
@@ -138,10 +141,13 @@ internal fun <T> cacheFirstWithParallelRefresh(
                 onRefreshState = onRefreshState,
                 backoff = backoff,
                 networkAccess = networkAccess,
+                isWaiting = isWaiting,
             )
         }
     }
 }
+    // A slow collector is handed the latest value, never a backlog of replaced ones
+    .conflate()
 
 /**
  * Runs [refresh] until it succeeds, retrying with [backoff] backoff for the life of the calling
@@ -155,6 +161,8 @@ internal fun <T> cacheFirstWithParallelRefresh(
  * @param backoff Backoff schedule keyed by consecutive-failure count.
  * @param networkAccess whether the network is known down ([RefreshState.Paused] rather than a
  *   failure), or access to it off (nothing is tried until it is back on).
+ * @param isWaiting whether a failure is a wait rather than a fault, such as for a session to
+ *   settle: retried on the same schedule, but never reported as [RefreshState.Stalled].
  */
 internal suspend fun refreshUntilSuccess(
     refresh: suspend () -> Unit,
@@ -162,6 +170,7 @@ internal suspend fun refreshUntilSuccess(
     onRefreshState: (RefreshState) -> Unit,
     backoff: (failures: Int) -> Duration,
     networkAccess: NetworkAccess = NetworkAccess(),
+    isWaiting: (Exception) -> Boolean = { false },
 ): Unit = coroutineScope {
     var reported: RefreshState = RefreshState.Refreshing
     val report = { state: RefreshState ->
@@ -205,6 +214,9 @@ internal suspend fun refreshUntilSuccess(
                 // The network is known down: waiting for it, not failing. Still retried on the
                 // capped schedule, as a monitor can be wrong
                 if (reported != RefreshState.Paused) report(RefreshState.Paused)
+            } else if (isWaiting(failure)) {
+                // Waiting, not failing: a response came back, so the refresh is under way
+                if (reported != RefreshState.Refreshing) report(RefreshState.Refreshing)
             } else if (failures >= FAST_RETRY_COUNT && reported !is RefreshState.Stalled) {
                 // The fast ladder exhausted: report the stall once, then keep retrying on the
                 // capped schedule (state stays Stalled until a success flips it to Idle).

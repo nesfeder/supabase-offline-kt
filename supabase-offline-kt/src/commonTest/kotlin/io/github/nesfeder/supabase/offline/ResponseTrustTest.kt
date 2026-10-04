@@ -293,11 +293,11 @@ class ResponseTrustTest {
             // When
             settle()
 
-            // Then — no data, still retrying, as before
+            // Then — no data, still retrying: a wait for an answer it may cache, not a failure
             assertEquals(listOf<String?>(null), observed.shown.distinct())
             assertEquals(
-                true,
-                observed.refresh is RefreshState.Stalled,
+                RefreshState.Refreshing,
+                observed.refresh,
                 "the read settled under the authenticated-only rule",
             )
             assertEquals(true, server.reads() > 1)

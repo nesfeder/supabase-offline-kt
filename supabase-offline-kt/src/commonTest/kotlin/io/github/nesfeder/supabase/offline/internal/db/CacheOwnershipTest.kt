@@ -199,9 +199,9 @@ class CacheOwnershipTest {
 
     /**
      * Seeds rows an earlier build left, with nobody signed in, runs [empty] and stops it once its
-     * transaction has committed, and asks whose the cache is meanwhile. Whoever is told the cache
-     * is theirs must also see the emptying counted, or a reader serves a payload it received
-     * before.
+     * transaction has committed, and asks whose the cache is meanwhile, then reads the payload as a
+     * reader does after it. Whoever is told the cache is theirs reads it emptied, never the rows
+     * the emptying removed.
      */
     private suspend fun TestScope.assertTheOwnerComesWithTheEmptying(empty: suspend () -> Unit) {
         // Given
@@ -214,31 +214,30 @@ class CacheOwnershipTest {
             committed.complete(Unit)
             resume.await()
         }
-        val countBefore = store.cacheOwnership.record.emptiedCount()
         val emptying = launch { empty() }
         committed.await()
 
         // When — a read asks whose the cache is before the emptying has recorded it
         val check = async {
             store.cacheOwnership.cacheServesCurrentIdentity() to
-                store.cacheOwnership.record.emptiedCount()
+                queryCacheDao.get(TABLE, CACHE_KEY)?.payload
         }
         runCurrent()
         resume.complete(Unit)
         emptying.join()
-        val (served, countSeen) = check.await()
+        val (served, payloadSeen) = check.await()
 
         // Then
-        assertTrue(!served || countSeen > countBefore, "served=$served at count $countSeen")
+        assertTrue(!served || payloadSeen == null, "served=$served the rows $payloadSeen")
     }
 
     @Test
-    fun a_read_during_a_drop_is_told_the_new_owner_only_with_the_drop_counted() = runTest {
+    fun a_read_during_a_drop_told_the_new_owner_reads_the_emptied_cache() = runTest {
         assertTheOwnerComesWithTheEmptying { store.localData.dropCacheFor(ANONYMOUS) }
     }
 
     @Test
-    fun a_read_during_a_clear_is_told_the_new_owner_only_with_the_clear_counted() = runTest {
+    fun a_read_during_a_clear_told_the_new_owner_reads_the_emptied_cache() = runTest {
         assertTheOwnerComesWithTheEmptying { store.localData.clearLocalData(owner = ANONYMOUS) }
     }
 

@@ -29,6 +29,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.storage.cachedFileKeyOf
 import io.github.nesfeder.supabase.offline.internal.storage.cachedFileRowOf
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
@@ -262,6 +263,6 @@ internal fun QueryOverlay.overlaidPayloadFlow(
     cacheKey: String,
     shape: QueryShape? = null,
 ): Flow<String?> =
-    servedPayloadFlow(table, cacheKey, shape)
-        .map { served -> served?.payload }
+    servedPayloadFlow(table, cacheKey, shape, MutableStateFlow(Unit))
+        .map { (served, _) -> served?.payload }
         .distinctUntilChanged()

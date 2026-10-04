@@ -23,6 +23,8 @@ import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
+import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.ktor.client.network.sockets.SocketTimeoutException
@@ -123,8 +125,10 @@ internal class CachingBucketApi(
                 try {
                     downloadToTemporaryFile(file, entryProvider = { entry }) { target ->
                         networkAccess.ensureEnabled()
-                        if (isPublic) delegate.downloadPublic(path, target) {}
-                        else delegate.downloadAuthenticated(path, target) {}
+                        checkingDownloadStatus {
+                            if (isPublic) delegate.downloadPublic(path, target) {}
+                            else delegate.downloadAuthenticated(path, target) {}
+                        }
                     }
                 } catch (failure: Exception) {
                     currentCoroutineContext().ensureActive()
@@ -230,15 +234,21 @@ internal class CachingBucketApi(
     /**
      * A download into the caller's channel, streamed through a temporary file so it is never held
      * in memory. [channel] gets nothing until the download is complete, then is closed, as
-     * supabase-kt does.
+     * supabase-kt does. A response that is not a success throws as the bytes download does, and
+     * none of it reaches [channel] or the cache.
      */
     private suspend fun downloadToChannel(
         path: String,
         channel: ByteWriteChannel,
         options: DownloadOptionBuilder.() -> Unit,
-        fetch:
+        uncheckedFetch:
             suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit,
     ) {
+        val fetch:
+            suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit =
+            { target, wrappedOptions ->
+                checkingDownloadStatus { uncheckedFetch(target, wrappedOptions) }
+            }
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!isCacheableObjectPath(path) || !isCacheableBucketId(bucketId)) {
             networkAccess.ensureEnabled()
@@ -305,7 +315,8 @@ internal class CachingBucketApi(
     /**
      * What a failed download returns instead of its failure. When the server says the object is
      * gone, nothing: its copies are dropped and the failure rethrown. Otherwise the cached copy of
-     * the variant asked for, or of the original when the request was never built.
+     * the variant asked for, or of the original when the request was never built. Offline, which
+     * is expected, is logged at INFO; any other failure at WARNING.
      */
     private suspend fun <T : Any> recover(
         path: String,
@@ -320,14 +331,17 @@ internal class CachingBucketApi(
             }
             throw failure
         }
+        val level =
+            if (failure.isNetworkOrConnectivityFailure()) EngineLogLevel.INFO
+            else EngineLogLevel.WARNING
         val cached = probe.entryToServe(cache, bucketId, path)?.let { entry -> readCached(entry) }
         if (cached != null) {
-            engineLogger.warning {
+            engineLogger.log(level) {
                 "Storage download from $bucketId failed; serving the cached copy"
             }
             return cached
         }
-        engineLogger.error { "Storage download from $bucketId failed and nothing is cached" }
+        engineLogger.log(level) { "Storage download from $bucketId failed and nothing is cached" }
         throw failure
     }
 

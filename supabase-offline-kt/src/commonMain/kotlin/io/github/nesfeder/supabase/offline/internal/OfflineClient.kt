@@ -69,6 +69,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.refreshWakeUps
 import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.storage.installDownloadStatusCheck
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -384,6 +385,7 @@ internal class OfflineClient(
         supabaseClient.installDryRunCheck()
         supabaseClient.installReadShapeCheck()
         supabaseClient.installTransportFailureCapture()
+        supabaseClient.installDownloadStatusCheck()
         networkAccess.watchIn(clientScope, onReconnected = ::replayAsTheNetworkReturns)
         if (autoSync) replayWhenTheSessionSettles()
         keepCacheWithTheSession()
@@ -948,6 +950,8 @@ internal class OfflineClient(
                 scrubDatabase()
             }
         }
+        // To a live read the clear is what a change of owner is: it fetches again
+        liveQueries.liveTables().forEach { table -> liveQueries.requestRefresh(table) }
         // The writes an earlier failure held back are gone with it
         publishStatus { status -> status.copy(lastSyncError = null) }
     }

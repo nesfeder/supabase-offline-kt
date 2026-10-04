@@ -252,7 +252,7 @@ internal class MutationQueue(
     /**
      * How many changes this queue made to each table's mutation rows, each counted once committed:
      * a flow, because readers collect it and read a table's rows again only when its count moves
-     * ([mutationsOfTableFlow], [queueChanges]). One queue per database ([OpenDatabaseRegistry]).
+     * ([mutationChangesOf], [queueChanges]). One queue per database ([OpenDatabaseRegistry]).
      */
     private val mutationChanges = MutableStateFlow(ChangeCounts())
 
@@ -279,15 +279,20 @@ internal class MutationQueue(
     }
 
     /**
-     * [table]'s mutation rows, pending and synced, in order: read once, and again each time this
-     * store changes them. Another table's changes cost this reader a comparison, not a read, and
-     * the table's readers share one read, and each body's parse, per change.
+     * Emits once at once, and again each time this queue changes [table]'s mutation rows, without
+     * reading them: the reader reads them itself, with [tableMutationsNow]. Another table's changes
+     * cost it a comparison, not a read.
      */
-    fun mutationsOfTableFlow(table: String): Flow<TableMutations> =
-        mutationChanges
-            .map { counts -> counts.of(table) }
-            .distinctUntilChanged()
-            .map { counts -> tableMutationsAt(table, counts) }
+    fun mutationChangesOf(table: String): Flow<Unit> =
+        mutationChanges.map { counts -> counts.of(table) }.distinctUntilChanged().map {}
+
+    /**
+     * [table]'s mutation rows, pending and synced, in order, as they stand now. The table's readers
+     * share one read, and each body's parse, per change; an overlay reads them in the same step as
+     * the payload it lays them over.
+     */
+    suspend fun tableMutationsNow(table: String): TableMutations =
+        tableMutationsAt(table, mutationChanges.value.of(table))
 
     /**
      * Each table's mutation rows as last read for its readers, with the counts they were read at.
