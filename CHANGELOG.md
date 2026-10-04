@@ -263,9 +263,10 @@ release.
   down.
 - After a sync pass stopped on a server's `Retry-After`, the library's own next pass waits at least
   that long (at most an hour); a sync the app asks for is sent at once.
-- The testing artifact pins the library to its own version: its published metadata carries a
-  strict constraint, so an app that resolves another version of the library beside it fails
-  dependency resolution instead of failing a test with a missing method.
+- The testing artifact pins the library to its own version with a strict constraint in its
+  published metadata. Beside a newer library, an older testing artifact fails dependency resolution
+  instead of a test failing with a missing method; a newer testing artifact raises the library in
+  the test classpath to its own version without a word. Keep both on one version.
 - A slow collector of a `CacheFirstThenNetwork` read is handed the latest snapshot, not each one in
   turn, and never holds back the query's other collectors.
 - The request lambda passed to a read or a write may run more than once, so it must configure the

@@ -33,6 +33,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
@@ -244,6 +245,31 @@ class OfflineTaskRepositoryTest {
         assertEquals("23503", failure.serverError.code)
         assertTrue(server.files.isEmpty(), "a file was left with no row: ${server.files.keys}")
         assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
+    }
+
+    @Test
+    fun a_photo_whose_row_fails_but_is_not_refused_keeps_its_file() = runTest {
+        // Given — a task, and its photo's row held on its way to the server
+        repository.addTask("Kept", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        val release = CompletableDeferred<Boolean>()
+        server.holdPhotoRowInserts = release
+        val attach = scope.async {
+            runCatching {
+                repository.attachPhoto(task.id, EncodedPhoto(ByteArray(8), 1, 1)).toList()
+            }
+        }
+        withTimeout(WAIT) { server.photoRowInsertsHeld.first { it == 1 } }
+
+        // When — local data is cleared meanwhile, and then the connection drops
+        repository.clearLocalData()
+        release.complete(false)
+
+        // Then — not a refusal, which alone says no row will name the file: the file stays
+        assertIs<NetworkUnavailableException>(
+            withTimeout(WAIT) { attach.await() }.exceptionOrNull()
+        )
+        assertEquals(1, server.files.size)
     }
 
     @Test

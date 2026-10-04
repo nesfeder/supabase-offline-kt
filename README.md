@@ -33,8 +33,10 @@ kotlin {
 ```
 
 In an Android-only app, the same coordinates go in `dependencies { }`, with the OkHttp engine. Use
-the testing artifact at exactly the library's version: its published metadata pins it, so a
-mismatch fails dependency resolution.
+the testing artifact at exactly the library's version, from one version-catalog entry. Its published
+metadata pins the library to its own version: an older testing artifact fails dependency
+resolution, and a newer one raises the library in your test classpath to its version without a
+word, so your tests would run on a library your app does not ship.
 
 ### Install the plugin
 
@@ -70,10 +72,10 @@ val tasks = supabase.offline.from("tasks")
 ```
 
 Online, this is the server's answer, and the device keeps it. Offline, the same request is answered
-from what the device kept. A request never answered online has nothing kept: the first time, offline,
-it fails as supabase-kt would. Each request is kept on its own, so read a single task from the list
-you already read rather than with a request of its own. `selectAsFlow { … }` reads the same rows as a
-`Flow` that follows every change.
+from what the device kept. A request never answered online has nothing kept: the first time,
+offline, it fails as supabase-kt would. Each request is kept on its own, so read a single task from
+the list you already read rather than with a request of its own. `selectAsFlow { … }` reads the
+same rows as a `Flow` that follows every change.
 
 ### Write
 
@@ -100,8 +102,9 @@ yet; its quick start comes with it.
 
 The [documentation site](https://nesfeder.github.io/supabase-offline-kt/), also under
 [`docs/`](./docs/index.md): [the architecture](./docs/project/architecture.md), with the whole
-public API and what the library promises; [compatibility and versioning](./docs/project/compatibility.md);
-and [the sample app](./docs/samples/index.md).
+public API and what the library promises;
+[compatibility and versioning](./docs/project/compatibility.md); and
+[the sample app](./docs/samples/index.md).
 
 ## Contributing
 

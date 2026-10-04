@@ -11,8 +11,9 @@ Answers to common questions, and fixes for common problems.
 
 The cache holds the answers the server gave, one per request: a request's columns, filters, order
 and range make its key. A request never answered online has nothing cached, so offline it fails
-(`NetworkFirst`), or shows nothing (`selectAsFlow` emits `null` rows), even when another cached request of the same
-table holds the rows it asks for. Read a detail screen's row from the list a list screen already
+(`NetworkFirst`), or shows nothing but the queued writes it admits (`selectAsFlow` emits `null`
+rows when there are none), even when another cached request of the same table holds the rows it
+asks for. Read a detail screen's row from the list a list screen already
 reads, with the same request, and pick it out on the device:
 
 ```kotlin

@@ -43,6 +43,9 @@ private const val BUCKET = "task-photos"
 /** The longest title the schema's check accepts. */
 private const val TITLE_LIMIT = 200
 
+/** The path a photo row is inserted at. */
+private const val PHOTO_ROWS_PATH = "/rest/v1/task_photos"
+
 /** The path every upload to the bucket is sent to, before the object's own path. */
 private const val UPLOAD_PREFIX = "/storage/v1/object/$BUCKET/"
 
@@ -82,6 +85,15 @@ class FakeSupabaseServer {
     /** How many uploads are stored and waiting on [holdUploadAnswers]. */
     val uploadsHeld: MutableStateFlow<Int> = MutableStateFlow(0)
 
+    /**
+     * While set, a photo row's insert waits for it before the row is stored, and fails at the
+     * transport when it completes with `false`, as a connection lost on the way would.
+     */
+    var holdPhotoRowInserts: CompletableDeferred<Boolean>? = null
+
+    /** How many photo row inserts are waiting on [holdPhotoRowInserts]. */
+    val photoRowInsertsHeld: MutableStateFlow<Int> = MutableStateFlow(0)
+
     private val lock = Any()
 
     /**
@@ -117,6 +129,11 @@ class FakeSupabaseServer {
         val path = request.url.encodedPath
         synchronized(lock) { requests += "${request.method.value} $path" }
         if (!isReachable) throw IOException("network unreachable")
+        val rowHold = holdPhotoRowInserts
+        if (rowHold != null && request.method == HttpMethod.Post && path == PHOTO_ROWS_PATH) {
+            photoRowInsertsHeld.update { it + 1 }
+            if (!rowHold.await()) throw IOException("connection lost")
+        }
         val body = request.body.toByteArray()
         val response =
             synchronized(lock) {

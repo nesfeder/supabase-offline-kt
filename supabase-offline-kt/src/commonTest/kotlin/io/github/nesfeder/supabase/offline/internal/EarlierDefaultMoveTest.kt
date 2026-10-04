@@ -137,6 +137,26 @@ class EarlierDefaultMoveTest {
     }
 
     @Test
+    fun a_move_that_fails_part_way_puts_back_the_log_it_had_moved() {
+        // Given — a log and an index beside the database, and the index's destination taken
+        leaveDataAtTheEarlierLocation()
+        write(root / "documents" / "supabase_offline.db-shm", "index")
+        write(root / "support" / "supabase_offline.db-shm" / "taken", "in the way")
+
+        // When — the log moves first, then the index cannot
+        val opened = moveEarlierDefaultIfUnclaimed(current, earlier, engineLogger)
+
+        // Then — the earlier database is opened with its log back beside it, holding its newest
+        // writes, and nothing of it is left at the current location
+        assertEquals(earlier, opened)
+        assertEquals("log", read(root / "documents" / "supabase_offline.db-wal"))
+        assertEquals("index", read(root / "documents" / "supabase_offline.db-shm"))
+        assertEquals("database", read(earlier.databasePath))
+        assertFalse(FileSystem.SYSTEM.exists(root / "support" / "supabase_offline.db-wal"))
+        assertFalse(FileSystem.SYSTEM.exists(current.databasePath))
+    }
+
+    @Test
     fun with_nothing_at_the_earlier_location_the_current_one_is_opened() {
         // Given — nothing anywhere
 

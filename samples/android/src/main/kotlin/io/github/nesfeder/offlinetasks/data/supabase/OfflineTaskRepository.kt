@@ -29,6 +29,7 @@ import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskServerError
 import io.github.nesfeder.offlinetasks.data.TaskSyncReport
+import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.data.UserSession
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
 import io.github.nesfeder.supabase.offline.CacheMissException
@@ -213,11 +214,9 @@ class OfflineTaskRepository(
                 write(Tables.TASK_PHOTOS, TaskMutationOperation.Insert, taskTitle = null) {
                     offline.from(Tables.TASK_PHOTOS).insert(row)
                 }
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (refused: Exception) {
-                // Refused at once (its task deleted on the server meanwhile, say): no row will
-                // ever name the file, so it goes too.
+            } catch (refused: TaskWriteRefusedException) {
+                // Refused at once (its task deleted on the server meanwhile, say): no row will ever
+                // name the file, so it goes too. Any other failure may leave the row queued.
                 deleteUploadedFile(objectPath, refused)
                 throw refused
             }

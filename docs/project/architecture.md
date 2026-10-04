@@ -168,7 +168,7 @@ revisited before the pin moves.
 | --- | --- | --- |
 | `CacheFirstThenNetwork` | Emits the cached rows at once and refreshes them from the server in parallel. | A failing refresh leaves the rows on screen and is retried for as long as the flow is collected, at most a minute apart, and at once when the session settles or the network comes back. |
 | `NetworkFirstThenCache` | Asks the server first, then emits the cached rows as they change. | Offline with the query cached, it emits the cached rows at once, `Stalled` (`Paused` when the network is known down), and keeps asking until the server answers. Then it fetches again only after a write the cache could not follow, a change of the cache's owner, or `clearLocalData()`. With nothing cached, or on a server error, the flow fails. |
-| `CacheOnly` | Emits the cached rows and never sends a request. | A query not cached emits `null` rows; it has no `maxAge`. A shape the cache never holds fails with `CacheMissException`. |
+| `CacheOnly` | Emits the cached rows and never sends a request. | A query not cached emits `null` rows, or only the queued writes it admits; it has no `maxAge`. A shape the cache never holds fails with `CacheMissException`. |
 
 `QuerySnapshot` is one emission:
 
@@ -410,7 +410,7 @@ stops being watched: a failure is logged, and the status falls back to `UNKNOWN`
 reachable. Either is a hint, never a gate: a request the app makes is always tried, because a
 monitor can be wrong either way. It decides only when the library tries by itself (while it says
 offline, one failed attempt per offline period, as above), what a waiting refresh reports, whether
-a read the cache cannot answer goes out once rather than with supabase-kt's transport retries,
+a list read the cache cannot answer goes out once rather than with supabase-kt's transport retries,
 whether a sync returns at once rather than wait for an unsettled session, and what
 `syncStatus.network` says.
 
@@ -516,9 +516,10 @@ val supabase = createSupabaseClient(url, key) {
 
 **The version rule.** Use the testing artifact at exactly the library's version. It calls hooks
 marked `@OfflineInternal`, which change between releases, so its published metadata pins the library
-at its own version with a strict constraint: another version of the library beside it fails
-dependency resolution. When a value type gains a field, its factory gains an overload rather than a
-new defaulted parameter.
+at its own version with a strict constraint. An older testing artifact beside a newer library fails
+dependency resolution; a newer one raises the library in the test classpath to its own version
+without a word. Keep both on one version. When a value type gains a field, its factory gains an
+overload rather than a new defaulted parameter.
 
 ### Moving a call from supabase-kt
 
@@ -757,8 +758,9 @@ falls back at once; a `503` or `520` is still retried on supabase-kt's schedule.
 60 s, for as long as the flow is collected: `Stalled` after the fourth failure (about 3.6 s),
 `Paused` instead when the network is known down, and `Refreshing` for as long as the answers come
 back under a session still settling, which is a wait, not a failure. A session settling or the
-network coming back cuts the wait short. A read the cache cannot answer, sent while the network is
-known down, goes out once with transport retries off too: the monitor is a hint, so it is still
+network coming back cuts the wait short. A list read the cache cannot answer, sent while the network
+is known down, goes out once with transport retries off too (a shape the cache never holds keeps
+supabase-kt's retries): the monitor is a hint, so it is still
 tried, but supabase-kt's waits could only delay the failure. A slow collector is handed the latest
 snapshot, never holding back the query's other collectors.
 

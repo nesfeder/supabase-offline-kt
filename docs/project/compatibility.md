@@ -74,8 +74,10 @@ Semantic versioning in the usual sense:
 Use `supabase-offline-kt-testing` at exactly the version of the library it sits beside. Its
 factories and its in-memory client call into the library outside the API records, so they work only
 with the library of their own version. Its published metadata pins that version (a `strictly`
-constraint): a build that resolves another version of the library beside it fails dependency
-resolution, rather than a test failing with a missing method.
+constraint), which works in one direction only. Beside a newer library, an older testing artifact
+fails dependency resolution, rather than a test failing with a missing method. A newer testing
+artifact raises the library in the test classpath to its own version without a word, so the tests
+run on a library the app does not ship. Keep both on one version, from one version-catalog entry.
 
 When a value type gains a field, its factory in the testing artifact gains an overload that takes
 it; the existing factory is not given a new parameter with a default. A new defaulted parameter

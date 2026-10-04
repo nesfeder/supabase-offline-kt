@@ -18,7 +18,8 @@ public abstract class OfflineException internal constructor(message: String, cau
  * A one-shot [ReadStrategy.CacheOnly] read throws it for a query that is not cached, for cached
  * rows older than its `maxAge`, and for a shape the cache never holds (`single()`, a count,
  * `csv()`, …). A reactive [FlowReadStrategy.CacheOnly] read fails with it only for such a shape:
- * for a query that is not cached it emits a snapshot whose rows are `null`.
+ * for a query that is not cached it emits a snapshot whose rows are `null`, or only the queued
+ * writes the query admits.
  */
 public class CacheMissException internal constructor(message: String) :
     OfflineException(message, null)
