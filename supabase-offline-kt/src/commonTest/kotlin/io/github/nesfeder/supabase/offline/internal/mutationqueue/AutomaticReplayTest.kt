@@ -7,6 +7,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.advanceTimeBy
@@ -16,7 +17,8 @@ import kotlinx.coroutines.test.runTest
 /**
  * The passes the engine starts on its own are coalesced — at most one runs and one waits, however
  * many are asked for — and wait after a pass that stopped on a failure, doubling up to a cap, so a
- * write the server keeps failing is not sent again for every write queued behind it.
+ * write the server keeps failing is not sent again for every write queued behind it. A reconnection
+ * or a settled session cuts that wait short, and no pass runs while the network is known down.
  */
 class AutomaticReplayTest {
 
@@ -132,6 +134,90 @@ class AutomaticReplayTest {
 
         // Then — it ran at once
         assertEquals(3, passes)
+    }
+
+    @Test
+    fun an_edge_cuts_short_the_wait_failed_passes_built() = runTest {
+        // Given — passes that keep failing have grown the wait to its cap
+        val passTimes = mutableListOf<Long>()
+        var failing = true
+        val automaticReplay =
+            AutomaticReplay(scope = backgroundScope, engineLogger = logger) {
+                passTimes += testScheduler.currentTime
+                val stop =
+                    if (failing) SyncStop.TransientFailure(IllegalStateException("offline"))
+                    else null
+                SyncReport(0, emptyList(), 1, stop)
+            }
+        repeat(8) {
+            automaticReplay.requestPass()
+            advanceTimeBy(65.seconds)
+        }
+        automaticReplay.requestPass()
+        runCurrent()
+        val lastFailedPassAt = passTimes.last()
+
+        // When — the network comes back 2 seconds into the minute's wait
+        advanceTimeBy(2.seconds)
+        failing = false
+        automaticReplay.requestPassOnEdge()
+        runCurrent()
+
+        // Then — the pass ran at once
+        assertEquals(lastFailedPassAt + 2_000L, passTimes.last())
+    }
+
+    @Test
+    fun after_an_edge_cut_it_short_the_wait_starts_again_from_one_second() = runTest {
+        // Given — every pass fails; three have grown the wait to four seconds
+        val passTimes = mutableListOf<Long>()
+        val automaticReplay =
+            AutomaticReplay(scope = backgroundScope, engineLogger = logger) {
+                passTimes += testScheduler.currentTime
+                SyncReport(0, emptyList(), 1, SyncStop.TransientFailure(IllegalStateException("x")))
+            }
+        repeat(3) {
+            automaticReplay.requestPass()
+            advanceTimeBy(10.seconds)
+        }
+
+        // When — an edge cuts the wait short, its pass fails too, and another pass is asked for
+        automaticReplay.requestPassOnEdge()
+        runCurrent()
+        val edgePassAt = passTimes.last()
+        automaticReplay.requestPass()
+        advanceTimeBy(5.seconds)
+
+        // Then — the next pass waited one second, not eight
+        assertEquals(edgePassAt + 1_000L, passTimes.last())
+    }
+
+    @Test
+    fun a_pass_asked_for_while_the_network_is_known_down_is_skipped() = runTest {
+        // Given — the network is known to be down
+        var down = true
+        var passes = 0
+        val automaticReplay =
+            AutomaticReplay(
+                scope = backgroundScope,
+                engineLogger = logger,
+                isNetworkKnownDown = { down },
+            ) {
+                passes++
+                SyncReport(0, emptyList(), 0, stop = null)
+            }
+
+        // When — passes are asked for, then the network comes back
+        repeat(3) { automaticReplay.requestPass() }
+        advanceTimeBy(2.minutes)
+        val whileDown = passes
+        down = false
+        automaticReplay.requestPassOnEdge()
+        runCurrent()
+
+        // Then — none ran while it was down, and the reconnection's ran at once
+        assertEquals(0, whileDown)
+        assertEquals(1, passes)
     }
 
     @Test

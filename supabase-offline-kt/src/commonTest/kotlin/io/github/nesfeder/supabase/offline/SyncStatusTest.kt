@@ -2,11 +2,18 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -14,17 +21,21 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -191,6 +202,81 @@ class SyncStatusTest {
             assertSame(status, client.syncStatus)
             assertEquals(atClose, client.syncStatus.value)
         }
+
+    @Test
+    fun the_status_counts_what_an_earlier_run_left_queued_before_it_is_first_read() = runTest {
+        // Given — a write an earlier run left queued
+        val mutationDao = FakeMutationDao()
+        newTestStore(mutationDao = mutationDao).mutationQueue.enqueueInsert(TABLE, row(1))
+
+        // When — a client opens over it, and nobody reads its status yet
+        val client =
+            newTestOfflineClient(
+                mutationDao = mutationDao,
+                config = Offline.Config().apply { autoSync = false },
+            )
+        val countedBeforeTheFirstRead =
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(10.seconds) {
+                    while (mutationDao.pendingCounts == 0) delay(5.milliseconds)
+                    true
+                }
+            }
+
+        // Then — the queue was counted from the moment the client opened
+        assertEquals(true, countedBeforeTheFirstRead, "nothing counted the queue until it was read")
+        assertEquals(
+            1,
+            client.syncStatus.awaiting { it.pendingMutationCount == 1 }.pendingMutationCount,
+        )
+        client.close()
+    }
+
+    @Test
+    fun the_status_counts_follow_the_queue_after_a_failed_read_of_the_rejected_list() = runTest {
+        // Given — reads of the rejected list fail for a moment, as a busy or failing disk would
+        var failing = true
+        val cacheDao =
+            FakeQueryCacheDao().apply {
+                onGetSnapshot = { table, key ->
+                    if (
+                        failing &&
+                            table == RESERVED_TABLE_NAME &&
+                            key == REJECTED_MUTATIONS_CACHE_KEY
+                    )
+                        error("Scripted failure reading the rejected list")
+                }
+            }
+        val logs = RecordingLogSink()
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = cacheDao,
+                engineLogger = logs.asEngineLogger(),
+            )
+        val status = client.syncStatus
+        withContext(Dispatchers.Default) {
+            withTimeout(10.seconds) {
+                while (logs.entries.none { "IllegalStateException" in it.message }) delay(
+                    10.milliseconds
+                )
+            }
+            delay(300.milliseconds)
+        }
+        failing = false
+
+        // When — a write is queued offline
+        client.from(TABLE).insert(row(1))
+        val counted = runCatching { status.awaiting { it.pendingMutationCount == 1 } }
+
+        // Then
+        assertTrue(
+            counted.isSuccess,
+            "the status never counted the queued write (status=${status.value}); ${logs.entries}",
+        )
+        client.close()
+    }
 
     @Test
     fun the_status_can_be_read_after_close_and_holds_its_last_value() = runTest {

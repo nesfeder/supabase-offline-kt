@@ -71,7 +71,6 @@ import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
-import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -84,17 +83,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
@@ -223,9 +223,6 @@ internal class OfflineClient(
                 lastSyncError = null,
             )
         )
-
-    /** Taken by the first read of [syncStatus], which starts the work that keeps it current. */
-    private val statusTracked = AtomicBoolean(false)
 
     /** Held by every change to [syncStatusState], so [close] can publish the last one. */
     private val statusLock = Mutex()
@@ -363,7 +360,12 @@ internal class OfflineClient(
      * them.
      */
     private val automaticReplay =
-        AutomaticReplay(scope = clientScope, engineLogger = engineLogger, clock = clock) {
+        AutomaticReplay(
+            scope = clientScope,
+            engineLogger = engineLogger,
+            clock = clock,
+            isNetworkKnownDown = { networkAccess.isKnownUnavailable },
+        ) {
             mutationQueueReplayer.sync()
         }
 
@@ -409,41 +411,52 @@ internal class OfflineClient(
     }
 
     /**
-     * Starts a pass when the session settles into an identity with mutations queued, in the
-     * client's scope so [close] stops it. Every new status counts, as a sign-out and sign-in it
-     * never saw arrive as a new session of the same identity. Not started with `autoSync` off; see
-     * [AutomaticReplay].
+     * Starts a pass when the session settles into an identity with mutations queued, cutting a
+     * backoff short, in the client's scope so [close] stops it. Every new status counts, as a
+     * sign-out and sign-in it never saw arrive as a new session of the same identity. Not started
+     * with `autoSync` off; see [AutomaticReplay].
      */
     private fun replayWhenTheSessionSettles() {
         val auth = authPluginOrNull() ?: return
         clientScope.launch {
             auth.sessionStatus.collect { status ->
                 val identity = replayIdentityFor(status) ?: return@collect
-                if (mutationQueue.hasPendingMutationsOf(identity.storedValue))
-                    automaticReplay.requestPass()
+                requestPassUnlessQueueEmpty(identity, onEdge = true)
             }
         }
     }
 
     /**
      * Starts a pass, as the network becomes reachable again (the monitor, the app's signal, or
-     * [enableNetwork]), when the settled identity has mutations queued. An identity still settling
-     * is left to the session trigger. Does nothing with `autoSync` off; see [AutomaticReplay].
+     * [enableNetwork]), when the settled identity has mutations queued, cutting a backoff short. An
+     * identity still settling is left to the session trigger. Does nothing with `autoSync` off; see
+     * [AutomaticReplay].
      */
     private suspend fun replayAsTheNetworkReturns() {
         if (!autoSync) return
         val identity = supabaseClient.currentReplayIdentity() ?: return
-        try {
-            if (mutationQueue.hasPendingMutationsOf(identity.storedValue))
-                automaticReplay.requestPass()
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
-            engineLogger.warning {
-                "Could not tell whether queued writes wait for the network " +
-                    "(${failure::class.simpleName}); they go with the next pass"
-            }
-        }
+        requestPassUnlessQueueEmpty(identity, onEdge = true)
+    }
+
+    /**
+     * Starts one pass when a client without Auth opens with mutations an earlier run left queued:
+     * that client's session is settled from the start, so no other trigger fires for them. Not
+     * started with `autoSync` off.
+     */
+    private fun replayWhatAnEarlierRunLeft() {
+        if (!autoSync || authPluginOrNull() != null) return
+        clientScope.launch { requestPassUnlessQueueEmpty(QueueIdentity.Anonymous, onEdge = false) }
+    }
+
+    /**
+     * Asks for a pass when [identity] has mutations queued, and when that cannot be read: the pass
+     * reads the queue itself, so a failed read never loses the trigger that asked.
+     *
+     * @param onEdge whether a reconnection or a settled session asks, which cuts a backoff short.
+     */
+    private suspend fun requestPassUnlessQueueEmpty(identity: QueueIdentity, onEdge: Boolean) {
+        if (!mutationQueue.mayHavePendingMutationsOf(identity.storedValue)) return
+        if (onEdge) automaticReplay.requestPassOnEdge() else automaticReplay.requestPass()
     }
 
     /**
@@ -614,7 +627,7 @@ internal class OfflineClient(
     override suspend fun discardPendingMutation(id: Long): Unit = operationGate.call {
         val identity = supabaseClient.currentQueueIdentity() ?: return@call
         if (!mutationQueueReplayer.discardPendingMutationOnceUnsent(id, identity)) return@call
-        if (mutationQueue.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
+        requestPassUnlessQueueEmpty(identity, onEdge = false)
     }
 
     override fun rejectedMutations(): Flow<List<RejectedMutation>> =
@@ -657,15 +670,8 @@ internal class OfflineClient(
 
     /* ─────────────────────────── Sync status and the network ─────────────────────────── */
 
-    /** [syncStatusState], read only. */
-    private val syncStatusView: StateFlow<SyncStatus> = syncStatusState.asStateFlow()
-
     /** The same flow whether or not the client is open; after [close] it keeps its last value. */
-    override val syncStatus: StateFlow<SyncStatus>
-        get() {
-            if (!operationGate.isClosed) trackStatusOnce()
-            return syncStatusView
-        }
+    override val syncStatus: StateFlow<SyncStatus> = syncStatusState.asStateFlow()
 
     override suspend fun disableNetwork(): Unit = operationGate.call {
         networkAccess.disable()
@@ -696,23 +702,12 @@ internal class OfflineClient(
     }
 
     /**
-     * Starts, once, the work that keeps [syncStatus] current, in the client's scope so [close]
-     * stops it: the network, whether a pass runs, and the two counts as the queue and the rejected
-     * list change. A client nobody asks the status of does none of it.
+     * Starts, when the client opens, the work that keeps [syncStatus] current, in the client's
+     * scope so [close] stops it: the network, whether a pass runs, and the two counts as the queue
+     * and the rejected list change. A failed read of either is logged, and they are followed again
+     * after a wait that doubles up to about a minute.
      */
-    private fun trackStatusOnce() {
-        if (!statusTracked.compareAndSet(expectedValue = false, newValue = true)) return
-        // Current from the first read when the lock is free at once; the collection below
-        // publishes it first thing either way, then keeps it current
-        if (statusLock.tryLock()) {
-            try {
-                if (!statusFinal) {
-                    syncStatusState.update { status -> status.copy(network = networkAccess.status) }
-                }
-            } finally {
-                statusLock.unlock()
-            }
-        }
+    private fun trackStatus() {
         clientScope.launch {
             publishStatus { status -> status.copy(network = networkAccess.status) }
             networkAccess.statusChanges.collect {
@@ -730,10 +725,14 @@ internal class OfflineClient(
             // once, and an older snapshot never lands after a newer one
             merge(mutationQueue.queueChanges(), mutationQueue.shownRejectionsFlow().map {})
                 .conflate()
-                .catch { failure ->
+                .retryWhen { failure, attempt ->
                     engineLogger.warning {
-                        "The sync status stopped following the queue (${failure::class.simpleName})"
+                        "The sync status lost track of the queue (${failure::class.simpleName}); " +
+                            "following it again"
                     }
+                    val doublings = attempt.coerceAtMost(STATUS_RETRY_DOUBLINGS.toLong()).toInt()
+                    delay(STATUS_RETRY_WAIT * (1 shl doublings))
+                    true
                 }
                 .collect {
                     val counts = queueCountsOrNull() ?: return@collect
@@ -1027,6 +1026,12 @@ internal class OfflineClient(
          * database.
          */
         val CLOSE_WAIT: Duration = 10.seconds
+
+        /** The first wait before the status follows the queue again after a failed read. */
+        val STATUS_RETRY_WAIT: Duration = 1.seconds
+
+        /** How many times that wait doubles: at most 64 times [STATUS_RETRY_WAIT]. */
+        const val STATUS_RETRY_DOUBLINGS: Int = 6
     }
 
     private fun ensurePostgrestInstalled() {
@@ -1045,5 +1050,11 @@ internal class OfflineClient(
                     "Storage plugin is not installed. Install with createSupabaseClient { install(Storage) }"
                 )
             }
+    }
+
+    // Last, once every part the work below reads is built
+    init {
+        trackStatus()
+        replayWhatAnEarlierRunLeft()
     }
 }

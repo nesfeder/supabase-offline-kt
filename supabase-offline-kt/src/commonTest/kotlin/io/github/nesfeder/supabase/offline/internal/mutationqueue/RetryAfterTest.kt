@@ -55,6 +55,31 @@ class RetryAfterTest {
     }
 
     @Test
+    fun an_edge_does_not_cut_short_the_wait_the_server_asked_for() = runTest {
+        // Given — a pass stopped on a 503 asking for 30 seconds
+        val failure = unavailable("30")
+        val passTimes = mutableListOf<Long>()
+        val automaticReplay =
+            AutomaticReplay(scope = backgroundScope, engineLogger = logger) {
+                passTimes += testScheduler.currentTime
+                SyncReport(0, emptyList(), 1, SyncStop.TransientFailure(failure))
+            }
+        automaticReplay.requestPass()
+        runCurrent()
+
+        // When — the network comes back a second later
+        advanceTimeBy(1.seconds)
+        automaticReplay.requestPassOnEdge()
+        advanceTimeBy(29.seconds - 1.milliseconds)
+        val beforeTheWait = passTimes.size
+        advanceTimeBy(2.milliseconds)
+
+        // Then — the reconnection's pass still waited for what the server asked
+        assertEquals(1, beforeTheWait)
+        assertEquals(listOf(0L, 30_000L), passTimes)
+    }
+
+    @Test
     fun the_next_pass_waits_at_least_as_long_as_the_server_asked() = runTest {
         // Given — every pass stops on a 503 asking for 30 seconds
         val failure = unavailable("30")
