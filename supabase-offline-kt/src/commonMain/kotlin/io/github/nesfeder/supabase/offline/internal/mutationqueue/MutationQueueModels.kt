@@ -115,8 +115,8 @@ internal sealed interface SyncStop {
     data object HeadInFlight : SyncStop
 
     /**
-     * A pass for one table reached a write with an earlier write of the same identity still queued
-     * in another table, and stopped there: a write is never sent ahead of an earlier one.
+     * A pass for one table stopped at a write with an earlier one of the same identity still queued
+     * in another table: a write is never sent ahead of an earlier one.
      *
      * @property mutationId The first write held back.
      */

@@ -76,8 +76,8 @@ internal class AutomaticReplay(
     }
 
     /**
-     * Asks for a pass as the network comes back or the session settles: a wait a failed pass left
-     * ends at once, but a wait the server asked for with `Retry-After` is kept. Returns at once.
+     * Asks for a pass as the network comes back or the session settles. It ends at once the wait a
+     * failed pass left, never one a server's `Retry-After` asked for. Returns at once.
      */
     fun requestPassOnEdge() {
         edges.trySend(Unit)

@@ -186,10 +186,9 @@ private val CommittedDryRunReportInstallation =
     AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.CommittedDryRunReport")
 
 /**
- * Installs, once per client, a check beside the engine that calls [onCommitted] when a PostgREST
- * write asked to be rolled back (`Prefer: tx=rollback`) and the server answered with a success that
- * does not list the rollback as applied: the dry run was committed. PostgREST ignores the
- * preference unless its `db-tx-end` setting allows the override, which hosted projects do not.
+ * Installs, once per client, a check beside the engine that calls [onCommitted] when a dry run was
+ * committed. That is a PostgREST write that asked for `Prefer: tx=rollback` and succeeded without
+ * `Preference-Applied` listing it, as hosted projects answer: their `db-tx-end` allows no override.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installCommittedDryRunReport(onCommitted: () -> Unit) {

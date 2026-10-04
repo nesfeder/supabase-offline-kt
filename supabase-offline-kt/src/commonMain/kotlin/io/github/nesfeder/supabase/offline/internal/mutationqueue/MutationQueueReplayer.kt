@@ -510,7 +510,7 @@ internal class MutationQueueReplayer(
     }
 
     /**
-     * What a pass sent and recorded so far, kept outside it so that a pass a clear cancels still
+     * What a pass sent and recorded so far. Kept outside the pass, so one a clear cancels still
      * reports the writes the server accepted or refused before.
      */
     private inner class PassProgress {

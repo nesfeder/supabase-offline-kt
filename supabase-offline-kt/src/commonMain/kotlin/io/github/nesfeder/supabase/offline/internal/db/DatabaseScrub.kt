@@ -21,8 +21,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Rewrites the database without the rows a clear deleted (`VACUUM`), so none can be read back from
- * its file, then tries once to empty its write-ahead log; see [emptyWriteAheadLog].
+ * Rewrites the database without the rows a clear deleted (`VACUUM`), then tries once to empty its
+ * write-ahead log; see [emptyWriteAheadLog].
  *
  * @return whether the write-ahead log was emptied.
  */
@@ -69,9 +69,8 @@ private suspend fun Transactor.tryTruncatingCheckpoint(): Boolean {
 
 /**
  * Makes sure the rows a clear or a cache drop deleted cannot be read back from the database's
- * files. Best effort: an open read can hold the write-ahead log, so what the rewrite leaves is
- * finished outside the clear's locks, then in the background, then once more at close. It never
- * fails its caller and never waits without bound.
+ * files, best effort: what an open read holds is finished outside the clear's locks, then in the
+ * background, then at close. It never fails its caller and never waits without bound.
  *
  * @param scope where the background retries run; cancelling it stops them.
  * @param engineLogger where a read holding the log, and a failure, are reported.

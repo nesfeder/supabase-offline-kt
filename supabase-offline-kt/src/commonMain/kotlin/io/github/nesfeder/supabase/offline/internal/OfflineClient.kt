@@ -265,10 +265,7 @@ internal class OfflineClient(
      */
     private val liveQueries = LiveQueries(clientScope, engineLogger)
 
-    /**
-     * The identity a write, a discard, a dismissal or a retry is for, read once per session status
-     * and bounded while the stored session restores.
-     */
+    /** The identity a write, a discard, a dismissal or a retry is for, read once per status. */
     private val queueIdentityReader = QueueIdentityReader(supabaseClient)
 
     /** The identity the overlay and counts are for, read once per session status. */
@@ -480,9 +477,9 @@ internal class OfflineClient(
     }
 
     /**
-     * Starts one pass when a client without Auth opens with mutations an earlier run left queued:
-     * that client's session is settled from the start, so no other trigger fires for them. Not
-     * started with `autoSync` off.
+     * Starts one pass when a client without Auth opens with mutations an earlier run left queued.
+     * Its session is settled from the start, so no other trigger fires for them. Not with
+     * `autoSync` off.
      */
     private fun replayWhatAnEarlierRunLeft() {
         if (!autoSync || authPluginOrNull() != null) return
@@ -490,7 +487,7 @@ internal class OfflineClient(
     }
 
     /**
-     * Asks for a pass when [identity] has mutations queued, and when that cannot be read: the pass
+     * Asks for a pass when [identity] has mutations queued, or when that cannot be read. The pass
      * reads the queue itself, so a failed read never loses the trigger that asked.
      *
      * @param onEdge whether a reconnection or a settled session asks, which cuts a backoff short.
@@ -744,10 +741,9 @@ internal class OfflineClient(
     }
 
     /**
-     * Starts, when the client opens, the work that keeps [syncStatus] current, in the client's
-     * scope so [close] stops it: the network, whether a pass runs, and the two counts as the queue
-     * and the rejected list change. A failed read of either is logged, and they are followed again
-     * after a wait that doubles up to about a minute.
+     * Starts, at open, the work that keeps [syncStatus] current, in the client's scope so [close]
+     * stops it. It follows the network, the passes, and both counts as the queue and the rejected
+     * list change; after a failed read, again after a wait doubling up to about a minute.
      */
     private fun trackStatus() {
         clientScope.launch {

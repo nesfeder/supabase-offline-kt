@@ -379,9 +379,9 @@ internal class MutationQueue(
         )
 
     /**
-     * [hasPendingMutationsOf], or `true` when the queue cannot be read: for a caller deciding
-     * whether to ask for a pass, which reads the queue itself, so a failed read never loses the
-     * pass. Throws only a cancellation.
+     * [hasPendingMutationsOf], or `true` when the queue cannot be read. For a caller deciding
+     * whether to ask for a pass, which reads the queue itself: a failed read never loses the pass.
+     * Throws only a cancellation.
      */
     suspend fun mayHavePendingMutationsOf(identity: String): Boolean =
         try {
