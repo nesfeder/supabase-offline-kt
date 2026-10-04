@@ -57,6 +57,7 @@ class DatabaseScrubTest {
         // Given — a read holds the log until it is let go
         var held = true
         var logTries = 0
+        var emptied = false
         val scrub =
             DatabaseScrub(
                 scope = backgroundScope,
@@ -64,7 +65,8 @@ class DatabaseScrubTest {
                 rewrite = { false },
                 emptyLog = {
                     logTries++
-                    !held
+                    emptied = !held
+                    emptied
                 },
             )
 
@@ -85,6 +87,7 @@ class DatabaseScrubTest {
         assertTrue(
             logs.entries.any { it.level == EngineLogLevel.INFO && "open read" in it.message }
         )
+        assertTrue(emptied, "the background never emptied the log")
         assertEquals(triesWhenEmptied, logTries)
         assertEquals(emptyList(), logs.entries.filter { it.level >= EngineLogLevel.WARNING })
     }
