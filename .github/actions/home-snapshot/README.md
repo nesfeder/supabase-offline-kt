@@ -51,10 +51,13 @@ written by applications the machine's user runs. Everything else is watched, inc
   in the persistence points. Nor is a new file four levels down: inside `.konan`'s toolchains, a
   runner's `externals/node24/bin`, or another runner's `_work/_tool`.
 - **Symbolic link targets.** A link is recorded as itself; what it points to is not followed.
-- **SwiftPM's link folder, `~/.swiftpm`:** recorded by name with its links listed, but its own
-  times and its `security` link are not, because SwiftPM re-creates that link on every package
-  build, in any session and in the job's Swift package step (xcodebuild). The link's target,
-  `~/Library/org.swift.swiftpm`, stays watched.
+- **SwiftPM's link folder, `~/.swiftpm`:** recorded by name with its links listed, but not its own
+  times, and its `security` link by name, target and mode only, without times: SwiftPM deletes and
+  re-creates that link, to the same target, on every package build, in any session and in the job's
+  Swift package step (xcodebuild). A link re-pointed elsewhere, or replaced by a file or a folder,
+  still shows. Nothing inside the target, `~/Library/org.swift.swiftpm/security`, three levels
+  down, is watched: only its parent, `~/Library/org.swift.swiftpm`, is recorded with its times, which
+  catches an entry added, removed or renamed directly inside it.
 - **Anything under an excluded path,** and anything inside the seven folders recorded by name only.
   `.claude*` matches any new top-level entry whose name starts that way, and every runner's
   `_work` hides that runner's tool cache.
