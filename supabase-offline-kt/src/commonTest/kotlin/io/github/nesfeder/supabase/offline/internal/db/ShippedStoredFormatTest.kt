@@ -52,7 +52,7 @@ class ShippedStoredFormatTest {
     }
 
     @Test
-    fun stored_operation_names_are_the_ones_the_syncer_dispatches_on() {
+    fun stored_operation_names_are_the_ones_the_replayer_dispatches_on() {
         // Given / When
         val operations =
             ShippedDatabaseFixture.MUTATION_ROWS.map { it.operation.storedName }.toSet()

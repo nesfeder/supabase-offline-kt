@@ -33,7 +33,7 @@ import okio.SYSTEM
  *
  * Uses are spaced minutes apart on the test clock, past that grace window.
  */
-class StorageCacheBoundTest {
+class FileCacheBoundTest {
 
     private lateinit var dataDirectory: Path
     private lateinit var store: TestStore

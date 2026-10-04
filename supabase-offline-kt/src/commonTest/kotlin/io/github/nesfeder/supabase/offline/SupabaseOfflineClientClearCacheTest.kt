@@ -40,7 +40,7 @@ class SupabaseOfflineClientClearCacheTest {
     }
 
     @Test
-    fun clearLocalData_wipes_storage_directory_from_disk() = runTest {
+    fun clearLocalData_deletes_the_storage_directory_from_disk() = runTest {
         // Given a client whose offline cache has a downloaded storage file on disk
         val baseDir =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /

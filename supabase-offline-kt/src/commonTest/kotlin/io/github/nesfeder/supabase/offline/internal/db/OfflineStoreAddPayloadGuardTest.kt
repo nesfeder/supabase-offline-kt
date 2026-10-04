@@ -240,7 +240,7 @@ class OfflineStoreAddPayloadGuardTest {
     }
 
     @Test
-    fun guard_is_scoped_per_signature() = runTest {
+    fun guard_is_scoped_per_cache_key() = runTest {
         // Given — the same table has two distinct cached signatures (e.g. one per user_id)
         val queryCacheDao = FakeQueryCacheDao()
         queryCacheDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")

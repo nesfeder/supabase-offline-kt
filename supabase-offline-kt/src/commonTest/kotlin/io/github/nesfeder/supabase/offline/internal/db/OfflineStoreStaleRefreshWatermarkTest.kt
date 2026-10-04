@@ -328,7 +328,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
     }
 
     @Test
-    fun a_response_issued_after_teardown_is_written_normally() = runTest {
+    fun a_response_issued_after_a_clear_is_written_normally() = runTest {
         // Given — a cache torn down at tick 10 (the next user has since signed in)
         val queryCacheDao = FakeQueryCacheDao()
         var tick = 10L

@@ -191,7 +191,7 @@ class LiveQueriesTest {
         }
 
     @Test
-    fun a_later_subscriber_to_a_failed_signature_gets_a_fresh_attempt() = runTest {
+    fun a_later_subscriber_to_a_failed_query_gets_a_fresh_attempt() = runTest {
         // Given — the first attempt fails, the second would succeed
         val liveQueries = LiveQueries(scope)
         var attempts = 0
@@ -225,7 +225,7 @@ class LiveQueriesTest {
     }
 
     @Test
-    fun a_signature_nobody_observes_leaves_nothing_running_or_retained() = runTest {
+    fun a_query_nobody_observes_leaves_nothing_running_or_retained() = runTest {
         // Given — search-as-you-type: many distinct signatures, each observed briefly
         val liveQueries = LiveQueries(scope)
 

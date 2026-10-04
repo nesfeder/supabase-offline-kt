@@ -26,7 +26,7 @@ import kotlinx.serialization.json.JsonArray
 class OfflineStoreClearAllTest {
 
     @Test
-    fun clearAll_wipes_cached_payloads_and_queued_mutations() = runTest {
+    fun clearLocalData_deletes_cached_payloads_and_queued_mutations() = runTest {
         // Given a store holding a cached SELECT payload and a queued offline mutation
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()

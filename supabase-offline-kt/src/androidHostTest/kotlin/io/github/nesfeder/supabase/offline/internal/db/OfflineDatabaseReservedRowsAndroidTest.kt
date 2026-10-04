@@ -49,7 +49,7 @@ class OfflineDatabaseReservedRowsAndroidTest {
     }
 
     @Test
-    fun room_eviction_keeps_the_listed_signatures() = runTest {
+    fun room_eviction_keeps_the_listed_cache_keys() = runTest {
         scenarios.roomEvictionKeepsTheListedCacheKeys(databasePath)
     }
 

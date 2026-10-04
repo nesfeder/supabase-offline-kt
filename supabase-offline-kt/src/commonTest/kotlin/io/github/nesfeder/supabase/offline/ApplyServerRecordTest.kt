@@ -164,7 +164,7 @@ class ApplyServerRecordTest {
     }
 
     @Test
-    fun applyServerRecord_patches_every_cached_signature_for_the_table() = runTest {
+    fun applyServerRecord_patches_every_cached_query_for_the_table() = runTest {
         // Given — the same reports row cached under two different signatures (two live observers)
         val queryCacheDao = FakeQueryCacheDao()
         queryCacheDao.seedPayload("reports", "sig-A", """[{"id":"rep-1","total":80}]""")

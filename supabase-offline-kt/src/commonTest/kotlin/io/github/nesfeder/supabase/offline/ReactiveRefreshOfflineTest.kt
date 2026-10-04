@@ -29,7 +29,7 @@ import kotlinx.coroutines.test.runTest
 class ReactiveRefreshOfflineTest {
 
     @Test
-    fun offline_the_refresh_says_stalled_once_its_fast_ladder_is_spent() = runTest {
+    fun offline_the_refresh_says_stalled_once_its_fast_retries_are_spent() = runTest {
         listOf(true, false).forEach { cached ->
             // Given — no network, supabase-kt's default retries, the list cached or not
             val queryCacheDao = FakeQueryCacheDao()

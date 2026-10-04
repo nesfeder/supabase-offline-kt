@@ -157,7 +157,7 @@ class CacheFirstWithParallelRefreshTest {
     // Exhausted fast ladder keeps the flow alive and continues on the capped schedule ──
 
     @Test
-    fun exhausted_fast_ladder_keeps_flow_alive_and_reports_stalled() =
+    fun exhausted_fast_retries_keep_the_flow_alive_and_report_stalled() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a cache with a value and a refresh that never succeeds
             val cache = MutableSharedFlow<String>(replay = 1)
@@ -205,7 +205,7 @@ class CacheFirstWithParallelRefreshTest {
     // Accelerator edge short-circuits the current backoff ───────────────────────
 
     @Test
-    fun accelerator_edge_triggers_one_immediate_retry_per_edge() =
+    fun each_wake_up_triggers_one_immediate_retry() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a refresh that fails until told otherwise, and an accelerator we control
             val cache = MutableSharedFlow<String>(replay = 1)
@@ -354,7 +354,7 @@ class CacheFirstWithParallelRefreshTest {
     // An accelerator edge after success never re-runs the refresh ───────────────
 
     @Test
-    fun accelerator_edge_after_success_does_not_re_run_refresh() =
+    fun a_wake_up_after_success_does_not_re_run_the_refresh() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a refresh that succeeds on the first attempt
             val cache = MutableSharedFlow<String>(replay = 1)

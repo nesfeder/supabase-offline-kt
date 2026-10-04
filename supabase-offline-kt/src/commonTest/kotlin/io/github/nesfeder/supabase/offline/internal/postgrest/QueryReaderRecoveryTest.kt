@@ -149,7 +149,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun two_collectors_on_one_signature_share_a_single_refresh() =
+    fun two_collectors_on_one_query_share_a_single_refresh() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a scripted network counter
             val postgrest = testPostgrest()
@@ -579,7 +579,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun every_network_bound_one_shot_strategy_walks_the_restore_ladder() =
+    fun every_network_bound_one_shot_strategy_waits_out_the_restore_window() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: the three one-shot strategies that can reach the network. CacheOnly is
             // excluded by design — it never issues a request, so it has nothing to retry. Running
@@ -651,7 +651,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun one_shot_restore_window_ladder_waits_before_it_spends_a_second_request() =
+    fun one_shot_restore_window_waits_before_it_spends_a_second_request() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a session that never finishes restoring, so RLS filters every request
             val postgrest = testPostgrest()
@@ -708,7 +708,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun one_shot_ladder_fires_at_the_next_boundary_when_the_session_returns_without_an_edge() =
+    fun one_shot_retry_fires_at_the_next_boundary_when_the_session_returns_without_a_wake_up() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a restore-window empty on the first attempt. The production accelerator is a
             // cold `drop(1)` flow, so an auth-ready transition that lands between two collections
@@ -817,7 +817,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun one_shot_teardown_refused_response_is_never_retried() =
+    fun one_shot_response_refused_after_a_clear_is_never_retried() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a one-shot read whose request parks in flight during the restore window
             val postgrest = testPostgrest()

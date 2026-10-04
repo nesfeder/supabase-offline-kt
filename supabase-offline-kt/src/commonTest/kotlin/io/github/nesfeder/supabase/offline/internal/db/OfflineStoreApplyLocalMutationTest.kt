@@ -160,7 +160,7 @@ class OfflineStoreApplyLocalMutationTest {
     }
 
     @Test
-    fun upsert_across_multiple_cached_signatures_patches_all() = runTest {
+    fun upsert_across_multiple_cached_queries_patches_all() = runTest {
         // Given — two live observers on the same table, under different filter signatures
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
@@ -277,7 +277,7 @@ class OfflineStoreApplyLocalMutationTest {
     // ── Query-aware overlay gating ────────────────────────────────────────────
 
     @Test
-    fun insert_does_not_land_in_cached_signature_whose_eq_filter_excludes_it() = runTest {
+    fun insert_does_not_land_in_a_cached_query_whose_eq_filter_excludes_it() = runTest {
         // Given — a cached exhaustive `type=eq.OPEN` query holding one OPEN row
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
@@ -306,7 +306,7 @@ class OfflineStoreApplyLocalMutationTest {
     }
 
     @Test
-    fun insert_lands_in_matching_exhaustive_signature() = runTest {
+    fun insert_lands_in_a_matching_exhaustive_query() = runTest {
         // Given — a cached exhaustive `type=eq.OPEN` query
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
@@ -334,7 +334,7 @@ class OfflineStoreApplyLocalMutationTest {
     }
 
     @Test
-    fun insert_fans_out_only_to_matching_signatures_across_multiple_queries() = runTest {
+    fun insert_fans_out_only_to_the_matching_queries_of_several() = runTest {
         // Given — two live observers on the same table under mutually-exclusive type filters
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
@@ -363,7 +363,7 @@ class OfflineStoreApplyLocalMutationTest {
     }
 
     @Test
-    fun insert_does_not_land_in_an_ordered_signature_whose_filter_excludes_it() = runTest {
+    fun insert_does_not_land_in_an_ordered_query_whose_filter_excludes_it() = runTest {
         // Given — an ordered `type=eq.OPEN` query
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
@@ -391,7 +391,7 @@ class OfflineStoreApplyLocalMutationTest {
     }
 
     @Test
-    fun upsert_append_is_gated_by_exhaustive_signature() = runTest {
+    fun upsert_append_is_gated_by_an_exhaustive_query() = runTest {
         // Given — a cached exhaustive `type=eq.OPEN` query
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
@@ -424,7 +424,7 @@ class OfflineStoreApplyLocalMutationTest {
     }
 
     @Test
-    fun upsert_merge_into_matching_row_unchanged_under_exhaustive_signature() = runTest {
+    fun upsert_merge_into_matching_row_unchanged_under_an_exhaustive_query() = runTest {
         // Given — a cached exhaustive `type=eq.OPEN` query with an existing row
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()

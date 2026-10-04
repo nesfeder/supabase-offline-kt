@@ -26,7 +26,7 @@ import okio.SYSTEM
  * A download that reached the server is the caller's, whatever happens to the cache copy: a cache
  * write that fails is logged and the bytes are still returned.
  */
-class StorageCacheWriteTest {
+class FileCacheWriteTest {
 
     private lateinit var dataDirectory: Path
     private lateinit var store: TestStore

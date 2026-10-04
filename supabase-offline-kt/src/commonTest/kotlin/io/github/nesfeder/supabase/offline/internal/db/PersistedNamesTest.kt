@@ -42,7 +42,7 @@ class PersistedNamesTest {
         )
 
     @Test
-    fun the_reserved_table_and_its_signatures_are_these() {
+    fun the_reserved_table_and_its_cache_keys_are_these() {
         assertEquals(
             "__supabase_offline_kt__.reserved_engine_state.this_name_is_longer_than_any_postgres_identifier",
             RESERVED_TABLE_NAME,
