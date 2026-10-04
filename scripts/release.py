@@ -27,8 +27,11 @@ Commands (from the repository root):
   push-tag --version X.Y.Z --sha SHA
       Pushes the tag X.Y.Z at SHA to origin, or does nothing when it is already there at SHA.
   publish-github-release --version X.Y.Z
-      Creates the GitHub Release for the existing tag from the changelog's section, not as a draft,
-      or does nothing when the release exists.
+      Publishes the draft GitHub Release X.Y.Z, which the Release run made before its approval
+      with the changelog's section as its notes and the Swift package's framework as its asset
+      (scripts/swift-release.py draft-release), for the existing tag; or does nothing when the
+      release is published. It refuses a draft without the framework, and a version with no
+      release: the Swift package's manifest names that asset.
   push-post-release-branch --version X.Y.Z
       Pushes the branch that starts the next development version (see next-snapshot), committed
       on origin/main's latest commit as github-actions[bot], and prints, and writes to the job
@@ -86,6 +89,9 @@ def api_compat_headings() -> list[str]:
 
 
 CHANGELOG_HEADINGS = api_compat_headings()
+# The Swift package's framework, an asset of each GitHub Release, which the package's manifest
+# names by URL (scripts/swift-release.py).
+SWIFT_FRAMEWORK_ASSET = "SupabaseOfflineCore.xcframework.zip"
 BOT_NAME = "github-actions[bot]"
 # GitHub's own address for its Actions bot, which shows the commits under that bot's name.
 BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -368,22 +374,22 @@ def gh(root: Path, *arguments: str, check: bool = True) -> subprocess.CompletedP
 
 
 def publish_github_release(root: Path, version: str) -> str:
-    """Creates the release for the tag, unless it exists: the changelog's section, then GitHub's
-    generated list of the merged pull requests, grouped as `.github/release.yml` says."""
-    existing = gh(root, "release", "view", version, "--json", "url,isDraft", check=False)
-    if existing.returncode == 0:
-        details = json.loads(existing.stdout or "{}")
-        if details.get("isDraft"):
-            raise ReleaseError(f"the GitHub Release {version} exists as a draft: publish or delete it by"
-                               " hand, then run this again")
+    """Publishes the draft release for the existing tag, unless it is published already. The draft
+    holds the notes (the changelog's section, then GitHub's generated list of the merged pull
+    requests, grouped as `.github/release.yml` says) and the Swift package's framework."""
+    existing = gh(root, "release", "view", version, "--json", "url,isDraft,assets", check=False)
+    if existing.returncode != 0:
+        raise ReleaseError(f"there is no GitHub Release {version}: the Release run's draft job creates"
+                           " it, as a draft holding the Swift package's framework, before the approval"
+                           " (RELEASING.md, \"When a release stops halfway\")")
+    details = json.loads(existing.stdout or "{}")
+    if not details.get("isDraft"):
         return f"The GitHub Release {version} already exists: {details.get('url', '')}"
-    with tempfile.TemporaryDirectory() as directory:
-        notes = Path(directory) / "notes.md"
-        notes.write_text(release_notes((root / CHANGELOG).read_text(encoding="utf-8"), version),
-                         encoding="utf-8")
-        created = gh(root, "release", "create", version, "--verify-tag", "--title", version,
-                     "--notes-file", str(notes), "--generate-notes")
-    return f"Created the GitHub Release {version}: {created.stdout.strip()}"
+    if SWIFT_FRAMEWORK_ASSET not in [asset.get("name") for asset in details.get("assets") or []]:
+        raise ReleaseError(f"the draft release {version} has no {SWIFT_FRAMEWORK_ASSET}, which the Swift"
+                           " package's manifest names: publishing it would leave the package unresolvable")
+    gh(root, "release", "edit", version, "--draft=false", "--verify-tag")
+    return f"Published the draft GitHub Release {version}: {details.get('url', '')}"
 
 
 def post_release_body(version: str, following: str, group: str) -> str:
@@ -404,7 +410,10 @@ def post_release_body(version: str, following: str, group: str) -> str:
               https://repo1.maven.org/maven2/{group.replace('.', '/')}/supabase-offline-kt/{version}/ and
               https://repo1.maven.org/maven2/{group.replace('.', '/')}/supabase-offline-kt-testing/{version}/
               (the Central Portal's search can take a few hours longer).
-        - [ ] The GitHub Release {version} shows the changelog's section, and is not a draft.
+        - [ ] The GitHub Release {version} shows the changelog's section, is not a draft, and holds
+              {SWIFT_FRAMEWORK_ASSET}.
+        - [ ] The Swift package resolves at {version} in a new Xcode project, by the URL
+              https://github.com/nesfeder/supabase-offline-swift (RELEASING.md, "After the release").
         - [ ] The diff touches only the four files above.
         """)
 
@@ -518,30 +527,86 @@ FIXTURE_FILES = {
     OVERRIDES: "# Findings a reviewer judged compatible.\n\nkotlin-removed: lib :: fun a()  # made open\n",
     PUBLISHED_RECORD: "# The record.\nlib file .pom\nlib-android file .aar\n",
 }
-# A stand-in for the GitHub CLI: it records each call, and answers from a JSON state file.
+# A stand-in for the GitHub CLI's `release` commands: it records each call, answers from a JSON
+# state file and keeps each asset's bytes in a folder beside it. `edit --verify-tag` asks origin.
 FAKE_GH = """\
 #!/usr/bin/env python3
-import json, os, sys
+import json, os, shutil, subprocess, sys
 state_path = os.environ["FAKE_GH_STATE"]
+assets_dir = state_path + ".assets"
 state = json.load(open(state_path)) if os.path.exists(state_path) else {"releases": {}}
 state.setdefault("calls", []).append(sys.argv[1:])
 args = sys.argv[1:]
+tag = args[2] if len(args) > 2 else ""
+release = state["releases"].get(tag)
+valued = {"--json", "--target", "--title", "--notes-file", "--pattern", "--dir"}
+def flag(name):
+    return args[args.index(name) + 1] if name in args else None
+def positional():
+    found, skip = [], False
+    for arg in args[3:]:
+        if skip:
+            skip = False
+        elif arg in valued:
+            skip = True
+        elif not arg.startswith("-"):
+            found.append(arg)
+    return found
+def add_asset(path):
+    os.makedirs(os.path.join(assets_dir, tag), exist_ok=True)
+    shutil.copyfile(path, os.path.join(assets_dir, tag, os.path.basename(path)))
+    release["assets"].append({"name": os.path.basename(path), "size": os.path.getsize(path)})
 code = 0
-if args[:2] == ["release", "view"]:
-    release = state["releases"].get(args[2])
-    if release is None:
-        sys.stderr.write("release not found\\n"); code = 1
-    else:
-        print(json.dumps(release))
+if args[:2] != ["release", "create"] and release is None and args[:1] == ["release"]:
+    sys.stderr.write("release not found\\n"); code = 1
+elif args[:2] == ["release", "view"]:
+    print(json.dumps(release))
 elif args[:2] == ["release", "create"]:
-    notes = open(args[args.index("--notes-file") + 1]).read()
-    state["releases"][args[2]] = {"url": "https://example.invalid/releases/" + args[2], "isDraft": False, "notes": notes}
-    print("https://example.invalid/releases/" + args[2])
+    release = {"url": "https://example.invalid/releases/" + tag, "isDraft": "--draft" in args,
+               "notes": open(flag("--notes-file")).read(), "targetCommitish": flag("--target") or "main",
+               "assets": []}
+    state["releases"][tag] = release
+    for path in positional():
+        add_asset(path)
+    print(release["url"])
+elif args[:2] == ["release", "upload"]:
+    if any(asset["name"] == os.path.basename(path) for path in positional() for asset in release["assets"]):
+        sys.stderr.write("asset exists\\n"); code = 1
+    else:
+        for path in positional():
+            add_asset(path)
+elif args[:2] == ["release", "download"]:
+    pattern, folder = flag("--pattern"), flag("--dir") or "."
+    names = [asset["name"] for asset in release["assets"] if asset["name"] == pattern]
+    if not names:
+        sys.stderr.write("no assets match\\n"); code = 1
+    for name in names:
+        shutil.copyfile(os.path.join(assets_dir, tag, name), os.path.join(folder, name))
+elif args[:2] == ["release", "edit"]:
+    listed = subprocess.run(["git", "ls-remote", "--tags", "origin", "refs/tags/" + tag],
+                            capture_output=True, text=True).stdout
+    if "--verify-tag" in args and not listed.strip():
+        sys.stderr.write("tag not found on the remote\\n"); code = 1
+    elif "--draft=false" in args:
+        release["isDraft"] = False
 else:
-    sys.stderr.write("the stand-in answers only `release view` and `release create`\\n"); code = 2
+    sys.stderr.write("the stand-in answers only `release` commands\\n"); code = 2
 json.dump(state, open(state_path, "w"))
 sys.exit(code)
 """
+
+
+def install_fake_gh(work: Path) -> Path:
+    """Puts the stand-in for gh first on the PATH, with a fresh state file; returns that file."""
+    tools = work / "bin"
+    tools.mkdir(exist_ok=True)
+    (tools / "gh").write_text(FAKE_GH)
+    (tools / "gh").chmod((tools / "gh").stat().st_mode | stat.S_IEXEC)
+    if not os.environ["PATH"].startswith(f"{tools}{os.pathsep}"):
+        os.environ["PATH"] = f"{tools}{os.pathsep}{os.environ['PATH']}"
+    state = work / "gh-state.json"
+    os.environ["FAKE_GH_STATE"] = str(state)
+    return state
 
 
 def make_repository(work: Path, name: str, files: dict[str, str]) -> Path:
@@ -657,12 +722,7 @@ def self_test() -> int:
                "check-resume refuses a tag at another commit")
 
         # The steps after Maven Central, against a bare origin and a stand-in for gh.
-        tools = work / "bin"
-        tools.mkdir()
-        (tools / "gh").write_text(FAKE_GH)
-        (tools / "gh").chmod((tools / "gh").stat().st_mode | stat.S_IEXEC)
-        os.environ["PATH"] = f"{tools}{os.pathsep}{os.environ['PATH']}"
-        os.environ["FAKE_GH_STATE"] = str(work / "gh-state.json")
+        gh_state = install_fake_gh(work)
         finish = make_repository(work, "finish", base)
         sha = git(finish, "rev-parse", "HEAD").strip()
         commit_change(finish, "README.md", "a later change on main\n")
@@ -672,12 +732,22 @@ def self_test() -> int:
         expect("already on origin" in push_tag(finish, "0.1.0", sha), "push-tag again does nothing")
         expect(refused(lambda: push_tag(finish, "0.1.0", git(finish, "rev-parse", "origin/main").strip()), "never move"),
                "push-tag refuses to move a tag")
-        expect(publish_github_release(finish, "0.1.0").startswith("Created"), "publish-github-release creates the release")
-        state = json.loads((work / "gh-state.json").read_text())
-        expect("Offline reads" in state["releases"]["0.1.0"]["notes"] and "--verify-tag" in state["calls"][-1],
-               "the release carries the changelog's section, for the existing tag")
-        expect("--generate-notes" in state["calls"][-1] and state["calls"][-1].count("--title") == 1,
-               "the release lists the merged pull requests beneath the section, under its own title")
+        expect(refused(lambda: publish_github_release(finish, "0.1.0"), "there is no GitHub Release 0.1.0"),
+               "publish-github-release refuses a version with no draft")
+        framework = work / SWIFT_FRAMEWORK_ASSET
+        framework.write_bytes(b"framework")
+        notes_file = work / "notes.md"
+        notes_file.write_text(release_notes(FIXTURE_CHANGELOG, "0.1.0"))
+        gh(finish, "release", "create", "0.1.0", "--draft", "--target", sha, "--notes-file", str(notes_file))
+        expect(refused(lambda: publish_github_release(finish, "0.1.0"), f"has no {SWIFT_FRAMEWORK_ASSET}"),
+               "publish-github-release refuses a draft without the framework")
+        gh(finish, "release", "upload", "0.1.0", str(framework))
+        expect(publish_github_release(finish, "0.1.0").startswith("Published the draft"),
+               "publish-github-release publishes the draft")
+        state = json.loads(gh_state.read_text())
+        expect(state["calls"][-1] == ["release", "edit", "0.1.0", "--draft=false", "--verify-tag"]
+               and not state["releases"]["0.1.0"]["isDraft"],
+               "the draft is published for the existing tag, notes and asset unchanged")
         expect("already exists" in publish_github_release(finish, "0.1.0"), "publish-github-release again does nothing")
         summary = work / "summary.md"
         os.environ["GITHUB_STEP_SUMMARY"] = str(summary)
@@ -706,7 +776,7 @@ def self_test() -> int:
         git(finish, "push", "-q", "origin", "refs/heads/release/0.1.0-next-snapshot:refs/heads/main")
         expect("has been started already" in push_post_release_branch(finish, "0.1.0"),
                "push-post-release-branch pushes nothing once main has moved on to the next version")
-        state = json.loads((work / "gh-state.json").read_text())
+        state = json.loads(gh_state.read_text())
         expect(all(call[0] == "release" for call in state["calls"]),
                "nothing asks GitHub to open a pull request")
         del os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_STEP_SUMMARY"]

@@ -9,10 +9,11 @@
 # Usage, from the repository root, after building the core:
 #   ./gradlew :supabase-offline-swift-bridge:assembleSupabaseOfflineCoreDebugXCFramework \
 #       -Psupabase.offline.iosSqlite=system
-#   scripts/test-swift-package.sh --simulator <UDID> --derived-data <DIR>
+#   scripts/test-swift-package.sh --simulator <UDID> --derived-data <DIR> [--framework <XCFRAMEWORK>]
 #
-# The framework is copied into swift/LocalCore (ignored by git), where Package.swift finds it when
-# SUPABASE_OFFLINE_LOCAL_CORE=1. Everything xcodebuild writes goes under the derived-data directory,
+# --framework tests against another build of the core, such as the release's (scripts/swift-release.py);
+# the default is Gradle's debug XCFramework above. The framework is copied into swift/LocalCore
+# (ignored by git), where Package.swift finds it when SUPABASE_OFFLINE_LOCAL_CORE=1. Everything xcodebuild writes goes under the derived-data directory,
 # but for the link SwiftPM re-creates in ~/.swiftpm on every package build (home-snapshot.sh).
 # When GITHUB_STEP_SUMMARY is set, the test count is added to it. Portable: bash 3.2 or later.
 
@@ -21,18 +22,19 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 simulator=""
 derived_data=""
+built="$root/supabase-offline-swift-bridge/build/XCFrameworks/debug/SupabaseOfflineCore.xcframework"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --simulator) simulator="${2:?--simulator needs a UDID}"; shift 2 ;;
         --derived-data) derived_data="${2:?--derived-data needs a directory}"; shift 2 ;;
+        --framework) built="${2:?--framework needs an XCFramework}"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 : "${simulator:?--simulator is required}" "${derived_data:?--derived-data is required}"
 
-built="$root/supabase-offline-swift-bridge/build/XCFrameworks/debug/SupabaseOfflineCore.xcframework"
 local_core="$root/swift/LocalCore"
-if [[ ! -d "$built" ]]; then
+if [[ ! -d "$built" || "$(basename "$built")" != SupabaseOfflineCore.xcframework ]]; then
     echo "No core framework at ${built#"$root"/}: build it first (see this script's usage)." >&2
     exit 1
 fi
