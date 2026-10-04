@@ -155,7 +155,9 @@ the number. Once the repository is public, GitHub's standard runners cost nothin
       the checksum again, and checks it: if the tree cannot be published, the job stops here,
       before anything is public;
    2. uploads the signed artifacts, releases the deployment, and waits until Central says
-      **PUBLISHED**, up to 45 minutes. This is the step that cannot be undone, so it goes first;
+      **PUBLISHED**, up to 45 minutes. This is the step that cannot be undone, so it goes first.
+      It runs with no Gradle daemon and the Kotlin compiler in-process, so no process it started
+      is still running when the next step writes the deploy key;
    3. pushes the Swift package to `nesfeder/supabase-offline-swift`: a commit on top of its `main`
       by `github-actions[bot]`, "Release X.Y.Z", whose tree is exactly the staged one, and the
       lightweight tag `X.Y.Z` on it, in one atomic push that never forces. This step alone reads

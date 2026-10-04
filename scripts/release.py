@@ -609,6 +609,36 @@ def install_fake_gh(work: Path) -> Path:
     return state
 
 
+class RecordedGit:
+    """Stands in for a module's `git` in a self-test: records each call, then runs it."""
+
+    def __init__(self, module_globals: dict):
+        self.module_globals = module_globals
+        self.real = module_globals["git"]
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, root: Path, *arguments: str, check: bool = True) -> str:
+        self.calls.append(arguments)
+        return self.real(root, *arguments, check=check)
+
+    def __enter__(self) -> "RecordedGit":
+        self.module_globals["git"] = self
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        self.module_globals["git"] = self.real
+
+    def pushes(self) -> list[tuple[str, ...]]:
+        """The recorded `git push` calls."""
+        return [call for call in self.calls if "push" in call]
+
+    def forced_pushes(self) -> list[tuple[str, ...]]:
+        """The recorded pushes that could move a ref: a force flag, a mirror, or a `+` refspec."""
+        return [call for call in self.pushes() if any(
+            argument == "--mirror" or argument.startswith(("--force", "+"))
+            or re.fullmatch(r"-[A-Za-z]*f[A-Za-z]*", argument) for argument in call)]
+
+
 def make_repository(work: Path, name: str, files: dict[str, str]) -> Path:
     """A git repository with files committed on main, and a bare origin it has pushed to."""
     origin = work / f"{name}-origin.git"
@@ -721,7 +751,9 @@ def self_test() -> int:
         expect(refused(lambda: check_resume(resume, released, repository), "already points at"),
                "check-resume refuses a tag at another commit")
 
-        # The steps after Maven Central, against a bare origin and a stand-in for gh.
+        # The steps after Maven Central, against a bare origin and a stand-in for gh; every git call
+        # is recorded, so a push that could move a ref fails the self-test.
+        recorded = RecordedGit(globals()).__enter__()
         gh_state = install_fake_gh(work)
         finish = make_repository(work, "finish", base)
         sha = git(finish, "rev-parse", "HEAD").strip()
@@ -779,6 +811,9 @@ def self_test() -> int:
         state = json.loads(gh_state.read_text())
         expect(all(call[0] == "release" for call in state["calls"]),
                "nothing asks GitHub to open a pull request")
+        recorded.__exit__()
+        expect(len(recorded.pushes()) >= 3 and not recorded.forced_pushes(),
+               f"push-tag and push-post-release-branch never force: {recorded.forced_pushes()}")
         del os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_STEP_SUMMARY"]
         expect(web_address("git@github.com:owner/repo.git") == "https://github.com/owner/repo"
                and web_address("https://github.com/owner/repo.git") == "https://github.com/owner/repo"

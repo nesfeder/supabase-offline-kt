@@ -92,7 +92,7 @@ The lowest versions each release supports. Raising one is a minor release.
 | --- | --- |
 | Maven, Android | API 23 |
 | Maven, iOS (`iosArm64`, `iosSimulatorArm64`) | iOS 15 |
-| Swift package | iOS 16, Xcode 26; the simulator on Apple silicon only (no x86_64 build) |
+| Swift package | iOS 16, Xcode 26; arm64 simulators only (a simulator build that includes x86_64, such as Any iOS Simulator Device, fails to link: build for a specific simulator, or with `ARCHS=arm64`) |
 
 ## supabase-kt
 

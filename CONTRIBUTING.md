@@ -310,7 +310,9 @@ python3 scripts/swift-release.py publish --dry-run --version 0.1.0 --sha HEAD \
     --zip <the scratch folder>/SupabaseOfflineCore.xcframework.zip --out <an empty folder>
 ```
 
-`publish --dry-run` reads the committed `swift/`, not your working tree, so commit first.
+`publish --dry-run` reads the committed `swift/`, not your working tree, so commit first. Without a
+framework, `python3 scripts/swift-release.py check-sources` stages the same tree from `HEAD` with a
+stand-in for it and runs the same check; CI's Static checks run it on every pull request.
 
 The core framework is imported `internal` everywhere (`InternalImportsByDefault`), so the compiler
 refuses a public declaration that names one of its types; the one file that needs more is the

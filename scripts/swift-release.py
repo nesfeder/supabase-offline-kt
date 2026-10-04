@@ -42,6 +42,11 @@ Commands (from the repository root):
       macOS only. Has SwiftPM read the staged tree's manifest (`swift package dump-package`), which
       the Linux jobs that publish it cannot: it must hold the binary target at the archive's URL
       with the zip's checksum, the two library targets and nothing else.
+  check-sources [--ref REF]
+      Stages the tree a release would publish from the commit REF (default HEAD), with a stand-in
+      for the framework (no build), and runs check-tree on it: the manifest renders, and the
+      sources, README and LICENSE hold nothing the release would refuse. CI runs it on every pull
+      request, so a refused word is found there, not in the release's macOS job.
   check-tree --tree DIR --zip ZIP --version X.Y.Z
       The check publish runs: the tree holds Package.swift, README.md, LICENSE and Sources/ and
       nothing else, Sources/ only Swift files and privacy manifests, no symbolic link and no hidden
@@ -117,6 +122,8 @@ SOURCE_PACKAGE = "swift"
 MANIFEST = "Package.swift"
 DEVELOPMENT_MARKER = "// MARK: Development only"
 ZERO_CHECKSUM = "0" * 64
+# The version check-sources renders: any release version will do, since nothing is published.
+SOURCES_CHECK_VERSION = "0.0.0"
 ASSET_URL = ("https://github.com/nesfeder/supabase-offline-kt/releases/download/\\(version)/"
              f"{ASSET}")
 PUBLISHED_ENTRIES = {MANIFEST, "README.md", "LICENSE", "Sources"}
@@ -433,6 +440,18 @@ def stage_tree(root: Path, sha: str, version: str, archive: Path, out: Path) -> 
     if problems:
         raise ReleaseError("the staged tree is not publishable:\n  " + "\n  ".join(problems))
     return archive_checksum
+
+
+def check_sources(root: Path, ref: str) -> str:
+    """Stages the tree a release would publish from ref, with a stand-in for the framework, and
+    checks it; the stand-in's checksum is a real one, so only the archive itself is not the release's."""
+    with tempfile.TemporaryDirectory() as directory:
+        stand_in = Path(directory) / ASSET
+        stand_in.write_bytes(b"A stand-in for the framework: check-sources builds nothing.\n")
+        tree = Path(directory) / "tree"
+        stage_tree(root, ref, SOURCES_CHECK_VERSION, stand_in, tree)
+        count = sum(1 for path in tree.rglob("*") if path.is_file())
+    return f"The tree a release would publish from {ref} ({count} files) passes the published-tree check."
 
 
 def swift_comments_and_strings(text: str) -> tuple[list[str], list[str]]:
@@ -875,6 +894,17 @@ def self_test() -> int:
                "the words in Sources' code (a framework type, a regex) are allowed")
         expect(refused(lambda: stage_tree(root, sha, "0.1.0", archive, tree), "not empty"),
                "a tree is staged afresh")
+        expect(check_sources(root, sha).startswith(f"The tree a release would publish from {sha} (6 files) passes"),
+               "check-sources stages the commit's tree with a stand-in framework, and it passes")
+        worded = release.make_repository(work, "worded", dict(FIXTURE_FILES, **{
+            "swift/Sources/SupabaseOffline/Client.swift": FIXTURE_SWIFT.replace(
+                "/// A client.", "/// A client, as `kotlinx.coroutines` names it.")}))
+        expect(refused(lambda: check_sources(worded, "HEAD"), "'kotlin' in a comment"),
+               "check-sources refuses a doc comment naming a coroutines package")
+        unwritten = release.make_repository(work, "unwritten", {
+            name: content for name, content in FIXTURE_FILES.items() if name != "swift/README.md"})
+        expect(refused(lambda: check_sources(unwritten, "HEAD"), "lacks swift/Package.swift, swift/README.md"),
+               "check-sources refuses a commit without the package's README")
 
         def mutated(name: str, change) -> list[str]:
             copy = work / f"mutant-{name}"
@@ -923,7 +953,9 @@ def self_test() -> int:
             problems = mutated(name, change)
             expect(any(phrase in problem for problem in problems), f"check-tree refuses {name}: {phrase}")
 
-        # The package's repository: a bare remote standing in for it.
+        # The package's repository: a bare remote standing in for it. Every git call is recorded, so
+        # a push that could move a ref fails the self-test.
+        recorded = release.RecordedGit(globals()).__enter__()
         remote = work / "swift-package.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
         first = push_package(tree, "0.1.0", str(remote))
@@ -958,6 +990,9 @@ def self_test() -> int:
         dry = work / "dry"
         expect("Dry run" in publish(root, archive, "0.3.0", sha, dry, None)
                and "refs/tags/0.3.0" not in remote_refs(work, str(remote)), "a dry run stages and pushes nothing")
+        recorded.__exit__()
+        expect(len(recorded.pushes()) >= 4 and not recorded.forced_pushes(),
+               f"the Swift package's pushes never force: {recorded.forced_pushes()}")
 
         # The draft release, against a stand-in for gh.
         gh_state = release.install_fake_gh(work)
@@ -1095,6 +1130,7 @@ def main(argv: list[str]) -> int:
     dumped = commands.add_parser("read-manifest")
     dumped.add_argument("--tree", required=True)
     dumped.add_argument("--zip", required=True)
+    commands.add_parser("check-sources").add_argument("--ref", default="HEAD")
     checked = commands.add_parser("check-tree")
     checked.add_argument("--tree", required=True)
     checked.add_argument("--zip", required=True)
@@ -1129,6 +1165,8 @@ def main(argv: list[str]) -> int:
                           Path(arguments.out), None if arguments.dry_run else arguments.remote))
         elif arguments.command == "read-manifest":
             print(read_manifest(Path(arguments.tree), Path(arguments.zip)))
+        elif arguments.command == "check-sources":
+            print(check_sources(root, arguments.ref))
         elif arguments.command == "check-tree":
             problems = tree_problems(Path(arguments.tree), arguments.version, checksum(Path(arguments.zip)))
             if problems:

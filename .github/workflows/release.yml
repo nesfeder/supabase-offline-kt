@@ -337,7 +337,9 @@ jobs:
           retention-days: 30
 
       # The secrets reach Gradle as project properties through the environment of this step only.
-      # No configuration cache: its entry would hold the signing key on the runner's disk.
+      # No configuration cache: its entry would hold the signing key on the runner's disk. No Gradle
+      # daemon and the Kotlin compiler in-process, in both Central steps: no build process started
+      # with the secrets is still running when the Swift package's step writes the deploy key.
       - name: Upload to the Central Portal without releasing (dry run)
         if: inputs.dry_run
         env:
@@ -347,7 +349,8 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
         run: |
           set -euo pipefail
-          ./gradlew publishToMavenCentral --no-configuration-cache --stacktrace 2>&1 \
+          ./gradlew publishToMavenCentral --no-configuration-cache --no-daemon \
+            -Pkotlin.compiler.execution.strategy=in-process --stacktrace 2>&1 \
             | tee "$RUNNER_TEMP/publish.log"
           deployment=$(sed -n 's/.*deployment id: \([0-9a-f-]*\).*/\1/p' "$RUNNER_TEMP/publish.log" | tail -1)
           {
@@ -370,7 +373,8 @@ jobs:
           ./gradlew publishAndReleaseToMavenCentral
           -PmavenCentralDeploymentValidation=PUBLISHED
           -PSONATYPE_CLOSE_TIMEOUT_SECONDS=2700
-          --no-configuration-cache --stacktrace
+          --no-configuration-cache --no-daemon -Pkotlin.compiler.execution.strategy=in-process
+          --stacktrace
 
       # After Central says PUBLISHED, and only then: the Swift package's commit and tag. The deploy
       # key reaches this step alone. It is written to a file only this user can read, used with

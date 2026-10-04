@@ -56,7 +56,9 @@ only the artifact itself:
     ```
 
     In an Xcode project, **File > Add Package Dependencies…** with the same URL. The package needs
-    iOS 16 and Xcode 26 or later, and builds for the simulator on Apple silicon only.
+    iOS 16 and Xcode 26 or later. It runs on arm64 simulators only: a simulator build that
+    includes x86_64 (such as Any iOS Simulator Device) fails to link, so build for a specific
+    simulator, or with `ARCHS=arm64`.
 
 Which versions you can take without reading their notes is on the
 [Compatibility](compatibility.md) page.

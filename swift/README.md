@@ -8,7 +8,8 @@ in a queue and are sent when it comes back.
 
 - iOS 16 or later
 - Xcode 26 or later
-- For the simulator, a Mac with Apple silicon: the package has no x86_64 simulator build
+- arm64 simulators only: a simulator build that includes x86_64 (such as Any iOS Simulator
+  Device) fails to link; build for a specific simulator, or with `ARCHS=arm64`
 
 ## Installation
 

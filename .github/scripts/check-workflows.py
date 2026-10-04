@@ -43,16 +43,20 @@ It fails when:
      - The Swift package's deploy key appears once per release workflow, in the environment of the
        one step that pushes the Swift package (release.yml's publish job, after the step that
        releases on Central and on a real run only; release-resume.yml's finish job, after the
-       resume check and before this repository's tag). That step runs no build, writes the key
-       with umask 077 and mode 600 under RUNNER_TEMP, and connects with IdentitiesOnly and
-       host-key checking on against a known_hosts file; a later step removes the key under
-       always(). No step of a release workflow pushes with force (`--force`, `-f`, a `+` refspec,
-       `--mirror`).
+       resume check and before this repository's tag). That step runs no build and pushes
+       nothing by itself (the script does), writes the key with umask 077 and mode 600 under
+       RUNNER_TEMP and uses that file only for ssh, and connects with IdentitiesOnly and host-key
+       checking on against the known_hosts file the script writes; a later step whose condition is
+       exactly always() removes it, and no other step touches it. No step of a release workflow
+       pushes with force (`--force`, `-f`, a `+` refspec, quoted or not, `--mirror`), and no job
+       or step of one may continue on error. A Central step runs with no Gradle daemon and the
+       Kotlin compiler in-process, so no build process outlives it into the key's step.
      - The framework: only release.yml's framework job builds and zips it, on a GitHub-hosted
        macOS runner it checks it is on, with `contents: read` alone and no secret; nothing reads
        its outputs. The draft job holds `contents: write` alone and no secret, runs on a real run
-       only after the framework, keeps no checkout credentials, and gives its token only to the
-       step that creates the draft release. publish needs verify, the framework and the draft,
+       only after the framework, keeps no checkout credentials, and gives its token only to a step
+       that runs the one command that creates the draft release. No job of release.yml but finish
+       runs `gh release`, `git push` or `git tag`. publish needs verify, the framework and the draft,
        under the exact condition below. The resume path takes the framework from the release and
        builds nothing.
      - The documentation site: each release workflow has a job that calls docs-publish.yml at the
@@ -141,9 +145,19 @@ SWIFT_PUBLISHING_JOBS = {("release.yml", "publish"), ("release-resume.yml", "fin
 SWIFT_PUBLISH = "python3 scripts/swift-release.py publish"
 SWIFT_KEY_FILE = '"$RUNNER_TEMP/swift-package-deploy-key"'
 SWIFT_KEY_WRITE = "(umask 077 && printenv SWIFT_PACKAGE_DEPLOY_KEY > \"$key\")"
-SWIFT_SSH_OPTIONS = ("-o IdentitiesOnly=yes", "-o StrictHostKeyChecking=yes", "-o UserKnownHostsFile=")
+SWIFT_SSH_OPTIONS = ("-o IdentitiesOnly=yes", "-o StrictHostKeyChecking=yes", "-o UserKnownHostsFile=$known_hosts")
 HOST_KEY_CHECKING_OFF = re.compile(r"StrictHostKeyChecking\s*=?\s*(?!yes\b)\w", re.IGNORECASE)
-FORCED_PUSH = re.compile(r"--force|--mirror|\bpush\b[^\n]*\s(-[A-Za-z]*f\b|\+\S)")
+FORCED_PUSH = re.compile(r"--force|--mirror|\bpush\b[^\n]*\s(-[A-Za-z]*f\b|[\"']?\+\S)")
+# What only release.yml's finish job may run: this repository's tags and GitHub Release. The Swift
+# package's push goes through scripts/swift-release.py, never a command of the workflow's own.
+REPOSITORY_WRITES = re.compile(r"(?<![\w./@-])(gh\b[^\n;&|]*?\srelease|git\b[^\n;&|]*?\s(push|tag))\b")
+# A Central step's build leaves no Gradle or Kotlin daemon running after it, holding its secrets,
+# when the next step writes the deploy key.
+CENTRAL_DAEMON_FLAGS = ("--no-daemon", "-Pkotlin.compiler.execution.strategy=in-process")
+SWIFT_KEY_FILE_NAME = "swift-package-deploy-key"
+KNOWN_HOSTS_WRITE = 'python3 scripts/swift-release.py known-hosts > "$known_hosts"'
+# One command, with nothing chained or substituted after it.
+CHAINED = re.compile(r"[;&|`\n]|\$\(")
 # The framework: built and zipped by one job on GitHub's macOS runner, staged on a draft release by
 # another before the approval, and never built again.
 FRAMEWORK_JOB = ("release.yml", "framework")
@@ -445,6 +459,9 @@ def release_job_problems(name: str, job_id: str, job: dict) -> list[str]:
         problems.append(f"{where}: its condition does not keep the Dependabot guard as its own"
                         " conjunct before one bracketed term, or has an `||`")
     steps = steps_of(job)
+    if name in RELEASE_WORKFLOWS and ("continue-on-error" in job
+                                      or any("continue-on-error" in step for step in steps)):
+        problems.append(f"{where} may continue on error; no job or step of a release may")
     for secret in MAVEN_SECRETS:
         in_steps = sum(secret_references(json.dumps(step.get("env", {})), secret) for step in steps
                        if runs_central_publish(step))
@@ -466,6 +483,17 @@ def release_job_problems(name: str, job_id: str, job: dict) -> list[str]:
         if name == "release.yml" and job_id != "finish" and re.search(TAGS_THIS_REPOSITORY, run):
             problems.append(f"{where} tags this repository or publishes its GitHub Release, which finish"
                             " alone does, after the Swift package")
+        if name == "release.yml" and job_id != "finish" and REPOSITORY_WRITES.search(run):
+            problems.append(f"{where} runs `gh release`, `git push` or `git tag`, which finish alone may")
+        if name in RELEASE_WORKFLOWS and runs_central_publish(step) and not all(
+                flag in run for flag in CENTRAL_DAEMON_FLAGS):
+            problems.append(f"{where}: a Central step leaves a Gradle or Kotlin daemon running after it"
+                            f" ({' '.join(CENTRAL_DAEMON_FLAGS)} missing)")
+        if (name in RELEASE_WORKFLOWS and SWIFT_KEY_FILE_NAME in run
+                and not secret_references(json.dumps(step.get("env", {})), SWIFT_KEY)
+                and run.strip() != f"rm -f {SWIFT_KEY_FILE}"):
+            problems.append(f"{where}: a step touches the deploy key's file outside the step that uses it"
+                            " and the one that removes it")
         if name in RELEASE_WORKFLOWS and key != FRAMEWORK_JOB and BUILDS_FRAMEWORK.search(run):
             problems.append(f"{where} builds or zips the Swift package's framework, which the framework"
                             " job alone does, once")
@@ -556,11 +584,19 @@ def swift_key_problems(name: str, job_id: str, job: dict, steps: list[dict]) -> 
             problems.append(f"{where}: the step holding {SWIFT_KEY} does not push the Swift package")
         if RUNS_GRADLE.search(run) or BUILDS_FRAMEWORK.search(run):
             problems.append(f"{where}: the step holding {SWIFT_KEY} also runs a build")
+        if REPOSITORY_WRITES.search(run):
+            problems.append(f"{where}: the step holding {SWIFT_KEY} pushes by itself; the Swift package"
+                            " goes through the script")
+        if (len(re.findall(r"\$\{?key\b", run)) != 3 or run.count("key=") != 1
+                or re.search(r"\.ssh\b|\$\{?HOME\b|~/", run)):
+            problems.append(f"{where}: the step holding {SWIFT_KEY} uses its file for more than ssh, or"
+                            " copies it out of RUNNER_TEMP")
         if (SWIFT_KEY_WRITE not in run or f"chmod 600 \"$key\"" not in run
                 or f"key={SWIFT_KEY_FILE}" not in run):
             problems.append(f"{where}: the step holding {SWIFT_KEY} does not write it with umask 077"
                             f" and mode 600 to {SWIFT_KEY_FILE}")
-        if not all(option in run for option in SWIFT_SSH_OPTIONS) or HOST_KEY_CHECKING_OFF.search(run):
+        if (not all(option in run for option in SWIFT_SSH_OPTIONS) or HOST_KEY_CHECKING_OFF.search(run)
+                or KNOWN_HOSTS_WRITE not in run or re.search(r"UserKnownHostsFile=(?!\$known_hosts\b)", run)):
             problems.append(f"{where}: the step holding {SWIFT_KEY} does not connect with host-key"
                             " checking on against a pinned known_hosts file")
         before = [str(earlier.get("run", "")) for earlier in steps[:index]]
@@ -576,7 +612,7 @@ def swift_key_problems(name: str, job_id: str, job: dict, steps: list[dict]) -> 
             problems.append(f"{where} pushes the Swift package before the resume check, or after this"
                             " repository's tag")
         removed = [later for later in steps[index + 1:]
-                   if str(later.get("if", "")).startswith("always()")
+                   if str(later.get("if", "")) == "always()"
                    and str(later.get("run", "")).strip() == f"rm -f {SWIFT_KEY_FILE}"]
         if not removed:
             problems.append(f"{where} does not remove the deploy key under always() after the step that"
@@ -618,8 +654,10 @@ def draft_problems(where: str, job: dict, steps: list[dict], needs: list) -> lis
         with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
         if uses.startswith("actions/checkout@") and with_.get("persist-credentials") is not False:
             problems.append(f"{where} keeps a checkout's credentials")
-        if "github.token" in json.dumps(step) and not str(step.get("run", "")).strip().startswith(DRAFT_RELEASE):
-            problems.append(f"{where} gives its token to a step that does not create the draft release")
+        run = str(step.get("run", "")).strip()
+        if "github.token" in json.dumps(step) and (not run.startswith(DRAFT_RELEASE) or CHAINED.search(run)):
+            problems.append(f"{where} gives its token to a step that does more than create the draft"
+                            " release (one command, nothing chained)")
     return problems
 
 
@@ -917,11 +955,14 @@ SWIFT_STEP = """\
           SWIFT_PACKAGE_DEPLOY_KEY: ${{ secrets.SWIFT_PACKAGE_DEPLOY_KEY }}
         run: |
           key="$RUNNER_TEMP/swift-package-deploy-key"
+          known_hosts="$RUNNER_TEMP/github-known-hosts"
           (umask 077 && printenv SWIFT_PACKAGE_DEPLOY_KEY > "$key")
           chmod 600 "$key"
-          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$h"
+          python3 scripts/swift-release.py known-hosts > "$known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts"
           python3 scripts/swift-release.py publish --remote git@github.com:o/r.git
-      - if: always()
+      - name: Remove the deploy key
+        if: always()
         run: rm -f "$RUNNER_TEMP/swift-package-deploy-key"
 """
 COMPLIANT_DOCS_PUBLISH = """\
@@ -987,11 +1028,11 @@ jobs:
       - if: inputs.dry_run
         env:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{{{ secrets.GPG_KEY_CONTENTS }}}}
-        run: ./gradlew publishToMavenCentral
+        run: ./gradlew publishToMavenCentral {" ".join(CENTRAL_DAEMON_FLAGS)}
       - if: ${{{{ !inputs.dry_run }}}}
         env:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{{{ secrets.GPG_KEY_CONTENTS }}}}
-        run: ./gradlew publishAndReleaseToMavenCentral {WAIT_FOR_PUBLISHED}
+        run: ./gradlew publishAndReleaseToMavenCentral {WAIT_FOR_PUBLISHED} {" ".join(CENTRAL_DAEMON_FLAGS)}
       - name: Publish the Swift package
         if: ${{{{ !inputs.dry_run }}}}
 {SWIFT_STEP}  finish:
@@ -1441,7 +1482,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_RESUME.replace("-o StrictHostKeyChecking=yes", "-o StrictHostKeyChecking=yes -o StrictHostKeyChecking=accept-new"),
      "does not connect with host-key checking on"),
     ("the deploy key without a pinned known_hosts file", "release.yml",
-     COMPLIANT_RELEASE.replace(" -o UserKnownHostsFile=$h", ""),
+     COMPLIANT_RELEASE.replace(" -o UserKnownHostsFile=$known_hosts", ""),
      "does not connect with host-key checking on"),
     ("the Swift package pushed with force", "release.yml",
      COMPLIANT_RELEASE.replace("publish --remote git@github.com:o/r.git",
@@ -1453,10 +1494,12 @@ CASES: list[tuple[str, str, str | None, str]] = [
      "a step pushes with force"),
     ("the Swift package's tag pushed before the Central step", "release.yml",
      COMPLIANT_RELEASE.replace("      - if: ${{ !inputs.dry_run }}\n        env:\n          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_KEY_CONTENTS }}\n"
-                               f"        run: ./gradlew publishAndReleaseToMavenCentral {WAIT_FOR_PUBLISHED}\n", "")
+                               f"        run: ./gradlew publishAndReleaseToMavenCentral {WAIT_FOR_PUBLISHED}"
+                               f" {' '.join(CENTRAL_DAEMON_FLAGS)}\n", "")
      .replace("  finish:\n", "      - if: ${{ !inputs.dry_run }}\n        env:\n"
               "          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_KEY_CONTENTS }}\n"
-              f"        run: ./gradlew publishAndReleaseToMavenCentral {WAIT_FOR_PUBLISHED}\n  finish:\n", 1),
+              f"        run: ./gradlew publishAndReleaseToMavenCentral {WAIT_FOR_PUBLISHED}"
+              f" {' '.join(CENTRAL_DAEMON_FLAGS)}\n  finish:\n", 1),
      "pushes the Swift package before Maven Central says PUBLISHED"),
     ("the Swift package pushed on a dry run", "release.yml",
      COMPLIANT_RELEASE.replace("      - name: Publish the Swift package\n        if: ${{ !inputs.dry_run }}\n",
@@ -1505,7 +1548,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
                                "      - name: Publish the Swift package\n"),
      "job publish tags this repository"),
     ("the deploy key not removed under always()", "release.yml",
-     COMPLIANT_RELEASE.replace("      - if: always()\n        run: rm -f", "      - if: success()\n        run: rm -f"),
+     COMPLIANT_RELEASE.replace("        if: always()\n        run: rm -f", "        if: success()\n        run: rm -f"),
      "does not remove the deploy key under always()"),
     ("the deploy key expanded in the script", "release-resume.yml",
      COMPLIANT_RESUME.replace("(umask 077 && printenv SWIFT_PACKAGE_DEPLOY_KEY > \"$key\")",
@@ -1575,7 +1618,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("the draft job's token in another step", "release.yml",
      COMPLIANT_RELEASE.replace(f"        run: {DRAFT_RELEASE} --zip z",
                                f"        run: gh release create 0.1.0 && {DRAFT_RELEASE} --zip z"),
-     "gives its token to a step that does not create the draft release"),
+     "gives its token to a step that does more than create the draft release"),
     ("publish not needing the draft", "release.yml",
      COMPLIANT_RELEASE.replace("needs: [verify, framework, draft]", "needs: [verify, framework]"),
      "does not need verify, the framework and the draft"),
@@ -1602,6 +1645,71 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("the documentation published before finish", "release-resume.yml",
      COMPLIANT_RESUME.replace("  docs:\n    needs: finish\n", "  docs:\n    needs: []\n"),
      "not finish alone"),
+    # The review of the Swift release: what the rule let through.
+    ("the draft step publishing the draft on a second line", "release.yml",
+     COMPLIANT_RELEASE.replace(f"        run: {DRAFT_RELEASE} --zip z\n",
+                               f"        run: |\n          {DRAFT_RELEASE} --zip z\n"
+                               "          gh release edit \"$VERSION\" --draft=false\n"),
+     "gives its token to a step that does more than create the draft release"),
+    ("the draft step chaining a command", "release.yml",
+     COMPLIANT_RELEASE.replace(f"        run: {DRAFT_RELEASE} --zip z\n",
+                               f"        run: {DRAFT_RELEASE} --zip z; curl -X PATCH example.invalid\n"),
+     "gives its token to a step that does more than create the draft release"),
+    ("a GitHub Release touched in publish", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/swift-release.py publish --dry-run --out t\n      - if: inputs.dry_run",
+                               "      - run: gh release upload 0.1.0 z\n      - if: inputs.dry_run"),
+     "job publish runs `gh release`, `git push` or `git tag`"),
+    ("a tag made in the framework job", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/check-bridge-header.py\n",
+                               "      - run: python3 scripts/check-bridge-header.py && git tag 0.1.0\n"),
+     "job framework runs `gh release`, `git push` or `git tag`"),
+    ("the resume's Swift step pushing by itself", "release-resume.yml",
+     COMPLIANT_RESUME.replace("python3 scripts/swift-release.py publish --remote git@github.com:o/r.git",
+                              "python3 scripts/swift-release.py publish --remote git@github.com:o/r.git\n"
+                              "          git -C \"$RUNNER_TEMP/p\" push git@github.com:o/r.git HEAD:refs/tags/0.1.0"),
+     "pushes by itself; the Swift package goes through the script"),
+    ("a double-quoted forced refspec", "release.yml",
+     COMPLIANT_RELEASE.replace("        run: python3 scripts/release.py push-tag\n",
+                               "        run: git push origin \"+$GITHUB_SHA:refs/tags/$VERSION\"\n"),
+     "a step pushes with force"),
+    ("a single-quoted forced refspec", "release-resume.yml",
+     COMPLIANT_RESUME.replace("      - run: python3 scripts/release.py push-tag",
+                              "      - run: git push origin '+HEAD:refs/tags/0.1.0'"),
+     "a step pushes with force"),
+    ("the tree check before Central may continue on error", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/swift-release.py publish --dry-run --out t\n      - if: inputs.dry_run",
+                               "      - run: python3 scripts/swift-release.py publish --dry-run --out t\n"
+                               "        continue-on-error: true\n      - if: inputs.dry_run"),
+     "job publish may continue on error"),
+    ("the hosted-runner check may continue on error", "release.yml",
+     COMPLIANT_RELEASE.replace(f"      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n",
+                               f"      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n        continue-on-error: true\n"),
+     "job framework may continue on error"),
+    ("a release job that may continue on error", "release-resume.yml",
+     COMPLIANT_RESUME.replace("    environment: release\n", "    environment: release\n    continue-on-error: true\n"),
+     "job finish may continue on error"),
+    ("the deploy key removed only on a dry run", "release.yml",
+     COMPLIANT_RELEASE.replace("        if: always()\n        run: rm -f", "        if: always() && inputs.dry_run\n        run: rm -f"),
+     "does not remove the deploy key under always()"),
+    ("the real Central step with a Gradle daemon", "release.yml",
+     COMPLIANT_RELEASE.replace(f"{WAIT_FOR_PUBLISHED} --no-daemon", WAIT_FOR_PUBLISHED),
+     "a Central step leaves a Gradle or Kotlin daemon running"),
+    ("the dry-run Central step with a Kotlin daemon", "release.yml",
+     COMPLIANT_RELEASE.replace("publishToMavenCentral --no-daemon -Pkotlin.compiler.execution.strategy=in-process",
+                               "publishToMavenCentral --no-daemon"),
+     "a Central step leaves a Gradle or Kotlin daemon running"),
+    ("the known_hosts file swapped for /dev/null", "release.yml",
+     COMPLIANT_RELEASE.replace("-o UserKnownHostsFile=$known_hosts", "-o UserKnownHostsFile=$known_hosts -o UserKnownHostsFile=/dev/null"),
+     "does not connect with host-key checking on"),
+    ("the deploy key copied to ~/.ssh in its step", "release-resume.yml",
+     COMPLIANT_RESUME.replace('          chmod 600 "$key"\n',
+                              '          chmod 600 "$key"\n          cp "$key" "$HOME/.ssh/id_ed25519"\n'),
+     "copies it out of RUNNER_TEMP"),
+    ("the deploy key copied by a later step", "release.yml",
+     COMPLIANT_RELEASE.replace("      - name: Remove the deploy key\n",
+                               "      - run: cp \"$RUNNER_TEMP/swift-package-deploy-key\" ~/.ssh/id_ed25519\n"
+                               "      - name: Remove the deploy key\n"),
+     "touches the deploy key's file outside the step that uses it"),
     # The scheduled workflows: only their schedule and a maintainer start them.
     ("the canary gains a pull_request trigger", "upstream-canary.yml",
      COMPLIANT_CANARY.replace("  workflow_dispatch:\n", "  pull_request:\n  workflow_dispatch:\n"),
