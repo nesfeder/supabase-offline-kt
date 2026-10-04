@@ -24,16 +24,14 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
- * Object names with spaces, `%`, `?` and `#` round-trip through the download, the cache and the
- * local file.
- *
- * Since supabase-kt 3.8.0 the bucket URL-encodes each segment of an object path on the wire. 3.6
- * puts the name in the URL as written, where a `%` fails the request and a `?` or `#` cuts the path
- * short, so these cases build only from 3.8 on. The cache is keyed by the name as the caller wrote
- * it, not by its URL form, so the same name must address the same entry however it was encoded.
- * This pins both halves: what goes on the wire, and what lands on disk.
+ * Object names with spaces, `%`, `?` and `#` reach their own object on the wire, and a download is
+ * served offline and evicted under the name as written. Since supabase-kt 3.8.0 the bucket
+ * URL-encodes each segment of an object path; 3.6 puts the name in the URL as written, where a `%`
+ * fails the request and a `?` or `#` can fetch a different object, so these cases build only from
+ * 3.8 on. The library's own on-disk encoding of such a name is pinned on every minor by
+ * `StorageObjectNameEncodingTest`.
  */
-class StorageObjectNameEncodingTest {
+class StorageObjectNameUrlEncodingTest {
 
     private lateinit var dataDirectory: Path
     private lateinit var store: TestStore
@@ -74,22 +72,6 @@ class StorageObjectNameEncodingTest {
             "/storage/v1/object/authenticated/$BUCKET/a%20b/my%20file%25%3F%23.png",
             server.requests.single().encodedPath,
         )
-    }
-
-    @Test
-    fun the_name_as_written_keys_the_cache_row_and_names_the_local_file() = runTest {
-        // Given
-        val bucket = bucket()
-
-        // When
-        bucket.downloadAuthenticated(NAME) {}
-
-        // Then
-        val row = assertNotNull(store.getStorageByKey(BUCKET, NAME))
-        assertEquals("$BUCKET::$NAME", row.key)
-        val file = dataDirectory / "storage" / BUCKET / "a b" / "my file%?#.png"
-        assertEquals(file.toString(), row.localPath)
-        assertEquals(CONTENT, FileSystem.SYSTEM.read(file) { readUtf8() })
     }
 
     @Test
