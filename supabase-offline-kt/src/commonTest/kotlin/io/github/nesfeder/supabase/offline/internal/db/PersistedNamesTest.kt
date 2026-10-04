@@ -223,7 +223,7 @@ class PersistedNamesTest {
             "todos",
             "todos?id=eq.1",
             """[{"id":1}]""",
-            requestStartedAtTick = store.monotonicTickNow(),
+            requestStartedAtTick = store.freshness.tickNow(),
         )
 
         // Then — the replays are numbered from 1 in order, and the payload holds both

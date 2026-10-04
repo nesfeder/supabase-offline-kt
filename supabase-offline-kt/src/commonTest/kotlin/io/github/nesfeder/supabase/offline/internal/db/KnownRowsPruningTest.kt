@@ -653,7 +653,7 @@ class KnownRowsPruningTest {
                 TABLE,
                 body,
                 JsonArray(returned).toString(),
-                store.monotonicTickNow(),
+                store.freshness.tickNow(),
             )
             return returned.map { row ->
                 val key =

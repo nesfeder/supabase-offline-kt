@@ -65,7 +65,7 @@ class ClearLocalDataAtomicityTest {
     @Test
     fun a_write_that_began_before_local_data_was_cleared_is_not_queued_after_it() = runTest {
         // Given — a write that started, then a clear
-        val startedAtTick = store.monotonicTickNow()
+        val startedAtTick = store.freshness.tickNow()
         store.clearLocalData()
 
         // When — the write reaches the mutation queue

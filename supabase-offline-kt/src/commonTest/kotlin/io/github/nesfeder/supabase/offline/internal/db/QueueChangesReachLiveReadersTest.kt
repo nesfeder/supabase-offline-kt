@@ -87,7 +87,7 @@ class QueueChangesReachLiveReadersTest {
                 TABLE,
                 CACHE_KEY,
                 """[{"id":1,"title":"server"},{"id":9,"title":"keyless"}]""",
-                requestStartedAtTick = store.monotonicTickNow(),
+                requestStartedAtTick = store.freshness.tickNow(),
                 authoritativeEmpty = true,
             )
 

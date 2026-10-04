@@ -49,7 +49,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         queryCacheDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(queryCacheDao, tick = { tick })
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
 
         // When — a local insert succeeds online while that request is still in flight
         tick = 20L
@@ -79,7 +79,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val queryCacheDao = FakeQueryCacheDao()
         var tick = 10L
         val store = buildStore(queryCacheDao, tick = { tick })
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
 
         // When — a local insert materializes into the observed signature mid-flight
         tick = 20L
@@ -115,7 +115,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — a refresh issued *after* that write returns the server's current rows
         tick = 20L
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L
         val outcome =
             store.addPayload(
@@ -143,7 +143,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — a refresh issued after the write carries an authenticated session and returns []
         tick = 20L
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L
         val outcome =
             store.addPayload(
@@ -169,7 +169,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         queryCacheDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(queryCacheDao, tick = { tick })
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
 
         // When — a refresh lands
         tick = 20L
@@ -193,7 +193,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         queryCacheDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(queryCacheDao, tick = { tick })
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
 
         // When — an auth-ready refresh reports the rows are gone
         tick = 20L
@@ -242,7 +242,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         queryCacheDao.seedPayload("plans", "sig-P", """[{"id":"plan-1"}]""")
         var tick = 10L
         val store = buildStore(queryCacheDao, tick = { tick })
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
         tick = 20L
         store.insertProjectTwo()
 
@@ -271,7 +271,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val store = buildStore(queryCacheDao, mutationDao = mutationDao, tick = { tick })
         store.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
 
         // When — reconnect drains the queue and the replay succeeds
         tick = 20L
@@ -300,7 +300,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         queryCacheDao.seedPayload("projects", "sig-A", oneProject)
         var tick = 10L
         val store = buildStore(queryCacheDao, tick = { tick })
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
 
         // When — the user signs out (or switches accounts) and the cache is torn down
         tick = 20L
@@ -333,7 +333,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — a refresh issued after the teardown returns rows
         tick = 20L
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L
         val outcome =
             store.addPayload(
@@ -358,7 +358,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val store = buildStore(queryCacheDao, mutationDao = mutationDao, tick = { tick })
         store.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
 
         // When — that response is accepted (no watermark yet, so nothing disqualifies it)
         tick = 15L
@@ -397,7 +397,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — a refresh issued afterwards brings back server state that already includes it
         tick = 20L
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L
         store.addPayload(
             table = "projects",

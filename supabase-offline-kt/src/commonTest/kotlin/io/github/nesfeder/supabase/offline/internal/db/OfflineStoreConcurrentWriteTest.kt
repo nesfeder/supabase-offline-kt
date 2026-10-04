@@ -97,7 +97,7 @@ class OfflineStoreConcurrentWriteTest {
         // payload is the server's view: the overlaid row is already there, and so is a row
         // another device wrote in the meantime.
         tick = 20L
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
         val refresh = launch {
             store.addPayload(
                 table = "ratings",

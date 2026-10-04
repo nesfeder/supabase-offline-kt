@@ -48,7 +48,7 @@ class SyncedOverlayScopeTest {
 
         // When — only ALL refreshes, and the server's rows include x
         tick = 30L
-        val started = store.monotonicTickNow()
+        val started = store.freshness.tickNow()
         tick = 40L
         store.addPayload(
             TABLE,
@@ -81,7 +81,7 @@ class SyncedOverlayScopeTest {
 
         // When — another device renamed it to C; ALL refreshes and brings back C
         tick = 30L
-        val started = store.monotonicTickNow()
+        val started = store.freshness.tickNow()
         tick = 40L
         store.addPayload(
             TABLE,
@@ -118,7 +118,7 @@ class SyncedOverlayScopeTest {
             tick = 20L
             store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
             tick = 30L
-            val started = store.monotonicTickNow()
+            val started = store.freshness.tickNow()
             tick = 40L
             store.addPayload(
                 TABLE,
@@ -174,7 +174,7 @@ class SyncedOverlayScopeTest {
 
         // When — the query refreshes after the replay
         tick = 50L
-        val started = store.monotonicTickNow()
+        val started = store.freshness.tickNow()
         store.addPayload(
             TABLE,
             LIST_L,
@@ -220,7 +220,7 @@ class SyncedOverlayScopeTest {
             store.markMutationSynced(id = mutation.id, table = TABLE)
         }
         tick = 30L
-        val started = store.monotonicTickNow()
+        val started = store.freshness.tickNow()
         tick = 40L
         store.addPayload(
             TABLE,

@@ -45,7 +45,7 @@ class SyncedRetirementScopeTest {
 
         // When — only the "all tasks" query refreshes, and brings back server state including X
         tick = 30L
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
         tick = 40L
         store.addPayload(
             table = TABLE,
@@ -73,7 +73,7 @@ class SyncedRetirementScopeTest {
         // When — both queries refresh after the replay
         for (cacheKey in listOf(ALL, LIST_L)) {
             tick += 10
-            val requestStartedAtTick = store.monotonicTickNow()
+            val requestStartedAtTick = store.freshness.tickNow()
             tick += 10
             store.addPayload(
                 table = TABLE,

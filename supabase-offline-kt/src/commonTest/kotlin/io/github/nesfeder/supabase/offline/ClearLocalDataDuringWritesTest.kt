@@ -116,7 +116,7 @@ class ClearLocalDataDuringWritesTest {
                 cacheKey = CACHE_KEY,
                 payload = "[]",
                 authoritativeEmpty = true,
-                requestStartedAtTick = store.monotonicTickNow(),
+                requestStartedAtTick = store.freshness.tickNow(),
             )
             release.complete(Unit)
             write.await()

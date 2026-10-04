@@ -91,7 +91,7 @@ class OfflineStoreCacheOwnerTest {
     fun a_response_or_write_that_began_before_a_drop_is_kept_out_of_the_cache_not_the_queue() =
         runTest {
             // Given — work that started for A before the cache passed to B
-            val startedAtTick = store.monotonicTickNow()
+            val startedAtTick = store.freshness.tickNow()
             store.dropCacheFor(USER_B)
             identity = USER_B
 
@@ -105,7 +105,7 @@ class OfflineStoreCacheOwnerTest {
 
             // Then — the response is refused; the write still queues, for A
             assertEquals(CacheWriteOutcome.REFUSED_OTHER_OWNER, outcome)
-            assertTrue(store.wasClearedSince(startedAtTick))
+            assertTrue(store.freshness.wasClearedSince(startedAtTick))
             assertTrue(enqueued is EnqueueOutcome.Queued, "$enqueued")
             assertEquals(emptyList(), queryCacheDao.rowsOf(TABLE))
         }
