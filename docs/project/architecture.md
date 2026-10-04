@@ -18,8 +18,8 @@ and served from there offline. A write returns a `MutationOutcome` rather than t
 because a queued write has none yet: that is the one difference in what a call returns, and a few
 call shapes need an edit (see [Moving a call from supabase-kt](#moving-a-call-from-supabase-kt)).
 Each minor
-release is built and tested against exactly one supabase-kt minor: today 3.8, which may still move
-before 0.1.0 (see [Decisions](#decisions)).
+release is built and tested against exactly one supabase-kt minor: today 3.6, until a supabase-kt
+release carries the two Realtime fixes 3.7.0 and 3.8.0 lack (see [Decisions](#decisions)).
 
 ```kotlin
 val supabase = createSupabaseClient(url, key) {
@@ -130,7 +130,7 @@ filter values, tokens or object paths; `DEBUG` may.
 | --- | --- | --- | --- |
 | `from(table)`, `from(schema, table)`, `get(table)`, `get(schema, table)` | A table's `OfflinePostgrestQueryBuilder`; `offline["todos"]` is `offline.from("todos")`. | A table of another schema is cached apart from the default schema's table of the same name. | `IllegalStateException` without PostgREST |
 | `class OfflinePostgrestQueryBuilder` | The offline counterpart of supabase-kt's `PostgrestQueryBuilder`, with its `postgrest`, `table` and `schema`. | Final, with an internal constructor. Each verb takes its offline choice as a named parameter with a default, before the trailing request lambda. | — |
-| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Only a list of rows is cached. `single()`, `maybeSingle()`, `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer |
+| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Only a list of rows is cached. `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer |
 | `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no Realtime channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached |
 
 A verb may run its `request` lambda more than once: a read once to learn its shape and once per
@@ -234,7 +234,8 @@ that a success updates the cache: patched in, or, where it cannot be (a write to
 filter the queue cannot record), the queries it may reach marked stale. A rolled-back dry run, and a
 write that answered after local data was cleared, leave the cache as it was. These writes are:
 
-- a `dryRun()` write, or one whose request could not be inspected to tell whether it is one;
+- a dry run, a write carrying `Prefer: tx=rollback` (supabase-kt 3.8's `dryRun()`, or the header
+  added by hand), or a write whose request could not be inspected to tell whether it is one;
 - an UPDATE or DELETE whose filter the queue cannot record exactly or would not replay in full:
   such as a logical group, an embedded table's column, a negated or unknown operator, a `limit`,
   `order` or `offset`, or no filter at all;
@@ -415,7 +416,9 @@ resumable upload drops them once it finishes, unless it finishes after `close()`
 stale copy. An upload does not put its bytes in the cache, so the
 next read downloads them. Signed URLs, listings, `info`, `exists` and the public status always ask
 the server. An object path that cannot be mapped safely onto a file (a leading `/`, an empty, `.` or
-`..` segment, a `\`, a control character) still downloads and writes, uncached.
+`..` segment, a `\`, a control character) still downloads and writes, uncached. So does one holding
+`%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8 puts the name in the URL as
+written, so its request can fetch a different object.
 
 ### Local data and lifecycle
 
@@ -721,10 +724,11 @@ flowchart TD
    it restores or refreshes, or the anonymous identity.
 2. The engine works out how the write would be queued. An INSERT or UPSERT always can be; an UPDATE
    or DELETE needs a filter the strict capture records exactly and that replays in full.
-3. It tells a dry run from a write. supabase-kt records `dryRun()` only in the `Prefer` header, which
-   the queue does not keep, so the engine builds the write once more, on the token-free PostgREST
-   instance, under a probe that a pipeline phase ahead of every plugin reads and stops. No app plugin
-   sees the stopped request.
+3. It tells a dry run, a write carrying `Prefer: tx=rollback`, from a write. supabase-kt 3.8 records
+   `dryRun()` only in that header, and on 3.6, which has no `dryRun()`, a caller adds the header
+   itself. The queue does not keep it, so the engine builds the write once more, on the token-free
+   PostgREST instance, under a probe that a pipeline phase ahead of every plugin reads (every
+   `Prefer` value) and stops. No app plugin sees the stopped request.
 4. It saves the write: one row in `mutation_cache` with its owner, inserted under the queue lock,
    refused when local data was cleared since the write began. The table's readers are told, and the
    overlay shows the write from now on.
@@ -980,7 +984,8 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-09-28 | The Kotlin artifact runs on the bundled SQLite for 0.1.0. | Every install then runs one SQLite version; the Swift package, whose users have no database to migrate, is to use the system one. |
 | 2026-09-28 | Clearing local data rewrites the database and empties its write-ahead log, so the deleted rows cannot be read from the files; best effort, finished in the background and at close when an open read holds the log (2026-10-04). | After a clear, the previous user's rows could still be read from the write-ahead log. Waiting out the read held every send for up to a minute, and failing the clear would leave a sign-out nothing it could do. |
 | 2026-09-28 | Nothing internal is visible to a consumer. | Only what is documented is API: internal code lives in internal packages, and a check in CI enforces it. |
-| 2026-09-28 | One tested supabase-kt minor per release, with a weekly canary (2026-09-30) and a warning at install (2026-10-02). | The artifact compiles supabase-kt's inline functions into itself, implements its `BucketApi` by delegation and matches its filter operators exhaustively, so a range of minors cannot be promised. Open before 0.1.0: supabase-kt 3.7.0 and 3.8.0 carry a Realtime crash and a protocol V2 leave bug, and the pin moves to the first release that fixes both, so the tested minor may move past 3.8. |
+| 2026-09-28 | One tested supabase-kt minor per release, with a weekly canary (2026-09-30) and a warning at install (2026-10-02). | The artifact compiles supabase-kt's inline functions into itself, implements its `BucketApi` by delegation and names each of its filter operators, so a range of minors cannot be promised. |
+| 2026-10-04 | supabase-kt 3.6.0 now; the first release that carries both Realtime fixes when it lands. Ktor and kotlinx.coroutines are held at the versions 3.6.0 was released with. | supabase-kt 3.7.0 and 3.8.0 carry an uncaught Realtime heartbeat crash and a protocol-V2 leave defect, and the library's pin sets an app's Realtime with the rest. The 3.8-only tests build only while the pin is 3.8 or later, so the weekly canary still runs them and the move costs a version and one Gradle condition. |
 | 2026-09-28 | Before 1.0, a patch changes nothing in the contract; a supabase-kt minor or a schema version is a minor release. | No change should alter what a version promises without anyone noticing. |
 | 2026-09-29 | The cache belongs to one identity at a time. | A signed-out empty answer was served to the next user to sign in, and one user's cached rows and files could be read by the next. |
 | 2026-09-29 | A read the cache answers never touches the network. | Built through the app's own plugin, each cached read offline with an expired token asked for a token refresh. |

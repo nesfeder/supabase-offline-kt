@@ -9,7 +9,6 @@ import io.github.jan.supabase.storage.DownloadOptionBuilder
 import io.github.jan.supabase.storage.FileObject
 import io.github.jan.supabase.storage.FileObjectV2
 import io.github.jan.supabase.storage.FileUploadResponse
-import io.github.jan.supabase.storage.PurgeCacheOptions
 import io.github.jan.supabase.storage.SignedUrl
 import io.github.jan.supabase.storage.SignedUrlBuilder
 import io.github.jan.supabase.storage.SignedUrlsBuilder
@@ -56,7 +55,8 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * The offline client's [OfflineBucketApi]: supabase-kt's bucket, with downloads cached in the
  * client's [StorageFileCache]. Every member that can change the server's copy of a path is
  * overridden, its convenience overloads included, so stale copies are dropped; every member passes
- * the client's gate.
+ * the client's gate. `purgeCache` (supabase-kt 3.8) is not overridden, so this compiles on 3.6: on
+ * 3.8 it reaches the delegate past the gate, and a build on 3.6 run on 3.8 fails the call.
  *
  * @param engineLogger messages at INFO and above name the bucket, never the object path.
  * @param backgroundScope the client's own scope, which closing the client cancels.
@@ -99,6 +99,7 @@ internal class CachingBucketApi(
     }
 
     override suspend fun cachedFile(path: String): CachedFile? = operationGate.call {
+        if (!cachesDownloadsOf(path)) return@call null
         cache.entryFor(bucketId, path)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
@@ -107,6 +108,10 @@ internal class CachingBucketApi(
 
     /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
     private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
+        require(isRequestedByItsOwnName(path)) {
+            "This object path cannot be cached on the device: it holds '%', '?' or '#', which this " +
+                "supabase-kt puts in the URL unencoded, so its request can reach another object"
+        }
         val entry =
             cache.entryFor(bucketId, path)
                 ?: throw IllegalArgumentException(
@@ -212,6 +217,10 @@ internal class CachingBucketApi(
             ) -> ByteArray,
     ): ByteArray {
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
+        if (!cachesDownloadsOf(path)) {
+            networkAccess.ensureEnabled()
+            return fetch { options -> options }
+        }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
         val generation = cache.currentGeneration()
         val bytes =
@@ -240,7 +249,7 @@ internal class CachingBucketApi(
             suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit,
     ) {
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
-        if (!isCacheableObjectPath(path) || !isCacheableBucketId(bucketId)) {
+        if (!cachesDownloadsOf(path)) {
             networkAccess.ensureEnabled()
             fetch(channel, options)
             return
@@ -612,11 +621,14 @@ internal class CachingBucketApi(
             delegate.changePublicStatusTo(public)
         }
 
-    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
-        operationGate.cancellableCall(backgroundScope) {
-            networkAccess.ensureEnabled()
-            delegate.purgeCache(path, options)
-        }
+    /**
+     * Whether a download of [path] in this bucket is cached: both map onto a file, and the pinned
+     * supabase-kt's request reaches the object the path names.
+     */
+    private fun cachesDownloadsOf(path: String): Boolean =
+        isCacheableBucketId(bucketId) &&
+            isCacheableObjectPath(path) &&
+            isRequestedByItsOwnName(path)
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
     private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T =

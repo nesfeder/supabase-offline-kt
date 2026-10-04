@@ -4,17 +4,11 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder
-import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
-import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.add
@@ -28,9 +22,10 @@ import kotlinx.serialization.json.put
  * counts and durations are fine; the values stay at DEBUG.
  *
  * Every refusal to queue an offline write is driven through the client, the way an app reaches it:
- * each filter shape the queue cannot capture or replay in full, a write with no filter, a dry run,
- * and a replay the server rejects or fails with a message quoting the value. Each log at INFO and
- * above is searched for the value.
+ * each filter shape the queue cannot capture or replay in full, a write with no filter, and a
+ * replay the server rejects or fails with a message quoting the value; a dry run is in
+ * `DryRunLogPrivacyTest`, which needs supabase-kt 3.8. Each log at INFO and above is searched for
+ * the value.
  */
 class LogPrivacyTest {
 
@@ -48,34 +43,6 @@ class LogPrivacyTest {
             "referenced-table column" to { eq("profile.email", EMAIL) },
             "range bound with a comma" to { sl("window", "$EMAIL,a" to "b") },
         )
-
-    /**
-     * Runs [write] offline through a fresh client and returns every message logged at INFO or
-     * above.
-     */
-    private suspend fun visibleLogsOfARefusal(
-        write: suspend (OfflinePostgrestQueryBuilder) -> Unit
-    ): List<String> = visibleLogsOf { client, _ ->
-        assertFailsWith<Exception> { write(client.from("profiles")) }
-    }
-
-    /**
-     * Runs [scenario] against a fresh client on an offline server and returns its INFO-and-above
-     * messages.
-     */
-    private suspend fun visibleLogsOf(
-        scenario: suspend (Offline, RecordingPostgrestServer) -> Unit
-    ): List<String> {
-        val logger = RecordingLogSink()
-        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val client =
-            newTestOfflineClient(
-                supabase = server.supabaseClient(),
-                engineLogger = logger.asEngineLogger(),
-            )
-        scenario(client, server)
-        return logger.entries.filter { it.level != EngineLogLevel.DEBUG }.map { it.message }
-    }
 
     /** Queues an INSERT carrying [EMAIL] offline, then replays it against [serverAnswer]. */
     private suspend fun visibleLogsOfAReplay(
@@ -97,19 +64,6 @@ class LogPrivacyTest {
 
         // Then
         assertTrue(visible.isNotEmpty(), "expected the refusal to be logged")
-        assertTrue(visible.none { EMAIL in it }, "a body value reached a visible log: $visible")
-    }
-
-    @Test
-    fun an_offline_dry_run_never_logs_its_body() = runTest {
-        // Given / When — a dry run is never queued; offline it fails
-        val visible = visibleLogsOfARefusal { builder ->
-            builder.insert(buildJsonArray { add(buildJsonObject { put("email", EMAIL) }) }) {
-                dryRun()
-            }
-        }
-
-        // Then
         assertTrue(visible.none { EMAIL in it }, "a body value reached a visible log: $visible")
     }
 

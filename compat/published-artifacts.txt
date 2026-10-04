@@ -18,11 +18,11 @@ supabase-offline-kt pom dependency com.squareup.okio:okio:3.17.0 scope=runtime
 supabase-offline-kt pom dependency io.github.jan-tennert.supabase:auth-kt:(none) scope=runtime
 supabase-offline-kt pom dependency io.github.jan-tennert.supabase:postgrest-kt:(none) scope=runtime
 supabase-offline-kt pom dependency io.github.jan-tennert.supabase:storage-kt:(none) scope=runtime
-supabase-offline-kt pom dependency io.ktor:ktor-client-core:3.5.1 scope=runtime
+supabase-offline-kt pom dependency io.ktor:ktor-client-core:3.4.3 scope=runtime
 supabase-offline-kt pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.4.20 scope=runtime
-supabase-offline-kt pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0 scope=runtime
+supabase-offline-kt pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2 scope=runtime
 supabase-offline-kt pom dependency org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0 scope=runtime
-supabase-offline-kt pom managed io.github.jan-tennert.supabase:bom:3.8.0 scope=import type=pom
+supabase-offline-kt pom managed io.github.jan-tennert.supabase:bom:3.6.0 scope=import type=pom
 supabase-offline-kt variant androidApiElements-published available-at supabase-offline-kt-android
 supabase-offline-kt variant androidRuntimeElements-published available-at supabase-offline-kt-android
 supabase-offline-kt variant androidSourcesElements-published available-at supabase-offline-kt-android
@@ -36,12 +36,12 @@ supabase-offline-kt variant metadataApiElements dependency androidx.room:room-ru
 supabase-offline-kt variant metadataApiElements dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt variant metadataApiElements dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt variant metadataApiElements dependency io.github.jan-tennert.supabase:auth-kt (no version)
-supabase-offline-kt variant metadataApiElements dependency io.github.jan-tennert.supabase:bom requires=3.8.0 [org.gradle.category=platform]
+supabase-offline-kt variant metadataApiElements dependency io.github.jan-tennert.supabase:bom requires=3.6.0 [org.gradle.category=platform]
 supabase-offline-kt variant metadataApiElements dependency io.github.jan-tennert.supabase:postgrest-kt (no version)
 supabase-offline-kt variant metadataApiElements dependency io.github.jan-tennert.supabase:storage-kt (no version)
-supabase-offline-kt variant metadataApiElements dependency io.ktor:ktor-client-core requires=3.5.1
+supabase-offline-kt variant metadataApiElements dependency io.ktor:ktor-client-core requires=3.4.3
 supabase-offline-kt variant metadataApiElements dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
-supabase-offline-kt variant metadataApiElements dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.11.0
+supabase-offline-kt variant metadataApiElements dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt variant metadataApiElements dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
 supabase-offline-kt-android file -javadoc.jar
 supabase-offline-kt-android file -sources.jar
@@ -56,30 +56,30 @@ supabase-offline-kt-android pom dependency com.squareup.okio:okio-jvm:3.17.0 sco
 supabase-offline-kt-android pom dependency io.github.jan-tennert.supabase:auth-kt:(none) scope=compile
 supabase-offline-kt-android pom dependency io.github.jan-tennert.supabase:postgrest-kt:(none) scope=compile
 supabase-offline-kt-android pom dependency io.github.jan-tennert.supabase:storage-kt:(none) scope=compile
-supabase-offline-kt-android pom dependency io.ktor:ktor-client-core-jvm:3.5.1 scope=compile
+supabase-offline-kt-android pom dependency io.ktor:ktor-client-core-jvm:3.4.3 scope=compile
 supabase-offline-kt-android pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.4.20 scope=compile
-supabase-offline-kt-android pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0 scope=compile
+supabase-offline-kt-android pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2 scope=compile
 supabase-offline-kt-android pom dependency org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0 scope=compile
-supabase-offline-kt-android pom managed io.github.jan-tennert.supabase:bom:3.8.0 scope=import type=pom
+supabase-offline-kt-android pom managed io.github.jan-tennert.supabase:bom:3.6.0 scope=import type=pom
 supabase-offline-kt-android variant androidApiElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
-supabase-offline-kt-android variant androidApiElements-published dependency io.github.jan-tennert.supabase:bom requires=3.8.0 [org.gradle.category=platform]
+supabase-offline-kt-android variant androidApiElements-published dependency io.github.jan-tennert.supabase:bom requires=3.6.0 [org.gradle.category=platform]
 supabase-offline-kt-android variant androidApiElements-published dependency io.github.jan-tennert.supabase:postgrest-kt (no version)
 supabase-offline-kt-android variant androidApiElements-published dependency io.github.jan-tennert.supabase:storage-kt (no version)
-supabase-offline-kt-android variant androidApiElements-published dependency io.ktor:ktor-client-core requires=3.5.1
+supabase-offline-kt-android variant androidApiElements-published dependency io.ktor:ktor-client-core requires=3.4.3
 supabase-offline-kt-android variant androidApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
-supabase-offline-kt-android variant androidApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.11.0
+supabase-offline-kt-android variant androidApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-android variant androidApiElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
 supabase-offline-kt-android variant androidRuntimeElements-published dependency androidx.room:room-runtime requires=2.8.4
 supabase-offline-kt-android variant androidRuntimeElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-android variant androidRuntimeElements-published dependency androidx.startup:startup-runtime requires=1.2.0
 supabase-offline-kt-android variant androidRuntimeElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-android variant androidRuntimeElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
-supabase-offline-kt-android variant androidRuntimeElements-published dependency io.github.jan-tennert.supabase:bom requires=3.8.0 [org.gradle.category=platform]
+supabase-offline-kt-android variant androidRuntimeElements-published dependency io.github.jan-tennert.supabase:bom requires=3.6.0 [org.gradle.category=platform]
 supabase-offline-kt-android variant androidRuntimeElements-published dependency io.github.jan-tennert.supabase:postgrest-kt (no version)
 supabase-offline-kt-android variant androidRuntimeElements-published dependency io.github.jan-tennert.supabase:storage-kt (no version)
-supabase-offline-kt-android variant androidRuntimeElements-published dependency io.ktor:ktor-client-core requires=3.5.1
+supabase-offline-kt-android variant androidRuntimeElements-published dependency io.ktor:ktor-client-core requires=3.4.3
 supabase-offline-kt-android variant androidRuntimeElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
-supabase-offline-kt-android variant androidRuntimeElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.11.0
+supabase-offline-kt-android variant androidRuntimeElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-android variant androidRuntimeElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
 supabase-offline-kt-iosarm64 file -javadoc.jar
 supabase-offline-kt-iosarm64 file -metadata.jar
@@ -95,32 +95,32 @@ supabase-offline-kt-iosarm64 pom dependency com.squareup.okio:okio-iosarm64:3.17
 supabase-offline-kt-iosarm64 pom dependency io.github.jan-tennert.supabase:auth-kt:(none) scope=compile
 supabase-offline-kt-iosarm64 pom dependency io.github.jan-tennert.supabase:postgrest-kt:(none) scope=compile
 supabase-offline-kt-iosarm64 pom dependency io.github.jan-tennert.supabase:storage-kt:(none) scope=compile
-supabase-offline-kt-iosarm64 pom dependency io.ktor:ktor-client-core-iosarm64:3.5.1 scope=compile
+supabase-offline-kt-iosarm64 pom dependency io.ktor:ktor-client-core-iosarm64:3.4.3 scope=compile
 supabase-offline-kt-iosarm64 pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.4.20 scope=compile
-supabase-offline-kt-iosarm64 pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-iosarm64:1.11.0 scope=compile
+supabase-offline-kt-iosarm64 pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-iosarm64:1.10.2 scope=compile
 supabase-offline-kt-iosarm64 pom dependency org.jetbrains.kotlinx:kotlinx-serialization-json-iosarm64:1.11.0 scope=compile
-supabase-offline-kt-iosarm64 pom managed io.github.jan-tennert.supabase:bom:3.8.0 scope=import type=pom
+supabase-offline-kt-iosarm64 pom managed io.github.jan-tennert.supabase:bom:3.6.0 scope=import type=pom
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency androidx.room:room-runtime requires=2.8.4
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
-supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io.github.jan-tennert.supabase:bom requires=3.8.0 [org.gradle.category=platform]
+supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io.github.jan-tennert.supabase:bom requires=3.6.0 [org.gradle.category=platform]
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io.github.jan-tennert.supabase:postgrest-kt (no version)
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io.github.jan-tennert.supabase:storage-kt (no version)
-supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io.ktor:ktor-client-core requires=3.5.1
+supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io.ktor:ktor-client-core requires=3.4.3
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
-supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.11.0
+supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency androidx.room:room-runtime requires=2.8.4
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
-supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency io.github.jan-tennert.supabase:bom requires=3.8.0 [org.gradle.category=platform]
+supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency io.github.jan-tennert.supabase:bom requires=3.6.0 [org.gradle.category=platform]
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency io.github.jan-tennert.supabase:postgrest-kt (no version)
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency io.github.jan-tennert.supabase:storage-kt (no version)
-supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency io.ktor:ktor-client-core requires=3.5.1
+supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency io.ktor:ktor-client-core requires=3.4.3
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
-supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.11.0
+supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
 supabase-offline-kt-iossimulatorarm64 file -javadoc.jar
 supabase-offline-kt-iossimulatorarm64 file -metadata.jar
@@ -136,32 +136,32 @@ supabase-offline-kt-iossimulatorarm64 pom dependency com.squareup.okio:okio-ioss
 supabase-offline-kt-iossimulatorarm64 pom dependency io.github.jan-tennert.supabase:auth-kt:(none) scope=compile
 supabase-offline-kt-iossimulatorarm64 pom dependency io.github.jan-tennert.supabase:postgrest-kt:(none) scope=compile
 supabase-offline-kt-iossimulatorarm64 pom dependency io.github.jan-tennert.supabase:storage-kt:(none) scope=compile
-supabase-offline-kt-iossimulatorarm64 pom dependency io.ktor:ktor-client-core-iossimulatorarm64:3.5.1 scope=compile
+supabase-offline-kt-iossimulatorarm64 pom dependency io.ktor:ktor-client-core-iossimulatorarm64:3.4.3 scope=compile
 supabase-offline-kt-iossimulatorarm64 pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.4.20 scope=compile
-supabase-offline-kt-iossimulatorarm64 pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-iossimulatorarm64:1.11.0 scope=compile
+supabase-offline-kt-iossimulatorarm64 pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-iossimulatorarm64:1.10.2 scope=compile
 supabase-offline-kt-iossimulatorarm64 pom dependency org.jetbrains.kotlinx:kotlinx-serialization-json-iossimulatorarm64:1.11.0 scope=compile
-supabase-offline-kt-iossimulatorarm64 pom managed io.github.jan-tennert.supabase:bom:3.8.0 scope=import type=pom
+supabase-offline-kt-iossimulatorarm64 pom managed io.github.jan-tennert.supabase:bom:3.6.0 scope=import type=pom
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency androidx.room:room-runtime requires=2.8.4
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
-supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.github.jan-tennert.supabase:bom requires=3.8.0 [org.gradle.category=platform]
+supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.github.jan-tennert.supabase:bom requires=3.6.0 [org.gradle.category=platform]
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.github.jan-tennert.supabase:postgrest-kt (no version)
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.github.jan-tennert.supabase:storage-kt (no version)
-supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.ktor:ktor-client-core requires=3.5.1
+supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.ktor:ktor-client-core requires=3.4.3
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
-supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.11.0
+supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency androidx.room:room-runtime requires=2.8.4
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
-supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.github.jan-tennert.supabase:bom requires=3.8.0 [org.gradle.category=platform]
+supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.github.jan-tennert.supabase:bom requires=3.6.0 [org.gradle.category=platform]
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.github.jan-tennert.supabase:postgrest-kt (no version)
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.github.jan-tennert.supabase:storage-kt (no version)
-supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.ktor:ktor-client-core requires=3.5.1
+supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.ktor:ktor-client-core requires=3.4.3
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
-supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.11.0
+supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
 supabase-offline-kt-testing file -javadoc.jar
 supabase-offline-kt-testing file -kotlin-tooling-metadata.json

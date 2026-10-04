@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 /** What the dry-run check learned about a write without sending it. */
 internal sealed interface DryRunVerdict {
 
-    /** The write asks PostgREST to roll its transaction back: `dryRun()`. */
+    /** The write asks PostgREST to roll its transaction back: `Prefer: tx=rollback`. */
     data object DryRun : DryRunVerdict
 
     /** An ordinary write. */
@@ -45,8 +45,8 @@ internal sealed interface DryRunVerdict {
 }
 
 /**
- * Tells a dry run (`dryRun()`) from an ordinary write before the write is queued. The queue does
- * not keep the `Prefer` header, so a queued dry run would replay as a real write.
+ * Tells a dry run (`Prefer: tx=rollback`) from an ordinary write before it is queued. The queue
+ * does not keep the `Prefer` header, so a queued dry run would replay as a real write.
  */
 internal fun interface DryRunProbe {
 
@@ -55,10 +55,10 @@ internal fun interface DryRunProbe {
 }
 
 /**
- * The [DryRunProbe] over supabase-kt's HTTP pipeline. supabase-kt records `dryRun()` nowhere but
- * the `Prefer` header, as `tx=rollback`, so the write runs under a [PreferHeaderCapture], and the
- * phase that [installDryRunCheck] puts ahead of every plugin reads that header and stops the
- * request.
+ * The [DryRunProbe] over supabase-kt's HTTP pipeline. A dry run shows only as `tx=rollback` in a
+ * `Prefer` header (supabase-kt 3.8's `dryRun()`, or the header a caller adds), so the write runs
+ * under a [PreferHeaderCapture], and the phase that [installDryRunCheck] puts ahead of every plugin
+ * reads every `Prefer` value and stops the request.
  *
  * A dry run is never queued; whether the server rolled it back is read from [wasRolledBack].
  *
@@ -104,7 +104,10 @@ internal class PreferHeaderCapture(val stopsEveryRequest: Boolean = false) :
     /** The key a capture is found under in a coroutine context. */
     companion object Key : CoroutineContext.Key<PreferHeaderCapture>
 
-    /** The `Prefer` header of the request the capture saw, or `null` while it has seen none. */
+    /**
+     * Every `Prefer` value of the request the capture saw, joined with commas, or `null` while it
+     * has seen none or the request carried none.
+     */
     var prefer: String? = null
         private set
 
@@ -120,9 +123,9 @@ internal class PreferHeaderCapture(val stopsEveryRequest: Boolean = false) :
     val requestedRollback: Boolean
         get() = namesRollback(prefer)
 
-    /** Records the `Prefer` header of a request, or `null` when it carried none. */
-    fun record(preferHeader: String?) {
-        prefer = preferHeader
+    /** Records the `Prefer` values of a request, in order, or `null` when it carried none. */
+    fun record(preferValues: List<String>?) {
+        prefer = preferValues?.joinToString(",")
         observations++
     }
 }
@@ -136,9 +139,9 @@ internal fun namesRollback(header: String?): Boolean =
  * header says `tx=rollback`, which PostgREST sends only when it honored the preference.
  */
 internal val PostgrestResult.wasRolledBack: Boolean
-    get() = namesRollback(headers[PREFERENCE_APPLIED_HEADER])
+    get() = namesRollback(headers.getAll(PREFERENCE_APPLIED_HEADER)?.joinToString(","))
 
-/** The preference supabase-kt's `dryRun()` writes into the `Prefer` header. */
+/** The preference that makes a write a dry run, as supabase-kt 3.8's `dryRun()` writes it. */
 private const val TX_ROLLBACK_PREFERENCE = "tx=rollback"
 
 /** The response header PostgREST lists the preferences it applied in. */
@@ -175,7 +178,8 @@ internal fun SupabaseClient.installDryRunCheck(): Boolean {
     client.requestPipeline.intercept(DryRunCheckPhase) {
         val capture = currentCoroutineContext()[PreferHeaderCapture] ?: return@intercept
         val write = isPostgrestWrite(context)
-        if (write) capture.record(context.headers[PostgrestQueryBuilder.HEADER_PREFER])
+        // Every value: supabase-kt writes its own Prefer first and appends one the caller adds.
+        if (write) capture.record(context.headers.getAll(PostgrestQueryBuilder.HEADER_PREFER))
         if (write || capture.stopsEveryRequest) throw DryRunCheckStop()
     }
     return true

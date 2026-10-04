@@ -21,7 +21,7 @@ body:
     attributes:
       label: supabase-kt version
       description: The version your Gradle build resolves. If you use the Swift package, write "Swift package".
-      placeholder: "3.8.0"
+      placeholder: "3.6.0"
     validations:
       required: true
   - type: input

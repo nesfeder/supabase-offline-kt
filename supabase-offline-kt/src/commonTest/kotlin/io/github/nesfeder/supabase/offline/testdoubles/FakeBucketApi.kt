@@ -11,7 +11,6 @@ import io.github.jan.supabase.storage.FileObjectV2
 import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.jan.supabase.storage.ImageTransformation
 import io.github.jan.supabase.storage.PublicUrlBuilder
-import io.github.jan.supabase.storage.PurgeCacheOptions
 import io.github.jan.supabase.storage.SignedUrl
 import io.github.jan.supabase.storage.SignedUrlBuilder
 import io.github.jan.supabase.storage.SignedUrlsBuilder
@@ -29,8 +28,9 @@ import kotlin.time.Duration
 /**
  * Scriptable [BucketApi] for the offline bucket's tests: every download returns [onDownload]'s
  * bytes, and every write records its arguments after [onWrite]. [setHeader] records its header,
- * [bucketId] is served, and every other member fails. It sees no image transform; a test that needs
- * one uses [RecordingStorageServer] and the real bucket.
+ * [bucketId] is served, and every other member fails, those a supabase-kt minor after 3.6 adds
+ * included ([BucketMembersSinceSupabaseKt38]). It sees no image transform; a test that needs one
+ * uses [RecordingStorageServer] and the real bucket.
  *
  * @property bucketId Bucket identifier the wrapper reads via `BucketApi by delegate`.
  * @property onDownload what every download, of every kind, returns or throws: a transport error, a
@@ -40,7 +40,7 @@ import kotlin.time.Duration
 internal class FakeBucketApi(
     override val bucketId: String = "test-bucket",
     var onDownload: suspend (path: String) -> ByteArray = { error("onDownload not scripted") },
-) : BucketApi {
+) : BucketMembersSinceSupabaseKt38() {
 
     /** Size of the pieces a channel download writes. */
     var channelChunkSize: Int = 4
@@ -238,9 +238,6 @@ internal class FakeBucketApi(
 
     override suspend fun changePublicStatusTo(public: Boolean): Unit =
         unsupported("changePublicStatusTo")
-
-    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
-        unsupported("purgeCache")
 
     override fun publicUrl(path: String, builder: PublicUrlBuilder.() -> Unit): String =
         unsupported("publicUrl")

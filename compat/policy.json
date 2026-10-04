@@ -40,6 +40,7 @@
       "supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/OfflineDatabaseOpenInPlaceAndroidTest.kt",
       "supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/OfflineDatabaseSchemaContinuityTest.kt",
       "supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/PlatformBaseDirectoryAndroidTest.kt",
+      "supabase-offline-kt/src/commonSupabaseKt38Test/kotlin/io/github/nesfeder/supabase/offline/internal/storage/StorageObjectNameUrlEncodingTest.kt",
       "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/PersistedNamesTest.kt",
       "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/ReservedRowsOnDisk.kt",
       "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/ShippedDatabaseFixture.kt",
