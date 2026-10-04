@@ -249,12 +249,20 @@ public struct OfflineBucketApi: Sendable {
     /// none.
     ///
     /// A cached copy is returned however old it is. Throws ``OfflineError/Code/invalidRequest``
-    /// for a name the cache cannot hold (see ``OfflineBucketApi``), sending nothing.
+    /// for a name the cache cannot hold (see ``OfflineBucketApi``), sending nothing; one holding
+    /// `%`, `?` or `#` is refused before the client is asked.
     ///
     /// - Parameter isPublic: Whether a download goes through the public URL rather than with the
     ///   user's session.
     public func ensureCachedFile(path: String, isPublic: Bool = false) async throws -> CachedFile {
-        try await client.connection.call { core, complete in
+        guard !holdsURLDelimiters(path) else {
+            throw OfflineError(
+                code: .invalidRequest,
+                message: "This object's name holds '%', '?' or '#', so it cannot be kept on the device: "
+                    + "keep those characters out of the names of objects the app keeps on the device"
+            )
+        }
+        return try await client.connection.call { core, complete in
             core.storage.ensureCachedFile(bucket: bucketId, path: path, isPublic: isPublic) { file, failure in
                 complete(coreResult(file, failure) { try CachedFile(coreFile: requiredValue($0)) })
             }
@@ -281,8 +289,14 @@ extension CachedFile {
 /// nothing; one that does would encode it twice). A name holding those three is never cached, so
 /// encoding it changes no cache key; any other name stays the key the cache knows it by.
 func escapingURLDelimiters(in name: String) -> String {
-    guard name.contains(where: { "%?#".contains($0) }) else { return name }
+    guard holdsURLDelimiters(name) else { return name }
     return name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+}
+
+/// Whether `name` holds `%`, `?` or `#`, which the core cannot put into a URL as they are, so it
+/// never caches such an object.
+func holdsURLDelimiters(_ name: String) -> Bool {
+    name.contains { "%?#".contains($0) }
 }
 
 /// The URL in a synchronous answer of the core, or the failure it carries.

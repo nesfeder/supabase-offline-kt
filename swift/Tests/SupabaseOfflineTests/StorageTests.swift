@@ -82,6 +82,9 @@ struct StorageTests {
         // Then
         #expect(error?.code == .invalidRequest)
         #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
+        if holdsURLDelimiters(name) {
+            #expect(error?.message.contains("keep those characters out of the names") == true)
+        }
         #expect(storage.requests.values.isEmpty)
         try await client.close()
     }
@@ -161,15 +164,66 @@ struct StorageTests {
         let client = Self.makeClient(storage)
         let bucket = client.storage.from("avatars")
 
-        // When, then
-        await withKnownIssue("The core keeps a refused channel download's answer as the file until its checked-download fix is merged") {
-            let error = await #expect(throws: OfflineError.self) { try await bucket.ensureCachedFile(path: "a.png") }
-            let cached = try await bucket.cachedFile(path: "a.png")
-            #expect(error?.code == .server)
-            #expect(error?.httpStatus == refusal.status)
-            #expect(error?.serverError?.code == refusal.code)
-            #expect(cached == nil)
+        // When
+        let error = await #expect(throws: OfflineError.self) { try await bucket.ensureCachedFile(path: "a.png") }
+        let cached = try await bucket.cachedFile(path: "a.png")
+
+        // Then
+        #expect(error?.code == .server)
+        #expect(error?.httpStatus == refusal.status)
+        #expect(error?.serverError?.code == refusal.code)
+        #expect(error?.serverError?.message == refusal.message)
+        #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
+        #expect(cached == nil)
+        try await client.close()
+    }
+
+    @Test func ensureCachedFileFollowsARedirectAndCachesWhatItLeadsTo() async throws {
+        // Given a Storage that sends the object from another https host
+        let storage = FakeStorageServer()
+        storage.answer { request in
+            request.url.host() == "cdn.example.com"
+                ? .status(200, headers: ["Content-Type": "image/png"], body: FakeStorageServer.photo)
+                : .status(302, headers: ["Location": "https://cdn.example.com/avatars/a.png"])
         }
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+
+        // When
+        let ensured = try await bucket.ensureCachedFile(path: "a.png")
+        let cached = try await bucket.cachedFile(path: "a.png")
+
+        // Then
+        #expect(ensured.sizeBytes == FakeStorageServer.photo.count)
+        #expect(cached == ensured)
+        #expect(storage.requests.values.map { $0.url.host() } == ["project.supabase.co", "cdn.example.com"])
+        try await client.close()
+    }
+
+    @Test func aRedirectFromHttpsToPlainHttpIsRefusedAndNothingCached() async throws {
+        // Given a Storage that sends the object from a plain-http host
+        let storage = FakeStorageServer()
+        storage.answer { request in
+            request.url.host() == "cdn.example.com"
+                ? .status(200, headers: ["Content-Type": "image/png"], body: FakeStorageServer.photo)
+                : .status(302, headers: ["Location": "http://cdn.example.com/avatars/a.png"])
+        }
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+
+        // When
+        let ensureError = await #expect(throws: OfflineError.self) { try await bucket.ensureCachedFile(path: "a.png") }
+        let downloadError = await #expect(throws: OfflineError.self) { try await bucket.download(path: "a.png") }
+        let cached = try await bucket.cachedFile(path: "a.png")
+
+        // Then neither followed it
+        for error in [ensureError, downloadError] {
+            #expect(error?.code == .server)
+            #expect(error?.httpStatus == 302)
+            #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
+        }
+        #expect(cached == nil)
+        #expect(storage.requests.values.allSatisfy { $0.url.host() == "project.supabase.co" })
         try await client.close()
     }
 

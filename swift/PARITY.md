@@ -132,7 +132,7 @@ supabase-swift never matches, because Storage's refusals arrive as `OfflineError
 | `publicURL(path:)` | `publicUrl(path)` | Kotlin's name (supabase-swift 2 says `getPublicURL`). `async` because the URL comes from the opened client, which opens in the background; for the same reason it throws `clientClosed` after `close()`, where Kotlin's still answers. `%`, `?` and `#` in the name are encoded, as supabase-swift encodes them, where Kotlin's (on supabase-kt 3.6) puts the name in as written; the same holds for `authenticatedURL`, `createSignedURL`, `createSignedUploadURL` and `uploadToSignedURL` |
 | `authenticatedURL(path:)` | `authenticatedUrl(path)` | Kotlin's name; `async` and `clientClosed` after `close()`, as `publicURL` |
 | `cachedFile(path:)` | `cachedFile(path)` | Kotlin's name |
-| `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Kotlin's name |
+| `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Kotlin's name. A name holding `%`, `?` or `#` is refused (`invalidRequest`) before the client is asked, in the package's own words, where Kotlin's throws `IllegalArgumentException` |
 | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | Kotlin's names; `Date` for `Instant`, `Int` for `Long` |
 | `CachedFile.url` | Android `ensureLocalFile` / `ensureLocalUri`, iOS `ensureLocalPath` | Swift's addition: a file URL beside `path`, for APIs that take a URL |
 | `OfflineBucketApi.UploadOptions` (`contentType`, `upsert`, `userMetadata`) | supabase-kt's `UploadOptionBuilder` (`contentType`, `upsert`, `userMetadata`) | Kotlin's fields; a value for a builder lambda, so not a "builder"; `String` for `ContentType`, `[String: OfflineJSON]` for `JsonObject` |

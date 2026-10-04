@@ -140,7 +140,7 @@ struct ScriptedStorageRefusal: Sendable, CustomTestStringConvertible {
 /// libraries under the package, which a Swift caller must never read.
 func namesTheRuntime(_ text: String) -> Bool {
     text.contains(/\b[A-Z][A-Za-z0-9]*(?:Exception|Error)\b/)
-        || text.contains(/(?i)\b(?:kotlin|kotlinx|konan|ktor|okio|androidx|bridge)\b/)
+        || text.contains(/(?i)\b(?:kotlin|kotlinx|konan|ktor|okio|androidx|bridge|supabase-kt)\b/)
         || text.contains(/io\.github\.|StorageErrorResponse|Json[A-Z]/)
 }
 
