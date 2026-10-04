@@ -43,8 +43,9 @@ Every row and photo belongs to that anonymous user, and the session is kept on t
 next launch is the same user, offline too.
 
 If the device is offline on the very first launch, there is no user yet. The list says it is not
-signed in and **New task** is hidden: every row needs its user, and only the server can create
-one. The app signs in as soon as it reaches the internet.
+signed in, and **New task** and the Sync tab's **Queue an invalid title** are switched off: every
+row needs its user, and only the server can create one. The app signs in as soon as it reaches
+the internet.
 
 ![The task list before the first sign-in, offline: "Not signed in yet", and no New task button](../assets/samples/android/not-signed-in.png){ width="270" loading=lazy }
 
