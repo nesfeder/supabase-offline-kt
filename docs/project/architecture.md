@@ -489,64 +489,72 @@ lambda, so supabase-kt's call shapes resolve unchanged. These need an edit:
 ### The components
 
 The plugin forwards every call to one internal `OfflineClient`, which wires the parts below and
-owns their lifecycle. Each layer depends only on the layers under it.
+owns their lifecycle. Calls go downward. The cache reports back up only through callbacks the client
+wires in: which queries are live, which went stale, who the current identity is, and a cache
+another identity owns. The client also builds the public types it hands out.
+
+The client and its parts:
 
 ```mermaid
 flowchart TB
-    subgraph surface["Public API"]
-        P["Offline plugin"]
-        B["OfflinePostgrestQueryBuilder"]
-        S["OfflineBucketApi"]
-    end
-    subgraph client["Client"]
-        OC["OfflineClient"]
-        G["ClientOperationGate"]
-        T["OfflineTable"]
-        QR["QueryReader and LiveQueries"]
-        R["MutationQueueReplayer and AutomaticReplay"]
-        N["NetworkAccess"]
-        FC["StorageFileCache"]
-    end
-    subgraph cache["Cache and queue"]
-        LD["LocalData"]
-        CP["CachePatcher"]
-        QO["QueryOverlay"]
-        QC["QueryCache"]
-        MQ["MutationQueue"]
-        CO["CacheOwnership"]
-        CF["CacheFreshness"]
-    end
-    DB[("Room database")]
-    P --> OC
-    B --> T
-    S --> FC
-    OC --> G
+    P["Offline plugin"] --> OC["OfflineClient"]
+    B["OfflinePostgrestQueryBuilder"] --> T["OfflineTable"]
+    S["OfflineBucketApi"] --> FC["StorageFileCache"]
     OC --> T
-    OC --> R
-    OC --> N
+    OC --> R["MutationQueueReplayer and AutomaticReplay"]
     OC --> FC
-    T --> QR
+    OC --> G["ClientOperationGate"]
+    OC --> N["NetworkAccess"]
+    T --> QR["QueryReader and LiveQueries"]
     T --> R
+    T --> G
+    T --> N
+    S --> G
+    S --> N
+    QR --> N
+    R --> N
+    OC --> CQ[["Cache and queue, below"]]
+    T --> CQ
+    QR --> CQ
+    R --> CQ
+    FC --> CQ
+    FC --> DB[("Room database")]
+    CQ --> DB
+```
+
+The cache and the queue, with the client parts that call them:
+
+```mermaid
+flowchart TB
+    OC["OfflineClient"] --> LD["LocalData"]
+    OC --> CP["CachePatcher"]
+    OC --> MQ["MutationQueue"]
+    OC --> CO["CacheOwnership"]
+    T["OfflineTable"] --> MQ
     T --> CP
-    QR --> QO
-    QR --> QC
-    R --> MQ
-    FC --> CO
+    QR["QueryReader"] --> QO["QueryOverlay"]
+    QR --> QC["QueryCache"]
+    R["MutationQueueReplayer"] --> MQ
+    FC["StorageFileCache"] --> CO
     LD --> QO
     LD --> QC
     LD --> MQ
+    LD --> CO
+    LD --> CF["CacheFreshness"]
     CP --> QO
     CP --> QC
+    CP --> CO
+    CP --> CF
     QO --> QC
     QO --> MQ
+    QO --> CO
     QC --> MQ
     QC --> CO
-    MQ --> CF
     QC --> CF
-    CO --> DB
+    MQ --> CF
+    QC --> DB[("Room database")]
     MQ --> DB
-    QC --> DB
-    FC --> DB
+    CO --> DB
 ```
 
 The client's parts:
@@ -565,7 +573,7 @@ own locks.
 
 | Component | Owns | Lock |
 | --- | --- | --- |
-| `CacheFreshness` | The watermarks that say whether a response or a cache write is still current: each table's last local write, and when local data was last cleared or the cache dropped. | The clear lock |
+| `CacheFreshness` | The watermarks that say whether a response or a cache write is still current: each table's last write that changed the cache, and when local data was last cleared or the cache dropped. | The clear lock |
 | `CacheOwnership` | Whose the query cache and the file cache are, and whether the current identity may read or write them; asked on every cache read and write. | The owner record's, always last |
 | `MutationQueue` | The queue's rows and the records beside them: enqueue, the head checks, a send's outcome, rejection, retry, discard, the counts and lists the app is shown, the send record, the sync sequence, the rejected list, and retiring replayed writes. | The queue lock, and a read lock per table that its readers share |
 | `QueryCache` | The cached queries: writing a response behind its guards, reading, observing and deleting payloads, size eviction, and each query's shape record. | The per-table write locks, the eviction lock, and the query-shape records' own |
@@ -589,19 +597,20 @@ calls.
 
 ```mermaid
 flowchart TD
-    A["select or selectAsFlow"] --> B["Operation gate"]
-    B --> C{"Read-shape check: a list of rows?"}
-    C -- "no: single, count, csv and the rest" --> D["Sent as it is, never stored<br/>CacheOnly: CacheMissException"]
-    C -- yes --> E["Cache slot: table and cache key"]
-    E --> F{"Read strategy"}
-    F -- "network" --> G["Request, tick read before it"]
-    G --> H{"Written to the cache?<br/>table lock, queue lock, clear lock"}
-    H -- "refused: older than a local write,<br/>before a clear, another owner,<br/>an untrusted session" --> I["Not written"]
-    H -- written --> J[("Payload and query shape")]
-    F -- "cache" --> J
-    J --> K{"The current identity's cache?"}
-    K -- yes --> L["Overlay: the identity's queued writes,<br/>replayed writes the payload lacks"]
-    L --> M["Result with its provenance"]
+    A["select or selectAsFlow, through the gate"] --> C{"A list of rows?"}
+    C -- "no: single, count, csv…" --> D["Sent as it is, never stored<br/>CacheOnly: CacheMissException"]
+    C -- yes --> F{"Strategy"}
+    F -- network --> G["Request, its tick read first"]
+    F -- cache --> J[("Payload and query shape")]
+    G -- "offered to the cache" --> H{"Taken?"}
+    H -- yes --> J
+    H -- "no: a guard refused it" --> X["Not stored"]
+    G -- "a one-shot read" --> O["The server's rows, stored or not<br/>after a clear: none<br/>still stale: the cache's rows"]
+    J -- "served from the cache" --> K{"Whose cache?"}
+    K -- "another identity's" --> Z["Nothing served, a drop requested"]
+    K -- "the current identity's" --> L["Overlay: the identity's queued writes,<br/>and replayed writes the payload lacks"]
+    O --> L
+    L --> M["Rows, with their provenance"]
 ```
 
 **The read-shape check.** Before a read touches the cache, the engine builds its SELECT through a
@@ -628,6 +637,12 @@ the rows its filter provably matches and moves a row out of, or into, a list as 
 changes, borrowing a row only from a query read with the same select list and embedded options; a
 DELETE removes provable matches. A queued row is appended past a list's order and limit. A write
 that fails part-way is undone from a journal and reported once, and the rest still show.
+
+**The cache's guards.** A network answer is offered to the cache under the table's write lock,
+the queue lock and the clear lock, in that order, and is not stored when it is older than a change
+to the cache (below), when it started before a clear or a drop, when the cache is another
+identity's, when `responseTrust` does not take the session it went out under, or when it is an
+empty answer the rule does not take as the server's.
 
 **Freshness ticks.** Every request reads a tick from a monotonic clock before it goes out. Every
 write that changes the cache itself (an online write's patch, a replayed write, an emptied table)
@@ -664,17 +679,20 @@ handed the latest snapshot, never holding back the query's other collectors.
 
 ```mermaid
 flowchart TD
-    W["A QueueIfOffline write"] --> Q{"Can the queue hold it faithfully?"}
+    W["A QueueIfOffline write"] --> Q{"Can the queue hold it?"}
     Q -- "no" --> D["Sent directly"]
     Q -- yes --> S["Saved with its owner, under the queue lock"]
-    S --> H{"At the head of its user's queue,<br/>session settled, nobody sending it?"}
+    S --> NS{"Network access on?"}
+    NS -- no --> QC["Queued, no pass requested"]
+    NS -- yes --> H{"At the head, settled,<br/>not in flight?"}
     H -- no --> QA["Queued, a pass is requested"]
     H -- yes --> X["Sent at once"]
     X -- accepted --> A["Cache patched, row deleted: Applied"]
-    X -- "may not have run" --> QB["Stays queued: Queued"]
-    X -- "refused" --> RF["Row deleted, error thrown"]
+    X -- "may not have run" --> QB["Queued, no pass requested"]
+    X -- "any other status" --> RF["Row deleted, error thrown"]
     QA --> PASS["Replay pass, in order"]
-    QB --> PASS
+    QB -- "a later trigger" --> PASS
+    QC -- "a later trigger" --> PASS
     PASS -- accepted --> SY["Marked replayed, kept for the overlay, later retired"]
     PASS -- "may pass" --> ST["Pass stops, backs off"]
     PASS -- "refused for good" --> RJ["Rejected list"]
