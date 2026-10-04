@@ -7,6 +7,10 @@ How a one-shot `select` chooses between the network and the cache, strategy by s
 
 ## Choosing a strategy
 
+Under every strategy, a read with two top-level filters on one column (`gte("age", 1);
+lte("age", 10)`) throws `IllegalArgumentException` before anything is sent: supabase-kt would send
+only the first. Write them as one `and { }` group, which sends both.
+
 ## `NetworkOnly`
 
 ## `NetworkFirst`

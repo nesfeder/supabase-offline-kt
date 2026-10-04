@@ -83,6 +83,11 @@ release.
   each takes `path` as the bucket's own members do. `localUriIfCached` and `localPathIfCached` are
   `null` only when nothing is cached. On supabase-kt's own bucket they no longer compile, where
   they returned `null`.
+- A read, an update or a delete with two top-level filters on one column, such as
+  `filter { gte("age", 1); lte("age", 10) }`, throws `IllegalArgumentException` before anything is
+  sent or queued. supabase-kt sends only the first of them, so the read showed rows outside the
+  window and the write reached them, and a queued write replayed that way later. Write the two as
+  one `and { }` group, which sends both.
 - On iOS the database and the file cache live in `Library/Application Support` by default
   (`supabase_offline.db` and `supabase_offline/`), not in `Documents`, which an app with file
   sharing on shows in the Files app. A client that finds a database in `Documents` moves it, with

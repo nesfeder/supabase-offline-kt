@@ -31,6 +31,13 @@ which the engine does not read.
 `WritesToAnotherSchemaTest.the_cached_queries_of_that_schema_are_fetched_again`,
 `NonDefaultSchemaTest.an_online_only_write_to_another_schema_is_sent_to_it`</small>
 
+An update or a delete with two top-level filters on one column (`gte("age", 1); lte("age", 10)`)
+throws `IllegalArgumentException` under either strategy, online or offline, before anything is sent
+or queued: supabase-kt would send only the first, and the write would reach more rows than it
+names, now or when the queue replays it. Write them as one `and { }` group, which sends both. An
+update or a delete with a group is sent at once and never queued: offline it throws
+`MutationNotQueueableException`.
+
 A dry run, a write carrying `Prefer: tx=rollback` (supabase-kt 3.8's `dryRun()`, or on 3.6 the
 header added by hand), is never queued: it is sent at once, and offline it throws
 `MutationNotQueueableException`. PostgREST rolls it back only when the project allows a request to

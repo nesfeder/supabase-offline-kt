@@ -149,6 +149,27 @@ kotlinx.coroutines are held at the versions supabase-kt 3.6.0 was released with 
   again on a later pass; an app's own call sees the `401`.
 - When the server refuses a sign-out, supabase-kt 3.6 keeps the local session (fixed in 3.7.0).
 
+**Two top-level filters on one column.** Every supabase-kt release to date, 3.6 and 3.8 included,
+sends only the first value of each top-level query parameter: `filter { gte("age", 1); lte("age",
+10) }` sends `age=gte.1` and nothing else, where postgrest-js and supabase-swift send both. Rather
+than read or delete more rows than the call names, the library refuses such a read, update or
+delete with `IllegalArgumentException` before anything is sent or queued. Write the two conditions
+as one group, which sends both:
+
+```kotlin
+filter {
+    and {
+        gte("age", 1)
+        lte("age", 10)
+    }
+}
+```
+
+The refusal sees a parameter that holds two values. It cannot see the calls that replace one: a
+second top-level `or { }` group replaces the first, and a text search replaces a filter written
+before it on the same column. Combine those into one group too. A test pins what supabase-kt sends,
+so the day it sends every value this rule is revisited before the pin moves.
+
 **An app that asks for supabase-kt 3.7 or 3.8 itself** gets it: Gradle picks the higher version,
 so the library's pin is a floor, not a ceiling.
 
