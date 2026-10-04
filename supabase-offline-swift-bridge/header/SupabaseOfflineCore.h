@@ -468,8 +468,8 @@ __attribute__((swift_name("BridgeClock")))
  * @property message what happened, in words. It never quotes a URL, a header, a row or a token.
  * @property httpStatus the server's HTTP status, for [BridgeErrorKind.SERVER],
  *   [BridgeErrorKind.HTTP] and a [BridgeErrorKind.SYNC_FAILED] the server caused; otherwise `null`.
- * @property code the Postgres SQLSTATE or PostgREST code (such as `23505` or `PGRST204`), when the
- *   server sent one.
+ * @property code the Postgres SQLSTATE or PostgREST code (such as `23505` or `PGRST204`), or
+ *   Storage's error code (such as `not_found`), when the server sent one.
  * @property details the server's details, when it sent any.
  * @property hint the server's hint, when it sent one.
  * @property isConnectivityFailure whether the network, not the server, failed: `true` for
