@@ -15,10 +15,13 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -27,6 +30,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -74,6 +79,47 @@ class SyncReportTest {
     }
 
     @Test
+    fun a_sync_of_one_table_holds_its_writes_behind_an_earlier_one_in_another_table() = runTest {
+        // Given — a parent queued while its table cannot be reached, then a child queued after it.
+        // The library's own passes stay idle, so these calls are the only senders
+        val server =
+            RecordingPostgrestServer(
+                answer = { request ->
+                    if (request.table == PARENTS) connectivityFailure() else okJson("[]")
+                }
+            )
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                coordinatorScope = idleCoroutineScope(),
+                closeWait = 100.milliseconds,
+            )
+        assertIs<MutationOutcome.Queued>(client.from(PARENTS).insert(row(1)))
+        assertIs<MutationOutcome.Queued>(client.from(CHILDREN).insert(row(2)))
+
+        // When — the app syncs the children's table only
+        val held = client.syncPendingMutations(CHILDREN)
+
+        // Then — the child was not sent ahead of its parent, and the report says why it remains
+        assertEquals(emptyList(), server.requests.filter { it.table == CHILDREN })
+        assertEquals(0, held.syncedCount)
+        assertEquals(1, held.remainingCount)
+        assertEquals(1, held.heldBehindOtherTablesCount)
+
+        // And — once the parent's table answers, syncing every table sends both, parent first
+        server.answer = { okJson("[]") }
+        val all = client.syncPendingMutations()
+        assertEquals(2, all.syncedCount)
+        assertEquals(0, all.heldBehindOtherTablesCount)
+        assertEquals(
+            listOf(PARENTS, CHILDREN),
+            server.requests.filter { it.method == "POST" }.map { it.table }.distinct(),
+        )
+        assertEquals(CHILDREN, server.requests.last().table)
+        client.close()
+    }
+
+    @Test
     fun a_sync_while_offline_returns_with_the_writes_still_queued_and_says_why() = runTest {
         // Given
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
@@ -86,7 +132,7 @@ class SyncReportTest {
 
         // Then
         assertEquals(0 to 2, report.syncedCount to report.remainingCount)
-        val why = assertIs<SyncFailedException>(client.syncStatus.value.lastSyncError)
+        val why = assertNotNull(client.syncStatus.value.lastSyncError)
         assertTrue(why.isNetworkOrConnectivityFailure())
         client.close()
     }
@@ -113,12 +159,47 @@ class SyncReportTest {
         client.syncPendingMutations()
 
         // Then — the status and the code, in the library's own words
-        val why = assertIs<SyncFailedException>(client.syncStatus.value.lastSyncError)
+        val why = assertNotNull(client.syncStatus.value.lastSyncError)
         assertEquals(500 to "XX000", why.httpStatus to why.code)
         assertEquals(500, why.httpStatusOrNull())
         assertFalse(SECRET in why.message.orEmpty(), why.message)
         assertEquals(null, why.cause)
         assertFalse(why.isNetworkOrConnectivityFailure())
+        client.close()
+    }
+
+    @Test
+    fun a_sync_a_clear_cuts_short_still_reports_the_writes_it_sent_before() = runTest {
+        // Given — two writes queued offline; the server accepts the first and holds the second.
+        // The library's own passes stay idle, so this call is the only sender
+        val arrived = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                coordinatorScope = idleCoroutineScope(),
+                closeWait = 100.milliseconds,
+            )
+        (1..2).forEach { id -> client.from(TABLE).insert(row(id)) }
+        server.answer = { request ->
+            if (""""id":2""" in request.body) {
+                arrived.complete(Unit)
+                release.await()
+            }
+            okJson("[]")
+        }
+
+        // When — local data is cleared while the second is on the wire
+        val sync = async(Dispatchers.Default) { client.syncPendingMutations() }
+        withContext(Dispatchers.Default) { withTimeout(10.seconds) { arrived.await() } }
+        client.clearLocalData()
+        release.complete(Unit)
+        val report = withContext(Dispatchers.Default) { withTimeout(10.seconds) { sync.await() } }
+
+        // Then — the first was sent and accepted before the clear, and nothing is left queued
+        assertEquals(1, report.syncedCount)
+        assertEquals(0, report.remainingCount)
         client.close()
     }
 
@@ -197,6 +278,8 @@ class SyncReportTest {
 
     private companion object {
         const val TABLE = "notes"
+        const val PARENTS = "parents"
+        const val CHILDREN = "children"
         const val SECRET = "s3cret-filter-value"
     }
 }

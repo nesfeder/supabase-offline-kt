@@ -574,7 +574,7 @@ private fun SyncStatus.toAppSyncStatus(): AppSyncStatus =
         rejectedMutationCount = rejectedMutationCount,
         isSyncing = isSyncing,
         lastSyncedAt = lastSyncedAt,
-        lastSyncError = lastSyncError,
+        lastSyncError = lastSyncError?.asSyncFailure(),
     )
 
 private fun SyncReport.toTaskSyncReport(): TaskSyncReport =

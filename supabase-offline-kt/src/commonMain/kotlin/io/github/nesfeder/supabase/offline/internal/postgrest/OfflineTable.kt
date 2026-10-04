@@ -593,7 +593,7 @@ internal class OfflineTable(
                             "Offline $operationLabel for $table would not be queued: $detail"
                         }
                     }
-                    return direct.send(EngineLogLevel.ERROR) {
+                    return direct.send(EngineLogLevel.INFO) {
                         "Refusing to queue offline $operationLabel for $table: ${capture.reason}"
                     }
                 }
@@ -736,13 +736,14 @@ internal class OfflineTable(
     }
 
     /**
-     * Asks for a pass when [identity] has mutations queued, which the head it just left held back.
-     * Reads the owner index only, whatever other identities have queued.
+     * Asks for a pass when [identity] has mutations queued, which the head it just left held back,
+     * or when that cannot be read: the write's own outcome stands either way. Reads the owner index
+     * only, whatever other identities have queued.
      *
-     * @return whether [identity] had mutations queued.
+     * @return whether [identity] may have mutations queued.
      */
     private suspend fun requestPassIfPending(identity: QueueIdentity): Boolean {
-        val pending = mutationQueue.hasPendingMutationsOf(identity.storedValue)
+        val pending = mutationQueue.mayHavePendingMutationsOf(identity.storedValue)
         if (pending) requestSync()
         return pending
     }
