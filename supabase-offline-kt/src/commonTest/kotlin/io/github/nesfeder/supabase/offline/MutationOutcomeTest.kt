@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import kotlin.test.Test
@@ -311,7 +312,7 @@ class MutationOutcomeTest {
         remoteTable: FakeRemoteTable,
         mutationDao: MutationDao,
     ): OfflineTable =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = remoteTable,
             store = buildStore(mutationDao),
         )

@@ -3,12 +3,12 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
@@ -29,7 +29,7 @@ class MutationQueueReplayerLoggingTest {
     private val logger = RecordingLogSink()
     private val store = newTestOfflineStore()
     private val replayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
             engineLogger = logger.asEngineLogger(),
@@ -117,7 +117,7 @@ class MutationQueueReplayerLoggingTest {
                 )
             )
             val corruptSyncer =
-                MutationQueueReplayer(
+                newTestMutationQueueReplayer(
                     store = storeWithCorruptRow,
                     supabase = server.supabaseClient(),
                     engineLogger = logger.asEngineLogger(),

@@ -4,16 +4,16 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.TOKEN_ENDPOINT
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.refreshRefused
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -47,7 +47,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
@@ -70,7 +70,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
@@ -96,7 +96,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
@@ -127,7 +127,7 @@ class ExpiredSessionWriteTest {
         supabase.signInForTest("user-a", expiresInSeconds = -60)
 
         // When
-        val report = MutationQueueReplayer(store = store, supabase = supabase).sync()
+        val report = newTestMutationQueueReplayer(store = store, supabase = supabase).sync()
 
         // Then — the pass stops before sending, and the write is not recorded as possibly sent
         assertIs<SyncStop.TransientFailure>(report.stop)
@@ -145,7 +145,7 @@ class ExpiredSessionWriteTest {
     ): String? {
         server.answer = { okJson("[]") }
         supabase.signInForTest("user-a")
-        MutationQueueReplayer(store = store, supabase = supabase).sync()
+        newTestMutationQueueReplayer(store = store, supabase = supabase).sync()
         return server.requests.single { it.table == TABLE }.prefer
     }
 

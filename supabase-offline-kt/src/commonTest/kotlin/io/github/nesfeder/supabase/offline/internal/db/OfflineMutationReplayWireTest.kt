@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.RecordedRequest
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
@@ -34,7 +34,8 @@ class OfflineMutationReplayWireTest {
     private val mutationDao = FakeMutationDao()
     private var clock = 0L
     private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock++ })
-    private val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+    private val replayer =
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     /**
      * Changed with idempotent replay: the rows carry their primary key, so the stored body is

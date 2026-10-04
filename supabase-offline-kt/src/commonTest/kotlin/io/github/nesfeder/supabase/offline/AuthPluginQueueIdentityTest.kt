@@ -11,12 +11,12 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
@@ -47,8 +47,9 @@ class AuthPluginQueueIdentityTest {
             }
         }
     private val store = newTestOfflineStore()
-    private val builder = OfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)
-    private val replayer = MutationQueueReplayer(store = store, supabase = supabase)
+    private val builder =
+        newTestOfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)
+    private val replayer = newTestMutationQueueReplayer(store = store, supabase = supabase)
 
     private fun sentBodies(): List<String> =
         server.requests.filter { it.method == "POST" }.map { it.body }

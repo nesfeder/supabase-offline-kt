@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestPostgrest
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
@@ -48,7 +49,10 @@ class RejectionCrashWindowTest {
         )
 
         // When — the write replays and this time the server accepts it
-        MutationQueueReplayer(store = store, supabase = RecordingPostgrestServer().supabaseClient())
+        newTestMutationQueueReplayer(
+                store = store,
+                supabase = RecordingPostgrestServer().supabaseClient(),
+            )
             .syncAllTables()
 
         // Then — it is not still reported as rejected
@@ -79,7 +83,7 @@ class RejectionCrashWindowTest {
             )
         )
         val replayer =
-            MutationQueueReplayer(
+            newTestMutationQueueReplayer(
                 store = store,
                 supabase = RecordingPostgrestServer().supabaseClient(),
                 currentIdentity = { QueueIdentity.User("user-a") },

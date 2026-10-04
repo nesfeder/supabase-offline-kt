@@ -111,7 +111,8 @@ internal class OfflineStore(
     /** [identityChanges] as assigned when a flow is collected. */
     private val currentIdentityChanges: Flow<Any?> = flow { emitAll(identityChanges) }
 
-    private val freshness = CacheFreshness(monotonicTick)
+    /** The watermarks and the clear lock. */
+    internal val freshness = CacheFreshness(monotonicTick)
 
     /** Whose the caches are; read by [StorageFileCache]'s facade constructor. */
     internal val cacheOwnership =
@@ -126,7 +127,8 @@ internal class OfflineStore(
 
     private val tableWriteLocks = TableWriteLocks()
 
-    private val mutationQueue =
+    /** The mutation queue. */
+    internal val mutationQueue =
         MutationQueue(
             mutationDao = mutationDao,
             queryCacheDao = countingQueryCacheDao,
@@ -142,7 +144,8 @@ internal class OfflineStore(
             engineLogger = { engineLogger },
         )
 
-    private val queryCache =
+    /** The cached queries. */
+    internal val queryCache =
         QueryCache(
             queryCacheDao = countingQueryCacheDao,
             queryCacheLimits = queryCacheLimits,
@@ -155,7 +158,8 @@ internal class OfflineStore(
             allLiveCacheKeys = { allLiveCacheKeys() },
         )
 
-    private val queryOverlay =
+    /** The overlaid reads. */
+    internal val queryOverlay =
         QueryOverlay(
             queryCacheDao = countingQueryCacheDao,
             json = json,
@@ -168,7 +172,8 @@ internal class OfflineStore(
             engineLogger = { engineLogger },
         )
 
-    private val cachePatcher =
+    /** The online-write patch. */
+    internal val cachePatcher =
         CachePatcher(
             queryCacheDao = countingQueryCacheDao,
             json = json,
@@ -182,7 +187,8 @@ internal class OfflineStore(
             onQueriesMarkedStale = { table, cacheKeys -> onQueriesMarkedStale(table, cacheKeys) },
         )
 
-    private val localData =
+    /** The clear and the drop. */
+    internal val localData =
         LocalData(
             queryCacheDao = countingQueryCacheDao,
             cachedFileDao = cachedFileDao,

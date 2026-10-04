@@ -24,8 +24,11 @@ import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.TransportClosedException
+import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
+import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
 import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
+import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
@@ -35,6 +38,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
@@ -56,7 +60,18 @@ import kotlinx.serialization.json.JsonElement
  */
 internal class OfflineTable(
     private val delegate: RemoteTable,
-    private val store: OfflineStore,
+    /** The cached queries a read is answered from and written to. */
+    private val queryCache: QueryCache,
+    /** The reads served with the queued mutations laid over them. */
+    private val queryOverlay: QueryOverlay,
+    /** Where a write is queued, and whose head decides whether it is sent at once. */
+    private val mutationQueue: MutationQueue,
+    /** Patches a write the server applied into the cached queries. */
+    private val cachePatcher: CachePatcher,
+    /** The tick a write starts at, and whether a clear has passed since. */
+    private val freshness: CacheFreshness,
+    /** Each table's key columns, which locate a write's rows. */
+    private val primaryKeys: PrimaryKeys,
     private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     /**
      * The session a read's request goes out under; built directly, a client without the Auth
@@ -72,10 +87,9 @@ internal class OfflineTable(
      * The real client passes its **client-scoped** instance so it is shared across every builder it
      * creates — single-flight per signature only works when one coordinator spans all builders, so
      * production must never rely on the default. The default builds a fresh per-builder coordinator
-     * over a standalone scope purely so tests and direct construction can call
-     * `OfflineTable(delegate, store)` without wiring one up; the scope hosts `WhileSubscribed(0,
-     * 0)` shares that tear down when collection stops, so nothing runs once a short-lived
-     * subscription ends.
+     * over a standalone scope purely so tests and direct construction need not wire one up; the
+     * scope hosts `WhileSubscribed(0, 0)` shares that tear down when collection stops, so nothing
+     * runs once a short-lived subscription ends.
      */
     private val liveQueries: LiveQueries = defaultLiveQueries(),
     /**
@@ -86,7 +100,7 @@ internal class OfflineTable(
     private val wakeUps: Flow<Unit> = emptyFlow(),
     /**
      * The identity a write is made for, read as the write is issued and recorded as its owner when
-     * it is queued; see [OfflineStore.enqueueOwnedBy]. `null` from the provider means it cannot be
+     * it is queued; see [MutationQueue.enqueueOwnedBy]. `null` from the provider means it cannot be
      * told, and the write is then sent directly, never queued.
      */
     private val queueIdentity: suspend () -> QueueIdentity? = {
@@ -105,7 +119,8 @@ internal class OfflineTable(
      */
     private val headSender: MutationQueueReplayer =
         MutationQueueReplayer(
-            store = store,
+            mutationQueue = mutationQueue,
+            freshness = freshness,
             supabase = delegate.postgrest.supabaseClient,
             engineLogger = engineLogger,
             currentIdentity = queueIdentity,
@@ -122,7 +137,12 @@ internal class OfflineTable(
 
     constructor(
         delegate: PostgrestQueryBuilder,
-        store: OfflineStore,
+        queryCache: QueryCache,
+        queryOverlay: QueryOverlay,
+        mutationQueue: MutationQueue,
+        cachePatcher: CachePatcher,
+        freshness: CacheFreshness,
+        primaryKeys: PrimaryKeys,
         engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
         requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
         trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
@@ -134,7 +154,8 @@ internal class OfflineTable(
         requestSync: () -> Unit = {},
         headSender: MutationQueueReplayer =
             MutationQueueReplayer(
-                store = store,
+                mutationQueue = mutationQueue,
+                freshness = freshness,
                 supabase = delegate.postgrest.supabaseClient,
                 engineLogger = engineLogger,
                 currentIdentity = queueIdentity,
@@ -146,7 +167,12 @@ internal class OfflineTable(
         networkAccess: NetworkAccess = NetworkAccess(),
     ) : this(
         delegate = SupabaseRemoteTable(delegate, readShapePostgrest, networkAccess),
-        store = store,
+        queryCache = queryCache,
+        queryOverlay = queryOverlay,
+        mutationQueue = mutationQueue,
+        cachePatcher = cachePatcher,
+        freshness = freshness,
+        primaryKeys = primaryKeys,
         engineLogger = engineLogger,
         requestSession = requestSession,
         trustPolicy = trustPolicy,
@@ -177,7 +203,10 @@ internal class OfflineTable(
     private val queryReader =
         QueryReader(
             delegate = delegate,
-            store = store,
+            queryCache = queryCache,
+            queryOverlay = queryOverlay,
+            mutationQueue = mutationQueue,
+            freshness = freshness,
             engineLogger = engineLogger,
             nowMillis = { clock.now().toEpochMilliseconds() },
             requestSession = requestSession,
@@ -232,11 +261,10 @@ internal class OfflineTable(
                 // OnlineOnly callers opted out of this — leave their cache untouched.
                 val insertBuilder = built.value
                 val descriptor = captureFilter(insertBuilder)
-                store.patchCachedQueries(
+                cachePatcher.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.INSERT,
-                    bodyJson =
-                        preferResponseForCache(body, result.data, store.primaryKeys.of(table)),
+                    bodyJson = preferResponseForCache(body, result.data, primaryKeys.of(table)),
                     filterJson = descriptor?.let { encodeFilter(it, json) },
                     defaultToNull = insertBuilder.defaultToNull,
                     startedAtTick = startedAtTick,
@@ -284,8 +312,8 @@ internal class OfflineTable(
                         ?.split(',')
                         ?.map { column -> column.trim() }
                         ?.filter { column -> column.isNotEmpty() }
-                        ?.takeIf { it.isNotEmpty() } ?: store.primaryKeys.of(table)
-                store.patchCachedQueries(
+                        ?.takeIf { it.isNotEmpty() } ?: primaryKeys.of(table)
+                cachePatcher.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.UPSERT,
                     bodyJson = preferResponseForCache(body, result.data, conflictColumns),
@@ -336,7 +364,7 @@ internal class OfflineTable(
                 // Asked for rows back, the response names every row the update changed, none when
                 // it is empty; each carrying its key is patched by it alone, in one pass
                 val returnsRows = built.value.returning is Returning.Representation
-                val keyColumns = store.primaryKeys.of(table)
+                val keyColumns = primaryKeys.of(table)
                 val returned = returnedRowsOf(json, result.data)
                 if (!returnsRows || returned.any { row -> primaryKeyOf(row, keyColumns) == null }) {
                     patchFilteredWrite(
@@ -349,7 +377,7 @@ internal class OfflineTable(
                 }
                 // Rows it returned carry what the server set itself, such as a trigger's
                 // `updated_at`
-                store.patchReturnedRows(table, body, result.data, startedAtTick)
+                cachePatcher.patchReturnedRows(table, body, result.data, startedAtTick)
             },
             captureForQueue = {
                 captureFilteredWrite(built.value) { descriptor ->
@@ -425,10 +453,16 @@ internal class OfflineTable(
             }
             // The flat conditions a row it reaches meets, logical groups and the rest aside
             val narrowing = captureFilter(builder)
-            store.markQueriesAWriteMayReach(table, operation, bodyJson, narrowing, startedAtTick)
+            cachePatcher.markQueriesAWriteMayReach(
+                table,
+                operation,
+                bodyJson,
+                narrowing,
+                startedAtTick,
+            )
             return
         }
-        store.patchCachedQueries(
+        cachePatcher.patchCachedQueries(
             table = table,
             operation = operation,
             bodyJson = bodyJson,
@@ -543,7 +577,7 @@ internal class OfflineTable(
             return sendToAnotherSchema(operationLabel, schema, table, performOnline)
         }
 
-        val startedAtTick = store.monotonicTickNow()
+        val startedAtTick = freshness.tickNow()
         // Taken as the write is issued: a session switch while it is in flight must not re-own it.
         val identity = queueIdentity()
         val direct = DirectSend(operationLabel, table, performOnline, patchCache, startedAtTick)
@@ -596,7 +630,7 @@ internal class OfflineTable(
         val queued =
             when (
                 val enqueued =
-                    store.enqueueOwnedBy(identity.storedValue, startedAtTick) {
+                    mutationQueue.enqueueOwnedBy(identity.storedValue, startedAtTick) {
                         queueable.enqueue(this)
                     }
             ) {
@@ -680,7 +714,7 @@ internal class OfflineTable(
         table: String,
         performOnline: suspend () -> PostgrestResult,
     ): MutationOutcome {
-        val startedAtTick = store.monotonicTickNow()
+        val startedAtTick = freshness.tickNow()
         val result =
             try {
                 performOnline()
@@ -696,7 +730,7 @@ internal class OfflineTable(
                 )
             }
         engineLogger.debug { "$operationLabel $schema.$table response: ${result.data}" }
-        if (!result.wasRolledBack) store.markEveryQueryStale("$schema.$table", startedAtTick)
+        if (!result.wasRolledBack) cachePatcher.markEveryQueryStale("$schema.$table", startedAtTick)
         return MutationOutcome.Applied(result)
     }
 
@@ -707,17 +741,17 @@ internal class OfflineTable(
      * @return whether [identity] had mutations queued.
      */
     private suspend fun requestPassIfPending(identity: QueueIdentity): Boolean {
-        val pending = store.hasPendingMutationsOf(identity.storedValue)
+        val pending = mutationQueue.hasPendingMutationsOf(identity.storedValue)
         if (pending) requestSync()
         return pending
     }
 
     /**
-     * Logs, once per store, that the dry-run check cannot tell: such writes lose their offline
-     * safety net.
+     * Logs, once per mutation queue, that the dry-run check cannot tell: such writes lose their
+     * offline safety net.
      */
     private fun reportUnclassifiableWriteOnce() {
-        if (store.claimUnclassifiableWriteReport()) {
+        if (mutationQueue.claimUnclassifiableWriteReport()) {
             engineLogger.error {
                 "Could not tell whether a write is a dry run; such writes are sent without being queued, " +
                     "so they fail rather than queue when offline"
@@ -777,7 +811,7 @@ internal class OfflineTable(
                         "$operationLabel $table was rolled back (a dry run); the cache is left as it was"
                     }
 
-                store.wasClearedSince(startedAtTick) ->
+                freshness.wasClearedSince(startedAtTick) ->
                     engineLogger.info {
                         "$operationLabel $table returned after local data was cleared; the cache is left as it was"
                     }
@@ -789,7 +823,7 @@ internal class OfflineTable(
 
     /** The queued write [row] as the caller sees it in [MutationOutcome.Queued]. */
     private fun pendingMutationOf(row: MutationRow): PendingMutation =
-        checkNotNull(row.toPendingMutation(json, store.primaryKeys)) {
+        checkNotNull(row.toPendingMutation(json, primaryKeys)) {
             "the queue stored an operation it cannot name"
         }
 

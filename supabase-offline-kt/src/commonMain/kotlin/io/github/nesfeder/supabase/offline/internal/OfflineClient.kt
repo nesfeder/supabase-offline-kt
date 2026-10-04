@@ -243,7 +243,8 @@ internal class OfflineClient(
 
     private val mutationQueueReplayer =
         MutationQueueReplayer(
-            store,
+            store.mutationQueue,
+            store.freshness,
             supabaseClient,
             engineLogger = engineLogger,
             networkAccess = networkAccess,
@@ -446,7 +447,12 @@ internal class OfflineClient(
         val engine =
             OfflineTable(
                 delegate = delegate,
-                store = store,
+                queryCache = store.queryCache,
+                queryOverlay = store.queryOverlay,
+                mutationQueue = store.mutationQueue,
+                cachePatcher = store.cachePatcher,
+                freshness = store.freshness,
+                primaryKeys = primaryKeys,
                 engineLogger = engineLogger,
                 requestSession = ::requestSession,
                 trustPolicy = responseTrust,

@@ -1242,7 +1242,10 @@ class QueryReaderRecoveryTest {
     ): QueryReader =
         QueryReader(
             delegate = remoteTable,
-            store = store,
+            queryCache = store.queryCache,
+            queryOverlay = store.queryOverlay,
+            mutationQueue = store.mutationQueue,
+            freshness = store.freshness,
             requestSession = authState,
             trustPolicy = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
             liveQueries = LiveQueries(scope),

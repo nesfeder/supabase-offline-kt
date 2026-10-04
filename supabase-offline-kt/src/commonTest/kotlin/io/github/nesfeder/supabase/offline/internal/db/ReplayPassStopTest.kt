@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
@@ -39,7 +39,7 @@ class ReplayPassStopTest {
         store.enqueueOwnedBy("user:user-a") {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"a1"}]"""))
         }
-        val replayer = MutationQueueReplayer(store = store, supabase = supabase)
+        val replayer = newTestMutationQueueReplayer(store = store, supabase = supabase)
         var pass: Job? = null
         mutationDao.onMarkSendUnconfirmed = { pass?.cancel() }
 

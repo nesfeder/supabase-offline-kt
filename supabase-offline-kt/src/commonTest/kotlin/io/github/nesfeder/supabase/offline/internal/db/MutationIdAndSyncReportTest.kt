@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.nesfeder.supabase.offline.MutationOperation as MutationQueueOperation
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -14,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
@@ -42,7 +42,8 @@ class MutationIdAndSyncReportTest {
     private var clock = 7_000L
     private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock })
     private val server = RecordingPostgrestServer()
-    private val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+    private val replayer =
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     @Test
     fun ids_are_assigned_in_order_and_survive_a_restart() = runTest {

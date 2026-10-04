@@ -3,14 +3,14 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -32,7 +32,7 @@ class OnlineWriteJoinsQueueTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
     private val builder =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
         )
@@ -50,7 +50,8 @@ class OnlineWriteJoinsQueueTest {
         // When — back online, the user renames it to B, then the queue replays
         server.answer = { okJson("[]") }
         rename("B")
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+            .syncAllTables()
 
         // Then — the server receives A, then B, and ends on B
         val patches = server.requests.filter { it.method == "PATCH" }.map { it.body }
@@ -92,7 +93,8 @@ class OnlineWriteJoinsQueueTest {
         // When — online, the user deletes it again, then the queue replays
         server.answer = { okJson("[]") }
         builder.delete { filter { eq("id", 7) } }
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+            .syncAllTables()
 
         // Then — the insert reaches the server before the delete
         val writes = server.requests.filter { it.method != "GET" }.drop(1).map { it.method }
@@ -103,7 +105,7 @@ class OnlineWriteJoinsQueueTest {
     fun an_online_write_waits_behind_a_pending_write_in_another_table() = runTest {
         // Given — another table has a pending write, this one has none
         server.answer = { connectivityFailure() }
-        OfflineTable(
+        newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from("other"),
                 store = store,
             )

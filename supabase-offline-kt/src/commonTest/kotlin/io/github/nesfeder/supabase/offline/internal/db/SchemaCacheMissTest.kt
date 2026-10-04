@@ -4,14 +4,14 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -45,7 +45,8 @@ class SchemaCacheMissTest {
             RecordingPostgrestServer(
                 answer = { postgrestError(HttpStatusCode.NotFound, code = "PGRST205") }
             )
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — a pass meets the miss, then the cache reloads
         val missed = replayer.sync()
@@ -69,7 +70,7 @@ class SchemaCacheMissTest {
                 answer = { postgrestError(HttpStatusCode.BadRequest, code = "PGRST204") }
             )
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
             )
@@ -97,7 +98,8 @@ class SchemaCacheMissTest {
                     )
                 }
             )
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — nine misses thirty seconds apart, with passes in between that come too soon
         repeat(9) {
@@ -127,13 +129,13 @@ class SchemaCacheMissTest {
             RecordingPostgrestServer(
                 answer = { postgrestError(HttpStatusCode.NotFound, code = "PGRST205") }
             )
-        val before = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val before = newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
         repeat(5) {
             before.sync()
             now += 30.seconds
         }
         now = Duration.ZERO
-        val after = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val after = newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — five more, spaced
         val reports =

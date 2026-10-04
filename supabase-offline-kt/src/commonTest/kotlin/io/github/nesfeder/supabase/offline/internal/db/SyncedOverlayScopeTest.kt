@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -150,7 +150,7 @@ class SyncedOverlayScopeTest {
         store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
         store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
         val replayer =
-            MutationQueueReplayer(
+            newTestMutationQueueReplayer(
                 store = store,
                 supabase = RecordingPostgrestServer().supabaseClient(),
             )
@@ -256,7 +256,10 @@ class SyncedOverlayScopeTest {
         store.deleteTablePayload(TABLE, ORPHAN)
 
         // When — a pass runs, with nothing left to send
-        MutationQueueReplayer(store = store, supabase = RecordingPostgrestServer().supabaseClient())
+        newTestMutationQueueReplayer(
+                store = store,
+                supabase = RecordingPostgrestServer().supabaseClient(),
+            )
             .sync()
 
         // Then

@@ -85,7 +85,10 @@ class QueryReaderStrategyTest {
     ): QueryReader =
         QueryReader(
             delegate = remoteTable,
-            store = store,
+            queryCache = store.queryCache,
+            queryOverlay = store.queryOverlay,
+            mutationQueue = store.mutationQueue,
+            freshness = store.freshness,
             engineLogger = logger?.asEngineLogger() ?: EngineLogger(null, EngineLogLevel.INFO),
             nowMillis = { currentTime },
             liveQueries = LiveQueries(scope),

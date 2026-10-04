@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -97,7 +97,8 @@ class SyncedRetirementScopeTest {
 
         // When
         val synced =
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .syncAllTables()
 
         // Then — no cached query needs them, so they do not accumulate
         assertEquals(2, synced)

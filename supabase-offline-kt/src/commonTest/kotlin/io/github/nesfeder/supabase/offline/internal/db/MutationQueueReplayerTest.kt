@@ -11,6 +11,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
@@ -284,7 +285,7 @@ class MutationQueueReplayerTest {
                 onInsert = { postgrestResultOf("[]", client.postgrest) },
             )
         val replayer =
-            MutationQueueReplayer(
+            newTestMutationQueueReplayer(
                 store = store,
                 supabase = client,
                 remoteTableFor = { _, _ ->
@@ -645,7 +646,7 @@ class MutationQueueReplayerTest {
         remoteTable: FakeRemoteTable,
         awaitSessionSettled: (suspend () -> Boolean)? = null,
     ): MutationQueueReplayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = client,
             remoteTableFor = { _, _ -> remoteTable },

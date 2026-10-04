@@ -9,7 +9,8 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.EngineJson
+import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
@@ -55,7 +56,10 @@ import kotlinx.serialization.json.JsonPrimitive
  * at the head of its identity's queue when it is made. Exactly one sender at a time per mutation.
  */
 internal class MutationQueueReplayer(
-    private val store: OfflineStore,
+    /** The queue it sends, and records each send's outcome in. */
+    private val mutationQueue: MutationQueue,
+    /** Where a schema-cache miss's tick is read from. */
+    private val freshness: CacheFreshness,
     private val supabase: SupabaseClient,
     private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     /** Whether the client may reach the network; nothing is sent while it is off. */
@@ -101,8 +105,7 @@ internal class MutationQueueReplayer(
 
     /**
      * When this process last counted a schema-cache miss of each mutation, as a
-     * [OfflineStore.monotonicTickNow] tick; see [schemaCacheMissReachesBound]. Guarded by
-     * [sendLock].
+     * [CacheFreshness.tickNow] tick; see [schemaCacheMissReachesBound]. Guarded by [sendLock].
      */
     private val schemaCacheMissesCountedAt = mutableMapOf<Long, Long>()
 
@@ -274,13 +277,13 @@ internal class MutationQueueReplayer(
                 clearGeneration.value == generation &&
                     mutationId !in inFlight.value &&
                     currentIdentity() == identity &&
-                    store.isAtHead(mutationId, identity.storedValue)
+                    mutationQueue.isAtHead(mutationId, identity.storedValue)
             if (available) inFlight.update { ids -> ids + mutationId }
             available
         }
         if (!claimed) return HeadSendOutcome.NotAtHead
         try {
-            val newlyUnconfirmed = store.markSendUnconfirmed(mutationId)
+            val newlyUnconfirmed = mutationQueue.markSendUnconfirmed(mutationId)
             val owner = ReplayOwner(identity)
             val result =
                 when (val sent = sendCapturingEngineFailure { withContext(owner) { send() } }) {
@@ -329,7 +332,7 @@ internal class MutationQueueReplayer(
         newlyUnconfirmed: Boolean,
         owner: QueueIdentity,
     ) {
-        if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+        if (newlyUnconfirmed) mutationQueue.clearUnconfirmedSend(mutationId)
         if (currentIdentity() == owner) {
             if (warnedOfTokenNotNamingUser.compareAndSet(expect = false, update = true)) {
                 engineLogger.warning {
@@ -357,22 +360,22 @@ internal class MutationQueueReplayer(
                 HeadSendOutcome.Cleared(result = null, cause = cause)
             // The session's token expired and could not be refreshed: nothing left the device
             cause is TokenExpiredException -> {
-                if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+                if (newlyUnconfirmed) mutationQueue.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
             }
             postgrestCodeOf(cause) in SCHEMA_CACHE_MISS_CODES &&
                 !schemaCacheMissReachesBound(mutationId) -> {
-                if (newlyUnconfirmed) store.clearUnconfirmedSend(mutationId)
+                if (newlyUnconfirmed) mutationQueue.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
             }
             cause.isNetworkOrConnectivityFailure() ||
                 cause.httpStatusOrNull() in STAYS_QUEUED_STATUSES -> {
                 if (newlyUnconfirmed && failure.provesWriteNotApplied())
-                    store.clearUnconfirmedSend(mutationId)
+                    mutationQueue.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
             }
             else -> {
-                store.abandonSentMutation(mutationId)
+                mutationQueue.abandonSentMutation(mutationId)
                 HeadSendOutcome.Refused(cause)
             }
         }
@@ -396,11 +399,11 @@ internal class MutationQueueReplayer(
      * [SCHEMA_CACHE_MISS_BOUND]. Caller holds [sendLock].
      */
     private suspend fun schemaCacheMissReachesBound(mutationId: Long): Boolean {
-        val now = store.monotonicTickNow()
+        val now = freshness.tickNow()
         val last = schemaCacheMissesCountedAt[mutationId]
         if (last != null && now - last < SCHEMA_CACHE_MISS_SPACING.inWholeNanoseconds) return false
         schemaCacheMissesCountedAt[mutationId] = now
-        val misses = store.recordSchemaCacheMiss(mutationId)
+        val misses = mutationQueue.recordSchemaCacheMiss(mutationId)
         engineLogger.warning {
             "PostgREST's schema cache does not know a table or column yet; " +
                 "miss $misses of $SCHEMA_CACHE_MISS_BOUND before the write is rejected"
@@ -421,7 +424,7 @@ internal class MutationQueueReplayer(
     /** Removes an accepted mutation, logging rather than failing a write the server applied. */
     private suspend fun completeAcceptedMutation(mutationId: Long) {
         try {
-            store.completeSentMutation(mutationId)
+            mutationQueue.completeSentMutation(mutationId)
         } catch (failure: Exception) {
             engineLogger.error {
                 "Could not remove an accepted mutation from the queue; it may be sent again (${failure::class.simpleName})"
@@ -438,7 +441,7 @@ internal class MutationQueueReplayer(
     suspend fun discardPendingMutation(id: Long, identity: QueueIdentity?): Boolean =
         sendLock.withLock {
             if (id in inFlight.value) false
-            else store.discardPendingMutation(id, identity?.storedValue)
+            else mutationQueue.discardPendingMutation(id, identity?.storedValue)
         }
 
     /**
@@ -452,7 +455,7 @@ internal class MutationQueueReplayer(
         while (true) {
             val discarded: Boolean? = sendLock.withLock {
                 if (id in inFlight.value) null
-                else store.discardPendingMutation(id, identity?.storedValue)
+                else mutationQueue.discardPendingMutation(id, identity?.storedValue)
             }
             if (discarded != null) return discarded
             inFlight.first { current -> id !in current }
@@ -461,8 +464,10 @@ internal class MutationQueueReplayer(
 
     private suspend fun remainingFor(identity: QueueIdentity?, table: String?): Int {
         if (identity == null)
-            return store.allPendingMutations().count { row -> table == null || row.table == table }
-        return store.pendingMutationsOf(identity.storedValue, table).size
+            return mutationQueue.allPendingMutations().count { row ->
+                table == null || row.table == table
+            }
+        return mutationQueue.pendingMutationsOf(identity.storedValue, table).size
     }
 
     /** The next step of a pass, chosen under [sendLock]. */
@@ -490,7 +495,7 @@ internal class MutationQueueReplayer(
         if (now != identity) return Claim.Stop(SyncStop.SessionChanged)
         if (inFlight.value.any { id -> id <= candidate.id })
             return Claim.Stop(SyncStop.HeadInFlight)
-        if (!store.isPending(candidate.id)) return Claim.Skip
+        if (!mutationQueue.isPending(candidate.id)) return Claim.Skip
         inFlight.update { ids -> ids + candidate.id }
         return Claim.Send(candidate)
     }
@@ -510,10 +515,10 @@ internal class MutationQueueReplayer(
         sendLock.withLock {
             if (clearGeneration.value != generation)
                 return SyncReport(0, emptyList(), 0, SyncStop.LocalDataCleared)
-            store.retireUnneededSyncedMutations()
-            store.adoptOwnerlessMutations(identity.storedValue)
+            mutationQueue.retireUnneededSyncedMutations()
+            mutationQueue.adoptOwnerlessMutations(identity.storedValue)
         }
-        val queue = store.pendingMutationsOf(identity.storedValue, table)
+        val queue = mutationQueue.pendingMutationsOf(identity.storedValue, table)
         if (queue.isEmpty()) return SyncReport(0, emptyList(), 0, null)
         engineLogger.info {
             if (table == null) "Syncing ${queue.size} pending mutations"
@@ -591,7 +596,9 @@ internal class MutationQueueReplayer(
 
         // A table nothing caches or observes has no use for its synced mutations; others keep them
         // until every cached query has refreshed past them.
-        syncedTables.forEach { syncedTable -> store.retireCoveredSyncedMutations(syncedTable) }
+        syncedTables.forEach { syncedTable ->
+            mutationQueue.retireCoveredSyncedMutations(syncedTable)
+        }
 
         engineLogger.info {
             if (table == null) "Sync complete: $syncedCount mutations synced"
@@ -599,7 +606,7 @@ internal class MutationQueueReplayer(
         }
         return SyncReport(
             syncedCount = syncedCount,
-            rejected = rejected.map { entry -> entry.toRejectedMutation(store.json, primaryKeys) },
+            rejected = rejected.map { entry -> entry.toRejectedMutation(EngineJson, primaryKeys) },
             remainingCount = remainingFor(identity, table),
             stop = stop,
             alreadyOnServerCount = alreadyOnServerCount,
@@ -620,7 +627,7 @@ internal class MutationQueueReplayer(
         when (outcome) {
             is ReplayOutcome.Synced -> {
                 schemaCacheMissesCountedAt -= mutation.id
-                store.markMutationSynced(id = mutation.id, table = mutation.table)
+                mutationQueue.recordReplayed(id = mutation.id, table = mutation.table)
                 syncedTables += mutation.table
                 engineLogger.debug { "Synced ${mutation.operation} mutation for ${mutation.table}" }
                 null
@@ -628,7 +635,8 @@ internal class MutationQueueReplayer(
 
             is ReplayOutcome.Rejected ->
                 try {
-                    rejected += store.rejectMutation(mutation, outcome.message, outcome.serverError)
+                    rejected +=
+                        mutationQueue.rejectMutation(mutation, outcome.message, outcome.serverError)
                     null
                 } catch (cancellation: CancellationException) {
                     throw cancellation
@@ -699,11 +707,11 @@ internal class MutationQueueReplayer(
     ): ReplayOutcome {
         // Decided before this attempt is recorded: only an earlier attempt can have reached the
         // server.
-        val earlierSendUnconfirmed = store.hasUnconfirmedSend(mutation.id)
+        val earlierSendUnconfirmed = mutationQueue.hasUnconfirmedSend(mutation.id)
         return when (val prepared = requestFor(mutation, earlierSendUnconfirmed)) {
             is Prepared.Refused -> prepared.outcome
             is Prepared.Ready -> {
-                val newlyUnconfirmed = store.markSendUnconfirmed(mutation.id)
+                val newlyUnconfirmed = mutationQueue.markSendUnconfirmed(mutation.id)
                 val owner = ReplayOwner(identity, sender = pass)
                 val sent = sendCapturingEngineFailure {
                     withContext(owner) { prepared.request(tableApi) }
@@ -713,14 +721,14 @@ internal class MutationQueueReplayer(
                     is SendOutcome.Failed ->
                         if (owner.stoppedWithItsSender) {
                             // It never left the device: the pass ends here, cancelled
-                            if (newlyUnconfirmed) store.clearUnconfirmedSend(mutation.id)
+                            if (newlyUnconfirmed) mutationQueue.clearUnconfirmedSend(mutation.id)
                             throw CancellationException("The replay pass was stopped")
                         } else if (owner.stoppedForAnotherSession) {
                             stoppedForAnotherSession(mutation.id, newlyUnconfirmed, identity)
                             ReplayOutcome.SessionChanged
                         } else {
                             if (newlyUnconfirmed && sent.provesWriteNotApplied())
-                                store.clearUnconfirmedSend(mutation.id)
+                                mutationQueue.clearUnconfirmedSend(mutation.id)
                             classify(mutation, sent.thrown, identity)
                         }
                 }
@@ -747,7 +755,7 @@ internal class MutationQueueReplayer(
                 val mayDependOnEarlierWrite = status == HTTP_FORBIDDEN || status == HTTP_CONFLICT
                 if (
                     mayDependOnEarlierWrite &&
-                        store.hasEarlierPendingMutation(mutation.id, identity.storedValue)
+                        mutationQueue.hasEarlierPendingMutation(mutation.id, identity.storedValue)
                 ) {
                     engineLogger.warning {
                         "Holding ${mutation.operation} on ${mutation.table} ($status) behind an earlier pending mutation"
@@ -796,7 +804,7 @@ internal class MutationQueueReplayer(
      * @param earlierSendUnconfirmed Whether an earlier send of it may have reached the server.
      */
     private fun requestFor(mutation: MutationRow, earlierSendUnconfirmed: Boolean): Prepared {
-        val json = store.json
+        val json = EngineJson
         val filter = decodeFilterOrNull(mutation.filterJson, json)
         // A stored filter that no longer decodes is not a missing one: sending without it would
         // reach rows the write never targeted

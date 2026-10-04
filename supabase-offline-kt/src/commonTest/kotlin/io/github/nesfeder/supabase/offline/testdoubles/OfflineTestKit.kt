@@ -10,6 +10,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.jan.supabase.storage.BucketApi
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
@@ -24,12 +25,24 @@ import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
+import io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries
+import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
+import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
+import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.postgrest.SupabaseRemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
+import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
@@ -45,6 +58,7 @@ import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import okio.FileSystem
@@ -226,6 +240,123 @@ internal fun newTestOfflineClient(
         responseTrust = responseTrust,
         config = config,
         networkAvailability = networkAvailability,
+    )
+
+/**
+ * Builds an [OfflineTable] for the table [delegate] targets, over [store]'s components and primary
+ * keys; every other parameter is [OfflineTable]'s, with its default.
+ *
+ * @param delegate the PostgREST handle the table's requests go through.
+ * @param store the components the table reads, queues and patches through.
+ * @return the table.
+ */
+internal fun newTestOfflineTable(
+    delegate: PostgrestQueryBuilder,
+    store: OfflineStore,
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
+    requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
+    trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
+    liveQueries: LiveQueries = LiveQueries(newEngineScope(engineLogger = null)),
+    wakeUps: Flow<Unit> = emptyFlow(),
+    queueIdentity: suspend () -> QueueIdentity? = {
+        delegate.postgrest.supabaseClient.currentQueueIdentity()
+    },
+    requestSync: () -> Unit = {},
+    headSender: MutationQueueReplayer =
+        MutationQueueReplayer(
+            mutationQueue = store.mutationQueue,
+            freshness = store.freshness,
+            supabase = delegate.postgrest.supabaseClient,
+            engineLogger = engineLogger,
+            currentIdentity = queueIdentity,
+        ),
+    operationGate: ClientOperationGate = ClientOperationGate(),
+    readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
+    clock: Clock = Clock.System,
+    queueEmptied: suspend () -> Unit = {},
+    networkAccess: NetworkAccess = NetworkAccess(),
+): OfflineTable =
+    OfflineTable(
+        delegate = delegate,
+        queryCache = store.queryCache,
+        queryOverlay = store.queryOverlay,
+        mutationQueue = store.mutationQueue,
+        cachePatcher = store.cachePatcher,
+        freshness = store.freshness,
+        primaryKeys = store.primaryKeys,
+        engineLogger = engineLogger,
+        requestSession = requestSession,
+        trustPolicy = trustPolicy,
+        liveQueries = liveQueries,
+        wakeUps = wakeUps,
+        queueIdentity = queueIdentity,
+        requestSync = requestSync,
+        headSender = headSender,
+        operationGate = operationGate,
+        readShapePostgrest = readShapePostgrest,
+        clock = clock,
+        queueEmptied = queueEmptied,
+        networkAccess = networkAccess,
+    )
+
+/**
+ * Builds an [OfflineTable] whose requests a test scripts through [delegate], over [store]'s
+ * components and primary keys; every other parameter is [OfflineTable]'s, with its default.
+ *
+ * @param delegate the scripted PostgREST handle, such as a [FakeRemoteTable].
+ * @param store the components the table reads, queues and patches through.
+ * @return the table.
+ */
+internal fun newTestOfflineTable(
+    delegate: RemoteTable,
+    store: OfflineStore,
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
+): OfflineTable =
+    OfflineTable(
+        delegate = delegate,
+        queryCache = store.queryCache,
+        queryOverlay = store.queryOverlay,
+        mutationQueue = store.mutationQueue,
+        cachePatcher = store.cachePatcher,
+        freshness = store.freshness,
+        primaryKeys = store.primaryKeys,
+        engineLogger = engineLogger,
+    )
+
+/**
+ * Builds a [MutationQueueReplayer] over [store]'s mutation queue and tick source; every other
+ * parameter is [MutationQueueReplayer]'s, with its default.
+ *
+ * @param store the components whose mutation queue the replayer sends.
+ * @param supabase the client the replayer sends through.
+ * @return the replayer.
+ */
+internal fun newTestMutationQueueReplayer(
+    store: OfflineStore,
+    supabase: SupabaseClient,
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
+    networkAccess: NetworkAccess = NetworkAccess(),
+    remoteTableFor: (schema: String, table: String) -> RemoteTable = { schema, table ->
+        SupabaseRemoteTable(supabase.postgrest.from(schema, table), networkAccess = networkAccess)
+    },
+    awaitSessionSettled: suspend () -> Boolean = { supabase.awaitSettledSession() },
+    currentIdentity: suspend () -> QueueIdentity? = { supabase.currentReplayIdentity() },
+    isSessionSettledNow: () -> Boolean = { supabase.currentReplayIdentity() != null },
+    primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    passEnded: suspend (table: String?, report: SyncReport) -> Unit = { _, _ -> },
+): MutationQueueReplayer =
+    MutationQueueReplayer(
+        mutationQueue = store.mutationQueue,
+        freshness = store.freshness,
+        supabase = supabase,
+        engineLogger = engineLogger,
+        networkAccess = networkAccess,
+        remoteTableFor = remoteTableFor,
+        awaitSessionSettled = awaitSessionSettled,
+        currentIdentity = currentIdentity,
+        isSessionSettledNow = isSessionSettledNow,
+        primaryKeys = primaryKeys,
+        passEnded = passEnded,
     )
 
 /**

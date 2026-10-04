@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
@@ -11,6 +10,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
@@ -49,7 +49,8 @@ class MutationQueueReplayOrderTest {
         store.enqueueUpdate(table = PHOTOS, body = row("caption" to "new"), filter = idFilter("p0"))
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         val synced = replayer.syncAllTables()
@@ -73,7 +74,8 @@ class MutationQueueReplayOrderTest {
         clock = 1_000L
         store.enqueueUpdate(table = TASKS, body = row("title" to "final"), filter = idFilter("t1"))
         val server = RecordingPostgrestServer()
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         replayer.syncAllTables()
@@ -93,7 +95,8 @@ class MutationQueueReplayOrderTest {
                     if (request.table == TASKS) connectivityFailure() else okJson("[]")
                 }
             )
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         val synced = replayer.syncAllTables()
@@ -117,7 +120,8 @@ class MutationQueueReplayOrderTest {
                     else okJson("[]")
                 }
             )
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         val synced = replayer.syncAllTables()
@@ -137,7 +141,8 @@ class MutationQueueReplayOrderTest {
             )
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — the photo replays first and its foreign key fails with 409
         replayer.syncTable(table = PHOTOS)
@@ -157,7 +162,8 @@ class MutationQueueReplayOrderTest {
         store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
         val server = RecordingPostgrestServer(answer = { postgrestError(HttpStatusCode.Forbidden) })
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When
         replayer.syncTable(table = PHOTOS)

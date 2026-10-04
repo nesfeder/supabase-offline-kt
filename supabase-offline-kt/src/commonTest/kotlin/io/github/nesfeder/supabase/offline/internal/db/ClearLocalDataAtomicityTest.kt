@@ -3,12 +3,12 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -48,7 +48,7 @@ class ClearLocalDataAtomicityTest {
         queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"1","title":"B's row"}]""")
         val shownToB = next.overlaidPayloadFlow(TABLE, TABLE).first()
         val server = RecordingPostgrestServer()
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
                 store = next,
                 supabase = server.supabaseClient(),
                 currentIdentity = { USER_B },

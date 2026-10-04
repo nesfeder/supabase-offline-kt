@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
@@ -15,6 +14,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
@@ -57,7 +57,7 @@ class DryRunClassificationTest {
                     dryRunVerdict = null,
                 )
             val builder =
-                OfflineTable(
+                newTestOfflineTable(
                     delegate = remoteTable,
                     store = store,
                     engineLogger = logger.asEngineLogger(),
@@ -87,7 +87,7 @@ class DryRunClassificationTest {
         val server = RecordingPostgrestServer(answer = { okJson("[]") })
         queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
             )
@@ -114,7 +114,7 @@ class DryRunClassificationTest {
             )
         queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
             )
@@ -135,7 +135,7 @@ class DryRunClassificationTest {
         // Given — offline
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
             )
@@ -159,7 +159,7 @@ class DryRunClassificationTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
                 engineLogger = logger.asEngineLogger(),
@@ -186,7 +186,7 @@ class DryRunClassificationTest {
         val logger = RecordingLogSink()
         val server = RecordingPostgrestServer(answer = { okJson("[]") })
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
                 engineLogger = logger.asEngineLogger(),

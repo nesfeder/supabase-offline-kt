@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.RecordedRequest
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 
 /** A server for [replayShippedQueue]: answers every write with `[]`. */
@@ -25,7 +25,8 @@ internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgre
             cachedFileDao = cachedFileDao(),
             mutationDao = mutationDao(),
         )
-    return MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+    return newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        .syncAllTables()
 }
 
 /**
