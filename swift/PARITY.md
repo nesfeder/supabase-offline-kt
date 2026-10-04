@@ -76,49 +76,73 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 ## Storage
 
 The library's own Storage names are Kotlin's. The bucket's object operations are the ones Kotlin's
-`OfflineBucketApi` inherits from supabase-kt's `BucketApi`; in Swift they take supabase-swift's
-names and labels instead, so a supabase-swift Storage call compiles with only its receiver changed,
-as a supabase-kt call does in Kotlin. Value types keep Kotlin's names, nested in `OfflineBucketApi`
-as `OfflineError.ServerError` is, so an app that imports supabase-swift too finds no two types of
-one name. supabase-kt's `Url` is Swift's `URL`.
+`OfflineBucketApi` inherits from supabase-kt's `BucketApi`; in Swift they take supabase-swift's names
+and labels instead, as Kotlin's take supabase-kt's, so that a supabase-swift Storage call reads the
+same. Value types keep supabase-kt's names, nested in `OfflineBucketApi` as `OfflineError.ServerError`
+is, so an app that imports supabase-swift too finds no two types of one name. supabase-kt's `Url` is
+Swift's `URL`.
 
-| Swift | Kotlin | Same / reason |
+**What compiles unchanged from supabase-swift 2** (2.55.2): a call with only its receiver changed
+compiles when its option values are written `.init(…)` and it reads no result field this package
+names differently. These do not compile:
+
+- an option type written out by supabase-swift's name: `FileOptions(…)`, `TransformOptions(…)`,
+  `SearchOptions(…)`, `DestinationOptions(…)`, `CreateSignedUploadURLOptions(…)`;
+- upload options supabase-swift has and this package does not: `cacheControl:`, `duplex:`,
+  `headers:`, and `metadata:` (here `userMetadata:`); `uploadToSignedURL(…, options: nil)`;
+- a transformation's `resize: "cover"` (an enum here) and `format: .webp` (a `String` here); a sort's
+  `order: "asc"` or `.ascending` (here `.asc` / `.desc`) and a sort without a column;
+- the upload overloads that take a `fileURL:`, and `download`'s `query:` and `cacheNonce:`;
+  `createSignedURL`'s and `createSignedURLs`' `download:` and `cacheNonce:`;
+- `move` / `copy` across buckets through `options:` (here `destinationBucket:`), and
+  `createSignedUploadURL(path:options: .init(upsert:))` (here `upsert:`);
+- `getPublicURL(path:…)`, which is `publicURL(path:)` here, `async`, with no transformation and no
+  `download:`;
+- code that reads a result this package shapes differently: `FileUploadResponse.fullPath` (here
+  `key`) and its `id` as a non-optional `String`; the key `copy` returns and the objects `remove`
+  returns (here both return nothing); `SignedUploadURL.signedURL` (here `url`); `createSignedURLs`'
+  `[SignedURLResult]` enum (here `[SignedURL]` structs); `FileObject.id` as a `UUID` and its
+  `bucketId`, `owner` and `buckets`; `FileObjectV2`'s optional `createdAt`, `size` and
+  `contentType` (non-optional here, as Kotlin has them) and its non-optional `id`.
+
+| Swift | Kotlin | Side / reason |
 | --- | --- | --- |
-| `SupabaseOfflineClient.storage` | `Offline.storage` | Same |
-| `OfflineStorage` | `OfflineStorage` | Same |
-| `OfflineStorage.from(_:)` | `OfflineStorage.from(bucketId)` | Same; the operator `get(bucketId)` (`storage["avatars"]`) has no counterpart, as `from(_:)` for tables has none |
-| `OfflineBucketApi` | `OfflineBucketApi` | Same; a struct for an interface, since only the library implements it |
-| `OfflineBucketApi.bucketId` | `BucketApi.bucketId` | Same. supabase-kt's `supabaseClient`, `resumable` and `setHeader` are not offered: Swift has no supabase-kt client, and resumable uploads are not bridged |
-| `upload(_:data:options:)` | `upload(path, data, options)` | Same; `path` unlabelled as supabase-swift has it; `Data` for `ByteArray` |
-| `update(_:data:options:)` | `update(path, data, options)` | As `upload` |
-| `uploadToSignedURL(_:token:data:options:)` | `uploadToSignedUrl(path, token, data, options)` | Same |
-| `createSignedUploadURL(path:upsert:)` | `createSignedUploadUrl(path, upsert)` | Same |
-| `remove(paths:)` | `delete(paths)` | supabase-swift's name; Swift returns nothing, as Kotlin does (supabase-swift returns the removed objects) |
-| `move(from:to:destinationBucket:)` | `move(from, to, destinationBucket)` | Same; supabase-swift's `options: DestinationOptions` is Kotlin's `destinationBucket` here |
-| `copy(from:to:destinationBucket:)` | `copy(from, to, destinationBucket)` | As `move`; returns nothing, as Kotlin does |
-| `createSignedURL(path:expiresIn:transform:)` | `createSignedUrl(path, expiresIn) { transform { … } }` | `expiresIn` in whole seconds (`Int`), as supabase-swift has it, for Kotlin's `Duration`; the transform a parameter for the builder lambda; returns `URL` |
-| `createSignedURLs(paths:expiresIn:)` | `createSignedUrls(expiresIn, paths)` | Labels in supabase-swift's order; seconds as above |
-| `download(path:options:isPublic:)` | `downloadAuthenticated(path, options)`, `downloadPublic(path, options)` | supabase-swift's name and `options:` label; `isPublic`, as `ensureCachedFile` takes it, chooses between Kotlin's two. The options are the image transformation, which Kotlin sets with `transform { }` in its options lambda |
+| `SupabaseOfflineClient.storage` | `Offline.storage` | Kotlin's name; supabase-swift's is the same |
+| `OfflineStorage` | `OfflineStorage` | Kotlin's name |
+| `OfflineStorage.from(_:)` | `OfflineStorage.from(bucketId)` | Kotlin's name, supabase-swift's unlabelled argument; the operator `get(bucketId)` (`storage["avatars"]`) has no counterpart, as `from(_:)` for tables has none |
+| `OfflineBucketApi` | `OfflineBucketApi` | Kotlin's name; a struct for an interface, since only the library implements it |
+| `OfflineBucketApi.bucketId` | `BucketApi.bucketId` | Kotlin's name. supabase-kt's `supabaseClient`, `resumable` and `setHeader` are not offered: Swift has no supabase-kt client, and resumable uploads are not offered |
+| `upload(_:data:options:)` | `upload(path, data, options)` | supabase-swift's labels (the path unlabelled); `Data` for `ByteArray`. Empty data is refused with `invalidRequest` and nothing is sent, as Kotlin's `upload(path, ByteArray)` refuses it: a zero-byte object (a folder placeholder) cannot be uploaded, where supabase-swift sends it |
+| `update(_:data:options:)` | `update(path, data, options)` | As `upload`, empty data included |
+| `uploadToSignedURL(_:token:data:options:)` | `uploadToSignedUrl(path, token, data, options)` | supabase-swift's labels; empty data as `upload`. `options` is not optional, as Kotlin's has a default |
+| `createSignedUploadURL(path:upsert:)` | `createSignedUploadUrl(path, upsert)` | supabase-swift's name; Kotlin's `upsert` parameter, because supabase-swift's `options: CreateSignedUploadURLOptions` would be a one-field type with no Kotlin counterpart |
+| `remove(paths:)` | `delete(paths)` | supabase-swift's name; returns nothing, as Kotlin's does (supabase-swift returns the removed objects) |
+| `move(from:to:destinationBucket:)` | `move(from, to, destinationBucket)` | supabase-swift's labels for the two paths; Kotlin's `destinationBucket`, because supabase-swift's `options: DestinationOptions` would be a one-field type with no Kotlin counterpart |
+| `copy(from:to:destinationBucket:)` | `copy(from, to, destinationBucket)` | As `move`; returns nothing, as Kotlin's does (supabase-swift returns the new key) |
+| `createSignedURL(path:expiresIn:transform:)` | `createSignedUrl(path, expiresIn) { transform { … } }` | supabase-swift's labels, and its `Int` seconds for Kotlin's `Duration`, so its call compiles; the transformation a parameter for the builder lambda; returns `URL` |
+| `createSignedURLs(paths:expiresIn:)` | `createSignedUrls(expiresIn, paths)` | supabase-swift's labels and order; seconds as above. A path Storage cannot sign fails the whole call with `decoding` (its message names the path's position), as Kotlin's call fails: supabase-kt's `SignedUrl` requires a URL |
+| `download(path:options:isPublic:)` | `downloadAuthenticated(path, options)`, `downloadPublic(path, options)` | supabase-swift's name and `options:` label; Kotlin's `isPublic`, as `ensureCachedFile` takes it, chooses between Kotlin's two. The options are the image transformation, which Kotlin sets with `transform { }` in its options lambda |
 | `list(path:options:)` | `list(prefix, filter)` | supabase-swift's labels |
-| `info(path:)` | `info(path)` | Same |
-| `exists(path:)` | `exists(path)` | Same |
-| `publicURL(path:)` | `publicUrl(path)` | Same (supabase-swift 2 calls it `getPublicURL`). `async` because the client opens in the background; Kotlin's plugin is open when it is called |
-| `authenticatedURL(path:)` | `authenticatedUrl(path)` | As `publicURL` |
-| `cachedFile(path:)` | `cachedFile(path)` | Same |
-| `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Same |
-| `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | Same; `Date` for `Instant`, `Int` for `Long` |
-| `CachedFile.url` | Android `ensureLocalFile` / `ensureLocalUri`, iOS `ensureLocalPath` | A file URL beside `path`, for APIs that take a URL |
-| `OfflineBucketApi.UploadOptions` (`contentType`, `upsert`, `userMetadata`) | supabase-kt's `UploadOptionBuilder` (`contentType`, `upsert`, `userMetadata`) | A value for a builder lambda, so not a "builder"; the fields are the same, `String` for `ContentType` and `[String: OfflineJSON]` for `JsonObject` |
-| `OfflineBucketApi.ImageTransformation` (`width`, `height`, `resize`, `quality`, `format`) | supabase-kt's `ImageTransformation` (the same) | Same; a value for a builder lambda |
-| `ImageTransformation.Resize` (`cover`, `contain`, `fill`) | `ImageTransformation.Resize` (`COVER`, `CONTAIN`, `FILL`) | Lower-camel cases |
-| `OfflineBucketApi.StorageListFilter` (`limit`, `offset`, `search`, `sortBy`) | supabase-kt's `StorageListFilter.Files` (`limit`, `offset`, `search`, `sortBy(column, order)`) | A value for a builder lambda: `sortBy` a field for the call |
-| `StorageListFilter.SortBy` (`column`, `order`) | the two arguments of `sortBy(column, order)` | A value holds what Kotlin's call takes |
-| `StorageListFilter.SortOrder` (`asc`, `desc`) | supabase-kt's `SortOrder` (`ASC`, `DESC`) | Lower-camel cases; nested because Foundation has a `SortOrder` |
-| `OfflineBucketApi.FileUploadResponse` (`id`, `path`, `key`) | supabase-kt's `FileUploadResponse` (the same) | Same |
-| `OfflineBucketApi.UploadSignedURL` (`url`, `path`, `token`) | supabase-kt's `UploadSignedUrl` (the same) | Same; `URL` for the URL string |
-| `OfflineBucketApi.SignedURL` (`error`, `signedURL`, `path`) | supabase-kt's `SignedUrl` (the same) | Same; `URL` for the URL string |
-| `OfflineBucketApi.FileObject` (`name`, `id`, `updatedAt`, `createdAt`, `lastAccessedAt`, `metadata`) | supabase-kt's `FileObject` (the same) | Same; `Date` for `Instant`, `[String: OfflineJSON]` for `JsonObject` |
-| `OfflineBucketApi.FileObjectV2` (`name`, `id`, `version`, `bucketId`, `updatedAt`, `createdAt`, `lastAccessedAt`, `metadata`, `size`, `contentType`, `etag`, `lastModified`, `cacheControl`) | supabase-kt's `FileObjectV2` (the same, with `rawContentType`) | `contentType` is the text Kotlin calls `rawContentType`: Swift has no parsed content-type type. Kotlin's `decodeMetadata()` has no counterpart |
+| `info(path:)` | `info(path)` | The same name in both |
+| `exists(path:)` | `exists(path)` | The same name in both |
+| `publicURL(path:)` | `publicUrl(path)` | Kotlin's name (supabase-swift 2 says `getPublicURL`). `async` because the URL comes from the opened client, which opens in the background; for the same reason it throws `clientClosed` after `close()`, where Kotlin's still answers |
+| `authenticatedURL(path:)` | `authenticatedUrl(path)` | Kotlin's name; `async` and `clientClosed` after `close()`, as `publicURL` |
+| `cachedFile(path:)` | `cachedFile(path)` | Kotlin's name |
+| `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Kotlin's name |
+| `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | Kotlin's names; `Date` for `Instant`, `Int` for `Long` |
+| `CachedFile.url` | Android `ensureLocalFile` / `ensureLocalUri`, iOS `ensureLocalPath` | Swift's addition: a file URL beside `path`, for APIs that take a URL |
+| `OfflineBucketApi.UploadOptions` (`contentType`, `upsert`, `userMetadata`) | supabase-kt's `UploadOptionBuilder` (`contentType`, `upsert`, `userMetadata`) | Kotlin's fields; a value for a builder lambda, so not a "builder"; `String` for `ContentType`, `[String: OfflineJSON]` for `JsonObject` |
+| `OfflineBucketApi.ImageTransformation` (`width`, `height`, `resize`, `quality`, `format`) | supabase-kt's `ImageTransformation` (the same) | Kotlin's names; a value for a builder lambda |
+| `ImageTransformation.Resize` (`cover`, `contain`, `fill`) | `ImageTransformation.Resize` (`COVER`, `CONTAIN`, `FILL`) | Kotlin's, lower-camel cases |
+| `OfflineBucketApi.StorageListFilter` (`init(limit:offset:sortBy:search:)`) | supabase-kt's `StorageListFilter.Files` (`limit`, `offset`, `search`, `sortBy(column, order)`) | Kotlin's names; a value for a builder lambda, with `sortBy` a field for the call; the initializer takes supabase-swift's argument order, which Kotlin's builder does not fix |
+| `StorageListFilter.SortBy` (`column`, `order`) | the two arguments of `sortBy(column, order)` | Kotlin's names: a value holds what Kotlin's call takes |
+| `StorageListFilter.SortOrder` (`asc`, `desc`) | supabase-kt's `SortOrder` (`ASC`, `DESC`) | Kotlin's, lower-camel cases; nested because Foundation has a `SortOrder` |
+| `OfflineBucketApi.FileUploadResponse` (`id`, `path`, `key`) | supabase-kt's `FileUploadResponse` (the same) | Kotlin's names and types (supabase-swift's has `fullPath` and a non-optional `id`) |
+| `OfflineBucketApi.UploadSignedURL` (`url`, `path`, `token`) | supabase-kt's `UploadSignedUrl` (the same) | Kotlin's names (supabase-swift's `SignedUploadURL` has `signedURL`); `URL` for the URL string |
+| `OfflineBucketApi.SignedURL` (`error`, `signedURL`, `path`) | supabase-kt's `SignedUrl` (the same) | Kotlin's names and shape (supabase-swift returns a `SignedURLResult` enum); `URL` for the URL string |
+| `OfflineBucketApi.FileObject` (`name`, `id`, `updatedAt`, `createdAt`, `lastAccessedAt`, `metadata`) | supabase-kt's `FileObject` (the same) | Kotlin's names and types; `Date` for `Instant`, `[String: OfflineJSON]` for `JsonObject` |
+| `OfflineBucketApi.FileObjectV2` (`name`, `id`, `version`, `bucketId`, `updatedAt`, `createdAt`, `lastAccessedAt`, `metadata`, `size`, `contentType`, `etag`, `lastModified`, `cacheControl`) | supabase-kt's `FileObjectV2` (the same, with `rawContentType`) | Kotlin's names and nullability; `contentType` is the text Kotlin calls `rawContentType`, as Swift has no parsed content-type type. Kotlin's `decodeMetadata()` has no counterpart |
+| A Storage refusal: `OfflineError` `server`, `serverError.status` / `.code` / `.message` | supabase-kt's `RestException` (`statusCode`, `error`, `description`) | Storage's own error code (`not_found`, `Duplicate`) is `code` and its message is `message`; supabase-kt keeps them only for a `400` and prints them into one string otherwise |
 
 ## The testing product
 
