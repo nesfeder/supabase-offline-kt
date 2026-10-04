@@ -85,7 +85,7 @@ internal class OperationRunner(
             return BridgeCancellable(null, ::reportCancelFailure)
         }
         val job =
-            launchCatching(delivery) {
+            launchCatching(delivery, endingOf = { cause -> errorOf(cause, ownCancellation = true) }) {
                 val value =
                     try {
                         faultInjector?.invoke(operation)
@@ -110,7 +110,8 @@ internal class OperationRunner(
 
     /**
      * Collects [values], handing each to [onValue], and ends with [onCompletion] exactly once:
-     * `null` when the flow completes, an error when it fails or the handle is cancelled.
+     * `null` when the flow completes or the client closes under it, an error when it fails or the
+     * handle is cancelled.
      */
     fun <T> subscribe(
         operation: String,
@@ -127,7 +128,7 @@ internal class OperationRunner(
             return BridgeCancellable(null, ::reportCancelFailure)
         }
         val job =
-            launchCatching(delivery) {
+            launchCatching(delivery, endingOf = ::subscriptionEndingOf) {
                 try {
                     faultInjector?.invoke(operation)
                     values().collect { value ->
@@ -138,8 +139,13 @@ internal class OperationRunner(
                         }
                     }
                 } catch (failure: Throwable) {
-                    delivery.deliver(null, errorOf(failure, ownCancellation = !isActive))
-                    if (failure is CancellationException && !isActive) throw failure
+                    val ownCancellation = failure is CancellationException && !isActive
+                    delivery.deliver(
+                        null,
+                        if (ownCancellation) subscriptionEndingOf(failure)
+                        else errorOf(failure, ownCancellation = false),
+                    )
+                    if (ownCancellation) throw failure
                     return@launchCatching
                 }
                 delivery.deliver(null, null)
@@ -165,11 +171,12 @@ internal class OperationRunner(
     }
 
     /**
-     * Launches [block] in [scope]. A job cancelled before it ran, or one that ended without an
-     * answer, still answers through [delivery], once.
+     * Launches [block] in [scope]. A job cancelled before it ran answers through [delivery] with
+     * [endingOf] its cause, and one that ended without an answer with an error, once.
      */
     private fun <T> launchCatching(
         delivery: OneTimeDelivery<T>,
+        endingOf: (cause: Throwable) -> BridgeError?,
         block: suspend CoroutineScope.() -> Unit,
     ): Job? =
         try {
@@ -183,7 +190,7 @@ internal class OperationRunner(
                                 "MissingAnswer",
                             )
                         } else {
-                            errorOf(cause, ownCancellation = true)
+                            endingOf(cause)
                         }
                     delivery.deliver(null, error)
                 }
@@ -192,6 +199,14 @@ internal class OperationRunner(
             delivery.deliver(null, errorOf(failure, ownCancellation = false))
             null
         }
+
+    /**
+     * How a subscription cancelled by [cause] ends: with no error when the client closed under it,
+     * as the library ends a live read at close, and as [errorOf] says otherwise.
+     */
+    private fun subscriptionEndingOf(cause: Throwable): BridgeError? =
+        if (cause is CancellationException && clientClosing()) null
+        else errorOf(cause, ownCancellation = true)
 
     /**
      * [failure] as an error. A cancellation of the call itself ([ownCancellation]) is

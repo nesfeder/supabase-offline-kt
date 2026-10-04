@@ -5,17 +5,17 @@ package io.github.nesfeder.supabase.offline.bridge
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.bridge.internal.OperationRunner
-import io.github.nesfeder.supabase.offline.bridge.internal.applyListOptions
-import io.github.nesfeder.supabase.offline.bridge.internal.applyTransform
-import io.github.nesfeder.supabase.offline.bridge.internal.applyUploadOptions
 import io.github.nesfeder.supabase.offline.bridge.internal.encodeFileObject
 import io.github.nesfeder.supabase.offline.bridge.internal.encodeFileObjects
 import io.github.nesfeder.supabase.offline.bridge.internal.encodeSignedUrls
 import io.github.nesfeder.supabase.offline.bridge.internal.encodeUploadResponse
 import io.github.nesfeder.supabase.offline.bridge.internal.encodeUploadSignedUrl
+import io.github.nesfeder.supabase.offline.bridge.internal.imageTransformOf
+import io.github.nesfeder.supabase.offline.bridge.internal.listOptionsOf
 import io.github.nesfeder.supabase.offline.bridge.internal.toBridge
 import io.github.nesfeder.supabase.offline.bridge.internal.toByteArray
 import io.github.nesfeder.supabase.offline.bridge.internal.toNSData
+import io.github.nesfeder.supabase.offline.bridge.internal.uploadOptionsOf
 import kotlin.time.Duration.Companion.seconds
 import platform.Foundation.NSData
 
@@ -47,8 +47,8 @@ internal constructor(
         completion: (String?, BridgeError?) -> Unit,
     ): BridgeCancellable =
         runner.runOnce("upload", completion) {
-            val bytes = data.toByteArray()
-            val response = bucketOf(bucket).upload(path, bytes) { applyUploadOptions(options) }
+            val upload = uploadOptionsOf(options)
+            val response = bucketOf(bucket).upload(path, data.toByteArray()) { upload.applyTo(this) }
             encodeUploadResponse(response)
         }
 
@@ -61,8 +61,8 @@ internal constructor(
         completion: (String?, BridgeError?) -> Unit,
     ): BridgeCancellable =
         runner.runOnce("update", completion) {
-            val bytes = data.toByteArray()
-            val response = bucketOf(bucket).update(path, bytes) { applyUploadOptions(options) }
+            val upload = uploadOptionsOf(options)
+            val response = bucketOf(bucket).update(path, data.toByteArray()) { upload.applyTo(this) }
             encodeUploadResponse(response)
         }
 
@@ -79,10 +79,10 @@ internal constructor(
         completion: (String?, BridgeError?) -> Unit,
     ): BridgeCancellable =
         runner.runOnce("uploadToSignedUrl", completion) {
-            val bytes = data.toByteArray()
+            val upload = uploadOptionsOf(options)
             val response =
-                bucketOf(bucket).uploadToSignedUrl(path, token, bytes) {
-                    applyUploadOptions(options)
+                bucketOf(bucket).uploadToSignedUrl(path, token, data.toByteArray()) {
+                    upload.applyTo(this)
                 }
             encodeUploadResponse(response)
         }
@@ -148,8 +148,9 @@ internal constructor(
         completion: (String?, BridgeError?) -> Unit,
     ): BridgeCancellable =
         runner.runOnce("createSignedUrl", completion) {
+            val transformation = imageTransform?.let(::imageTransformOf)
             bucketOf(bucket).createSignedUrl(path, expiresInSeconds.seconds) {
-                imageTransform?.let { text -> transform { applyTransform(text) } }
+                transformation?.let { transform { it.applyTo(this) } }
             }
         }
 
@@ -184,15 +185,16 @@ internal constructor(
         completion: (NSData?, BridgeError?) -> Unit,
     ): BridgeCancellable =
         runner.runOnce("download", completion) {
+            val transformation = imageTransform?.let(::imageTransformOf)
             val api = bucketOf(bucket)
             val bytes =
                 if (isPublic) {
                     api.downloadPublic(path) {
-                        imageTransform?.let { text -> transform { applyTransform(text) } }
+                        transformation?.let { transform { it.applyTo(this) } }
                     }
                 } else {
                     api.downloadAuthenticated(path) {
-                        imageTransform?.let { text -> transform { applyTransform(text) } }
+                        transformation?.let { transform { it.applyTo(this) } }
                     }
                 }
             bytes.toNSData()
@@ -212,7 +214,8 @@ internal constructor(
         completion: (String?, BridgeError?) -> Unit,
     ): BridgeCancellable =
         runner.runOnce("list", completion) {
-            encodeFileObjects(bucketOf(bucket).list(prefix) { applyListOptions(options) })
+            val listing = listOptionsOf(options)
+            encodeFileObjects(bucketOf(bucket).list(prefix) { listing.applyTo(this) })
         }
 
     /** The object at [path]'s details, as supabase-kt's file object in JSON. */

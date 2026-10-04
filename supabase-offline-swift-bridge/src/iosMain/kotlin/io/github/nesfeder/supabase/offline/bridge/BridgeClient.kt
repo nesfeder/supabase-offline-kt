@@ -31,7 +31,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -60,9 +59,6 @@ internal constructor(
 ) {
     /** Whether [close] has begun; once set, every new call fails with the closed error. */
     private val closing = AtomicBoolean(false)
-
-    /** Set once [close] has closed the library, which ends the status subscriptions. */
-    private val closedSignal = MutableStateFlow(false)
 
     /** Completed when the first [close] is done, for the calls of [close] that follow it. */
     private val closed = CompletableDeferred<Unit>()
@@ -305,7 +301,7 @@ internal constructor(
         onCompletion: (BridgeError?) -> Unit,
     ): BridgeCancellable =
         runner.subscribe("observeSyncStatus", onStatus, onCompletion) {
-            offline.syncStatus.endingAtClose().map { it.toBridge() }
+            offline.syncStatus.map { it.toBridge() }
         }
 
     /** Turns the library's network access off, as airplane mode does, until [enableNetwork]. */
@@ -407,7 +403,13 @@ internal constructor(
      */
     private suspend fun closeEverything(): BridgeError? {
         var firstFailure: Throwable? = null
-        for (step in listOf<suspend () -> Unit>({ offline.close() }, { supabase.close() })) {
+        val steps =
+            listOf<suspend () -> Unit>(
+                { runner.faultInjector?.invoke("close") },
+                { offline.close() },
+                { supabase.close() },
+            )
+        for (step in steps) {
             try {
                 step()
             } catch (failure: Throwable) {
@@ -415,7 +417,6 @@ internal constructor(
                 if (firstFailure == null) firstFailure = failure
             }
         }
-        closedSignal.value = true
         runner.cancelAll()
         closed.complete(Unit)
         return firstFailure?.let { bridgeErrorOf(it, clientClosing = false) }
@@ -424,16 +425,6 @@ internal constructor(
     /** The table builder for [table], in [schema] or the client's default schema. */
     private fun tableOf(schema: String?, table: String): OfflinePostgrestQueryBuilder =
         if (schema == null) offline.from(table) else offline.from(schema, table)
-
-    /** This flow until [close] has closed the library, then completed. */
-    private fun <T> Flow<T>.endingAtClose(): Flow<T> {
-        val source = this
-        return channelFlow {
-            val forwarding = launch { source.collect { send(it) } }
-            closedSignal.first { it }
-            forwarding.cancel()
-        }
-    }
 
     /** Opens clients. */
     public companion object {
