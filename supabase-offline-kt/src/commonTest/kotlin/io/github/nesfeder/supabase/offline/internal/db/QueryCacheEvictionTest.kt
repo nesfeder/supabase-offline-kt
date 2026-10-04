@@ -28,7 +28,7 @@ import kotlinx.coroutines.test.runTest
  * oldest-first eviction order, the unlimited-cache short-circuit, the small-cache hysteresis
  * handling, and deadlock-free concurrent writes.
  */
-class OfflineStoreEvictionTest {
+class QueryCacheEvictionTest {
 
     @Test
     fun eviction_removes_oldest_rows_until_within_limit_keeping_newest() = runTest {

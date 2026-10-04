@@ -35,7 +35,7 @@ import kotlinx.serialization.json.put
  * succeeds online becomes a real cache row for a live reader with nothing cached; and nothing is
  * written when no reader is live.
  */
-class OfflineStoreEmptyCacheReactivityTest {
+class EmptyCacheReactivityTest {
 
     @Test
     fun substrate_reports_no_data_when_no_cache_and_no_mutations() = runTest {

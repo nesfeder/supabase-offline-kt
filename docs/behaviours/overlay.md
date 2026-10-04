@@ -49,7 +49,7 @@ Facts about the engine as it is. Each names the test that pins it.
   Reading it as unknown instead would keep every `is(column, null)` write off screen until it
   synced.
   <small>`RowMatchingTest.a_json_null_is_read_as_sql_null_even_where_the_column_is_jsonb`,
-  `OfflineStoreApplyLocalMutationTest.update_with_is_null_condition_patches_unread_row_and_skips_read_row`</small>
+  `PatchCachedQueriesTest.update_with_is_null_condition_patches_unread_row_and_skips_read_row`</small>
 - **Keys are read as UUIDs.** A key written in capitals matches the same key sent back in lower
   case, so the row is shown once.
   <small>`UuidKeyCaseTest.a_row_written_in_capitals_and_sent_back_in_lower_case_is_shown_once`,

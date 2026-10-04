@@ -34,7 +34,7 @@ import kotlinx.serialization.json.put
  * another, and Room invalidation is table-granular — so before this dedup, any write for any
  * feature re-emitted every live observer app-wide with byte-identical payloads.
  */
-class OfflineStoreEmissionDedupTest {
+class OverlaidPayloadDedupTest {
 
     @Test
     fun identical_payload_rewrite_does_not_reemit() =

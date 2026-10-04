@@ -36,7 +36,7 @@ file cache belong to one identity at a time: a signed-in user, or nobody signed 
 `CacheBelongsToOneIdentityTest.an_upgraded_install_signed_in_adopts_what_is_cached`,
 `CacheBelongsToOneIdentityTest.an_upgraded_install_signed_out_drops_what_is_cached`,
 `CacheBelongsToOneIdentityTest.without_the_auth_plugin_the_cache_is_one_anonymous_identitys_for_good`,
-`OfflineStoreCacheOwnerTest.a_response_or_write_that_began_before_a_drop_is_kept_out_of_the_cache_not_the_queue`</small>
+`CacheOwnershipTest.a_response_or_write_that_began_before_a_drop_is_kept_out_of_the_cache_not_the_queue`</small>
 
 `clearAllCache()` on sign-out is still how to delete a user's data from the device: the drop on a
 change of identity keeps the mutation queue, which holds the user's unsent writes.

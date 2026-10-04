@@ -23,7 +23,7 @@ import kotlinx.serialization.json.JsonArray
  * store, so an identity-clearing flow (logout, account switch, account deletion) leaves no
  * prior-user data or un-synced writes behind on disk.
  */
-class OfflineStoreClearAllTest {
+class ClearLocalDataTest {
 
     @Test
     fun clearLocalData_deletes_cached_payloads_and_queued_mutations() = runTest {

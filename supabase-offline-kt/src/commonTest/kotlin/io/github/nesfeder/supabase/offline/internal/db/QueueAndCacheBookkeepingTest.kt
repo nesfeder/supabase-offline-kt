@@ -33,7 +33,7 @@ import okio.Path.Companion.toPath
  * row, pending counts (plain and reactive), and retiring synced rows.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class OfflineStoreQueueAndCacheTest {
+class QueueAndCacheBookkeepingTest {
 
     private val mutationDao = FakeMutationDao()
     private var clock = 1_000L

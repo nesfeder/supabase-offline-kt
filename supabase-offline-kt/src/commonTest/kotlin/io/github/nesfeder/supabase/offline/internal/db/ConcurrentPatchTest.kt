@@ -41,7 +41,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * timing-dependent.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class OfflineStoreConcurrentWriteTest {
+class ConcurrentPatchTest {
 
     private val json = Json { ignoreUnknownKeys = true }
 

@@ -36,7 +36,7 @@ import kotlinx.coroutines.test.runTest
  * attributed empty writes into a cold slot too, which is how a legitimately-empty first read still
  * seeds the cache for collectors.
  */
-class OfflineStoreAddPayloadGuardTest {
+class EmptyResponseGuardTest {
 
     @Test
     fun authoritative_empty_replaces_non_empty_cache() = runTest {

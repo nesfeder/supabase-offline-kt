@@ -34,7 +34,7 @@ import kotlinx.serialization.json.buildJsonObject
  * `selectAsFlow(...)` must be patched so reactive observers emit the new state within flow dispatch
  * latency — no tab switch, no pull-to-refresh.
  */
-class OfflineStoreApplyLocalMutationTest {
+class PatchCachedQueriesTest {
 
     private val json = Json { ignoreUnknownKeys = true }
 

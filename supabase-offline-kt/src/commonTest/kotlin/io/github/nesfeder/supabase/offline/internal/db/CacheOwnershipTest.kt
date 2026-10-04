@@ -30,7 +30,7 @@ import okio.Path.Companion.toPath
  * The store's side of a cache that belongs to one identity at a time: what a drop for a new owner
  * empties and what it keeps, and which reads and writes the recorded owner lets through.
  */
-class OfflineStoreCacheOwnerTest {
+class CacheOwnershipTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()

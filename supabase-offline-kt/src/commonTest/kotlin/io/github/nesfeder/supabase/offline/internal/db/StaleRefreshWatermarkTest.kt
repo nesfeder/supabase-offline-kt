@@ -41,7 +41,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * Every test drives the store's tick source by hand so the interleavings are exact rather than
  * timing-dependent.
  */
-class OfflineStoreStaleRefreshWatermarkTest {
+class StaleRefreshWatermarkTest {
 
     private val oneProject = """[{"id":"project-1"}]"""
     private val bothProjects = """[{"id":"project-1"},{"id":"project-2"}]"""
