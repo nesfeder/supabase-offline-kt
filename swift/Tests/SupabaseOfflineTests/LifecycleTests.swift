@@ -65,6 +65,19 @@ struct LifecycleTests {
         #expect(!client.syncStatus.value.isSyncing)
     }
 
+    @Test func theStatusAfterCloseIsTheLastOneNotAFreshOne() async throws {
+        // Given a status no fresh client has
+        let client = SupabaseOfflineClient.inMemory()
+        try await client.disableNetwork()
+        #expect(client.syncStatus.value.network == .disabled)
+
+        // When
+        try await client.close()
+
+        // Then
+        #expect(client.syncStatus.value.network == .disabled, "after close: \(client.syncStatus.value)")
+    }
+
     @Test func clearingLocalDataWhenTheUserChangesLeavesNothingOfTheLastUser() async throws {
         // Given user A's cached rows, queued write and rejected write
         let session = OSAllocatedUnfairLock(initialState: "token-a")

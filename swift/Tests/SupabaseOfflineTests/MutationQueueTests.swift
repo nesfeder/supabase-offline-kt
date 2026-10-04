@@ -102,6 +102,32 @@ struct MutationQueueTests {
         try await client.close()
     }
 
+    @Test func aServersTextIsKeptVerbatimOnTheRejectedList() async throws {
+        // Given a refusal whose text holds words the package clears from its own messages
+        let server = RecordingFakeServer { _ in .noConnection }
+        let client = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server.server)
+        _ = try await client.from("todos").insert(Self.tea).execute()
+        server.answer { _ in
+            .json(
+                #"{"code":"23503","message":"insert on bridge refused by kotlin trigger","details":"see konan bridge","hint":"Kotlin hint"}"#,
+                status: 409
+            )
+        }
+
+        // When
+        let reported = try #require(try await client.syncPendingMutations().rejected.first)
+        let listed = try #require(try await client.rejectedMutations().first().first)
+
+        // Then the server's own words reach the app as sent
+        for rejected in [reported, listed] {
+            #expect(rejected.serverError?.code == "23503")
+            #expect(rejected.serverError?.message == "insert on bridge refused by kotlin trigger")
+            #expect(rejected.serverError?.details == "see konan bridge")
+            #expect(rejected.serverError?.hint == "Kotlin hint")
+        }
+        try await client.close()
+    }
+
     @Test func aRefusedWriteWhoseBodyWasNotKeptCannotBeRetried() async throws {
         // Given a refused write whose body is too long to keep on the rejected list
         let server = RecordingFakeServer { _ in .noConnection }
