@@ -114,21 +114,27 @@ internal class DatabaseScrub(
 
     /**
      * Outside the caller's locks: waits, for at most a second, for what [rewriteAfterDelete] left,
-     * then leaves the rest to background retries. Throws only a cancellation.
+     * then leaves the rest to background retries, its caller cancelled or not. Throws only a
+     * cancellation.
      */
     suspend fun finishSoon() {
         if (remaining.load() == Remaining.NOTHING) return
-        val done =
-            withTimeoutOrNull(briefWait) {
-                while (!step()) delay(retryInterval)
-                true
+        var done = false
+        try {
+            done =
+                withTimeoutOrNull(briefWait) {
+                    while (!step()) delay(retryInterval)
+                    true
+                } != null
+        } finally {
+            if (!done) {
+                engineLogger.info {
+                    "An open read holds the database's write-ahead log after a clear; the " +
+                        "deleted rows are removed from it once the read ends"
+                }
+                retryInBackground()
             }
-        if (done != null) return
-        engineLogger.info {
-            "An open read holds the database's write-ahead log after a clear; the deleted rows " +
-                "are removed from it once the read ends"
         }
-        retryInBackground()
     }
 
     /**
