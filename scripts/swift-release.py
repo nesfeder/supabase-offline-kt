@@ -576,6 +576,8 @@ def dumped_manifest_problems(dump: dict, archive_checksum: str) -> list[str]:
 
 def read_manifest(tree: Path, archive: Path) -> str:
     """Has SwiftPM read the staged manifest, and checks what it read."""
+    if not (tree / MANIFEST).is_file():
+        raise ReleaseError(f"no {MANIFEST} in {tree}")
     with tempfile.TemporaryDirectory() as directory:
         dumped = run(["swift", "package", "dump-package", "--scratch-path", directory], cwd=tree)
     dump = json.loads(dumped)
