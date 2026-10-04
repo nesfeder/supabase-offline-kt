@@ -14,7 +14,11 @@ import io.ktor.client.plugins.plugin
 import io.ktor.client.plugins.pluginOrNull
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.URLBuilder
+import io.ktor.http.Url
+import io.ktor.http.isSecure
 import io.ktor.http.isSuccess
+import io.ktor.http.takeFrom
 import io.ktor.util.AttributeKey
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -53,6 +57,13 @@ private val FOLLOWED_REDIRECTS: Set<HttpStatusCode> =
         HttpStatusCode.PermanentRedirect,
     )
 
+/**
+ * Whether a redirect from [from] to [location] leaves https for plain http, which Ktor's
+ * `HttpRedirect` does not follow unless the app allowed it.
+ */
+private fun leavesHttps(from: Url, location: String): Boolean =
+    from.protocol.isSecure() && !URLBuilder(from).takeFrom(location).protocol.isSecure()
+
 /** Set on a client's HTTP client once the download status check is installed. */
 private val DownloadStatusCheckInstallation =
     AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.DownloadStatusCheck")
@@ -62,7 +73,8 @@ private val DownloadStatusCheckInstallation =
  * download made through [checkingDownloadStatus] whose response is not a success: with the
  * exception the Storage plugin makes of that response, which is what its bytes download throws. The
  * response is read whole first, so its connection is released. A redirect the client follows passes
- * through, and the answer it leads to is checked in turn. An HTTP retry plugin the app installed,
+ * through, and the answer it leads to is checked in turn; one from https to plain http is refused,
+ * as the bytes download refuses it. An HTTP retry plugin the app installed,
  * or a Ktor bearer-auth refresh on `401`, sits further from the engine, and sees the failure as an
  * exception.
  */
@@ -79,11 +91,14 @@ internal fun SupabaseClient.installDownloadStatusCheck() {
         val status = call.response.status
         if (currentCoroutineContext()[CheckedDownloadKey] == null || status.isSuccess())
             return@intercept call
-        // Not the answer: HttpRedirect, further from the engine, asks again, back through here
+        // Not the answer: HttpRedirect, further from the engine, asks again, back through here. It
+        // does not follow one that leaves https, so that one is the answer, and refused
+        val location = call.response.headers[HttpHeaders.Location]
         if (
             followsRedirects &&
                 status in FOLLOWED_REDIRECTS &&
-                call.response.headers[HttpHeaders.Location] != null
+                location != null &&
+                !leavesHttps(call.request.url, location)
         )
             return@intercept call
         val saved = call.save()

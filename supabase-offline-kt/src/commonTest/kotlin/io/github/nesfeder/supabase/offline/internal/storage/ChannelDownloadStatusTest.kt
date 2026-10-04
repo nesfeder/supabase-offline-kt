@@ -211,6 +211,28 @@ class ChannelDownloadStatusTest {
         assertNull(bucket.cachedFile(PATH))
     }
 
+    @Test
+    fun a_redirect_from_https_to_http_is_refused_as_the_bytes_download_refuses_it() = runTest {
+        // Given — Storage redirects the object's download to plain http, which the client does not
+        // follow, with a page as the redirect's body
+        server.objects["$BUCKET/$REDIRECT_TARGET"] = CONTENT
+        server.redirects["$BUCKET/$PATH"] = "$BUCKET/$REDIRECT_TARGET"
+        server.redirectsToPlainHttp = true
+        val bytesFailure = failureOf { bucket.downloadAuthenticated(PATH) {} }
+        val channel = ByteChannel(autoFlush = true)
+
+        // When — the app downloads it into a channel and asks for the cached file
+        val channelFailure = failureOf { bucket.downloadAuthenticated(PATH, channel) {} }
+        val ensureFailure = failureOf { bucket.ensureCachedFile(PATH) }
+
+        // Then — the bytes download's 302 from both; no bytes, nothing cached
+        assertEquals(HttpStatusCode.Found.value, (bytesFailure as RestException).statusCode)
+        assertSameFailure(bytesFailure, channelFailure)
+        assertSameFailure(bytesFailure, ensureFailure)
+        assertEquals(0, bytesLeftIn(channel).size)
+        assertNull(bucket.cachedFile(PATH))
+    }
+
     private suspend fun failureOf(call: suspend () -> Unit): Throwable =
         assertNotNull(runCatching { call() }.exceptionOrNull(), "the call returned")
 

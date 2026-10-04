@@ -71,6 +71,9 @@ internal class RecordingStorageServer {
      */
     val redirects: MutableMap<String, String> = mutableMapOf()
 
+    /** When set, each of [redirects] points to plain http, with a page as its body. */
+    var redirectsToPlainHttp: Boolean = false
+
     /** Completed each time a request reaches the server (and before it waits on [gate]). */
     var requestArrived: CompletableDeferred<Unit> = CompletableDeferred()
 
@@ -97,16 +100,19 @@ internal class RecordingStorageServer {
             }
         // storage/v1/<kind...>/<bucket>/<path...>
         when {
-            redirect != null ->
+            redirect != null -> {
+                val target = request.url.toString().replace(redirect.key, redirect.value)
                 respond(
-                    content = "",
+                    content = if (redirectsToPlainHttp) "<html>Moved</html>" else "",
                     status = HttpStatusCode.Found,
                     headers =
                         headersOf(
                             HttpHeaders.Location,
-                            request.url.toString().replace(redirect.key, redirect.value),
+                            if (redirectsToPlainHttp) target.replaceFirst("https://", "http://")
+                            else target,
                         ),
                 )
+            }
 
             segments.take(4) == listOf("storage", "v1", "upload", "resumable") ->
                 resumable(request.method.value, segments.drop(4).firstOrNull(), request)
