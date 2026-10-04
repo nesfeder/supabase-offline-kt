@@ -285,6 +285,19 @@ private fun LazyListScope.rejectedGroup(state: SyncUiState.Ready, actions: SyncA
                             rejection.serverError?.let { refusalReason(LocalResources.current, it) }
                                 ?: rejection.message
                         )
+                        // The server's own answer, as the library keeps it for each refusal.
+                        rejection.serverError?.let { error ->
+                            Text(
+                                text =
+                                    stringResource(
+                                        R.string.sync_rejected_server_answer,
+                                        error.status,
+                                        error.code.orEmpty(),
+                                    ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { actions.onRetry(rejection) }) {
                                 Text(stringResource(R.string.action_retry))
