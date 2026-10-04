@@ -98,8 +98,8 @@ internal data class StoredRejection(
     val bodyOmittedChars: Int? = null,
 ) {
     /**
-     * The mutation row this rejection re-queues as: every stored field, a fresh id (`0`, so the
-     * queue assigns the next one and the write goes to the tail), a new creation time and [owner].
+     * The row this rejection re-queues as, at the tail: its stored fields, id `0` for the queue to
+     * assign, a new creation time and [owner].
      *
      * @param createdAtMs When it is re-queued.
      * @param owner The identity it is re-queued for, or `null` to record none.

@@ -39,10 +39,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 
 /**
- * The mutation queue over its rows and the records kept beside them: enqueue, the head checks, a
- * send's outcome, rejection, retry, discard, the counts and flows the app is shown, the
- * send-unconfirmed record, and the retirement of replayed mutations. Owns the queue lock; takes a
- * table's write lock only to retire, and never while holding its own.
+ * The mutation queue: its rows, the records kept beside them, and every change to either, from
+ * enqueue to the retirement of replayed mutations. Owns the queue lock; takes a table's write lock
+ * only to retire, and never while holding its own.
  *
  * @param queryCacheDao where the rejected list is kept and payloads' coverage is read.
  * @param primaryKeys each table's key columns, which tell a keyed INSERT.
@@ -230,21 +229,13 @@ internal class MutationQueue(
     }
 
     /**
-     * Runs [enqueue], which queues one write with [identity] recorded as its owner.
+     * Runs [enqueue], which queues one write with [identity] as its owner: a replay pass sends only
+     * the current identity's writes. Refused when local data was cleared since [startedAtTick]; the
+     * check and the insert run under the queue lock, which a clear holds.
      *
-     * The queue is kept per identity: each write records who made it, a replay pass sends only the
-     * current identity's writes, and another identity's writes neither block it nor are sent by it.
-     *
-     * The write is refused when local data was cleared since [startedAtTick]: it belongs to the
-     * identity that was cleared. The check and the insert run under the queue lock, which a clear
-     * holds, so no clear can fall between them.
-     *
-     * @param identity The stored value of the identity making the write, or `null` to record none
-     *   (a store driven directly, with no session model).
-     * @param startedAtTick [CacheFreshness.tickNow] as read before the write started, or `null` to
-     *   skip the check.
-     * @param enqueue Queues the write and returns its row as stored. Must make DAO calls only.
-     * @return What happened.
+     * @param identity the owner's stored value, or `null` to record none (no session model).
+     * @param startedAtTick the tick the write started at, or `null` to skip the check.
+     * @param enqueue queues the write and returns its row as stored; DAO calls only.
      */
     suspend fun enqueueOwnedBy(
         identity: String?,

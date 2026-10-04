@@ -13,13 +13,10 @@ import okio.Path
 import okio.Path.Companion.toPath
 
 /**
- * Makes `install(Offline)` open its client over in-memory tables instead of the platform's
- * database, through the same wiring the platform opener uses, so every setting of this
- * configuration reaches the engine as it does in an app. For tests of the plugin that need no
- * database file. Rows are stamped `0L`, as [newTestStore]'s are.
+ * Makes `install(Offline)` open its client over in-memory tables through the platform opener's
+ * wiring, so every setting applies as it does in an app. Rows are stamped `0L`, as [newTestStore]'s
+ * are.
  *
- * @param queryCacheDao the cached queries' table.
- * @param cachedFileDao the Storage file cache's table.
  * @param mutationDao the mutation queue's table; pass one to read what the client queued.
  * @param coordinatorScope the parent of the client's own scope; see [newTestOfflineClient].
  * @param dataDirectory where the Storage file cache keeps its files; by default a directory nothing

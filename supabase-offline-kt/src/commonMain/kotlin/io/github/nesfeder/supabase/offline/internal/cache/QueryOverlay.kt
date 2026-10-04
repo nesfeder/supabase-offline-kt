@@ -116,9 +116,8 @@ internal class QueryOverlay(
     }
 
     /**
-     * Overlays the current identity's pending mutations, and the synced ones [cachedJson] does not
-     * already contain, onto a cached payload served while offline, saying whether a pending one
-     * changed a row it shows.
+     * Overlays the identity's pending mutations, and synced ones newer than [cachedJson], onto that
+     * cached payload; says whether a pending one changed a row it shows.
      *
      * @param cacheKey The payload's query, or `null` when not known: every synced mutation applies.
      * @param shape the query's shape, recorded with the payload; `null` looks up the one recorded.
@@ -165,11 +164,9 @@ internal class QueryOverlay(
 
     /**
      * The cached payload of [table]/[cacheKey] with the current identity's mutations overlaid, as
-     * it changes, or `null` while nothing is known. Each carries when it was fetched, whether it is
-     * stale and whether a pending mutation changed a row it shows; a change to any of these emits.
-     * With no payload, mutations that produce rows are overlaid onto an empty list, not stored; a
-     * cache that is not the current identity's counts as none. A write to another table, or by
-     * another identity, costs a comparison.
+     * it changes, or `null` while nothing is known. Each carries its fetch time, staleness and
+     * whether a pending mutation changed a shown row; with no payload, mutations are overlaid onto
+     * an empty list, and another identity's cache counts as none.
      */
     fun servedPayloadFlow(
         table: String,

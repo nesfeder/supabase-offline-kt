@@ -87,9 +87,9 @@ internal fun openOfflineClient(
 }
 
 /**
- * The client this configuration describes, over the three tables given: every setting of
- * [Offline.Config] reaches the engine here and nowhere else, whether the tables are the platform's
- * database or a test's in-memory ones.
+ * The client this configuration describes, over the three tables given. Every setting of
+ * [Offline.Config] reaches the engine here and nowhere else, over the platform's database or a
+ * test's in-memory tables.
  *
  * @param queryCacheDao the cached queries' table.
  * @param cachedFileDao the Storage file cache's table.

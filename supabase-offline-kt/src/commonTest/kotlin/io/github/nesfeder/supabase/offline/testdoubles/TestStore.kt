@@ -40,9 +40,8 @@ import okio.Path
 
 /**
  * The cache and mutation-queue components over one set of tables, wired as [OfflineClient] wires
- * its own, with every collaborator a client supplies given at construction. Built by
- * [newTestStore], whose defaults are those of a store driven with no client: no session model, no
- * live queries. Its members below the components are test helpers, built on what production uses.
+ * its own; built by [newTestStore]. Its members after the components are test helpers, built on
+ * what production uses.
  *
  * @param identityProvider the identity whose queued writes the overlay and counts show, or `null`
  *   for every identity's.

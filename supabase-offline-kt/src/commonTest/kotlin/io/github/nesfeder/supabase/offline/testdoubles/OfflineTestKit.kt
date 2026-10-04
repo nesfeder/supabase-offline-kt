@@ -98,25 +98,11 @@ internal val UNLIMITED_TEST_CACHE_SETTINGS: QueryCacheLimits =
  * without Room, a filesystem or a client. The defaults are a store driven with no client: no
  * session model (every identity's writes are shown), no live queries, nothing logged.
  *
- * @param queryCacheDao the cached queries' DAO; pass a [FakeQueryCacheDao] to seed or inspect
- *   cached payloads.
- * @param cachedFileDao the Storage file cache's DAO.
- * @param mutationDao the mutation queue's DAO; pass a [FakeMutationDao] to inspect what was queued.
- * @param queryCacheLimits eviction settings; eviction is off by default.
+ * @param queryCacheDao pass a [FakeQueryCacheDao] to seed or inspect the cached payloads.
+ * @param mutationDao pass a [FakeMutationDao] to inspect what was queued.
  * @param nowMillis the clock rows are stamped with; a fixed `0L` by default.
- * @param monotonicTick the tick source of the watermarks.
- * @param primaryKeys each table's key columns.
  * @param identityProvider the identity whose queued writes are shown, or `null` for every one's.
- * @param identityChanges emits when the identity may have changed.
  * @param isCacheOwnedPerIdentity whether the cache belongs to one identity at a time, as with Auth.
- * @param ownerlessMutationsAreAnonymous whether writes queued with no owner are the anonymous
- *   identity's, as without Auth.
- * @param engineLogger where conditions the components recover from are logged.
- * @param liveCacheKeysOf a table's queries with a live reader.
- * @param allLiveCacheKeys every table's queries with a live reader.
- * @param onQueriesMarkedStale told of the queries a write marked stale.
- * @param onCacheNotServed told when the cache was not served to, or written for, the identity.
- * @return the components.
  */
 internal fun newTestStore(
     queryCacheDao: QueryCacheDao = FakeQueryCacheDao(),
@@ -214,11 +200,9 @@ internal suspend fun TestStore.recordQueryShape(
  *
  * @param supabase the wrapped client.
  * @param queryCacheDao the cached queries' DAO; pass a [FakeQueryCacheDao] to seed or inspect it.
- * @param cachedFileDao the Storage file cache's DAO.
  * @param mutationDao the mutation queue's DAO; pass a [FakeMutationDao] to inspect what was queued.
  * @param queryCacheLimits eviction settings; eviction is off by default.
  * @param nowMillis the clock rows are stamped with; a fixed `0L` by default.
- * @param monotonicTick the tick source of the watermarks.
  * @param baseDirectoryProvider base directory for downloaded storage files.
  * @param engineLogger the SDK logger.
  * @param onClose what the client's `close()` releases, as the platforms' open paths wire the
