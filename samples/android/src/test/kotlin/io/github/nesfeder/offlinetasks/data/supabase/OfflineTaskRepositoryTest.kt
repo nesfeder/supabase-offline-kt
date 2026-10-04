@@ -230,6 +230,25 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
+    fun a_photo_whose_row_is_refused_at_once_leaves_no_file_behind() = runTest {
+        // Given — a task the server no longer has, deleted on another device meanwhile
+        repository.addTask("Deleted elsewhere", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        server.deleteRows(Tables.TASKS)
+
+        // When — the photo uploads, and its row is refused
+        val failure =
+            assertFailsWith<TaskWriteRefusedException> {
+                repository.attachPhoto(task.id, EncodedPhoto(ByteArray(8), 1, 1)).toList()
+            }
+
+        // Then — the server's reason reaches the app, and the file went with the row
+        assertEquals("23503", failure.serverError.code)
+        assertTrue(server.files.isEmpty(), "a file was left with no row: ${server.files.keys}")
+        assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
+    }
+
+    @Test
     fun a_photo_cannot_be_attached_offline() = runTest {
         // Given
         repository.addTask("Offline", notes = null)

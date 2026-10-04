@@ -209,8 +209,17 @@ class OfflineTaskRepository(
                     height = photo.height,
                     createdAt = clock.now().toString(),
                 )
-            write(Tables.TASK_PHOTOS, TaskMutationOperation.Insert, taskTitle = null) {
-                offline.from(Tables.TASK_PHOTOS).insert(row)
+            try {
+                write(Tables.TASK_PHOTOS, TaskMutationOperation.Insert, taskTitle = null) {
+                    offline.from(Tables.TASK_PHOTOS).insert(row)
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (refused: Exception) {
+                // Refused at once (its task deleted on the server meanwhile, say): no row will
+                // ever name the file, so it goes too.
+                deleteUploadedFile(objectPath, refused)
+                throw refused
             }
             TaskPhoto(
                 id = photoId,
@@ -247,6 +256,20 @@ class OfflineTaskRepository(
             throw cancellation
         } catch (failure: Exception) {
             throw failure.asStorageFailure(objectPath)
+        }
+    }
+
+    /**
+     * Deletes the file just uploaded to [objectPath] when its row was [refused]. Best effort: a
+     * failure to delete it is kept on [refused], which is what the caller is told.
+     */
+    private suspend fun deleteUploadedFile(objectPath: String, refused: Exception) {
+        try {
+            photoBucket.delete(objectPath)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            refused.addSuppressed(failure)
         }
     }
 

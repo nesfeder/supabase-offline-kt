@@ -40,7 +40,7 @@ import kotlinx.coroutines.flow.StateFlow
  * **Cancellation.** A call that has started a write finishes it even if its caller is cancelled: a
  * screen that closes mid-delete cannot leave a photo's file deleted and its row in place, and one
  * that closes mid-upload cannot leave a file with no row. The caller only stops waiting for the
- * result.
+ * result. A photo whose row the server refuses at once has its file deleted too.
  */
 interface TaskRepository {
     /** The user's tasks, newest first. */
@@ -90,8 +90,9 @@ interface TaskRepository {
 
     /**
      * Uploads [photo] for the task and then writes its row, reporting progress. The flow fails with
-     * [NetworkUnavailableException] at once while the network is off, and with
-     * [ServerUnreachableException] or [PhotoStorageException] when the upload fails.
+     * [NetworkUnavailableException] at once while the network is off, with
+     * [ServerUnreachableException] or [PhotoStorageException] when the upload fails, and with
+     * [TaskWriteRefusedException] when the server refuses the row at once, after deleting the file.
      */
     fun attachPhoto(taskId: String, photo: EncodedPhoto): Flow<PhotoUpload>
 
