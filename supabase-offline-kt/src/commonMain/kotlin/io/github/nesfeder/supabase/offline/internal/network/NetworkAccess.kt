@@ -8,7 +8,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -52,8 +51,11 @@ internal class NetworkAccess(private val source: Flow<Boolean>? = null) {
     val status: NetworkStatus
         get() = inputs.value.status()
 
-    /** The status as it changes, starting with the current one. */
-    val statusChanges: Flow<NetworkStatus> = inputs.map { it.status() }.distinctUntilChanged()
+    /**
+     * The status each time anything it is made of changes, starting with the current one. Not
+     * distinct, so a reader that reads [status] on each emission always ends on the current one.
+     */
+    val statusChanges: Flow<NetworkStatus> = inputs.map { it.status() }
 
     /** Whether the app has turned network access off. */
     val isDisabled: Boolean
