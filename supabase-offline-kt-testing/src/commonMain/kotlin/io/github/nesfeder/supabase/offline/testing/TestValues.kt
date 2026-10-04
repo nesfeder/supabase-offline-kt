@@ -116,7 +116,7 @@ public fun pendingMutation(
 /**
  * The state of a refresh that keeps failing.
  *
- * @param cause the last failure.
+ * @param cause the failure that stalled the refresh.
  */
 @OptIn(OfflineInternal::class)
 public fun stalledRefresh(cause: Throwable): RefreshState.Stalled = ValueConstructors.stalled(cause)

@@ -386,8 +386,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * A replay pass in progress is cancelled first, and nothing queued is sent once clearing has
      * begun. A write already on the wire is neither applied to the cache nor queued when it
      * answers. A Storage download in flight may hand its bytes to its caller, or fail, but is not
-     * written back. The deleted rows cannot be read back from the database's files either: the
-     * database is rewritten without them.
+     * written back. The database is rewritten without the deleted rows, and its write-ahead log is
+     * emptied unless open reads hold the log's checkpoint off for about a second, which is logged;
+     * the old pages then stay in the log until its next checkpoint.
      *
      * The client stays usable afterwards.
      *
