@@ -343,6 +343,10 @@ jobs:
             echo "$marker"
             echo "supabase-kt $LATEST is on Maven Central. This library pins $PINNED (\`supabase-bom\` in \`gradle/libs.versions.toml\`), and $LATEST is newer than that minor."
             echo
+            if [[ "$CATALOG_PIN" == 3.6.* ]]; then
+              echo "**Why the pin is behind.** supabase-kt 3.7.0 and 3.8.0 carry two Realtime defects: a heartbeat tick that races \`disconnect()\` and ends the app's process with an uncaught exception (supabase-community/supabase-kt#1394, fixed by supabase-community/supabase-kt#1395), and a protocol-V2 channel leave sent without its \`join_ref\` (fixed by supabase-community/supabase-kt#1402). This library never uses Realtime, but its pin lifts an app's whole supabase-kt, Realtime included, so it stays on 3.6 and moves to the first release that contains both fixes. Until then this issue reports each newer release and how the library's tests fare on it, the tests that need 3.8 API included."
+              echo
+            fi
             if [[ "$PRETEND" == true ]]; then
               echo "> [!NOTE]"
               echo "> A manual test of this workflow: \`pretend_pinned\` set to $PINNED stood in for the catalog's pin, $CATALOG_PIN."
@@ -354,7 +358,11 @@ jobs:
             echo
             echo "Checked on $checked_on by [this run]($RUN_URL), at commit $COMMIT. The canary moves the pin in its own checkout and commits nothing. It runs the Android host tests only; the iOS tests run in the pull request that moves the pin."
             echo
-            echo "**What to do.** Moving the pin is a decision, not a routine update. Read upstream's release notes for changes to the PostgREST query builder, filters, Storage, and request and retry behavior, and check the Kotlin version it was built with. Then open a pull request that moves \`supabase-bom\` and the pass-through set (Ktor, okio, kotlinx.coroutines, kotlinx.serialization) to the versions $LATEST was built with, records the new minor in the [supabase-kt table]($compatibility_url), adds a changelog entry, and closes this issue. See [Held dependencies]($held_url)."
+            if [[ "$CATALOG_PIN" == 3.6.* ]]; then
+              echo "**What to do.** Move the pin only to a release that contains both supabase-community/supabase-kt#1395 and supabase-community/supabase-kt#1402; check $LATEST's release notes and tag for them. If $LATEST has both, open a pull request that moves \`supabase-bom\` and the pass-through set (Ktor, okio, kotlinx.coroutines, kotlinx.serialization) to the versions $LATEST was built with, folds the 3.8-only tests back into the common tests, records the new minor in the [supabase-kt table]($compatibility_url), adds a changelog entry, and closes this issue. If not, leave this issue open. See [Held dependencies]($held_url)."
+            else
+              echo "**What to do.** Moving the pin is a decision, not a routine update. Read upstream's release notes for changes to the PostgREST query builder, filters, Storage, and request and retry behavior, and check the Kotlin version it was built with. Then open a pull request that moves \`supabase-bom\` and the pass-through set (Ktor, okio, kotlinx.coroutines, kotlinx.serialization) to the versions $LATEST was built with, records the new minor in the [supabase-kt table]($compatibility_url), adds a changelog entry, and closes this issue. See [Held dependencies]($held_url)."
+            fi
             echo
             echo "Closing this issue without moving the pin brings a new one the next Monday: to hold this minor back, leave it open and say why in a comment. This description is rewritten on every check, so notes belong in comments."
             echo

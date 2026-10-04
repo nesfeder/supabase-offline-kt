@@ -31,9 +31,10 @@ import kotlinx.serialization.json.JsonElement
 /**
  * Offline for longer than a session token lives, supabase-kt refreshes the token before building a
  * request, cannot, and throws before anything is sent. A write that may queue still queues, as the
- * signed-in user's: telling a dry run needs only the request's shape, not the session's token. A
- * dry run in the same state is still refused. Online, a refresh the Auth server refuses throws the
- * same way, so the write is known never to have been sent.
+ * signed-in user's: telling a dry run needs only the request's shape, not the session's token (a
+ * dry run in the same state is refused: `ExpiredSessionDryRunTest`, on supabase-kt 3.8). Online, a
+ * refresh the Auth server refuses throws the same way, so the write is known never to have been
+ * sent.
  */
 class ExpiredSessionWriteTest {
 
@@ -61,31 +62,6 @@ class ExpiredSessionWriteTest {
         assertIs<MutationOutcome.Queued>(updated)
         assertEquals(listOf("user:user-a", "user:user-a"), mutationDao.inserted.map { it.owner })
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
-    }
-
-    @Test
-    fun a_dry_run_with_an_expired_session_offline_is_still_refused() = runTest {
-        // Given
-        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
-        supabase.signInForTest("user-a", expiresInSeconds = -60)
-        val builder =
-            newTestOfflineTable(
-                delegate = supabase.postgrest.from(TABLE),
-                store = store,
-            )
-
-        // When
-        val outcome = runCatching {
-            builder.update(patch()) {
-                filter { eq("id", "k1") }
-                dryRun()
-            }
-        }
-
-        // Then — the caller gets the failure, and nothing is queued
-        assertTrue(outcome.isFailure)
-        assertTrue(mutationDao.inserted.isEmpty())
     }
 
     @Test

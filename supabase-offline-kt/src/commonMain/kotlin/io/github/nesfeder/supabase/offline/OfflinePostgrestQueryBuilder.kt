@@ -74,11 +74,11 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * Reads rows once, from the server or the device's cache as [readStrategy] says.
      *
      * Only a list of rows is cached. A read that asks for another shape (`single()`,
-     * `maybeSingle()`, `head`, a `count` with rows or without, `csv()`, `geojson()`, `stripNulls()`
-     * or `explain()`) goes to the server under every strategy but [ReadStrategy.CacheOnly], is not
-     * stored, and offline fails as [ReadStrategy.NetworkOnly] does; under [ReadStrategy.CacheOnly]
-     * it sends nothing and throws [CacheMissException]. To read one row offline, read the list and
-     * take its first row.
+     * `maybeSingle()` from supabase-kt 3.8, `head`, a `count` with rows or without, `csv()`,
+     * `geojson()`, `stripNulls()` or `explain()`) goes to the server under every strategy but
+     * [ReadStrategy.CacheOnly], is not stored, and offline fails as [ReadStrategy.NetworkOnly]
+     * does; under [ReadStrategy.CacheOnly] it sends nothing and throws [CacheMissException]. To
+     * read one row offline, read the list and take its first row.
      *
      * @param columns the columns to select.
      * @param readStrategy where the rows come from; [ReadStrategy.NetworkFirst] by default, which
