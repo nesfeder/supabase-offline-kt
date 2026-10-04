@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -27,7 +27,7 @@ class UuidKeyCaseTest {
             mayAlreadyHold = { true },
         )
 
-    private fun mutation(operation: String, body: String, filter: String? = null) =
+    private fun mutation(operation: MutationOperation, body: String, filter: String? = null) =
         MutationRow(
             table = TABLE,
             operation = operation,

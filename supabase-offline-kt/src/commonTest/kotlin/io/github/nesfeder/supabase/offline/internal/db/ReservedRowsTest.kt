@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
@@ -192,7 +193,7 @@ class ReservedRowsTest {
         StoredRejection(
             id = id,
             table = "todos",
-            operation = MutationOperation.INSERT,
+            operation = MutationOperation.INSERT.storedName,
             bodyJson = """[{"title":"x"}]""",
             createdAtMs = 0L,
             rejectedAtMs = 1L,

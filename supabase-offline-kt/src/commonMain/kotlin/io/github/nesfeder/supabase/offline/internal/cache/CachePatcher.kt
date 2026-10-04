@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
@@ -63,7 +63,6 @@ internal class CachePatcher(
      * again. Runs under the table's write lock, after moving its watermark, so a response already
      * in flight cannot roll the patch back.
      *
-     * @param operation one of the [MutationOperation] values.
      * @param bodyJson rows for INSERT and UPSERT, the changed columns for UPDATE, `"{}"` for
      *   DELETE.
      * @param filterJson the encoded [FilterDescriptor] of an UPDATE or DELETE; one that is missing
@@ -77,7 +76,7 @@ internal class CachePatcher(
      */
     suspend fun patchCachedQueries(
         table: String,
-        operation: String,
+        operation: MutationOperation,
         bodyJson: String,
         filterJson: String?,
         defaultToNull: Boolean? = null,
@@ -337,7 +336,7 @@ internal class CachePatcher(
      */
     suspend fun markQueriesAWriteMayReach(
         table: String,
-        operation: String,
+        operation: MutationOperation,
         bodyJson: String,
         narrowing: FilterDescriptor?,
         startedAtTick: Long,

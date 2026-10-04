@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
@@ -293,7 +294,7 @@ class KnownRowsPruningTest {
 
     /** A write to the table, as queued or as the server accepted it. */
     private class Write(
-        val operation: String,
+        val operation: MutationOperation,
         val body: String,
         val filter: FilterDescriptor?,
         val onConflict: String?,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
@@ -53,16 +54,17 @@ class ShippedStoredFormatTest {
     @Test
     fun stored_operation_names_are_the_ones_the_syncer_dispatches_on() {
         // Given / When
-        val operations = ShippedDatabaseFixture.MUTATION_ROWS.map { it.operation }.toSet()
+        val operations =
+            ShippedDatabaseFixture.MUTATION_ROWS.map { it.operation.storedName }.toSet()
 
         // Then
         assertEquals(setOf("INSERT", "UPSERT", "UPDATE", "DELETE"), operations)
         assertEquals(
             setOf(
-                MutationOperation.INSERT,
-                MutationOperation.UPSERT,
-                MutationOperation.UPDATE,
-                MutationOperation.DELETE,
+                MutationOperation.INSERT.storedName,
+                MutationOperation.UPSERT.storedName,
+                MutationOperation.UPDATE.storedName,
+                MutationOperation.DELETE.storedName,
             ),
             operations,
         )

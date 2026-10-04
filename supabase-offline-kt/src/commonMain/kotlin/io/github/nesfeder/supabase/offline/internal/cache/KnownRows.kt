@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -211,6 +211,8 @@ internal fun mutationsThatReach(
                     if (isPlainColumn(condition.column)) read += jsonNameOf(condition.column)
                     else readsEveryColumn = true
                 }
+            MutationOperation.INSERT,
+            MutationOperation.DELETE -> Unit
         }
     }
     reaching.forEach(::noteWhatItReads)

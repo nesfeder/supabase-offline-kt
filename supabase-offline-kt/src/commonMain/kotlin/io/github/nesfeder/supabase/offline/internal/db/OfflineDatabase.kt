@@ -6,6 +6,7 @@ import androidx.room.ConstructedBy
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.RoomDatabaseConstructor
+import androidx.room.TypeConverters
 import androidx.sqlite.SQLiteDriver
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,7 @@ internal const val OFFLINE_DB_VERSION: Int = 1
     version = OFFLINE_DB_VERSION,
     exportSchema = true,
 )
+@TypeConverters(MutationOperationConverter::class)
 internal abstract class OfflineDatabase : RoomDatabase() {
 
     abstract fun queryCacheDao(): QueryCacheDao

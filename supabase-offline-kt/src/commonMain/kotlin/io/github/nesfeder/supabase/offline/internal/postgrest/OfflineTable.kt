@@ -16,6 +16,7 @@ import io.github.jan.supabase.postgrest.query.request.UpsertRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.PendingMutation
@@ -29,7 +30,6 @@ import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
@@ -435,7 +435,7 @@ internal class OfflineTable(
      * write's request, already built.
      */
     private suspend fun patchFilteredWrite(
-        operation: String,
+        operation: MutationOperation,
         table: String,
         bodyJson: String,
         builder: PostgrestRequestBuilder,
@@ -824,9 +824,7 @@ internal class OfflineTable(
 
     /** The queued write [row] as the caller sees it in [MutationOutcome.Queued]. */
     private fun pendingMutationOf(row: MutationRow): PendingMutation =
-        checkNotNull(row.toPendingMutation(json, primaryKeys)) {
-            "the queue stored an operation it cannot name"
-        }
+        row.toPendingMutation(json, primaryKeys)
 
     private fun preferResponseForCache(
         requestBody: JsonArray,

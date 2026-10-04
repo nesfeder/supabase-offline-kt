@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
@@ -141,7 +142,7 @@ class OverlayMutationIsolationTest {
 
     private fun mutation(
         id: Long,
-        operation: String,
+        operation: MutationOperation,
         body: String,
         filter: FilterDescriptor? = null,
     ): MutationRow =

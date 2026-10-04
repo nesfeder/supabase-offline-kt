@@ -11,6 +11,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.TypeConverter
+import io.github.nesfeder.supabase.offline.MutationOperation
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -26,8 +28,8 @@ internal data class MutationRow(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     @ColumnInfo(name = "table_name") val table: String,
 
-    /** "INSERT", "UPSERT", "UPDATE", or "DELETE". */
-    val operation: String,
+    /** What the write does; the column holds its [storedName]. */
+    val operation: MutationOperation,
 
     /**
      * Raw JSON body string. For INSERT/UPSERT usually a JSON array; for UPDATE a JSON object; for
@@ -281,10 +283,30 @@ internal suspend fun <T> MutationDao.inTransaction(block: suspend () -> T): T {
 /** What a transaction's block returned, so a `null` result is told from a block that never ran. */
 private class TransactionResult<T>(val value: T)
 
-/** Simple operation "enum" so we don't rely on Room @TypeConverter right away. */
-internal object MutationOperation {
-    const val INSERT = "INSERT"
-    const val UPSERT = "UPSERT"
-    const val UPDATE = "UPDATE"
-    const val DELETE = "DELETE"
+/** The name the `operation` column holds for this operation; frozen, as every stored name is. */
+internal val MutationOperation.storedName: String
+    get() =
+        when (this) {
+            MutationOperation.INSERT -> "INSERT"
+            MutationOperation.UPSERT -> "UPSERT"
+            MutationOperation.UPDATE -> "UPDATE"
+            MutationOperation.DELETE -> "DELETE"
+        }
+
+/** The operation stored under [storedName], or `null` for a name no build writes. */
+internal fun mutationOperationStoredAs(storedName: String): MutationOperation? =
+    MutationOperation.entries.firstOrNull { operation -> operation.storedName == storedName }
+
+/** Room's conversion of the `operation` column, by [storedName]. */
+internal class MutationOperationConverter {
+
+    /** [operation]'s stored name. */
+    @TypeConverter fun storedNameOf(operation: MutationOperation): String = operation.storedName
+
+    /** The operation [storedName] names; a name no build writes is a row that cannot be read. */
+    @TypeConverter
+    fun operationStoredAs(storedName: String): MutationOperation =
+        checkNotNull(mutationOperationStoredAs(storedName)) {
+            "The mutation queue holds an operation this build does not write"
+        }
 }

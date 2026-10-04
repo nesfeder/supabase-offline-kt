@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
@@ -126,10 +127,10 @@ class PersistedNamesTest {
         assertEquals(
             listOf("INSERT", "UPSERT", "UPDATE", "DELETE"),
             listOf(
-                MutationOperation.INSERT,
-                MutationOperation.UPSERT,
-                MutationOperation.UPDATE,
-                MutationOperation.DELETE,
+                MutationOperation.INSERT.storedName,
+                MutationOperation.UPSERT.storedName,
+                MutationOperation.UPDATE.storedName,
+                MutationOperation.DELETE.storedName,
             ),
         )
     }
@@ -141,7 +142,7 @@ class PersistedNamesTest {
             StoredRejection(
                 id = 7,
                 table = "todos",
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = "{}",
                 filterJson = "f",
                 createdAtMs = 1,

@@ -4,19 +4,20 @@
 
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.TableWriteLocks
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.ChangeCounts
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.inTransaction
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
@@ -201,7 +202,7 @@ internal class MutationQueue(
         /** Stores one pending mutation of [owner]'s, tells [table]'s readers, and returns it. */
         private suspend fun insert(
             table: String,
-            operation: String,
+            operation: MutationOperation,
             bodyJson: String,
             filter: FilterDescriptor?,
             defaultToNull: Boolean? = null,
@@ -523,7 +524,7 @@ internal class MutationQueue(
             StoredRejection(
                 id = mutation.id,
                 table = mutation.table,
-                operation = mutation.operation,
+                operation = mutation.operation.storedName,
                 bodyJson = mutation.bodyJson,
                 filterJson = mutation.filterJson,
                 createdAtMs = mutation.createdAtMs,

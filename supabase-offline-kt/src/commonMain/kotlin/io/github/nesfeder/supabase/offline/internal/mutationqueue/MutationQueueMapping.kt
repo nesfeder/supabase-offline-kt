@@ -4,8 +4,8 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.PendingMutation
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation as StoredOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.mutationOperationStoredAs
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import kotlin.time.Instant
@@ -16,29 +16,12 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * The [MutationOperation] a stored operation string names.
- *
- * @param stored A `mutation_cache.operation` value.
- * @return The operation, or `null` for a value no build of the engine writes.
- */
-internal fun mutationOperationOf(stored: String): MutationOperation? =
-    when (stored) {
-        StoredOperation.INSERT -> MutationOperation.INSERT
-        StoredOperation.UPSERT -> MutationOperation.UPSERT
-        StoredOperation.UPDATE -> MutationOperation.UPDATE
-        StoredOperation.DELETE -> MutationOperation.DELETE
-        else -> null
-    }
-
-/**
  * This mutation row as a [PendingMutation].
  *
  * @param json The engine's [Json].
  * @param primaryKeys Where the table's key columns come from, for [PendingMutation.rowKeys].
- * @return The pending mutation, or `null` for a row whose operation no build of the engine writes.
  */
-internal fun MutationRow.toPendingMutation(json: Json, primaryKeys: PrimaryKeys): PendingMutation? {
-    val operation = mutationOperationOf(operation) ?: return null
+internal fun MutationRow.toPendingMutation(json: Json, primaryKeys: PrimaryKeys): PendingMutation {
     val body = bodyOf(operation, bodyJson, json)
     return PendingMutation(
         id = id,
@@ -61,7 +44,7 @@ internal fun StoredRejection.toRejectedMutation(
     json: Json,
     primaryKeys: PrimaryKeys,
 ): RejectedMutation {
-    val operation = mutationOperationOf(operation) ?: MutationOperation.UPDATE
+    val operation = mutationOperationStoredAs(operation) ?: MutationOperation.UPDATE
     val body = bodyOf(operation, bodyJson, json)
     return RejectedMutation(
         id = id,

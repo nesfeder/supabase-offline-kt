@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.MutationOperation as MutationQueueOperation
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ServerError
@@ -79,7 +79,7 @@ class RejectedMutationListTest {
         val rejected = report.rejected.single()
         assertEquals(id, rejected.id)
         assertEquals(TABLE, rejected.table)
-        assertEquals(MutationQueueOperation.INSERT, rejected.operation)
+        assertEquals(MutationOperation.INSERT, rejected.operation)
         assertEquals(Instant.fromEpochMilliseconds(1_000L), rejected.createdAt)
         assertEquals(Instant.fromEpochMilliseconds(5_000L), rejected.rejectedAt)
         assertEquals(rows("""[{"id":"t1","title":""}]"""), rejected.body)
@@ -159,7 +159,7 @@ class RejectedMutationListTest {
         val report = replayer.sync()
 
         // Then
-        assertEquals(MutationQueueOperation.UPDATE, report.rejected.single().operation)
+        assertEquals(MutationOperation.UPDATE, report.rejected.single().operation)
         assertNull(report.rejected.single().serverError)
         assertTrue(server.requests.isEmpty())
     }

@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf

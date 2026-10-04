@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import kotlin.test.Test
@@ -121,7 +121,7 @@ class TypeDependentComparisonTest {
         assertEquals(rows, deleted.visible)
     }
 
-    private fun mutation(operation: String, body: String, filter: String) =
+    private fun mutation(operation: MutationOperation, body: String, filter: String) =
         MutationRow(
             table = "codes",
             operation = operation,

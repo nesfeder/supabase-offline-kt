@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -41,7 +42,7 @@ class RejectionCrashWindowTest {
             StoredRejection(
                 id = pending.id,
                 table = NOTES,
-                operation = pending.operation,
+                operation = pending.operation.storedName,
                 bodyJson = pending.bodyJson,
                 createdAtMs = 0,
                 rejectedAtMs = 0,
@@ -76,7 +77,7 @@ class RejectionCrashWindowTest {
             StoredRejection(
                 id = id,
                 table = NOTES,
-                operation = MutationOperation.INSERT,
+                operation = MutationOperation.INSERT.storedName,
                 bodyJson = "[]",
                 createdAtMs = 0,
                 rejectedAtMs = 0,

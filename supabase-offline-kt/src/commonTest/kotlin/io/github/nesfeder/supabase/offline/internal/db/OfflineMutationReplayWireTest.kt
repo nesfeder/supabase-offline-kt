@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -349,7 +350,7 @@ class OfflineMutationReplayWireTest {
         )
 
     private fun queuedRow(
-        operation: String,
+        operation: MutationOperation,
         bodyJson: String,
         filterJson: String? = null,
         syncedAtMs: Long? = null,

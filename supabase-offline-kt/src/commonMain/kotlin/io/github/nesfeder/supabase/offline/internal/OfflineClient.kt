@@ -12,6 +12,7 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.storage
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.OfflineInternal
@@ -34,7 +35,6 @@ import io.github.nesfeder.supabase.offline.internal.cache.TableWriteLocks
 import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
@@ -633,7 +633,7 @@ internal class OfflineClient(
     override fun pendingMutations(table: String?): Flow<List<PendingMutation>> =
         operationGate.callCollecting(
             mutationQueue.shownPendingMutationsFlow(table).map { rows ->
-                rows.mapNotNull { row -> row.toPendingMutation(EngineJson, primaryKeys) }
+                rows.map { row -> row.toPendingMutation(EngineJson, primaryKeys) }
             }
         )
 

@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
@@ -56,7 +57,7 @@ internal val ON_DISK_REJECTION: StoredRejection =
     StoredRejection(
         id = 99,
         table = "todos",
-        operation = MutationOperation.INSERT,
+        operation = MutationOperation.INSERT.storedName,
         bodyJson = """[{"title":"refused"}]""",
         createdAtMs = 1_727_000_005_000,
         rejectedAtMs = 1_727_000_006_000,

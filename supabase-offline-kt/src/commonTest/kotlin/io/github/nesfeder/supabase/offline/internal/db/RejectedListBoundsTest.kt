@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
@@ -169,7 +170,7 @@ class RejectedListBoundsTest {
         StoredRejection(
             id = id,
             table = "notes",
-            operation = MutationOperation.INSERT,
+            operation = MutationOperation.INSERT.storedName,
             bodyJson = bodyJson,
             createdAtMs = 0,
             rejectedAtMs = 0,

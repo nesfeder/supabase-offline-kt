@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.MutationOperation as MutationQueueOperation
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
@@ -108,7 +108,7 @@ class MutationIdAndSyncReportTest {
                 PendingMutation(
                     id = insertId,
                     table = TABLE,
-                    operation = MutationQueueOperation.INSERT,
+                    operation = MutationOperation.INSERT,
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("a")),
                     body = rows("""[{"id":"a","title":"x"},{"title":"no key"}]"""),
@@ -116,7 +116,7 @@ class MutationIdAndSyncReportTest {
                 PendingMutation(
                     id = updateId,
                     table = TABLE,
-                    operation = MutationQueueOperation.UPDATE,
+                    operation = MutationOperation.UPDATE,
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("b")),
                     body = Json.parseToJsonElement("""{"done":true}"""),
