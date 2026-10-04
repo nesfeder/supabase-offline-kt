@@ -58,11 +58,12 @@ RECORDED_HEADER = os.path.join(MODULE, "header", "SupabaseOfflineCore.h")
 ALLOW_LIST = os.path.join(MODULE, "header", "allowed-names.txt")
 
 # `@class A, B<T>;` and `@protocol A, B;`: forward declarations, which name every type used.
-FORWARD = re.compile(r"^@(class|protocol)\s+([^;{]+);", re.MULTILINE)
+# Each sits on one line, so a protocol's own declaration and its methods never read as one.
+FORWARD = re.compile(r"^@(class|protocol)[ \t]+([^;{\n]+);", re.MULTILINE)
 # `@interface Name<T> : Super <Protocols>` or `@interface Name (Category)`.
 INTERFACE = re.compile(r"^@interface\s+(\w+)\s*(?:<[^>]*>)?\s*(?:\((\w*)\))?", re.MULTILINE)
 # `@protocol Name <Protocols>` on its own, not a forward declaration.
-PROTOCOL = re.compile(r"^@protocol\s+(\w+)\s*(?:<[^>]*>)?\s*$", re.MULTILINE)
+PROTOCOL = re.compile(r"^@protocol[ \t]+(\w+)[ \t]*(?:<[^>\n]*>)?[ \t]*$", re.MULTILINE)
 SUSPEND = re.compile(r"\bcompletionHandler:")
 THROWING = re.compile(r"\berror:\s*\(\s*NSError\b")
 # Block comments: the KDoc the header carries may mention any name.
@@ -182,6 +183,7 @@ __attribute__((swift_name("KotlinBase")))
 @end
 @protocol SOCBridgeLogSink
 @required
+- (void)logLevel:(NSString *)level message:(NSString *)message __attribute__((swift_name("log(level:message:)")));
 @end
 @interface SOCKotlinArray<T> : SOCBase
 @end
@@ -211,6 +213,12 @@ SELF_TEST_CASES: Tuple[Tuple[str, str, Optional[str], bool], ...] = (
         True,
     ),
     ("a kotlinx protocol", CLEAN + "@protocol SOCKotlinx_coroutines_coreJob\n@end\n", None, True),
+    (
+        "a protocol with methods that adopts another",
+        CLEAN + "@protocol SOCKotlinx_coroutines_coreFlow <SOCBridgeLogSink>\n@required\n- (void)a;\n@end\n",
+        None,
+        True,
+    ),
     ("a category on a platform type", CLEAN + "@interface NSData (SOCBridgeLeak)\n@end\n", None, True),
     (
         "a suspend function",
