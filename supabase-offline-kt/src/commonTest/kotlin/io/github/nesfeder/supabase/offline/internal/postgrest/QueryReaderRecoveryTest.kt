@@ -1188,7 +1188,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun a_refresh_parked_across_sign_out_does_not_repopulate_the_wiped_cache() =
+    fun a_refresh_parked_across_sign_out_does_not_repopulate_the_cleared_cache() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a subscription whose first refresh goes out and parks in flight
             val postgrest = testPostgrest()

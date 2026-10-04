@@ -93,7 +93,7 @@ class QueueAndCacheBookkeepingTest {
     }
 
     @Test
-    fun deleteTablePayload_removesOnlyMatchingSignature() = runTest {
+    fun deleteTablePayload_removesOnlyMatchingCacheKey() = runTest {
         // Given
         store.queryCache.cacheResponse(TABLE, CACHE_KEY, PAYLOAD)
         store.queryCache.cacheResponse(TABLE, OTHER_CACHE_KEY, PAYLOAD)

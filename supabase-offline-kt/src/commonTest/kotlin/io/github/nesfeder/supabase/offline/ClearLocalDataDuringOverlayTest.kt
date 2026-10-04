@@ -19,7 +19,7 @@ import kotlinx.serialization.json.JsonArray
  * An overlay already patching the cache when local data is cleared must not write the outgoing
  * user's rows back: the teardown check and each write it guards are one step with the wipe.
  */
-class OverlayTeardownRaceTest {
+class ClearLocalDataDuringOverlayTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val store = newTestStore(queryCacheDao = queryCacheDao)

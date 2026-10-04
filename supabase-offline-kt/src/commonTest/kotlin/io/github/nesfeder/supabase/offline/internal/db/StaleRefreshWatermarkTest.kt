@@ -298,7 +298,7 @@ class StaleRefreshWatermarkTest {
     }
 
     @Test
-    fun a_response_that_left_before_sign_out_never_repopulates_the_wiped_cache() = runTest {
+    fun a_response_that_left_before_sign_out_never_repopulates_the_cleared_cache() = runTest {
         // Given — the signed-in user's rows are cached and a refresh went out at tick 10
         val queryCacheDao = FakeQueryCacheDao()
         queryCacheDao.seedPayload("projects", "sig-A", oneProject)
