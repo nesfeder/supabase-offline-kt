@@ -212,7 +212,9 @@ internal fun SupabaseClient.installCommittedDryRunReport(onCommitted: () -> Unit
         if (
             askedForRollback &&
                 call.response.status.isSuccess() &&
-                !namesRollback(call.response.headers[PREFERENCE_APPLIED_HEADER]) &&
+                !namesRollback(
+                    call.response.headers.getAll(PREFERENCE_APPLIED_HEADER)?.joinToString(",")
+                ) &&
                 isPostgrestWrite(request)
         )
             onCommitted()

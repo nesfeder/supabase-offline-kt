@@ -10,9 +10,12 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.plugin
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
+import io.ktor.http.headers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -53,6 +56,33 @@ class CommittedDryRunTest {
             RecordingPostgrestServer(
                 answer = {
                     okJson("[]", extraHeaders = mapOf("Preference-Applied" to "tx=rollback"))
+                }
+            )
+        val client = clientAskingForRollback(server)
+
+        // When
+        client.from(TABLE).insert(row(1))
+
+        // Then
+        assertEquals(emptyList(), committedReports())
+        client.close()
+    }
+
+    @Test
+    fun a_rollback_listed_in_a_second_preference_applied_value_is_not_reported() = runTest {
+        // Given — the server applies the rollback, and lists it after another preference
+        val server =
+            RecordingPostgrestServer(
+                answer = {
+                    respond(
+                        content = "[]",
+                        headers =
+                            headers {
+                                append(HttpHeaders.ContentType, "application/json")
+                                append(PREFERENCE_APPLIED, "return=minimal")
+                                append(PREFERENCE_APPLIED, ROLLBACK)
+                            },
+                    )
                 }
             )
         val client = clientAskingForRollback(server)
@@ -116,5 +146,6 @@ class CommittedDryRunTest {
         const val TABLE = "tasks"
         const val PREFER = "Prefer"
         const val ROLLBACK = "tx=rollback"
+        const val PREFERENCE_APPLIED = "Preference-Applied"
     }
 }
