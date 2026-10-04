@@ -73,6 +73,53 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | --- | --- | --- |
 | `OfflineJSON` (`null`, `bool`, `int`, `double`, `string`, `array`, `object`) | kotlinx.serialization's `JsonElement`, `JsonObject` | No shared JSON type; supabase-swift's `AnyJSON` would clash |
 
+## Storage
+
+The library's own Storage names are Kotlin's. The bucket's object operations are the ones Kotlin's
+`OfflineBucketApi` inherits from supabase-kt's `BucketApi`; in Swift they take supabase-swift's
+names and labels instead, so a supabase-swift Storage call compiles with only its receiver changed,
+as a supabase-kt call does in Kotlin. Value types keep Kotlin's names, nested in `OfflineBucketApi`
+as `OfflineError.ServerError` is, so an app that imports supabase-swift too finds no two types of
+one name. supabase-kt's `Url` is Swift's `URL`.
+
+| Swift | Kotlin | Same / reason |
+| --- | --- | --- |
+| `SupabaseOfflineClient.storage` | `Offline.storage` | Same |
+| `OfflineStorage` | `OfflineStorage` | Same |
+| `OfflineStorage.from(_:)` | `OfflineStorage.from(bucketId)` | Same; the operator `get(bucketId)` (`storage["avatars"]`) has no counterpart, as `from(_:)` for tables has none |
+| `OfflineBucketApi` | `OfflineBucketApi` | Same; a struct for an interface, since only the library implements it |
+| `OfflineBucketApi.bucketId` | `BucketApi.bucketId` | Same. supabase-kt's `supabaseClient`, `resumable` and `setHeader` are not offered: Swift has no supabase-kt client, and resumable uploads are not bridged |
+| `upload(_:data:options:)` | `upload(path, data, options)` | Same; `path` unlabelled as supabase-swift has it; `Data` for `ByteArray` |
+| `update(_:data:options:)` | `update(path, data, options)` | As `upload` |
+| `uploadToSignedURL(_:token:data:options:)` | `uploadToSignedUrl(path, token, data, options)` | Same |
+| `createSignedUploadURL(path:upsert:)` | `createSignedUploadUrl(path, upsert)` | Same |
+| `remove(paths:)` | `delete(paths)` | supabase-swift's name; Swift returns nothing, as Kotlin does (supabase-swift returns the removed objects) |
+| `move(from:to:destinationBucket:)` | `move(from, to, destinationBucket)` | Same; supabase-swift's `options: DestinationOptions` is Kotlin's `destinationBucket` here |
+| `copy(from:to:destinationBucket:)` | `copy(from, to, destinationBucket)` | As `move`; returns nothing, as Kotlin does |
+| `createSignedURL(path:expiresIn:transform:)` | `createSignedUrl(path, expiresIn) { transform { … } }` | `expiresIn` in whole seconds (`Int`), as supabase-swift has it, for Kotlin's `Duration`; the transform a parameter for the builder lambda; returns `URL` |
+| `createSignedURLs(paths:expiresIn:)` | `createSignedUrls(expiresIn, paths)` | Labels in supabase-swift's order; seconds as above |
+| `download(path:options:isPublic:)` | `downloadAuthenticated(path, options)`, `downloadPublic(path, options)` | supabase-swift's name and `options:` label; `isPublic`, as `ensureCachedFile` takes it, chooses between Kotlin's two. The options are the image transformation, which Kotlin sets with `transform { }` in its options lambda |
+| `list(path:options:)` | `list(prefix, filter)` | supabase-swift's labels |
+| `info(path:)` | `info(path)` | Same |
+| `exists(path:)` | `exists(path)` | Same |
+| `publicURL(path:)` | `publicUrl(path)` | Same (supabase-swift 2 calls it `getPublicURL`). `async` because the client opens in the background; Kotlin's plugin is open when it is called |
+| `authenticatedURL(path:)` | `authenticatedUrl(path)` | As `publicURL` |
+| `cachedFile(path:)` | `cachedFile(path)` | Same |
+| `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Same |
+| `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | Same; `Date` for `Instant`, `Int` for `Long` |
+| `CachedFile.url` | Android `ensureLocalFile` / `ensureLocalUri`, iOS `ensureLocalPath` | A file URL beside `path`, for APIs that take a URL |
+| `OfflineBucketApi.UploadOptions` (`contentType`, `upsert`, `userMetadata`) | supabase-kt's `UploadOptionBuilder` (`contentType`, `upsert`, `userMetadata`) | A value for a builder lambda, so not a "builder"; the fields are the same, `String` for `ContentType` and `[String: OfflineJSON]` for `JsonObject` |
+| `OfflineBucketApi.ImageTransformation` (`width`, `height`, `resize`, `quality`, `format`) | supabase-kt's `ImageTransformation` (the same) | Same; a value for a builder lambda |
+| `ImageTransformation.Resize` (`cover`, `contain`, `fill`) | `ImageTransformation.Resize` (`COVER`, `CONTAIN`, `FILL`) | Lower-camel cases |
+| `OfflineBucketApi.StorageListFilter` (`limit`, `offset`, `search`, `sortBy`) | supabase-kt's `StorageListFilter.Files` (`limit`, `offset`, `search`, `sortBy(column, order)`) | A value for a builder lambda: `sortBy` a field for the call |
+| `StorageListFilter.SortBy` (`column`, `order`) | the two arguments of `sortBy(column, order)` | A value holds what Kotlin's call takes |
+| `StorageListFilter.SortOrder` (`asc`, `desc`) | supabase-kt's `SortOrder` (`ASC`, `DESC`) | Lower-camel cases; nested because Foundation has a `SortOrder` |
+| `OfflineBucketApi.FileUploadResponse` (`id`, `path`, `key`) | supabase-kt's `FileUploadResponse` (the same) | Same |
+| `OfflineBucketApi.UploadSignedURL` (`url`, `path`, `token`) | supabase-kt's `UploadSignedUrl` (the same) | Same; `URL` for the URL string |
+| `OfflineBucketApi.SignedURL` (`error`, `signedURL`, `path`) | supabase-kt's `SignedUrl` (the same) | Same; `URL` for the URL string |
+| `OfflineBucketApi.FileObject` (`name`, `id`, `updatedAt`, `createdAt`, `lastAccessedAt`, `metadata`) | supabase-kt's `FileObject` (the same) | Same; `Date` for `Instant`, `[String: OfflineJSON]` for `JsonObject` |
+| `OfflineBucketApi.FileObjectV2` (`name`, `id`, `version`, `bucketId`, `updatedAt`, `createdAt`, `lastAccessedAt`, `metadata`, `size`, `contentType`, `etag`, `lastModified`, `cacheControl`) | supabase-kt's `FileObjectV2` (the same, with `rawContentType`) | `contentType` is the text Kotlin calls `rawContentType`: Swift has no parsed content-type type. Kotlin's `decodeMetadata()` has no counterpart |
+
 ## The testing product
 
 | Swift | Kotlin | Same / reason |

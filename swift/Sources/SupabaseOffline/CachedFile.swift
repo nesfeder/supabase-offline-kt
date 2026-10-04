@@ -10,7 +10,8 @@ public import Foundation
 /// for 30 seconds, and when local data is cleared.
 public struct CachedFile: Sendable, Hashable {
 
-    /// The copy's absolute path on this device.
+    /// The copy's absolute path on this device; from the testing product's in-memory client, a
+    /// path in that client's memory, which is not on disk.
     public let path: String
 
     /// When the copy was downloaded. A cached copy is served however old it is: compare this with
