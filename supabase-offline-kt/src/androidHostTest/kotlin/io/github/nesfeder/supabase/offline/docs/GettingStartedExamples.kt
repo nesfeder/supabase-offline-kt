@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.docs
 
+import android.content.Context
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.createSupabaseClient
@@ -135,6 +136,26 @@ internal fun setupLogging(supabaseUrl: String, supabaseKey: String): SupabaseCli
             }
         }
     // --8<-- [end:logging]
+    return supabase
+}
+
+/** The setup page's Android data directory, which Android never backs up. */
+internal fun setupNoBackupDirectory(
+    context: Context,
+    supabaseUrl: String,
+    supabaseKey: String,
+): SupabaseClient {
+    // --8<-- [start:no-backup-directory]
+    val supabase =
+        createSupabaseClient(supabaseUrl, supabaseKey) {
+            install(Auth)
+            install(Postgrest)
+            install(Offline) {
+                // The database and the file cache; Android never backs up noBackupFilesDir
+                dataDirectory = context.noBackupFilesDir.resolve("supabase_offline").path
+            }
+        }
+    // --8<-- [end:no-backup-directory]
     return supabase
 }
 

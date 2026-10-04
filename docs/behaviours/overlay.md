@@ -1,19 +1,57 @@
 # Optimistic overlay
 
-How writes that have not reached the server yet appear in cached query results.
+What a read returns is the cached rows with the user's writes that have not reached them yet laid
+on top, oldest first. So a write shows in every list at once, online or offline, and a list never
+loses it between the moment it is sent and the moment the list is fetched again.
 
-> **Not written yet.** This page is a placeholder in the planned site. The headings below are its
-> outline; the content will be written for 0.1.0, once the API it describes has settled.
+```kotlin
+--8<-- "ReadExamples.kt:pending-marks"
+```
+
+A queued write changes the rows a read returns; `hasPendingMutations` on the result or the snapshot
+says whether one did, and each `PendingMutation`'s `rowKeys` say which rows it touches.
 
 ## What it applies
 
+- **The user's queued writes**, in the order they were made: every write in the mutation queue
+  that belongs to the current user, or to no user yet.
+- **Writes a replay pass sent** that the cached list has not seen yet. Such a write stays in the
+  overlay until each cached list of its table has been fetched again after it, then retires. A
+  table keeps at most its newest 1,000 such writes: past that, the oldest go whether or not every
+  list has seen them.
+
+Another user's writes are never laid over your reads.
+
 ## Online writes
+
+A write sent at once and accepted is patched into the cached lists instead: the rows the server
+returned, or the rows sent when it returned none, are laid into every cached list of the table
+that admits them, matched by key and merged with the columns the write sent. A live read with
+nothing cached yet gets a list made of the written rows it admits. A write whose effect the cache
+cannot work out (an UPDATE or DELETE filtered by something it cannot evaluate, an upsert without
+keys, a write to another schema) marks the lists it may reach stale, and their live readers fetch
+again.
+
+An `OnlineOnly` write is not patched in: the list changes when it is fetched again.
 
 ## How rows are matched
 
+| Write | Effect on a cached list |
+| --- | --- |
+| INSERT | Its rows join every list whose filters may admit them, after the list's own rows |
+| UPSERT | Merged into the row with the same `onConflict` columns, or the same key; otherwise joins as an insert |
+| UPDATE | Patches the rows its filter provably matches, and moves a row into or out of a list as its membership changes |
+| DELETE | Removes the rows its filter provably matches |
+
+The library evaluates `eq`, `neq`, `in` and `is`, with Postgres's rules for nulls. Any other
+condition, and any comparison whose answer depends on the column's type, is unknown: unknown
+admits a new row into a list, so your own row is never hidden, and never lets a queued UPDATE or
+DELETE touch a row. A row is recognised by the table's primary key, `id` unless you set another
+with `primaryKey` (see [Configuration](../reference/configuration.md#primarykeys)).
+
 ## Limits
 
-Facts about the engine as it is. Each names the test that pins it.
+Facts about the engine. Each names the test that pins it.
 
 - **Order, limit and pages are not applied.** A queued row is appended after a list's rows, past
   its limit, and shows on every page whose filters admit it. An edited sort column does not move
@@ -58,11 +96,6 @@ Facts about the engine as it is. Each names the test that pins it.
   does not join a list it starts matching after an online update, even when the update asked for
   the row back; the list shows it once it is fetched again.
   <small>`OverlayLimitsTest.an_online_update_of_a_row_no_cached_list_holds_brings_it_into_none`</small>
-- **A list cached by an earlier build admits every row until it is read.** Which rows a list admits
-  is recorded when it is read, from the cache or the server. A list an earlier build cached has no
-  record, so until it is read, an online write, or a record sent from the server, for any list of
-  its table is placed in it, and stays there until the list is fetched again.
-  <small>`QueryShapeRecordsTest.a_query_cached_without_a_shape_admits_every_row_until_it_is_read`</small>
 - **An upsert keys on `id` unless it names its conflict columns.** On a table without an `id`
   column, an upsert without `onConflict` adds a row next to the one it replaces on the server. Name
   the conflict columns.
@@ -72,5 +105,22 @@ Facts about the engine as it is. Each names the test that pins it.
   the server already holds the row, so it shows in the lists it matches even when the server will
   keep it where it is.
   <small>`OverlayLimitsTest.an_ignore_duplicates_upsert_shows_a_row_the_server_may_keep_elsewhere`</small>
+- **Lists cached long ago and never fetched again.** Once a table has 1,000 replayed writes newer
+  than a cached list, that list stops showing the oldest of them, and a row a replayed DELETE
+  removed reappears in it, until the list is fetched again. A list a live reader shows is fetched
+  again when its read starts, so this affects lists that sit unread through 1,000 writes.
 
 ## Tips
+
+- **Make ids, and every column a list decodes, on the device.** A queued row carries only the
+  columns it wrote, until the list is fetched again: a column the server fills in, such as a
+  default `created_at`, is missing from it, and a list that decodes that column into a
+  non-nullable property fails. Write `id` and `created_at` yourself, as the
+  [sample app](../samples/android.md) does.
+- **Ask an online write for its rows back** with `select()`: when it is sent at once, the
+  server's values (defaults, triggers) are patched into the cache with it. A write that waited in
+  the queue does not use them: the list shows the server's values once it is fetched again.
+- **Sort and page in the app** for lists that show your own writes: a queued row is appended past
+  the list's order and limit.
+- **Keep queued rows out of lists that embed or rename columns**, or decode those columns as
+  nullable, since a queued row has neither.
