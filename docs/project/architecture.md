@@ -172,7 +172,7 @@ together, and a change to any of them emits.
 | Case | Meaning |
 | --- | --- |
 | `Idle` | No refresh is running or waiting: the last one succeeded, or the read does not refresh. |
-| `Refreshing` | A refresh is running, or is about to be tried again soon after a failure, or waits for a session that is still settling, which is not a failure. |
+| `Refreshing` | A refresh is running, or is about to be tried again soon after a failure, or waits for a session that is still settling, which is not a failure. Under `AuthenticatedSessionOnly`, a live read of an empty table made signed out or without Auth stays here, retried at most a minute apart, until a user signs in. |
 | `Paused` | The refresh waits for the network, which the library knows to be unavailable. Nothing is failing. |
 | `Stalled(cause)` | The refresh keeps failing; `cause` is the failure that stalled it, and a later, different failure does not replace it. It is still tried, at most a minute apart. |
 
@@ -891,11 +891,15 @@ runs, in order:
 
 **Who a request speaks for.** With Auth, a signed-in session is its user, and a signed-out one the
 anonymous identity. A session that is restoring, or whose refresh failed, is the stored session's
-user for queueing and for the overlay, but is not settled: nothing is sent under it and no response
+user for queueing and for the overlay, but is not settled: no write is sent under it and no response
 it brings is trusted, since its requests carry the anon key. The overlay waits for the stored
-session at most 10 seconds; past that its identity cannot be told, so the cache is not served and a
-read goes to the network instead of waiting on a session store that hangs. Without Auth, or with the app's own
-token provider, every request is the anonymous identity: the engine cannot tell those users apart.
+session at most 10 seconds; past that the identity is untold for that session status, so the cache
+is not served and a read goes out under the restoring session, on the anon key, instead of waiting
+on a session store that hangs. Nothing such a read brings back is cached: a one-shot read waits out
+the restore window (a few seconds) and then returns the anon key's answer uncached, with a warning,
+which under row-level security can hold fewer rows, or none; a live read shows nothing
+(`Refreshing`) until the session settles. Without Auth, or with the app's own token provider, every
+request is the anonymous identity: the engine cannot tell those users apart.
 
 **Ownerless mutations.** Every write the plugin queues records its owner. The queue also accepts a
 write with no owner recorded, which the plugin itself does not make; a pass adopts such writes for a

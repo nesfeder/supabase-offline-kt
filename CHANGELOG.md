@@ -328,7 +328,9 @@ release.
 - A live read fetches again after `clearLocalData()`, as after a change of owner, instead of
   showing the emptied cache until something else fetched; a refresh request made while a read's
   refresh ran is no longer lost.
-- A read made while the stored session restores waits for it at most 10 seconds, then reads from
-  the network instead of waiting on a session store that hangs.
+- A read made while the stored session restores waits for it at most 10 seconds instead of waiting
+  on a session store that hangs. Past that the cache is not served and the read goes out on the anon
+  key: a one-shot read returns that answer uncached, which under row-level security can hold fewer
+  rows, or none, and a live read shows nothing (`Refreshing`) until the session settles.
 - A read the cache cannot answer, made while the connectivity monitor says the network is down, is
   sent once instead of after supabase-kt's retries.
