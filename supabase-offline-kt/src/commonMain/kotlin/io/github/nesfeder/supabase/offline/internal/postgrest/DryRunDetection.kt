@@ -104,7 +104,10 @@ internal class PreferHeaderCapture(val stopsEveryRequest: Boolean = false) :
     /** The key a capture is found under in a coroutine context. */
     companion object Key : CoroutineContext.Key<PreferHeaderCapture>
 
-    /** The `Prefer` header of the request the capture saw, or `null` while it has seen none. */
+    /**
+     * Every `Prefer` value of the request the capture saw, comma-joined, or `null` while it has
+     * seen none.
+     */
     var prefer: String? = null
         private set
 
@@ -120,9 +123,12 @@ internal class PreferHeaderCapture(val stopsEveryRequest: Boolean = false) :
     val requestedRollback: Boolean
         get() = namesRollback(prefer)
 
-    /** Records the `Prefer` header of a request, or `null` when it carried none. */
-    fun record(preferHeader: String?) {
-        prefer = preferHeader
+    /**
+     * Records every `Prefer` value of a request, or `null` when it carried none. supabase-kt sends
+     * its own first and a request's own `headers` after it, so a rollback may be in any of them.
+     */
+    fun record(preferValues: List<String>?) {
+        prefer = preferValues?.joinToString(separator = ",")
         observations++
     }
 }
@@ -136,7 +142,7 @@ internal fun namesRollback(header: String?): Boolean =
  * header says `tx=rollback`, which PostgREST sends only when it honored the preference.
  */
 internal val PostgrestResult.wasRolledBack: Boolean
-    get() = namesRollback(headers[PREFERENCE_APPLIED_HEADER])
+    get() = headers.getAll(PREFERENCE_APPLIED_HEADER).orEmpty().any(::namesRollback)
 
 /** The preference supabase-kt's `dryRun()` writes into the `Prefer` header. */
 private const val TX_ROLLBACK_PREFERENCE = "tx=rollback"
@@ -175,7 +181,7 @@ internal fun SupabaseClient.installDryRunCheck(): Boolean {
     client.requestPipeline.intercept(DryRunCheckPhase) {
         val capture = currentCoroutineContext()[PreferHeaderCapture] ?: return@intercept
         val write = isPostgrestWrite(context)
-        if (write) capture.record(context.headers[PostgrestQueryBuilder.HEADER_PREFER])
+        if (write) capture.record(context.headers.getAll(PostgrestQueryBuilder.HEADER_PREFER))
         if (write || capture.stopsEveryRequest) throw DryRunCheckStop()
     }
     return true
@@ -208,7 +214,10 @@ internal fun SupabaseClient.installCommittedDryRunReport(onCommitted: () -> Unit
         if (
             askedForRollback &&
                 call.response.status.isSuccess() &&
-                !namesRollback(call.response.headers[PREFERENCE_APPLIED_HEADER]) &&
+                call.response.headers
+                    .getAll(PREFERENCE_APPLIED_HEADER)
+                    .orEmpty()
+                    .none(::namesRollback) &&
                 isPostgrestWrite(request)
         )
             onCommitted()
