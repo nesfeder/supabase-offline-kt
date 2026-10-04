@@ -23,7 +23,8 @@ import kotlinx.io.IOException
  * The passes the engine starts on its own are coalesced — at most one runs and one waits, however
  * many are asked for — and wait after a pass that stopped on a failure, doubling up to a cap, so a
  * write the server keeps failing is not sent again for every write queued behind it. A reconnection
- * or a settled session cuts that wait short, and no pass runs while the network is known down.
+ * or a settled session cuts that wait short. No pass runs while network access is off, and while
+ * the monitor says offline one failed attempt is made per offline period.
  */
 class AutomaticReplayTest {
 
@@ -244,30 +245,67 @@ class AutomaticReplayTest {
                     SyncReport(0, emptyList(), 1, stop)
                 }
 
-            // When — writes ask for passes over ten minutes, then the app syncs, then the network
-            // is back
+            // When — a write asks for a pass, which fails; the app syncs at that same moment;
+            // then writes ask for passes over ten minutes, and then the network is back
+            automaticReplay.requestPass()
+            runCurrent()
+            val failedAt = passTimes.single()
+            automaticReplay.allowAnOfflineAttempt()
+            automaticReplay.requestPass()
+            runCurrent()
+            val afterTheAppSynced = passTimes.toList()
             repeat(10) {
                 automaticReplay.requestPass()
                 advanceTimeBy(1.minutes)
             }
             val inTheOfflinePeriod = passTimes.size
-            automaticReplay.allowAnOfflineAttempt()
-            automaticReplay.requestPass()
-            runCurrent()
-            val afterTheAppSynced = passTimes.size
-            advanceTimeBy(1.minutes)
             online = true
             status = NetworkStatus.ONLINE
             val reconnectedAt = testScheduler.currentTime
             automaticReplay.requestPass()
             runCurrent()
 
-            // Then — one attempt in the offline period, one more after the app's sync, and none
-            // of them left a wait: the pass once online ran at once
-            assertEquals(1, inTheOfflinePeriod)
-            assertEquals(2, afterTheAppSynced)
+            // Then — the failure left no wait: the pass the app's sync allowed ran at the
+            // failure's own time. It failed too, so the writes after it made no attempt, and the
+            // pass once online ran at once
+            assertEquals(listOf(failedAt, failedAt), afterTheAppSynced)
+            assertEquals(2, inTheOfflinePeriod)
             assertEquals(reconnectedAt, passTimes.last())
         }
+
+    @Test
+    fun a_pass_run_while_the_monitor_says_online_starts_a_new_offline_period() = runTest {
+        // Given — an attempt failed while the monitor said offline; then it said online and a pass
+        // ran
+        var status = NetworkStatus.OFFLINE
+        var online = false
+        var passes = 0
+        val automaticReplay =
+            AutomaticReplay(
+                scope = backgroundScope,
+                engineLogger = logger,
+                networkStatus = { status },
+            ) {
+                passes++
+                val stop = if (online) null else SyncStop.TransientFailure(IOException("offline"))
+                SyncReport(0, emptyList(), 1, stop)
+            }
+        automaticReplay.requestPass()
+        runCurrent()
+        status = NetworkStatus.ONLINE
+        online = true
+        automaticReplay.requestPass()
+        runCurrent()
+
+        // When — the monitor says offline again and a write asks for a pass
+        status = NetworkStatus.OFFLINE
+        online = false
+        automaticReplay.requestPass()
+        runCurrent()
+
+        // Then — the new offline period had its one attempt
+        assertEquals(3, passes)
+    }
 
     @Test
     fun while_the_monitor_says_offline_passes_that_reach_the_server_keep_running() = runTest {

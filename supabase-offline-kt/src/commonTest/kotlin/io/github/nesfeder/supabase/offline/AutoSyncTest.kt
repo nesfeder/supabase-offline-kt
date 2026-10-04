@@ -338,6 +338,79 @@ class AutoSyncTest {
     }
 
     @Test
+    fun the_monitor_coming_back_with_nothing_queued_still_starts_a_new_offline_period() = runTest {
+        for (autoSync in listOf(true, false)) {
+            // Given — offline: the library's one attempt failed, then the queue was emptied
+            val signal = MutableStateFlow(false)
+            val rig = rig(autoSync = autoSync, signal = signal)
+            failOneAttemptThenEmptyTheQueue(rig)
+
+            // When — the monitor comes back with nothing to send, and goes again, now wrongly
+            signal.value = true
+            settle()
+            signal.value = false
+            settle()
+            queueAWriteTheServerCannotRunYetAndOneBehindIt(rig)
+
+            // Then — the new offline period had its attempt, which sent both
+            assertEquals(0, rig.client.pendingMutationCount(), "autoSync = $autoSync")
+            assertEquals(listOf(3, 3, 4).map { row(it).toString() }, rig.writes.takeLast(3))
+            rig.scope.cancel()
+        }
+    }
+
+    @Test
+    fun the_session_settling_with_nothing_queued_still_starts_a_new_offline_period() = runTest {
+        for (autoSync in listOf(true, false)) {
+            // Given — user A signed in, offline: the library's one attempt failed, then the queue
+            // was emptied
+            val rig = rig(autoSync = autoSync, signal = MutableStateFlow(false), withAuth = true)
+            rig.supabase.signInForTest(USER_A)
+            settle()
+            failOneAttemptThenEmptyTheQueue(rig)
+
+            // When — A's session settles anew with nothing to send, while the monitor still, now
+            // wrongly, says offline
+            rig.supabase.signInForTest(USER_A)
+            settle()
+            queueAWriteTheServerCannotRunYetAndOneBehindIt(rig)
+
+            // Then — the new offline period had its attempt, which sent both
+            assertEquals(0, rig.client.pendingMutationCount(), "autoSync = $autoSync")
+            assertEquals(listOf(3, 3, 4).map { row(it).toString() }, rig.writes.takeLast(3))
+            rig.scope.cancel()
+        }
+    }
+
+    /**
+     * With the monitor saying offline and the server out of reach: a write is queued, the library's
+     * one attempt at it fails, and the queue is emptied by discards, so nothing asks for a pass
+     * afterwards.
+     */
+    private suspend fun TestScope.failOneAttemptThenEmptyTheQueue(rig: Rig) {
+        val first = assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(1)))
+        val second = assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(2)))
+        settle()
+        assertEquals(
+            List(2) { row(1).toString() },
+            rig.writes,
+            "the write's own attempt and the library's one",
+        )
+        rig.client.discardPendingMutation(second.pendingMutation.id)
+        rig.client.discardPendingMutation(first.pendingMutation.id)
+        settle()
+    }
+
+    /** The server cannot run one write now, and answers the one queued behind it. */
+    private suspend fun TestScope.queueAWriteTheServerCannotRunYetAndOneBehindIt(rig: Rig) {
+        rig.server.answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST000") }
+        assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(3)))
+        rig.server.answer = { okJson("[]") }
+        assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(4)))
+        settle()
+    }
+
+    @Test
     fun a_client_without_auth_sends_what_an_earlier_run_left_queued_when_it_opens() = runTest {
         for (autoSync in listOf(true, false)) {
             // Given — a write an earlier run left queued

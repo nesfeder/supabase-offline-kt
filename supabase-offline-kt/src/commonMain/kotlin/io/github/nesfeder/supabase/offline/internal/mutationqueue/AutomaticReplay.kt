@@ -35,8 +35,11 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   pass runs only when something asked for one, and never while network access is off.
  * - **One failed attempt per offline period:** while the monitor says offline a pass still runs,
  *   because a monitor can be wrong; once one fails for want of a connection, no more run, and none
- *   grows the wait, until the monitor stops saying offline, an edge arrives, or the app syncs
- *   ([allowAnOfflineAttempt]). A wrong monitor costs one failed attempt and strands nothing.
+ *   grows the wait, until the network comes back, the session settles or the app syncs (each calls
+ *   [allowAnOfflineAttempt], whether or not it asks for a pass), or a pass runs while the monitor
+ *   does not say offline. A wrong monitor costs nothing while requests reach the server; after one
+ *   fails for want of a connection, queued writes wait for the monitor, the session or the app's
+ *   sync.
  * - **Backed off:** after a pass that stopped on a failure that may pass (a transient failure, or a
  *   write held behind an earlier one), the next pass waits — [initialBackoff], doubling up to
  *   [maxBackoff] — and a pass that ends any other way resets the wait. So a write the server keeps
@@ -100,7 +103,10 @@ internal class AutomaticReplay(
         requestPass()
     }
 
-    /** Lets the next pass asked for while the monitor says offline run: the app synced itself. */
+    /**
+     * Starts a new offline period: the next pass asked for while the monitor says offline runs. The
+     * app's sync, a reconnection and a settled session call it, whether or not a pass follows.
+     */
     fun allowAnOfflineAttempt() {
         offlineAttemptFailed.store(false)
     }

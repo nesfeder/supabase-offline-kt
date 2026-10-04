@@ -342,11 +342,13 @@ server sent, up to an hour. The session settling and the network coming back end
 and start it again from 1 s, but never before a `Retry-After` has passed. No automatic pass runs
 while network access is off. While the monitor says offline, an automatic pass still runs, since a
 monitor can be wrong, until one fails for want of a connection: after that, none runs and none
-grows the wait until the monitor stops saying offline, the session settles anew, or the app syncs.
-So a device that is offline makes one attempt per offline period, and a wrong monitor costs one
-failed attempt and strands nothing. A pass the app asks for goes at once and moves no wait. A trigger's own
-read of the queue that fails asks for a pass anyway, which reads the queue itself, so one failed
-read never turns a trigger off.
+grows the wait until the monitor stops saying offline, the session settles anew, or the app syncs,
+each of which starts a new offline period whether or not a pass is asked for then. So a device
+that is offline makes one attempt per offline period. A wrong monitor costs nothing while requests
+reach the server; after one fails for want of a connection, queued writes wait for the monitor,
+the session or the app's sync. A pass the app asks for goes at once and moves no wait. A trigger's
+own read of the queue that fails asks for a pass anyway, which reads the queue itself, so one
+failed read never turns a trigger off.
 
 ### Status and the network switch
 

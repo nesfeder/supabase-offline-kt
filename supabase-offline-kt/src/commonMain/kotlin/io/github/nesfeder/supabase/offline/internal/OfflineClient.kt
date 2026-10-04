@@ -413,7 +413,7 @@ internal class OfflineClient(
         supabaseClient.installTransportFailureCapture()
         supabaseClient.installCommittedDryRunReport(::reportCommittedDryRunOnce)
         networkAccess.watchIn(clientScope, onReconnected = ::replayAsTheNetworkReturns)
-        if (autoSync) replayWhenTheSessionSettles()
+        replayWhenTheSessionSettles()
         keepCacheWithTheSession()
     }
 
@@ -449,28 +449,32 @@ internal class OfflineClient(
     }
 
     /**
-     * Starts a pass when the session settles into an identity with mutations queued, cutting a
-     * backoff short, in the client's scope so [close] stops it. Every new status counts, as a
-     * sign-out and sign-in it never saw arrive as a new session of the same identity. Not started
-     * with `autoSync` off; see [AutomaticReplay].
+     * As the session settles into an identity, starts a new offline period, and, with `autoSync`
+     * on, a pass when that identity has mutations queued, cutting a backoff short; in the client's
+     * scope so [close] stops it. Every new status counts, as a sign-out and sign-in it never saw
+     * arrive as a new session of the same identity. See [AutomaticReplay].
      */
     private fun replayWhenTheSessionSettles() {
         val auth = authPluginOrNull() ?: return
         clientScope.launch {
             auth.sessionStatus.collect { status ->
                 val identity = replayIdentityFor(status) ?: return@collect
-                requestPassUnlessQueueEmpty(identity, onEdge = true)
+                // Whether or not a pass is asked for now: an emptied queue keeps no old period
+                automaticReplay.allowAnOfflineAttempt()
+                if (autoSync) requestPassUnlessQueueEmpty(identity, onEdge = true)
             }
         }
     }
 
     /**
-     * Starts a pass, as the network becomes reachable again (the monitor, the app's signal, or
-     * [enableNetwork]), when the settled identity has mutations queued, cutting a backoff short. An
-     * identity still settling is left to the session trigger. Does nothing with `autoSync` off; see
-     * [AutomaticReplay].
+     * As the network becomes reachable again (the monitor, the app's signal, or [enableNetwork]),
+     * starts a new offline period, and, with `autoSync` on, a pass when the settled identity has
+     * mutations queued, cutting a backoff short. An identity still settling is left to the session
+     * trigger. See [AutomaticReplay].
      */
     private suspend fun replayAsTheNetworkReturns() {
+        // Whether or not a pass is asked for now: an emptied queue keeps no old period
+        automaticReplay.allowAnOfflineAttempt()
         if (!autoSync) return
         val identity = supabaseClient.currentReplayIdentity() ?: return
         requestPassUnlessQueueEmpty(identity, onEdge = true)

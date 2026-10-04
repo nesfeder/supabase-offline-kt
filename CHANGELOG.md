@@ -271,8 +271,10 @@ release.
 - A reconnection, or the session settling, ends at once the wait a failed pass left before the
   library's next pass, and starts it again from one second; a server's `Retry-After` is still
   waited out. While the monitor says offline, the library makes one failed attempt by itself per
-  offline period and grows no wait, so a wrong monitor strands nothing. With `autoSync` on, a
-  client without Auth sends what an earlier run left queued when it opens. An app's connectivity
+  offline period and grows no wait. A wrong monitor costs nothing while requests reach the server;
+  after one fails for want of a connection, queued writes wait for the monitor, the session or the
+  app's sync. With `autoSync` on, a client without Auth sends what an earlier run left queued when
+  it opens. An app's connectivity
   signal that ends while saying offline counts as unknown, as one that fails does.
 - Keeping the rows `clearLocalData()` deleted out of the database's files is best effort, and
   never holds the clear: it waits at most a second for an open read holding the write-ahead log,
