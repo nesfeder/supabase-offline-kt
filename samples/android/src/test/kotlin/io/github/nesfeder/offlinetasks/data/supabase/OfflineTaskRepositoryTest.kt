@@ -344,8 +344,10 @@ class OfflineTaskRepositoryTest {
         screen.cancelAndJoin()
         release.complete(Unit)
 
-        // Then — the file has its row
-        repository.allPhotos().awaitValue { it.size == 1 }
+        // Then — the file has its row, on the server (a write shows in reads before it is sent)
+        repository.allPhotos().awaitValue { photos ->
+            photos.size == 1 && photos.none { it.hasPendingMutations }
+        }
         assertEquals(1, server.rows(Tables.TASK_PHOTOS).size)
     }
 
