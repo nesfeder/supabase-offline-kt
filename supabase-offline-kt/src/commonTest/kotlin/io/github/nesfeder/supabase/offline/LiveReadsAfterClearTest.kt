@@ -8,8 +8,14 @@ import io.github.nesfeder.supabase.offline.internal.db.LiveReadConsistency.seede
 import io.github.nesfeder.supabase.offline.internal.db.RecordedLiveList
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import kotlin.test.Test
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -67,6 +73,47 @@ class LiveReadsAfterClearTest {
                 }
                 list.stop()
             }
+            client.close()
+        }
+
+    @Test
+    fun a_live_list_fetches_again_after_a_clear_cut_short_while_a_read_holds_the_log() =
+        runTest(timeout = 2.minutes) {
+            // Given — a client whose clear is cancelled while it rewrites the database, with an
+            // open read holding the log, so the rewrite leaves work for later
+            val heldServer = seededServer("a" to "Milk")
+            val clear = CompletableDeferred<Job>()
+            val heldClient =
+                newTestOfflineClient(
+                    supabase = heldServer.supabaseClient(),
+                    nowMillis = { Clock.System.now().toEpochMilliseconds() },
+                    scrubDatabase = {
+                        clear.await().cancel()
+                        false
+                    },
+                    emptyWriteAheadLog = { false },
+                )
+            onRealThreads {
+                // And — a live list showing the server's rows, then a row only the server has
+                val list = RecordedLiveList(heldClient, LiveReadConsistency.TABLE)
+                list.await { seen -> seen.titles == listOf("Milk") && !seen.isFromCache }
+                heldServer.seed(LiveReadConsistency.TABLE, row("b", "Eggs"))
+
+                // When — local data is cleared, and the clear's caller is cancelled
+                val job =
+                    launch(Dispatchers.Default, start = CoroutineStart.LAZY) {
+                        heldClient.clearLocalData()
+                    }
+                clear.complete(job)
+                job.start()
+                job.join()
+
+                // Then — the clear was cut short, and the list still asks the server again
+                assertTrue(job.isCancelled)
+                list.await { seen -> seen.titles == listOf("Milk", "Eggs") && !seen.isFromCache }
+                list.stop()
+            }
+            heldClient.close()
             client.close()
         }
 

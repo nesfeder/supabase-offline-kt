@@ -1014,11 +1014,11 @@ internal class OfflineClient(
                 }
             }
         } finally {
+            // To a live read the clear, done or cut short, is what a change of owner is: it
+            // fetches again. Asked first, as finishing the rewrite rethrows a cancellation
+            liveQueries.liveTables().forEach { table -> liveQueries.requestRefresh(table) }
             // Cancelled too: what the rewrite left goes to the background
             databaseScrub.finishSoon()
-            // To a live read the clear, done or cut short, is what a change of owner is: it
-            // fetches again
-            liveQueries.liveTables().forEach { table -> liveQueries.requestRefresh(table) }
         }
         // The writes an earlier failure held back are gone with it
         publishStatus { status -> status.copy(lastSyncError = null) }
