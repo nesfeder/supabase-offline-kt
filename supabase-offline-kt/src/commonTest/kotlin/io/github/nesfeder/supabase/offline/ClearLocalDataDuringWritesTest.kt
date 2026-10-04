@@ -111,7 +111,7 @@ class ClearLocalDataDuringWritesTest {
 
             // When — the cache is cleared, the next user's first read lands, then the old response
             client.clearLocalData()
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = TABLE,
                 cacheKey = CACHE_KEY,
                 payload = "[]",

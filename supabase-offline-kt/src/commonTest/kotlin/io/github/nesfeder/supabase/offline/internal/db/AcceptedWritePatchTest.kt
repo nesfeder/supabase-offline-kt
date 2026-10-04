@@ -60,7 +60,9 @@ class AcceptedWritePatchTest {
                     filter { eq("list", "A") }
                 },
             )
-        val writer = launch { store.addPayload(TASKS, LIST_A, LIST_A_ROWS, shape = listA) }
+        val writer = launch {
+            store.queryCache.cacheResponse(TASKS, LIST_A, LIST_A_ROWS, shape = listA)
+        }
         reached.await()
 
         // When — an accepted insert of a row of list B waits on the lock, and the lock's release

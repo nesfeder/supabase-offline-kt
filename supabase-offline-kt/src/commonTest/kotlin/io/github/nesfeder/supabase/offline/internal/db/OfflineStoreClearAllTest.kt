@@ -29,7 +29,7 @@ class OfflineStoreClearAllTest {
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
         val store = buildStore(queryCacheDao, mutationDao)
-        store.addPayload("reports", "sig-A", """[{"id":"i-1","user_id":"u-1"}]""")
+        store.queryCache.cacheResponse("reports", "sig-A", """[{"id":"i-1","user_id":"u-1"}]""")
         store.enqueueInsert(table = "projects", body = JsonArray(emptyList()))
         assertTrue(queryCacheDao.getRow("reports", "sig-A") != null, "precondition: payload seeded")
         assertTrue(mutationDao.inserted.isNotEmpty(), "precondition: mutation queued")

@@ -50,7 +50,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then the cache is back within the limit
         assertTrue(queryCacheDao.totalPayloadBytes() <= 250L, "cache should be within the limit")
@@ -76,7 +76,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs it must return rather than spin
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then the progress guard stopped it after the first zero-row delete batch
         assertEquals(1, queryCacheDao.deleteCallCount, "should stop after one empty delete batch")
@@ -98,7 +98,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs it must still terminate
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then the loop was bounded by the hard iteration cap (belt-and-braces backstop)
         assertEquals(
@@ -121,7 +121,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then nothing is deleted: eviction starts only above the limit
         assertEquals(0, queryCacheDao.deleteCallCount)
@@ -149,7 +149,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then the oversized evictionHeadroomBytes headroom coerced to a no-op and eviction still
         // ran
@@ -185,7 +185,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs after the cache crosses the ceiling
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then eviction continues past the ceiling down to the hysteresis floor (ceiling minus
         // headroom), not merely to the ceiling — so subsequent writes don't immediately
@@ -226,7 +226,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then nothing is measured or evicted
         assertEquals(0, queryCacheDao.deleteCallCount)
@@ -246,7 +246,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When a payload large enough to otherwise trigger enforcement is written
-        store.addPayload("ratings", "sig", "x".repeat(8_192))
+        store.queryCache.cacheResponse("ratings", "sig", "x".repeat(8_192))
 
         // Then enforcement was skipped entirely (kept off the hot path)
         assertEquals(0, queryCacheDao.deleteCallCount)
@@ -263,10 +263,10 @@ class OfflineStoreEvictionTest {
                 evictionBatchSize = 1,
                 nowMillis = incrementingClock(),
             )
-        store.addPayload("ratings", "old", "x".repeat(800))
+        store.queryCache.cacheResponse("ratings", "old", "x".repeat(800))
 
         // When a large payload pushes the cache over the limit
-        store.addPayload("ratings", "new", "x".repeat(9_000))
+        store.queryCache.cacheResponse("ratings", "new", "x".repeat(9_000))
 
         // Then the large write's enforcement evicted the older entry, keeping the newest
         assertTrue(queryCacheDao.totalPayloadBytes() <= 9_500L)
@@ -297,11 +297,11 @@ class OfflineStoreEvictionTest {
             )
 
         // When 31 small writes arrive, the periodic backstop has not yet fired
-        repeat(31) { index -> store.addPayload("ratings", "small-$index", "x") }
+        repeat(31) { index -> store.queryCache.cacheResponse("ratings", "small-$index", "x") }
         assertEquals(0, queryCacheDao.deleteCallCount, "no enforcement before the write interval")
 
         // When the 32nd write arrives, the rolling counter reaches the interval
-        store.addPayload("ratings", "small-31", "x")
+        store.queryCache.cacheResponse("ratings", "small-31", "x")
 
         // Then the periodic backstop triggered an eviction pass off the per-write hot path
         assertTrue(queryCacheDao.deleteCallCount >= 1, "enforcement should fire on the 32nd write")
@@ -327,7 +327,7 @@ class OfflineStoreEvictionTest {
             )
 
         // When enforcement runs
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then the batch size is coerced to at least one row so eviction still drains to the
         // limit instead of stalling (a zero-row batch would trip the progress guard immediately
@@ -358,7 +358,7 @@ class OfflineStoreEvictionTest {
         val writers =
             List(50) { index ->
                 launch {
-                    store.addPayload("ratings", "sig-$index", "x".repeat(4_096))
+                    store.queryCache.cacheResponse("ratings", "sig-$index", "x".repeat(4_096))
                 }
             }
         writers.forEach { writer -> writer.join() }

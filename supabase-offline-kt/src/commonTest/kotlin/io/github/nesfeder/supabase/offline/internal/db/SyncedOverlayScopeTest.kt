@@ -50,7 +50,7 @@ class SyncedOverlayScopeTest {
         tick = 30L
         val started = store.freshness.tickNow()
         tick = 40L
-        store.addPayload(
+        store.queryCache.cacheResponse(
             TABLE,
             ALL,
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
@@ -83,7 +83,7 @@ class SyncedOverlayScopeTest {
         tick = 30L
         val started = store.freshness.tickNow()
         tick = 40L
-        store.addPayload(
+        store.queryCache.cacheResponse(
             TABLE,
             ALL,
             """[{"id":"a","list_id":"L","title":"C"}]""",
@@ -120,7 +120,7 @@ class SyncedOverlayScopeTest {
             tick = 30L
             val started = store.freshness.tickNow()
             tick = 40L
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 TABLE,
                 ALL,
                 """[{"id":"a","list_id":"L","title":"C"}]""",
@@ -175,7 +175,7 @@ class SyncedOverlayScopeTest {
         // When — the query refreshes after the replay
         tick = 50L
         val started = store.freshness.tickNow()
-        store.addPayload(
+        store.queryCache.cacheResponse(
             TABLE,
             LIST_L,
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
@@ -222,7 +222,7 @@ class SyncedOverlayScopeTest {
         tick = 30L
         val started = store.freshness.tickNow()
         tick = 40L
-        store.addPayload(
+        store.queryCache.cacheResponse(
             TABLE,
             ALL,
             """[{"id":"a","title":"C"},{"id":"srv","title":"keyless"}]""",

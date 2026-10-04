@@ -66,7 +66,7 @@ class ReservedRowsTest {
                 .length
 
         // When
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then — the cache row went; the reserved rows stayed and never counted towards the size
         assertNull(queryCacheDao.getRow("todos", "todos"))
@@ -83,7 +83,12 @@ class ReservedRowsTest {
 
         // When / Then — no read path serves them, even asked for them by name
         assertNull(store.getPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
-        assertNull(store.getPayloadWithTimestamp(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
+        assertNull(
+            store.queryCache.getPayloadWithTimestamp(
+                RESERVED_TABLE_NAME,
+                REJECTED_MUTATIONS_CACHE_KEY,
+            )
+        )
         assertNull(store.observePayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY).first())
         assertNull(
             store.overlaidPayloadFlow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY).first()
@@ -111,7 +116,7 @@ class ReservedRowsTest {
         }
         assertFailsWith<IllegalArgumentException> { store.clearTable(RESERVED_TABLE_NAME) }
         assertFailsWith<IllegalArgumentException> {
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 RESERVED_TABLE_NAME,
                 REJECTED_MUTATIONS_CACHE_KEY,
                 "[]",

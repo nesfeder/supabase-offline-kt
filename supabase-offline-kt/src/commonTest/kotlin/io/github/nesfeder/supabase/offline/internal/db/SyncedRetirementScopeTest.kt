@@ -47,7 +47,7 @@ class SyncedRetirementScopeTest {
         tick = 30L
         val requestStartedAtTick = store.freshness.tickNow()
         tick = 40L
-        store.addPayload(
+        store.queryCache.cacheResponse(
             table = TABLE,
             cacheKey = ALL,
             payload = """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
@@ -75,7 +75,7 @@ class SyncedRetirementScopeTest {
             tick += 10
             val requestStartedAtTick = store.freshness.tickNow()
             tick += 10
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = TABLE,
                 cacheKey = cacheKey,
                 payload = """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",

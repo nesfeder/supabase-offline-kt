@@ -36,7 +36,7 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun addAndGetPayload_roundTrip() = runTest {
         // Given
-        store.addPayload(TABLE, CACHE_KEY, PAYLOAD)
+        store.queryCache.cacheResponse(TABLE, CACHE_KEY, PAYLOAD)
 
         // When
         val payload = store.getPayload(TABLE, CACHE_KEY)
@@ -49,10 +49,10 @@ class OfflineStoreQueueAndCacheTest {
     fun getPayloadWithTimestamp_returnsCorrectValues() = runTest {
         // Given
         clock = 42L
-        store.addPayload(TABLE, CACHE_KEY, PAYLOAD)
+        store.queryCache.cacheResponse(TABLE, CACHE_KEY, PAYLOAD)
 
         // When
-        val stored = store.getPayloadWithTimestamp(TABLE, CACHE_KEY)
+        val stored = store.queryCache.getPayloadWithTimestamp(TABLE, CACHE_KEY)
 
         // Then
         assertEquals(PAYLOAD to 42L, stored)
@@ -63,7 +63,7 @@ class OfflineStoreQueueAndCacheTest {
         // Given — nothing cached
 
         // When
-        val stored = store.getPayloadWithTimestamp(TABLE, CACHE_KEY)
+        val stored = store.queryCache.getPayloadWithTimestamp(TABLE, CACHE_KEY)
 
         // Then
         assertNull(stored)
@@ -72,9 +72,9 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun clearTable_removesPayloads() = runTest {
         // Given
-        store.addPayload(TABLE, CACHE_KEY, PAYLOAD)
-        store.addPayload(TABLE, OTHER_CACHE_KEY, PAYLOAD)
-        store.addPayload(OTHER_TABLE, CACHE_KEY, PAYLOAD)
+        store.queryCache.cacheResponse(TABLE, CACHE_KEY, PAYLOAD)
+        store.queryCache.cacheResponse(TABLE, OTHER_CACHE_KEY, PAYLOAD)
+        store.queryCache.cacheResponse(OTHER_TABLE, CACHE_KEY, PAYLOAD)
 
         // When
         store.clearTable(TABLE)
@@ -88,8 +88,8 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun deleteTablePayload_removesOnlyMatchingSignature() = runTest {
         // Given
-        store.addPayload(TABLE, CACHE_KEY, PAYLOAD)
-        store.addPayload(TABLE, OTHER_CACHE_KEY, PAYLOAD)
+        store.queryCache.cacheResponse(TABLE, CACHE_KEY, PAYLOAD)
+        store.queryCache.cacheResponse(TABLE, OTHER_CACHE_KEY, PAYLOAD)
 
         // When
         store.deleteTablePayload(TABLE, CACHE_KEY)
@@ -109,7 +109,7 @@ class OfflineStoreQueueAndCacheTest {
             }
 
             // When
-            store.addPayload(TABLE, CACHE_KEY, PAYLOAD)
+            store.queryCache.cacheResponse(TABLE, CACHE_KEY, PAYLOAD)
             collector.cancel()
 
             // Then

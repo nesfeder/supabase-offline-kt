@@ -34,7 +34,7 @@ class QueueChangesReachLiveReadersTest {
     fun a_rejected_write_leaves_a_live_reader() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a reader showing a queued write
-            store.addPayload(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            store.queryCache.cacheResponse(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
             val shown = startReader(CACHE_KEY)
             val id = store.enqueueInsert(TABLE, rows("""[{"id":2,"title":"queued"}]"""))
             assertEquals("""[{"id":1,"title":"server"},{"id":2,"title":"queued"}]""", shown.value)
@@ -54,7 +54,7 @@ class QueueChangesReachLiveReadersTest {
     fun a_retried_rejection_returns_to_a_live_reader() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a rejected write, and a reader showing the table without it
-            store.addPayload(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            store.queryCache.cacheResponse(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
             val id = store.enqueueInsert(TABLE, rows("""[{"id":2,"title":"queued"}]"""))
             store.rejectMutation(
                 store.allPendingMutations().single { it.id == id },
@@ -75,15 +75,20 @@ class QueueChangesReachLiveReadersTest {
     fun a_replayed_keyless_insert_shows_once_after_its_query_refreshes() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a reader showing a keyless INSERT; a second cached query keeps it after sync
-            store.addPayload(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
-            store.addPayload(TABLE, OTHER_CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            store.queryCache.cacheResponse(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            store.queryCache.cacheResponse(
+                TABLE,
+                OTHER_CACHE_KEY,
+                SERVER_ROWS,
+                authoritativeEmpty = true,
+            )
             val shown = startReader(CACHE_KEY)
             val id = store.enqueueInsert(TABLE, rows("""[{"title":"keyless"}]"""))
             assertEquals("""[{"id":1,"title":"server"},{"title":"keyless"}]""", shown.value)
 
             // When — it replays, and a refresh started after the replay brings its row back
             store.markMutationSynced(id, TABLE)
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 TABLE,
                 CACHE_KEY,
                 """[{"id":1,"title":"server"},{"id":9,"title":"keyless"}]""",
@@ -99,7 +104,7 @@ class QueueChangesReachLiveReadersTest {
     fun a_clear_takes_the_queued_write_from_a_live_reader() =
         runTest(UnconfinedTestDispatcher()) {
             // Given — a reader showing a queued write
-            store.addPayload(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
+            store.queryCache.cacheResponse(TABLE, CACHE_KEY, SERVER_ROWS, authoritativeEmpty = true)
             val shown = startReader(CACHE_KEY)
             store.enqueueInsert(TABLE, rows("""[{"id":2,"title":"queued"}]"""))
             assertEquals("""[{"id":1,"title":"server"},{"id":2,"title":"queued"}]""", shown.value)

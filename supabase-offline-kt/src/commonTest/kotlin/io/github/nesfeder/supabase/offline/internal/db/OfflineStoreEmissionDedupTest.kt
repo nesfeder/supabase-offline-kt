@@ -44,13 +44,21 @@ class OfflineStoreEmissionDedupTest {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
             now = 1L
-            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_ONE_ROW)
+            store.queryCache.cacheResponse(
+                table = "ratings",
+                cacheKey = "sig-A",
+                payload = PAYLOAD_ONE_ROW,
+            )
             val emissionsAfterFirstWrite = emissions.size
 
             // When — a background refresh rewrites the byte-identical payload with a fresh
             // timestamp
             now = 2L
-            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_ONE_ROW)
+            store.queryCache.cacheResponse(
+                table = "ratings",
+                cacheKey = "sig-A",
+                payload = PAYLOAD_ONE_ROW,
+            )
 
             // Then — the rewrite is invisible downstream: no new emission, so no re-decode fan-out
             assertEquals(
@@ -70,7 +78,11 @@ class OfflineStoreEmissionDedupTest {
             val collector = launch {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
-            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_ONE_ROW)
+            store.queryCache.cacheResponse(
+                table = "ratings",
+                cacheKey = "sig-A",
+                payload = PAYLOAD_ONE_ROW,
+            )
             val emissionsBeforeUnrelatedWrite = emissions.size
 
             // When — a mutation is queued for a different table (the mutation queue is one shared
@@ -108,11 +120,19 @@ class OfflineStoreEmissionDedupTest {
                 store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
             }
             now = 1L
-            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_ONE_ROW)
+            store.queryCache.cacheResponse(
+                table = "ratings",
+                cacheKey = "sig-A",
+                payload = PAYLOAD_ONE_ROW,
+            )
 
             // When — a refresh writes a genuinely different payload
             now = 2L
-            store.addPayload(table = "ratings", cacheKey = "sig-A", payload = PAYLOAD_TWO_ROWS)
+            store.queryCache.cacheResponse(
+                table = "ratings",
+                cacheKey = "sig-A",
+                payload = PAYLOAD_TWO_ROWS,
+            )
 
             // Then — the change propagates and the latest emission carries the new payload
             assertEquals(

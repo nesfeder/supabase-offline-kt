@@ -58,7 +58,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // And — the in-flight refresh's pre-insert response finally lands
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = oneProject,
@@ -88,7 +88,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // And — the pre-insert `[]` lands afterwards
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = "[]",
@@ -118,7 +118,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = bothProjects,
@@ -146,7 +146,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = "[]",
@@ -174,7 +174,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // When — a refresh lands
         tick = 20L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = bothProjects,
@@ -198,7 +198,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // When — an auth-ready refresh reports the rows are gone
         tick = 20L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = "[]",
@@ -223,7 +223,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // When — a caller with no request behind it writes a payload (no tick to compare)
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = oneProject,
@@ -249,7 +249,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // When — the `plans` refresh lands after the unrelated `projects` write
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "plans",
                 cacheKey = "sig-P",
                 payload = """[{"id":"plan-2"}]""",
@@ -280,7 +280,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // And — the refresh that was already in flight returns the pre-replay server state
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = oneProject,
@@ -309,7 +309,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // And — the refresh that was still in flight delivers the outgoing user's rows
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = bothProjects,
@@ -336,7 +336,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = oneProject,
@@ -363,7 +363,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         // When — that response is accepted (no watermark yet, so nothing disqualifies it)
         tick = 15L
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
                 payload = oneProject,
@@ -399,7 +399,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         tick = 20L
         val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L
-        store.addPayload(
+        store.queryCache.cacheResponse(
             table = "projects",
             cacheKey = "sig-A",
             payload = bothProjects,

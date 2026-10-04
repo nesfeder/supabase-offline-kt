@@ -150,7 +150,7 @@ class QueryShapeRecordsTest {
         }
 
         // When
-        val shape = store.queryShapes.shapeOf(TABLE, "$TABLE?list_id=eq.A&note=eq.x")
+        val shape = store.queryCache.queryShapes.shapeOf(TABLE, "$TABLE?list_id=eq.A&note=eq.x")
 
         // Then — unknown, so that key's rows are never judged by the wrong query's filters
         assertEquals(null, shape)
@@ -173,7 +173,7 @@ class QueryShapeRecordsTest {
         client
             .from(TABLE)
             .select(readStrategy = ReadStrategy.NetworkOnly, request = list("BBBBBBBBBBBBBB"))
-        store.evictOverBudget()
+        store.queryCache.evictOverBudget()
 
         // Then — one payload, and one shape record, for it
         val payloads = queryCacheDao.rowsOf(TABLE).map { row -> row.cacheKey }

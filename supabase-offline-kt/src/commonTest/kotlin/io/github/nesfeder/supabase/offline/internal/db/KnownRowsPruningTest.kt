@@ -214,7 +214,12 @@ class KnownRowsPruningTest {
         queries
             .filter { query -> query.shaped }
             .forEach { query ->
-                store.queryShapes.remember(TABLE, query.cacheKey, shapeOf(query), persist = false)
+                store.queryCache.queryShapes.remember(
+                    TABLE,
+                    query.cacheKey,
+                    shapeOf(query),
+                    persist = false,
+                )
             }
         return cached
             .mapIndexed { position, query ->
@@ -798,7 +803,7 @@ class KnownRowsPruningTest {
         lists.forEach { (cacheKey, payload, updatedAt) ->
             queryCacheDao.seedPayload(TABLE, cacheKey, payload, updatedAt)
             val query = queriesFor(Keys.INT).single { query -> query.cacheKey == cacheKey }
-            store.queryShapes.remember(TABLE, cacheKey, shapeOf(query), persist = false)
+            store.queryCache.queryShapes.remember(TABLE, cacheKey, shapeOf(query), persist = false)
         }
         return store to queryCacheDao
     }
@@ -856,7 +861,7 @@ class KnownRowsPruningTest {
                 ),
                 Triple("list-b", LIST_B, NOW - 4_000),
             )
-        store.queryShapes.remember(
+        store.queryCache.queryShapes.remember(
             TABLE,
             "everything",
             shapeOf(queriesFor(Keys.INT).single { query -> query.cacheKey == "everything" }),
@@ -869,7 +874,7 @@ class KnownRowsPruningTest {
         val first = store.overlayCachedPayload(TABLE, "list-b", LIST_B)
 
         // When — a newer fetch of every row lands, holding row 5 as it is now
-        store.addPayload(
+        store.queryCache.cacheResponse(
             TABLE,
             "everything",
             """[{"id":5,"list":"A","title":"newest","code":"c5"}]""",
@@ -1029,7 +1034,7 @@ class KnownRowsPruningTest {
             store.onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys }
             queries.entries.forEachIndexed { position, (cacheKey, conditions) ->
                 val shape = QueryShape("*", conditions, hasOtherFilters = false)
-                store.queryShapes.remember(TABLE, cacheKey, shape, persist = false)
+                store.queryCache.queryShapes.remember(TABLE, cacheKey, shape, persist = false)
                 val answer = server.filter { row -> conditions.all { truth(row, it) } }
                 queryCacheDao.seedPayload(
                     TABLE,

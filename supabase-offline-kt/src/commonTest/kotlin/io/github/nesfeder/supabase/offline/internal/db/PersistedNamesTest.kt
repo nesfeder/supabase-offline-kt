@@ -73,15 +73,21 @@ class PersistedNamesTest {
                 conditions = listOf(FilterDescriptor.Condition("done", "eq", "false")),
                 hasOtherFilters = false,
             )
-        store.addPayload(
+        store.queryCache.cacheResponse(
             "todos",
             "todos?done=eq.false",
             "[]",
             authoritativeEmpty = true,
             shape = shape,
         )
-        store.addPayload("todos", "todos?shared", "[]", authoritativeEmpty = true, shape = shape)
-        store.addPayload(
+        store.queryCache.cacheResponse(
+            "todos",
+            "todos?shared",
+            "[]",
+            authoritativeEmpty = true,
+            shape = shape,
+        )
+        store.queryCache.cacheResponse(
             "todos",
             "todos?shared",
             "[]",
@@ -219,7 +225,7 @@ class PersistedNamesTest {
         store.markMutationSynced(id = 2, table = "todos")
 
         // When
-        store.addPayload(
+        store.queryCache.cacheResponse(
             "todos",
             "todos?id=eq.1",
             """[{"id":1}]""",

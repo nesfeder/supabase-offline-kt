@@ -78,7 +78,7 @@ class OfflineStoreCacheOwnerTest {
         // Then — the cache is B's and empty; the queue and its records are as they were
         assertEquals(emptyList(), queryCacheDao.rowsOf(TABLE))
         assertEquals(emptyList(), cachedFileDao.all())
-        assertNull(store.queryShapes.shapeOf(TABLE, CACHE_KEY))
+        assertNull(store.queryCache.queryShapes.shapeOf(TABLE, CACHE_KEY))
         assertEquals(1, mutationDao.inserted.size)
         assertEquals(
             queueRowsBefore.map { row -> row.cacheKey } + CACHE_OWNER_CACHE_KEY,
@@ -97,7 +97,12 @@ class OfflineStoreCacheOwnerTest {
 
             // When
             val outcome =
-                store.addPayload(TABLE, CACHE_KEY, ROWS, requestStartedAtTick = startedAtTick)
+                store.queryCache.cacheResponse(
+                    TABLE,
+                    CACHE_KEY,
+                    ROWS,
+                    requestStartedAtTick = startedAtTick,
+                )
             val enqueued =
                 store.enqueueOwnedBy(USER_A, startedAtTick) {
                     enqueueInsert(table = TABLE, body = Json.parseToJsonElement(ROWS) as JsonArray)
@@ -119,7 +124,7 @@ class OfflineStoreCacheOwnerTest {
 
         // When
         val read = store.getPayload(TABLE, CACHE_KEY)
-        val written = store.addPayload(TABLE, CACHE_KEY, OTHER_ROWS)
+        val written = store.queryCache.cacheResponse(TABLE, CACHE_KEY, OTHER_ROWS)
 
         // Then — neither, and the client was told
         assertNull(read)
@@ -141,7 +146,7 @@ class OfflineStoreCacheOwnerTest {
         assertNull(recordedOwner())
 
         // When — A writes into it
-        store.addPayload(TABLE, CACHE_KEY, OTHER_ROWS)
+        store.queryCache.cacheResponse(TABLE, CACHE_KEY, OTHER_ROWS)
 
         // Then — claimed before the write
         assertEquals(ownerRecordOf(USER_A), recordedOwner())
@@ -156,7 +161,7 @@ class OfflineStoreCacheOwnerTest {
 
         // When
         val read = store.getPayload(TABLE, CACHE_KEY)
-        val written = store.addPayload(TABLE, CACHE_KEY, OTHER_ROWS)
+        val written = store.queryCache.cacheResponse(TABLE, CACHE_KEY, OTHER_ROWS)
 
         // Then — it may be a user's; the settled session drops it first
         assertNull(read)
@@ -170,7 +175,7 @@ class OfflineStoreCacheOwnerTest {
         identity = QueueIdentity.Anonymous.storedValue
 
         // When
-        val written = store.addPayload(TABLE, CACHE_KEY, ROWS)
+        val written = store.queryCache.cacheResponse(TABLE, CACHE_KEY, ROWS)
 
         // Then — claimed, and written: no earlier user's rows are there to protect
         assertEquals(CacheWriteOutcome.WRITTEN, written)
@@ -259,7 +264,10 @@ class OfflineStoreCacheOwnerTest {
 
             // When / Then — served whoever owns it, never dropped
             assertEquals(ROWS, store.getPayload(TABLE, CACHE_KEY))
-            assertEquals(CacheWriteOutcome.WRITTEN, store.addPayload(TABLE, CACHE_KEY, OTHER_ROWS))
+            assertEquals(
+                CacheWriteOutcome.WRITTEN,
+                store.queryCache.cacheResponse(TABLE, CACHE_KEY, OTHER_ROWS),
+            )
             assertNotNull(queryCacheDao.getRow(TABLE, CACHE_KEY))
             assertEquals(0, notServed)
         }

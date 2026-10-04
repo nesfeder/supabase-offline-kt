@@ -99,7 +99,7 @@ class OfflineStoreConcurrentWriteTest {
         tick = 20L
         val requestStartedAtTick = store.freshness.tickNow()
         val refresh = launch {
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "ratings",
                 cacheKey = "sig-A",
                 payload = ratingsPayload(1, 2, 9),
