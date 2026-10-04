@@ -58,8 +58,8 @@ public class NetworkDisabledException internal constructor(message: String) :
 /**
  * Why a sync pass stopped with writes still queued, as [SyncStatus.lastSyncError] reports it: the
  * network could not be reached, the server answered with a failure that may pass (a `5xx`, `408`,
- * `429` or `401`, or a refusal held behind an earlier write), or a local failure stopped it. The
- * writes stay queued and are sent by a later pass.
+ * `429` or `401`, or PostgREST's schema cache not yet knowing the table or a column), or a local
+ * failure stopped it. The writes stay queued and are sent by a later pass.
  *
  * The library builds it from what stopped the pass and keeps nothing else of that failure, whose
  * message may carry a row, a filter value or a token. [isNetworkOrConnectivityFailure] is `true`
