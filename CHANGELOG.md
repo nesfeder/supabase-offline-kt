@@ -84,7 +84,12 @@ release.
 
 ### Added
 
-- Built and tested against supabase-kt 3.8 (`supabase-bom` in the version catalog). Each minor
+- Built and tested against supabase-kt 3.6 (`supabase-bom` in the version catalog), with Ktor
+  3.4.3 and kotlinx.coroutines 1.10.2, the versions it was released with. Not 3.8: supabase-kt
+  3.7.0 and 3.8.0 carry a Realtime crash and a protocol-V2 leave defect, fixed upstream but not yet
+  released, and this library's pin sets an app's Realtime too; it moves to the first release with
+  both fixes. On 3.6 there is no `dryRun()`, `maybeSingle()`, `isdistinct` filter or `purgeCache`,
+  and Storage object names with `%`, `?` or `#` fail (see the compatibility page). Each minor
   release of this library names exactly one supabase-kt minor: the artifact compiles supabase-kt's
   inline functions into itself and implements its `BucketApi`, which gains members in minor
   releases, so a range cannot be promised. When an app resolves another supabase-kt minor, the
@@ -208,8 +213,8 @@ release.
   refreshes is never cached.
 - With the Auth plugin, the cached rows and cached files belong to one identity at a time: when the
   session settles into another, they are dropped. Queued mutations are kept for their owners.
-- `single()`, `maybeSingle()`, `head`, counts (a list with a count included), `csv()`, `geojson()`,
-  `stripNulls()` and `explain()` are never cached: they go to the network, and under `CacheOnly`
+- `single()`, `maybeSingle()` (from supabase-kt 3.8), `head`, counts (a list with a count
+  included), `csv()`, `geojson()`, `stripNulls()` and `explain()` are never cached: they go to the network, and under `CacheOnly`
   throw `CacheMissException` without sending anything.
 - A table in another schema is cached apart. A write to it with the default strategy is sent at
   once and never queued; offline it throws `MutationNotQueueableException`.

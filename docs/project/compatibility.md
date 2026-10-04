@@ -92,12 +92,44 @@ different supabase-kt minor can fail at runtime even when your app compiles.
 
 | supabase-offline-kt | supabase-kt |
 | --- | --- |
-| Unreleased | 3.8.0 |
+| Unreleased | 3.6.0 |
 
 Each release renames the `Unreleased` row to its version, and the release workflow refuses a
 version without its row. Moving to a new supabase-kt minor is a minor release of
 supabase-offline-kt, even when nothing else changes, because it changes which supabase-kt your app
 must use. A supabase-kt patch can arrive in a patch release.
+
+### Why 3.6, not 3.8
+
+supabase-kt 3.7.0 and 3.8.0 carry two Realtime defects:
+
+- A heartbeat tick can race `disconnect()` and throw from a coroutine with no handler, which ends
+  the app's process.
+- Under protocol V2, a channel leaves without its `join_ref`, so subscribing again on the same
+  socket can stop the new channel.
+
+Both fixes are merged upstream and not yet released. This library never uses Realtime, but it
+declares supabase-kt through its BOM, so its pin sets an app's whole supabase-kt, Realtime
+included. The pin moves to the first supabase-kt release that contains both fixes. Ktor and
+kotlinx.coroutines are held at the versions supabase-kt 3.6.0 was released with (3.4.3 and
+1.10.2), so adopting the library does not move your app past them.
+
+**What an app on supabase-kt 3.6 does not have.**
+
+- supabase-kt 3.8 API: `dryRun()`, `maybeSingle()`, the `isdistinct` filter operator
+  (`FilterOperator.ISDISTINCT`), and `purgeCache` / `purgeBucketCache`.
+- Storage object names containing `%`, `?` or `#`. supabase-kt 3.6.0 itself puts the name in the
+  URL unencoded: a `%` fails the request, and a `?` or `#` cuts the path short. Keep such
+  characters out of object names until the pin moves.
+
+**An app that asks for supabase-kt 3.7 or 3.8 itself** gets it: Gradle picks the higher version,
+so the library's pin is a floor, not a ceiling.
+
+- The plugin logs one warning when it is installed, naming both versions.
+- `purgeCache` called on a bucket from `supabase.offline.storage` fails, on Android as an
+  `AbstractMethodError` when it is called, and on iOS as an `IrLinkageError`. The library was
+  built against a `BucketApi` without that member.
+- Call `purgeCache` on supabase-kt's own bucket instead (`supabase.storage.from(…)`).
 
 Every Monday a scheduled job looks for a newer supabase-kt minor, builds this library against it,
 runs its Android host tests, and reports the result in one issue labelled

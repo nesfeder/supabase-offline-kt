@@ -468,9 +468,9 @@ because coercion would change what the overlay decodes.
 
 ### Telling a dry run from a write
 
-supabase-kt keeps `dryRun()` private and records it nowhere but the request's `Prefer` header, as
-`tx=rollback`. The mutation queue does not keep that header, so a dry run that was queued would
-replay as a real write. Before a write can be queued, the engine therefore builds its request and
+A dry run is a write whose `Prefer` header carries `tx=rollback`. supabase-kt 3.8's `dryRun()` is
+recorded nowhere else (supabase-kt 3.6, which the library pins, has no `dryRun()`). The mutation
+queue does not keep that header, so a dry run that was queued would replay as a real write. Before a write can be queued, the engine therefore builds its request and
 reads the header: the write runs under a `PreferHeaderCapture` coroutine-context element, and a
 request-pipeline phase installed ahead of every plugin (`installDryRunCheck`, once per client,
 claimed by compare-and-set on a flag in the client's attributes) records the header of a PostgREST

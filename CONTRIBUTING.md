@@ -326,7 +326,7 @@ moves the coupled versions together.
 
 | Dependency | Why it is held |
 | --- | --- |
-| supabase-kt | The library compiles supabase-kt's inline functions into its own artifact and matches exhaustively on its filter operators, so a minor release can change its behavior or break the build. |
+| supabase-kt | The library compiles supabase-kt's inline functions into its own artifact and names each of its filter operators, so a minor release can change its behavior or break the build. Pinned at 3.6 while 3.7.0 and 3.8.0 carry two Realtime defects ([compatibility](https://nesfeder.github.io/supabase-offline-kt/project/compatibility/#supabase-kt)). |
 | Ktor, okio, kotlinx.coroutines, kotlinx.serialization | The pass-through set, below. |
 | Kotlin | The version the library is built with limits the Kotlin versions its consumers can use, and it has to work with the pinned supabase-kt. |
 | Android Gradle plugin | It has to stay inside the Kotlin Gradle plugin's supported range. |
@@ -363,6 +363,14 @@ reports the result in one issue, which the pull request that moves the pin close
 issue without moving the pin brings a new one the next Monday: to hold a minor back, leave the
 issue open and say why in a comment. The `upstream-pin` label marks everything that would move
 supabase-kt or the pass-through set: that issue, and Dependabot's pull requests for them.
+
+**Tests that need a newer supabase-kt than the pin.** A test that calls supabase-kt API the pinned
+minor lacks goes in `supabase-offline-kt/src/commonSupabaseKt38Test`, which the module's build adds
+to `commonTest` only while `supabase-bom` is 3.8 or later. The canary moves the pin, so it builds
+and runs those tests every Monday. A name the common tests share with them, such as a list of extra
+read shapes, has a 3.6 answer in `src/commonSupabaseKt36Test`. When the pin reaches 3.8 or later,
+the condition in `supabase-offline-kt/build.gradle.kts` goes: the 3.8 directory's files move into
+`commonTest`, and the 3.6 directory is deleted.
 
 Other Gradle dependencies arrive as grouped minor and patch updates, and a new major version as a
 pull request of its own. The Android sample's libraries (Compose, Material 3, Navigation 3 and

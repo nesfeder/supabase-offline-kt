@@ -38,20 +38,20 @@ Facts about the engine as it is, one row per condition. Each cell names the test
 | **Offline, cold** | Throws the connectivity failure, after supabase-kt's retries.<br><small>`QueryReaderStrategyTest.networkOnly_networkFailure_throws`</small> | Throws the connectivity failure, after supabase-kt's retries (four attempts, 7 s).<br><small>`RetryDelayTest.a_network_first_read_with_a_cold_cache_keeps_upstreams_retries`</small> | Throws the connectivity failure.<br><small>`QueryReaderStrategyTest.cacheFirst_noCache_networkFailure_throws`</small> | `NoSuchElementException`; no request.<br><small>`QueryReaderStrategyTest.cacheOnly_noCache_logsError`</small> |
 | **Session restoring** | Sends, then waits for the session (300, 900 and 2,400 ms, woken early when it settles) and asks again. Settled as the stored user: the user's answer, cached. Settled signed out: the anonymous answer; the rows cached for the last user are dropped and never served. Never settles: the last answer, uncached.<br><small>`ReadsWhileRestoringTest.a_read_that_needs_the_network_waits_for_the_session_and_caches_only_the_users_answer`, `CacheBelongsToOneIdentityTest.a_read_waiting_on_a_restore_that_settles_signed_out_gets_the_anonymous_answer`, `ReadsWhileRestoringTest.a_read_whose_session_never_settles_returns_the_last_answer_uncached`</small> | As `NetworkOnly`.<br><small>`ReadsWhileRestoringTest.a_read_that_needs_the_network_waits_for_the_session_and_caches_only_the_users_answer`, `CacheBelongsToOneIdentityTest.a_read_waiting_on_a_restore_that_settles_signed_out_gets_the_anonymous_answer`</small> | Warm with the stored user's cache: the cached payload, no request. Cold, or no stored user: as `NetworkOnly`.<br><small>`ReadsWhileRestoringTest.a_read_the_cache_answers_sends_nothing_while_the_session_restores`, `ReadsWhileRestoringTest.a_read_that_needs_the_network_waits_for_the_session_and_caches_only_the_users_answer`, `CacheBelongsToOneIdentityTest.a_read_waiting_on_a_restore_that_settles_signed_out_gets_the_anonymous_answer`</small> | The cached payload, no request.<br><small>`ReadsWhileRestoringTest.a_read_the_cache_answers_sends_nothing_while_the_session_restores`</small> |
 
-**A read of another shape.** `single()`, `maybeSingle()`, `head`, a `count` (with rows or
+**A read of another shape.** `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a `count` (with rows or
 without), `csv()`, `geojson()`, `stripNulls()` and `explain()` do not return a plain list of rows,
 so the cache does not hold their answer. Under every strategy but `CacheOnly` such a read goes to
 the network, is not stored and is not overlaid; offline it throws as `NetworkOnly` does, after
 supabase-kt's retries. Under `CacheOnly` it sends nothing and throws `NoSuchElementException`.
-`maybeSingle()` with no row returns supabase-kt's empty result at once, even while the session
-restores. The shape is read from the request supabase-kt builds, before anything is sent. A read
+On supabase-kt 3.8, `maybeSingle()` with no row returns supabase-kt's empty result at once, even
+while the session restores. The shape is read from the request supabase-kt builds, before anything is sent. A read
 whose request cannot be built (no token to be had) fails as sending it would, and is never answered
 from the list.
 <small>`ReadShapeTest.each_shape_is_answered_by_the_network_and_never_stored_over_the_list`,
 `ReadShapeTest.each_shape_goes_to_the_network_even_when_asked_for_the_cache`,
 `ReadShapeTest.offline_each_shape_fails_as_a_network_only_read_does`,
 `ReadShapeTest.a_cache_only_read_of_each_shape_sends_nothing_and_says_the_cache_cannot_answer_it`,
-`ReadShapeTest.maybe_single_with_no_row_returns_the_empty_result_at_once_while_restoring`,
+`MaybeSingleWhileRestoringTest.maybe_single_with_no_row_returns_the_empty_result_at_once_while_restoring` (built from supabase-kt 3.8),
 `ReadShapeTest.a_client_that_cannot_resolve_a_token_never_answers_a_shape_from_the_list`</small>
 
 Two consequences to plan for. A paginated list that also asks for a total (`count`) is not cached,
