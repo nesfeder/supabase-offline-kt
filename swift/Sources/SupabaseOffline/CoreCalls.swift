@@ -54,15 +54,17 @@ final class CoreConnection: Sendable {
         return try await awaitCompletion { complete in start(reference.client, complete) }
     }
 
-    /// One subscription on the opened client, as a stream that keeps only its newest unread value.
-    func subscription<Element: Sendable>(
+    /// One subscription on the opened client, as a stream that keeps only its newest unread value
+    /// and keeps `owner` alive until it ends. Reached only through ``SupabaseOfflineClient/liveSequence(_:)``.
+    fileprivate func subscription<Element: Sendable>(
+        retaining owner: any Sendable,
         _ start: @escaping @Sendable (
             BridgeClient,
             _ yield: @escaping @Sendable (Element) -> Void,
             _ finish: @escaping @Sendable ((any Error)?) -> Void
         ) -> BridgeCancellable
     ) -> AsyncThrowingStream<Element, any Error> {
-        subscriptionStream { yield, finish in
+        subscriptionStream(retaining: owner) { yield, finish in
             start(try await self.openedClient().client, yield, finish)
         }
     }
@@ -88,6 +90,26 @@ final class CoreConnection: Sendable {
                 guard let failure else { return }
                 packageLogger.warning("Closing the client failed: \(redactingRuntimeNames(failure.message), privacy: .public)")
             }
+        }
+    }
+}
+
+extension SupabaseOfflineClient {
+
+    /// A live read of the core in the one shape every public sequence is built on: each iterator
+    /// is a subscription of its own, ended when its loop is left however it is left, and the client
+    /// stays open while any iterator is in use.
+    ///
+    /// `start` subscribes and converts each core value inside its value block, off the caller's actor.
+    func liveSequence<Element: Sendable>(
+        _ start: @escaping @Sendable (
+            BridgeClient,
+            _ yield: @escaping @Sendable (Element) -> Void,
+            _ finish: @escaping @Sendable ((any Error)?) -> Void
+        ) -> BridgeCancellable
+    ) -> SubscriptionSequence<Element> {
+        SubscriptionSequence { [self] in
+            connection.subscription(retaining: self, start)
         }
     }
 }
@@ -223,9 +245,11 @@ func requiredValue<Value>(_ value: Value?) throws -> Value {
 ///
 /// Every value is a whole state (a snapshot, a count, a list), so a slow reader skips stale ones
 /// and nothing piles up. The stream finishes when the subscription ends; when the reader stops
-/// first, the subscription is cancelled through its handle exactly once.
+/// first, the subscription is cancelled through its handle exactly once. `owner` lives as long as
+/// the stream.
 func subscriptionStream<Element: Sendable>(
     keepingNewest limit: Int = 1,
+    retaining owner: (any Sendable)? = nil,
     _ start: @escaping @Sendable (
         _ yield: @escaping @Sendable (Element) -> Void,
         _ finish: @escaping @Sendable ((any Error)?) -> Void
@@ -239,6 +263,7 @@ func subscriptionStream<Element: Sendable>(
     )
     let subscription = LiveSubscription()
     continuation.onTermination = { termination in
+        withExtendedLifetime(owner) {}
         if case .cancelled = termination { subscription.cancel() }
     }
     Task.detached {

@@ -178,6 +178,33 @@ struct ClientTests {
         await #expect(throws: Never.self) { try await reading.value }
     }
 
+    @Test func anIteratorKeepsItsClientOpenAndLeavingItLetsTheClientGo() async throws {
+        // Given an iterator whose client nothing else holds
+        var client: SupabaseOfflineClient? = SupabaseOfflineClient.inMemory()
+        let reference = WeakReference(try #require(client))
+        let ends = RecordingList<String>()
+        var iterator: SubscriptionSequence<Int>.AsyncIterator? =
+            client?.pendingMutationCounts(recordingEndsIn: ends).makeAsyncIterator()
+        client = nil
+
+        // When
+        let first = try await iterator?.next()
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Then the subscription runs on, and the client is open
+        #expect(first == 0)
+        #expect(reference.value != nil)
+        #expect(ends.values.isEmpty)
+
+        // When the iterator is let go
+        iterator = nil
+
+        // Then the subscription ends (cancelled, or by the freed client's close) and the client is freed
+        #expect(await eventually { ends.values.count == 1 })
+        #expect(["CANCELLED", "nil"].contains(ends.values.first ?? ""))
+        #expect(await eventually { reference.value == nil })
+    }
+
     @Test func leavingALoopCancelsTheCoresSubscription() async throws {
         // Given
         let client = SupabaseOfflineClient.inMemory()
