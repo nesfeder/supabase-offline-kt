@@ -178,11 +178,11 @@ public abstract interface class io/github/nesfeder/supabase/offline/OfflineBucke
 }
 
 public final class io/github/nesfeder/supabase/offline/OfflineBucketApi_androidKt {
-	public static final fun ensureLocalFile (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun ensureLocalFile$default (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public static final fun ensureLocalUri (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun ensureLocalUri$default (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-	public static final fun localUriIfCached (Lio/github/jan/supabase/storage/BucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static final fun ensureLocalFile (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun ensureLocalFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun ensureLocalUri (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun ensureLocalUri$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun localUriIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract class io/github/nesfeder/supabase/offline/OfflineException : java/lang/Exception {
