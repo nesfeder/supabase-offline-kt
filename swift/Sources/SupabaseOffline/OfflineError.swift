@@ -85,7 +85,7 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
         /// The server's hint, when it sent one.
         public let hint: String?
 
-        init(status: Int, code: String?, message: String, details: String?, hint: String?) {
+        package init(status: Int, code: String?, message: String, details: String?, hint: String?) {
             self.status = status
             self.code = code
             self.message = message
@@ -115,7 +115,7 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
     /// The server's HTTP status, when the server answered: ``ServerError/status``.
     public var httpStatus: Int? { serverError?.status }
 
-    init(
+    package init(
         code: Code,
         message: String,
         serverError: ServerError? = nil,

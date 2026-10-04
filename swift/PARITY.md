@@ -160,3 +160,24 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `clearLocalData()` | `Offline.clearLocalData()` | Same |
 | `applyServerRecord(table:record:primaryKeys:schema:)` (an `Encodable`, or `[String: OfflineJSON]`) | `Offline.applyServerRecord(table, record, primaryKeys, schema)` (a `JsonObject`, or the reified `T`) | Same parameters in the same order; `Encodable` for the reified form, a dictionary of `OfflineJSON` for `JsonObject`. A record that is not a JSON object throws `invalidRequest` where Kotlin throws `IllegalArgumentException` |
 | `applyServerDelete(table:oldRecord:primaryKeys:schema:)` (an `Encodable`, or `[String: OfflineJSON]`) | `Offline.applyServerDelete(table, oldRecord, primaryKeys, schema)` | As `applyServerRecord`; Kotlin takes a `JsonObject` only |
+
+## Test values
+
+The testing product's factories, for an app's own test doubles: free functions with every field as
+a parameter and defaults for the rest, as the Kotlin testing artifact's are.
+
+| Swift | Kotlin | Same / reason |
+| --- | --- | --- |
+| `pendingMutation(id:table:operation:createdAt:rowKeys:body:)` | `pendingMutation(id, table, operation, createdAt, rowKeys, body)` | Same |
+| `rejectedMutation(id:table:operation:createdAt:rowKeys:body:serverError:message:rejectedAt:isRetryable:)` | `rejectedMutation(…)`, the same parameters | Same |
+| `serverError(status:code:message:details:hint:)` | `serverError(status, code, message, details, hint)` | Same; it builds an `OfflineError.ServerError` |
+| `syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:)` | `syncReport(…)`, the same parameters | Same |
+| `syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:)` | `syncStatus(…)`, the same parameters | Same; `lastSyncError` is an `OfflineError` |
+| `querySnapshot(result:isFromCache:fetchedAt:hasPendingMutations:refresh:)` | `querySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)` | Same; generic over the decoded rows |
+| `offlineResponse(value:data:count:isFromCache:fetchedAt:hasPendingMutations:)` | — | Swift only: Kotlin's `PostgrestResult` is supabase-kt's, with a public constructor |
+| — | `appliedOutcome(result)`, `queuedOutcome(pendingMutation)` | Not needed: `MutationOutcome`'s cases are public in Swift, so `.applied(result:)` and `.queued(pendingMutation:)` build them |
+| — | `stalledRefresh(cause)` | Not needed: `RefreshState.stalled(cause:)` is a public case |
+| `cacheMissError(message:)`, `mutationNotQueueableError(message:)`, `networkDisabledError(message:)` | `cacheMissException(message)`, `mutationNotQueueableException(cause, message)`, `networkDisabledException(message)` | `Error` for `Exception`: each builds an `OfflineError` with that code. Swift's has no `cause`; it is a network failure, as Kotlin's is through its cause |
+| `syncFailedError(message:httpStatus:code:isConnectivityFailure:)` | `syncFailedException(message, httpStatus, code, isConnectivityFailure)` | `Error` for `Exception`; the status and code go in `serverError` |
+| `offlineError(code:message:serverError:isNetworkOrConnectivityFailure:)` | — (supabase-kt's own exceptions have public constructors) | Swift only: any other code, such as `server` or `connectivity` |
+| — | `cachedFile(path, fetchedAt, sizeBytes)` | Not yet: Storage's `CachedFile` takes its factory beside it |
