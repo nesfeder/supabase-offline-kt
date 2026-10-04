@@ -91,7 +91,15 @@ public object ValueConstructors {
         rejected: List<RejectedMutation>,
         remainingCount: Int,
         alreadyOnServerCount: Int,
-    ): SyncReport = SyncReport(syncedCount, rejected, remainingCount, alreadyOnServerCount)
+        heldBehindOtherTablesCount: Int,
+    ): SyncReport =
+        SyncReport(
+            syncedCount,
+            rejected,
+            remainingCount,
+            alreadyOnServerCount,
+            heldBehindOtherTablesCount,
+        )
 
     /** A [SyncStatus] with the given fields. */
     public fun syncStatus(
@@ -100,7 +108,7 @@ public object ValueConstructors {
         rejectedMutationCount: Int,
         isSyncing: Boolean,
         lastSyncedAt: Instant?,
-        lastSyncError: Throwable?,
+        lastSyncError: SyncFailedException?,
     ): SyncStatus =
         SyncStatus(
             network,

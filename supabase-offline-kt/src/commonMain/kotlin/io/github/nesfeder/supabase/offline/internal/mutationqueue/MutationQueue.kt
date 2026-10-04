@@ -26,6 +26,7 @@ import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.update
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -52,7 +53,8 @@ import kotlinx.serialization.json.JsonElement
  * @param ownerlessMutationsAreAnonymous whether mutations queued with no owner are the anonymous
  *   identity's: without the Auth plugin there is no other.
  * @param liveCacheKeysOf a table's queries with a live reader; retirement keeps what they wait for.
- * @param engineLogger where the rejected list reports a row it could not read.
+ * @param engineLogger where the rejected list reports a row it could not read, and where a failed
+ *   read of the queue is reported.
  */
 internal class MutationQueue(
     private val mutationDao: MutationDao,
@@ -66,7 +68,7 @@ internal class MutationQueue(
     private val identityChanges: Flow<Any?>,
     private val ownerlessMutationsAreAnonymous: Boolean,
     private val liveCacheKeysOf: (table: String) -> Set<String>,
-    engineLogger: EngineLogger,
+    private val engineLogger: EngineLogger,
 ) {
 
     /** The mutation queue's record kept beside the rows: the rejected list. */
@@ -380,6 +382,24 @@ internal class MutationQueue(
             mayAdoptOwnerlessMutations(identity),
             beforeId = Long.MAX_VALUE,
         )
+
+    /**
+     * [hasPendingMutationsOf], or `true` when the queue cannot be read. For a caller deciding
+     * whether to ask for a pass, which reads the queue itself: a failed read never loses the pass.
+     * Throws only a cancellation.
+     */
+    suspend fun mayHavePendingMutationsOf(identity: String): Boolean =
+        try {
+            hasPendingMutationsOf(identity)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not read whether queued writes wait (${failure::class.simpleName}); " +
+                    "taking it that they do"
+            }
+            true
+        }
 
     /**
      * Records [identity] as the owner of every pending mutation that has none — rows queued with no

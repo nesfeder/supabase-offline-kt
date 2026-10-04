@@ -81,6 +81,13 @@ release.
   uses the framework yet: the Swift package is being rebuilt on a bridge of its own.
 - On Android, an interface member with a body compiles to a JVM default method only, so the
   `$DefaultImpls` classes are gone (`-jvm-default=no-compatibility`).
+- `SyncStatus.lastSyncError` is a `SyncFailedException?`, which is all it ever held: read its
+  `httpStatus` and `code` without a cast. The testing artifact's `syncStatus(lastSyncError = …)`
+  takes one.
+- `syncPendingMutations(table)` no longer sends a table's writes ahead of an earlier write of the
+  same user to another table: it stops at the first write with an earlier one still queued
+  elsewhere, and `SyncReport.heldBehindOtherTablesCount` counts what it held back. Sync every table
+  to send them in order.
 
 ### Added
 
@@ -190,6 +197,8 @@ release.
 - Published on Maven Central as `io.github.nesfeder.supabase-offline:supabase-offline-kt` and
   `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing`, for Android, `iosArm64` and
   `iosSimulatorArm64`, each with its sources, an HTML API reference and a signature on every file.
+- `SyncReport.heldBehindOtherTablesCount`, and the testing artifact's
+  `syncReport(heldBehindOtherTablesCount = …)`, defaulting to `0`.
 
 ### Changed
 
@@ -263,6 +272,26 @@ release.
 - The engine's internal store is the set of components the client builds itself. No public
   declaration, stored name or stored format changed: the exported Room schema and its identity hash
   are unchanged.
+- `syncStatus` follows the queue from the moment the client opens, so its counts include what an
+  earlier run left queued before the app first reads it; read for the first time after `close()`,
+  it holds the last value it had.
+- A reconnection, or the session settling, ends at once the wait a failed pass left before the
+  library's next pass, and starts it again from one second; a server's `Retry-After` is still
+  waited out. While the monitor says offline, the library makes one failed attempt by itself per
+  offline period and grows no wait. A wrong monitor costs nothing while requests reach the server;
+  after one fails for want of a connection, queued writes wait for the monitor, the session or the
+  app's sync. With `autoSync` on, a client without Auth sends what an earlier run left queued when
+  it opens. An app's connectivity
+  signal that ends while saying offline counts as unknown, as one that fails does.
+- Keeping the rows `clearLocalData()` deleted out of the database's files is best effort, and
+  never holds the clear: it waits at most a second for an open read holding the write-ahead log,
+  then empties the log in the background as soon as the read ends, and once more at `close()`. It
+  waited for up to about a minute, holding every send, and then only logged a warning.
+- Being offline is logged at INFO at most: a write the queue cannot hold that fails for want of a
+  connection was logged at ERROR, and a replay pass stopped by the network at WARNING. A write that
+  asked for a rollback (`Prefer: tx=rollback`, what a dry run sends) and was committed, as hosted
+  projects do, is logged once per client at WARNING.
+- `close()` never throws: a failure closing the database is logged, and the database is released.
 
 ### Deprecated
 
@@ -334,3 +363,9 @@ release.
   rows, or none, and a live read shows nothing (`Refreshing`) until the session settles.
 - A read the cache cannot answer, made while the connectivity monitor says the network is down, is
   sent once instead of after supabase-kt's retries.
+- One failed read of the database no longer turns automatic behaviour off for the client's life,
+  or fails a write the server answered: a later sign-in sends the user's queued writes, the sync
+  status follows the queue again, and a write the server applied (or refused), or a discard that
+  happened, is reported as it happened rather than as the failed read.
+- A sync that `clearLocalData()` cut short reports the writes it had sent before.
+- While a stored session restores, reads and writes read it once between them, not once each.

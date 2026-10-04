@@ -13,7 +13,10 @@ data class AppSyncStatus(
     val isSyncing: Boolean,
     /** When a replay last finished with the queue empty; kept in memory only. */
     val lastSyncedAt: Instant?,
-    /** Why the last replay stopped early, cleared by the next clean one. */
+    /**
+     * Why the last replay stopped early, cleared by the next clean one: a
+     * [NetworkUnavailableException] or a [ServerUnreachableException].
+     */
     val lastSyncError: Throwable?,
 )
 

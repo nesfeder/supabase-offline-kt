@@ -207,6 +207,13 @@ internal class FakeMutationDao : InMemoryMutationDao() {
      */
     var failNextHasPendingOwnedBy: Boolean = false
 
+    /**
+     * When set, the next [hasPendingOwnedBy] over the whole queue fails: the read a trigger, a
+     * finished write or a discard makes to ask whether anything waits. The head check, bounded by
+     * an id, is left alone.
+     */
+    var failNextWholeQueueCheck: Boolean = false
+
     /** When set, runs after [unconfirmedSendIds] read the rows and before it returns them. */
     var afterUnconfirmedSendIdsRead: (suspend () -> Unit)? = null
 
@@ -240,6 +247,15 @@ internal class FakeMutationDao : InMemoryMutationDao() {
         return super.pendingAll()
     }
 
+    /** How many times an identity's pending mutations were counted, in every table. */
+    var pendingCounts: Int = 0
+        private set
+
+    override suspend fun countPendingOwnedBy(owner: String, includeOwnerless: Boolean): Int {
+        pendingCounts++
+        return super.countPendingOwnedBy(owner, includeOwnerless)
+    }
+
     override suspend fun pendingForTable(table: String): List<MutationRow> {
         beforeTableRead?.invoke(table)
         pendingListReads++
@@ -269,6 +285,10 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     ): Boolean {
         if (failNextHasPendingOwnedBy) {
             failNextHasPendingOwnedBy = false
+            error("Scripted failure reading the queue")
+        }
+        if (failNextWholeQueueCheck && beforeId == Long.MAX_VALUE) {
+            failNextWholeQueueCheck = false
             error("Scripted failure reading the queue")
         }
         return super.hasPendingOwnedBy(owner, includeOwnerless, beforeId)

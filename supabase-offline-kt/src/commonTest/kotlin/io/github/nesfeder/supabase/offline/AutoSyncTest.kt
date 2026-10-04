@@ -6,12 +6,18 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
+import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
+import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -60,6 +66,7 @@ class AutoSyncTest {
         autoSync: Boolean,
         signal: MutableStateFlow<Boolean>? = null,
         withAuth: Boolean = false,
+        mutationDao: MutationDao = FakeMutationDao(),
     ): Rig {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -74,6 +81,7 @@ class AutoSyncTest {
         val client =
             newTestOfflineClient(
                 supabase = supabase,
+                mutationDao = mutationDao,
                 coordinatorScope = scope,
                 config = Offline.Config().apply { this.autoSync = autoSync },
                 networkAvailability = signal,
@@ -238,6 +246,185 @@ class AutoSyncTest {
             val expected = if (autoSync) listOf(row(1).toString()) else emptyList()
             assertEquals(expected, rig.writes, "autoSync = $autoSync")
             assertEquals(if (autoSync) 0 else 1, rig.client.pendingMutationCount())
+            rig.scope.cancel()
+        }
+    }
+
+    @Test
+    fun a_reconnection_sends_at_once_however_long_a_wait_failed_passes_built() = runTest {
+        // Given — the monitor says online but the server cannot be reached (a captive portal): a
+        // write is queued, then each write queued behind it asks for a pass that fails, until the
+        // wait before the next pass has grown to its cap
+        val signal = MutableStateFlow(true)
+        val rig = rig(autoSync = true, signal = signal)
+        rig.client.from(TABLE).insert(row(1))
+        for (id in 2..9) {
+            rig.client.from(TABLE).insert(row(id))
+            runCurrent()
+            advanceTimeBy(65.seconds)
+        }
+        rig.client.from(TABLE).insert(row(10))
+        runCurrent()
+
+        // When — the device drops off the network and comes back, and the server answers again
+        signal.value = false
+        runCurrent()
+        rig.server.answer = { okJson("[]") }
+        signal.value = true
+        runCurrent()
+
+        // Then — the queue was sent at once, not after the minute the failed passes asked for
+        assertEquals(0, rig.client.pendingMutationCount())
+        rig.scope.cancel()
+    }
+
+    @Test
+    fun a_device_offline_makes_one_attempt_by_itself_until_the_network_comes_back() = runTest {
+        // Given — the device is offline and a write is queued: its own attempt is the first request
+        val signal = MutableStateFlow(false)
+        val rig = rig(autoSync = true, signal = signal)
+        rig.client.from(TABLE).insert(row(1))
+        runCurrent()
+
+        // When — writes queued behind it ask for passes while the monitor says offline, over time
+        rig.client.from(TABLE).insert(row(2))
+        settle()
+        rig.client.from(TABLE).insert(row(3))
+        settle()
+        val whileOffline = rig.writes
+        // The app syncs itself, which fails too; a write after it is attempted once more
+        rig.client.syncPendingMutations()
+        rig.client.from(TABLE).insert(row(4))
+        settle()
+        rig.client.from(TABLE).insert(row(5))
+        settle()
+        val afterTheAppSynced = rig.writes
+
+        // Then — one attempt by the library itself per offline period, the app's own sync starting
+        // another, and everything at once when the network comes back
+        rig.server.answer = { okJson("[]") }
+        signal.value = true
+        runCurrent()
+        assertEquals(List(2) { row(1).toString() }, whileOffline)
+        assertEquals(List(4) { row(1).toString() }, afterTheAppSynced)
+        assertEquals(0, rig.client.pendingMutationCount())
+        rig.scope.cancel()
+    }
+
+    @Test
+    fun a_monitor_stuck_offline_holds_nothing_back_when_the_server_answers() = runTest {
+        // Given — a monitor that wrongly says offline, a server that answers, and two writes an
+        // earlier run left queued
+        val mutationDao = FakeMutationDao()
+        newTestStore(mutationDao = mutationDao).mutationQueue.enqueueInsert(TABLE, row(1))
+        newTestStore(mutationDao = mutationDao).mutationQueue.enqueueInsert(TABLE, row(2))
+        val rig = rig(autoSync = true, signal = MutableStateFlow(false), mutationDao = mutationDao)
+        rig.server.answer = { okJson("[]") }
+
+        // When — the client opens, then a write the server cannot run now is queued, and one
+        // behind it
+        settle()
+        val drainedAtOpen = rig.client.pendingMutationCount()
+        rig.server.answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST000") }
+        rig.client.from(TABLE).insert(row(3))
+        rig.server.answer = { okJson("[]") }
+        rig.client.from(TABLE).insert(row(4))
+        settle()
+
+        // Then — the library sent them by itself both times
+        assertEquals(0, drainedAtOpen)
+        assertEquals(0, rig.client.pendingMutationCount())
+        rig.scope.cancel()
+    }
+
+    @Test
+    fun the_monitor_coming_back_with_nothing_queued_still_starts_a_new_offline_period() = runTest {
+        for (autoSync in listOf(true, false)) {
+            // Given — offline: the library's one attempt failed, then the queue was emptied
+            val signal = MutableStateFlow(false)
+            val rig = rig(autoSync = autoSync, signal = signal)
+            failOneAttemptThenEmptyTheQueue(rig)
+
+            // When — the monitor comes back with nothing to send, and goes again, now wrongly
+            signal.value = true
+            settle()
+            signal.value = false
+            settle()
+            queueAWriteTheServerCannotRunYetAndOneBehindIt(rig)
+
+            // Then — the new offline period had its attempt, which sent both
+            assertEquals(0, rig.client.pendingMutationCount(), "autoSync = $autoSync")
+            assertEquals(listOf(3, 3, 4).map { row(it).toString() }, rig.writes.takeLast(3))
+            rig.scope.cancel()
+        }
+    }
+
+    @Test
+    fun the_session_settling_with_nothing_queued_still_starts_a_new_offline_period() = runTest {
+        for (autoSync in listOf(true, false)) {
+            // Given — user A signed in, offline: the library's one attempt failed, then the queue
+            // was emptied
+            val rig = rig(autoSync = autoSync, signal = MutableStateFlow(false), withAuth = true)
+            rig.supabase.signInForTest(USER_A)
+            settle()
+            failOneAttemptThenEmptyTheQueue(rig)
+
+            // When — A's session settles anew with nothing to send, while the monitor still, now
+            // wrongly, says offline
+            rig.supabase.signInForTest(USER_A)
+            settle()
+            queueAWriteTheServerCannotRunYetAndOneBehindIt(rig)
+
+            // Then — the new offline period had its attempt, which sent both
+            assertEquals(0, rig.client.pendingMutationCount(), "autoSync = $autoSync")
+            assertEquals(listOf(3, 3, 4).map { row(it).toString() }, rig.writes.takeLast(3))
+            rig.scope.cancel()
+        }
+    }
+
+    /**
+     * With the monitor saying offline and the server out of reach: a write is queued, the library's
+     * one attempt at it fails, and the queue is emptied by discards, so nothing asks for a pass
+     * afterwards.
+     */
+    private suspend fun TestScope.failOneAttemptThenEmptyTheQueue(rig: Rig) {
+        val first = assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(1)))
+        val second = assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(2)))
+        settle()
+        assertEquals(
+            List(2) { row(1).toString() },
+            rig.writes,
+            "the write's own attempt and the library's one",
+        )
+        rig.client.discardPendingMutation(second.pendingMutation.id)
+        rig.client.discardPendingMutation(first.pendingMutation.id)
+        settle()
+    }
+
+    /** The server cannot run one write now, and answers the one queued behind it. */
+    private suspend fun TestScope.queueAWriteTheServerCannotRunYetAndOneBehindIt(rig: Rig) {
+        rig.server.answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST000") }
+        assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(3)))
+        rig.server.answer = { okJson("[]") }
+        assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(4)))
+        settle()
+    }
+
+    @Test
+    fun a_client_without_auth_sends_what_an_earlier_run_left_queued_when_it_opens() = runTest {
+        for (autoSync in listOf(true, false)) {
+            // Given — a write an earlier run left queued
+            val mutationDao = FakeMutationDao()
+            newTestStore(mutationDao = mutationDao).mutationQueue.enqueueInsert(TABLE, row(1))
+
+            // When — a client without Auth opens with the server reachable, and nothing else asks
+            val rig = rig(autoSync = autoSync, mutationDao = mutationDao)
+            rig.server.answer = { okJson("[]") }
+            settle()
+
+            // Then — sent by itself, or left for the app
+            val expected = if (autoSync) listOf(row(1).toString()) else emptyList()
+            assertEquals(expected, rig.writes, "autoSync = $autoSync")
             rig.scope.cancel()
         }
     }

@@ -20,11 +20,16 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -73,6 +78,59 @@ class PluginCloseTest {
     private fun oneRow() = buildJsonArray { add(buildJsonObject { put("id", 7) }) }
 
     @Test
+    fun a_caller_cancelled_while_supabase_close_runs_gets_its_own_cancellation() = runTest {
+        // Given — a warm cache, so offline would answer, and a NetworkFirst read held on the wire
+        val arrived = CompletableDeferred<Unit>()
+        val calls = AtomicInt(0)
+        val server =
+            RecordingPostgrestServer(
+                answer = {
+                    if (calls.incrementAndFetch() == 1) okJson("""[{"id":1}]""")
+                    else {
+                        arrived.complete(Unit)
+                        awaitCancellation()
+                    }
+                }
+            )
+        val supabase =
+            newTestSupabaseClient(engine = server.engine) {
+                install(Postgrest) { maxRetries = 0 }
+                install(Offline) { openInMemory() }
+            }
+        supabase.offline.from("todos").select()
+        withContext(Dispatchers.Default) {
+            val seen = CompletableDeferred<Throwable?>()
+            val caller = launch {
+                try {
+                    supabase.offline
+                        .from("todos")
+                        .select(readStrategy = ReadStrategy.NetworkFirst())
+                    seen.complete(null)
+                } catch (failure: Throwable) {
+                    seen.complete(failure)
+                    throw failure
+                }
+            }
+            withTimeout(5.seconds) { arrived.await() }
+
+            // When — supabase-kt closes, then the caller is cancelled
+            val closing = async { supabase.close() }
+            withTimeout(5.seconds) {
+                while (runCatching { supabase.offline.from("todos") }.isSuccess) delay(1)
+            }
+            caller.cancel()
+            val failure = withTimeout(5.seconds) { seen.await() }
+            closing.await()
+
+            // Then — its own cancellation, neither the closed error nor an offline answer
+            assertTrue(
+                failure is CancellationException,
+                "the cancelled caller saw ${failure ?: "a value"}, not its own cancellation",
+            )
+        }
+    }
+
+    @Test
     fun calls_made_while_supabase_close_runs_end_as_offline_or_closed_never_cancelled() = runTest {
         // Given — a warm cache, and a plugin installed before Offline whose close waits
         val server = RecordingPostgrestServer(answer = { okJson("""[{"id":1}]""") })
@@ -85,6 +143,7 @@ class PluginCloseTest {
                     openInMemory(
                         mutationDao = store.mutationDao,
                         coordinatorScope = idleCoroutineScope(),
+                        closeWait = 100.milliseconds,
                     )
                 }
             }

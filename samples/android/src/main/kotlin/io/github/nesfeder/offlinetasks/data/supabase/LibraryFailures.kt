@@ -12,6 +12,7 @@ import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
 import io.github.nesfeder.offlinetasks.data.TaskServerError
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
+import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import kotlinx.serialization.json.JsonPrimitive
@@ -42,6 +43,14 @@ internal fun Throwable.asReadFailure(): Throwable =
         httpStatusOrNull() != null -> ServerUnreachableException(this)
         else -> this
     }
+
+/**
+ * Why the last sync stopped, as `TaskRepository` names it: the network, or a server that answered
+ * with a failure that may pass. The writes stay queued either way.
+ */
+internal fun SyncFailedException.asSyncFailure(): Exception =
+    if (isNetworkOrConnectivityFailure()) NetworkUnavailableException(this)
+    else ServerUnreachableException(this)
 
 /** A Storage call's failure as `TaskRepository` names it, for the object at [objectPath]. */
 internal fun Throwable.asStorageFailure(objectPath: String): Throwable =

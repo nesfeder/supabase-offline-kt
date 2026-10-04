@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import okio.Path.Companion.toOkioPath
 import org.junit.runner.RunWith
@@ -47,5 +48,25 @@ class ClearLocalDataAndroidTest {
         )
         assertEquals(0, report.reservedRowsAfterClear, "a reserved row survived the clear: $report")
         assertFalse(report.anyRecoverable, "a cleared user's data can be read back: $report")
+    }
+
+    @Test
+    fun a_read_holding_the_log_neither_holds_the_clear_nor_keeps_the_rows_once_it_ends() = runTest {
+        // Given / When — rows carrying a marker, cleared while another connection holds a read
+        val report =
+            runClearUnderAHeldRead(directory.toOkioPath()) { supabase, config ->
+                openAndroidClient(context, supabase, config)
+            }
+
+        // Then — the read did hold the log, the clear did not wait it out, and once the read
+        // ended the rows left the files with the client still open
+        assertTrue(report.heldReadKeptTheMarker, "the read did not hold the log: $report")
+        assertTrue(report.clearTook < CLEAR_BOUND, "the clear waited for the read: $report")
+        assertTrue(report.cleanAfterTheReadEnded, "the cleared rows stayed in the files: $report")
+    }
+
+    private companion object {
+        /** Under Room's three-second busy timeout: the clear never waits it out. */
+        val CLEAR_BOUND = 2.5.seconds
     }
 }
