@@ -3,50 +3,36 @@
 package io.github.nesfeder.supabase.offline
 
 import android.net.Uri
-import io.github.jan.supabase.storage.BucketApi
 import java.io.File
 
 /**
- * The cached copy of [objectPath] as a [File], downloading it first when none is cached. A thin
- * Android convenience over [OfflineBucketApi.ensureCachedFile]; see there for what it throws.
+ * The cached copy of the object at [path] as a [File], downloading it into the cache first when
+ * none is cached: [OfflineBucketApi.ensureCachedFile] as a [File]. It throws what that throws.
  *
- * @param objectPath the object path within this bucket.
+ * @param path the object path within this bucket.
  * @param isPublic whether to download through the public URL rather than the authenticated one.
- * @return the cached file, or `null` only when this bucket did not come from the offline client.
  */
 @Throws(Throwable::class)
-public suspend fun BucketApi.ensureLocalFile(
-    objectPath: String,
-    isPublic: Boolean = false,
-): File? {
-    val offline = this as? OfflineBucketApi ?: return null
-    return File(offline.ensureCachedFile(objectPath, isPublic).path)
-}
+public suspend fun OfflineBucketApi.ensureLocalFile(path: String, isPublic: Boolean = false): File =
+    File(ensureCachedFile(path, isPublic).path)
 
 /**
- * The cached copy of [objectPath] as a `file:` [Uri], downloading it first when none is cached. See
- * [ensureLocalFile].
+ * The cached copy of the object at [path] as a `file:` [Uri], downloading it into the cache first
+ * when none is cached: [ensureLocalFile] as a [Uri].
  *
- * @param objectPath the object path within this bucket.
+ * @param path the object path within this bucket.
  * @param isPublic whether to download through the public URL rather than the authenticated one.
- * @return the file's [Uri], or `null` only when this bucket did not come from the offline client.
  */
 @Throws(Throwable::class)
-public suspend fun BucketApi.ensureLocalUri(
-    objectPath: String,
-    isPublic: Boolean = false,
-): Uri? = ensureLocalFile(objectPath, isPublic)?.let { Uri.fromFile(it) }
+public suspend fun OfflineBucketApi.ensureLocalUri(path: String, isPublic: Boolean = false): Uri =
+    Uri.fromFile(ensureLocalFile(path, isPublic))
 
 /**
- * The cached copy of [objectPath] as a `file:` [Uri] when one is cached; never touches the network.
- * A thin Android convenience over [OfflineBucketApi.cachedFile].
+ * The cached copy of the object at [path] as a `file:` [Uri], or `null` when none is cached:
+ * [OfflineBucketApi.cachedFile] as a [Uri]. Never touches the network.
  *
- * @param objectPath the object path within this bucket.
- * @return the file's [Uri], or `null` when nothing is cached or this bucket did not come from the
- *   offline client.
+ * @param path the object path within this bucket.
  */
 @Throws(Throwable::class)
-public suspend fun BucketApi.localUriIfCached(objectPath: String): Uri? {
-    val offline = this as? OfflineBucketApi ?: return null
-    return offline.cachedFile(objectPath)?.let { Uri.fromFile(File(it.path)) }
-}
+public suspend fun OfflineBucketApi.localUriIfCached(path: String): Uri? =
+    cachedFile(path)?.let { Uri.fromFile(File(it.path)) }
