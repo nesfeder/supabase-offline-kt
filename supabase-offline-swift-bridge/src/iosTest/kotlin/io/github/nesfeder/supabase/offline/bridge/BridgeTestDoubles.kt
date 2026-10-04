@@ -95,6 +95,9 @@ class RecordingServer(
     /** Whether requests reach this server. */
     @Volatile var online: Boolean = true
 
+    /** The requests that fail as if the connection were down, while the rest are answered. */
+    @Volatile var unreachable: (RecordedRequest) -> Boolean = { false }
+
     /** Every request so far, in order. */
     val requests: List<RecordedRequest>
         get() = recorded.load()
@@ -112,7 +115,7 @@ class RecordingServer(
                 body = request.body.toByteArray().decodeToString(),
             )
         recorded.update { it + recordedRequest }
-        if (!online) {
+        if (!online || unreachable(recordedRequest)) {
             responder.failWithoutConnection("network down")
             return
         }
@@ -300,3 +303,6 @@ suspend fun awaitErrorOnly(call: ((BridgeError?) -> Unit) -> BridgeCancellable):
 
 /** An insert of one row into `todos`, queued while offline. */
 const val INSERT_TODO = """{"v":1,"operation":"insert","table":"todos"}"""
+
+/** An insert of one row into `projects`, the table a test makes a parent of `todos`. */
+const val INSERT_PROJECT = """{"v":1,"operation":"insert","table":"projects"}"""

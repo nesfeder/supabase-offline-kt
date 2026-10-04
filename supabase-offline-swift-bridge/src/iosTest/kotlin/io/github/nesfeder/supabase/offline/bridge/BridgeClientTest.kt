@@ -97,6 +97,42 @@ class BridgeClientTest {
     }
 
     @Test
+    fun a_one_table_sync_reports_a_write_held_behind_one_in_another_table() = bridgeTest {
+        // Given — a parent queued while its table cannot be reached, then a child queued after
+        // it; the library's own passes stop at the parent, so nothing can send the child first
+        server.unreachable = { it.path.endsWith("/projects") }
+        val client = openTestClient(server) { autoSync = false }
+        val (parent, _) = client.mutateAndWait(INSERT_PROJECT, """{"id":1}""")
+        val (child, _) = client.mutateAndWait(INSERT_TODO, """{"id":2,"title":"Tea"}""")
+
+        // When — the app syncs the child's table only
+        val held = CompletionProbe<BridgeSyncReport>()
+        client.syncPendingMutations("todos", held.completion)
+        val report = assertNotNull(held.awaitValue())
+
+        // Then — the child was held, not sent ahead of its parent, and the report says so
+        assertEquals(true, parent?.isQueued)
+        assertEquals(true, child?.isQueued)
+        assertEquals(0, report.syncedCount)
+        assertEquals(1, report.remainingCount)
+        assertEquals(1, report.heldBehindOtherTablesCount)
+        assertEquals(emptyList(), server.requests.filter { it.path.endsWith("/todos") })
+
+        // And — once the parent's table answers, a sync of every table holds nothing back
+        server.unreachable = { false }
+        val all = CompletionProbe<BridgeSyncReport>()
+        client.syncPendingMutations(null, all.completion)
+        val allReport = assertNotNull(all.awaitValue())
+        assertEquals(0, allReport.heldBehindOtherTablesCount)
+        assertEquals(0, allReport.remainingCount)
+        val posts =
+            server.requests.filter { it.method == "POST" }.map { it.path.substringAfterLast('/') }
+        assertEquals(listOf("projects", "todos"), posts.distinct())
+        assertEquals("todos", posts.last())
+        client.closeAndWait()
+    }
+
+    @Test
     fun a_discarded_write_leaves_the_queue_unsent() = bridgeTest {
         // Given — one queued write
         val client = openTestClient(server) { autoSync = false }
