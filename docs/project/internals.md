@@ -47,7 +47,6 @@ flowchart TB
         OMS[OfflineMutationSyncer]
         OBA[OfflineBucketApi]
         SIG[SignatureBuilder]
-        SUB[CacheSubsetResolver]
         OVR[OfflineMutationOverlay]
     end
 
@@ -60,7 +59,6 @@ flowchart TB
     subgraph platform [Platform factories]
         Android["createSupabaseOfflineClient(context, ...)"]
         iOS["SupabaseFactory.offlineClient / createSupabaseOfflineClient"]
-        Swift["SupabaseOfflineSupport (Swift wrapper)"]
     end
 
     SOC --> OSR
@@ -69,7 +67,6 @@ flowchart TB
     OPQB --> OSR
     OPQB --> OS
     OSR --> SIG
-    OSR --> SUB
     OSR --> OVR
     OSR --> OS
     OMS --> OS
@@ -79,7 +76,6 @@ flowchart TB
     OS --> SO
     Android --> SOC
     iOS --> SOC
-    Swift --> iOS
 ```
 
 ### Key files
@@ -91,7 +87,6 @@ flowchart TB
 | Read/mutation/flow strategies | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt) |
 | Read resolver | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineSelectResolver.kt) |
 | Signature builder | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/SignatureBuilder.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/SignatureBuilder.kt) |
-| Subset resolver | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt) |
 | Filter engine (overlay + replay) | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt) |
 | Central Room store | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineStore.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineStore.kt) |
 | Mutation overlay | [shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationOverlay.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineMutationOverlay.kt) |
