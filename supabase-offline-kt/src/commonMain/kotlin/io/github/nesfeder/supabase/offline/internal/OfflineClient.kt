@@ -46,6 +46,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentityReader
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation as EngineRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
@@ -62,6 +63,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
+import io.github.nesfeder.supabase.offline.internal.postgrest.installCommittedDryRunReport
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installReadShapeCheck
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
@@ -72,6 +74,7 @@ import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
+import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -234,6 +237,9 @@ internal class OfflineClient(
     /** Set, under [statusLock], by [close]: the status changes no more. */
     private var statusFinal = false
 
+    /** Taken by the one committed dry run this client reports. */
+    private val committedDryRunReported = AtomicBoolean(false)
+
     /** Completed once the database is released: what every [close] waits for. */
     private val released = CompletableDeferred<Unit>()
 
@@ -258,6 +264,12 @@ internal class OfflineClient(
      * in [CachePatcher.patchCachedQueries].
      */
     private val liveQueries = LiveQueries(clientScope, engineLogger)
+
+    /**
+     * The identity a write, a discard, a dismissal or a retry is for, read once per session status
+     * and bounded while the stored session restores.
+     */
+    private val queueIdentityReader = QueueIdentityReader(supabaseClient)
 
     /** The identity the overlay and counts are for, read once per session status. */
     private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
@@ -402,12 +414,25 @@ internal class OfflineClient(
         supabaseClient.installDryRunCheck()
         supabaseClient.installReadShapeCheck()
         supabaseClient.installTransportFailureCapture()
+        supabaseClient.installCommittedDryRunReport(::reportCommittedDryRunOnce)
         networkAccess.watchIn(clientScope, onReconnected = ::replayAsTheNetworkReturns)
         if (autoSync) replayWhenTheSessionSettles()
         keepCacheWithTheSession()
     }
 
     private fun authPluginOrNull(): Auth? = supabaseClient.pluginManager.getPluginOrNull(Auth)
+
+    /**
+     * Logs, once per client, that a write asked PostgREST to roll it back and was committed: an
+     * app's dry run changed data. It names nothing else.
+     */
+    private fun reportCommittedDryRunOnce() {
+        if (!committedDryRunReported.compareAndSet(expectedValue = false, newValue = true)) return
+        engineLogger.warning {
+            "A dry run was committed: the server did not apply the rollback it asked for " +
+                "(Prefer: tx=rollback)"
+        }
+    }
 
     /** Emits whenever the session status changes; once, without the Auth plugin. */
     private fun sessionChanges(): Flow<Any?> = authPluginOrNull()?.sessionStatus ?: flowOf(Unit)
@@ -561,7 +586,7 @@ internal class OfflineClient(
                 trustPolicy = responseTrust,
                 liveQueries = liveQueries,
                 wakeUps = wakeUps,
-                queueIdentity = { supabaseClient.currentQueueIdentity() },
+                queueIdentity = queueIdentityReader::current,
                 requestSync = automaticReplay::requestPass,
                 headSender = mutationQueueReplayer,
                 operationGate = operationGate,
@@ -642,7 +667,7 @@ internal class OfflineClient(
      * sent by a pass asked for here, with `autoSync` off too: it is a write-path pass.
      */
     override suspend fun discardPendingMutation(id: Long): Unit = operationGate.call {
-        val identity = supabaseClient.currentQueueIdentity() ?: return@call
+        val identity = queueIdentityReader.current() ?: return@call
         if (!mutationQueueReplayer.discardPendingMutationOnceUnsent(id, identity)) return@call
         requestPassUnlessQueueEmpty(identity, onEdge = false)
     }
@@ -655,12 +680,12 @@ internal class OfflineClient(
         )
 
     override suspend fun dismissRejectedMutation(id: Long): Unit = operationGate.call {
-        val identity = supabaseClient.currentQueueIdentity() ?: return@call
+        val identity = queueIdentityReader.current() ?: return@call
         mutationQueue.dismissRejectedMutationOf(id, identity.storedValue)
     }
 
     override suspend fun retryRejectedMutation(id: Long): Unit = operationGate.call {
-        val identity = supabaseClient.currentQueueIdentity() ?: return@call
+        val identity = queueIdentityReader.current() ?: return@call
         val entry = mutationQueue.shownRejection(id, identity.storedValue) ?: return@call
         require(entry.bodyOmittedChars == null) {
             "This rejected mutation cannot be retried: its body was too large to keep " +

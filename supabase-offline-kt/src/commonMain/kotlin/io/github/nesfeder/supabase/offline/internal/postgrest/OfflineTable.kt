@@ -593,7 +593,7 @@ internal class OfflineTable(
                             "Offline $operationLabel for $table would not be queued: $detail"
                         }
                     }
-                    return direct.send(EngineLogLevel.ERROR) {
+                    return direct.send(EngineLogLevel.INFO) {
                         "Refusing to queue offline $operationLabel for $table: ${capture.reason}"
                     }
                 }

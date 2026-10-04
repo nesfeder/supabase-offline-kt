@@ -15,7 +15,10 @@ import kotlinx.coroutines.CompletableDeferred
 internal class FakeHeldSessionManager(private val stored: UserSession?) : SessionManager {
 
     private val released = CompletableDeferred<Unit>()
-    private var loads = 0
+
+    /** How many times the stored session was loaded, the held first load included. */
+    var loads: Int = 0
+        private set
 
     /** Lets the plugin's load finish, so the session settles into [stored]. */
     fun release() {

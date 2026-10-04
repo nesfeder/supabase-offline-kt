@@ -9,9 +9,12 @@ import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.PostgrestQueryBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.plugin
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.HttpRequestPipeline
 import io.ktor.http.HttpMethod
+import io.ktor.http.isSuccess
 import io.ktor.util.AttributeKey
 import io.ktor.util.pipeline.PipelinePhase
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -176,6 +179,42 @@ internal fun SupabaseClient.installDryRunCheck(): Boolean {
         if (write || capture.stopsEveryRequest) throw DryRunCheckStop()
     }
     return true
+}
+
+/** Set on a client's HTTP client once the committed dry-run report is installed. */
+private val CommittedDryRunReportInstallation =
+    AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.CommittedDryRunReport")
+
+/**
+ * Installs, once per client, a check beside the engine that calls [onCommitted] when a PostgREST
+ * write asked to be rolled back (`Prefer: tx=rollback`) and the server answered with a success that
+ * does not list the rollback as applied: the dry run was committed. PostgREST ignores the
+ * preference unless its `db-tx-end` setting allows the override, which hosted projects do not.
+ */
+@OptIn(SupabaseInternal::class)
+internal fun SupabaseClient.installCommittedDryRunReport(onCommitted: () -> Unit) {
+    val client = httpClient.httpClient
+    val installation =
+        client.attributes.computeIfAbsent(CommittedDryRunReportInstallation) {
+            AtomicBoolean(false)
+        }
+    if (!installation.compareAndSet(expectedValue = false, newValue = true)) return
+    client.plugin(HttpSend).intercept { request ->
+        val call = execute(request)
+        val askedForRollback =
+            request.headers
+                .getAll(PostgrestQueryBuilder.HEADER_PREFER)
+                .orEmpty()
+                .any(::namesRollback)
+        if (
+            askedForRollback &&
+                call.response.status.isSuccess() &&
+                !namesRollback(call.response.headers[PREFERENCE_APPLIED_HEADER]) &&
+                isPostgrestWrite(request)
+        )
+            onCommitted()
+        call
+    }
 }
 
 /** Whether the dry-run check is on this client's pipeline. */

@@ -88,7 +88,7 @@ class MutationQueueReplayerLoggingTest {
     }
 
     @Test
-    fun syncTable_networkFailure_logsWarningPaused() = runTest {
+    fun syncTable_networkFailure_logsInfoPaused() = runTest {
         // Given — the network is down
         store.mutationQueue.enqueueInsert(table = TABLE, body = ROWS)
         server.answer = { connectivityFailure() }
@@ -96,11 +96,12 @@ class MutationQueueReplayerLoggingTest {
         // When
         replayer.syncTable(table = TABLE)
 
-        // Then
-        assertEquals(
-            listOf("Network unavailable, pausing sync for $TABLE"),
-            messagesAt(EngineLogLevel.WARNING),
+        // Then — being offline is not a fault: nothing above INFO
+        assertTrue(
+            "Network unavailable, pausing sync for $TABLE" in messagesAt(EngineLogLevel.INFO),
+            "got ${logger.entries}",
         )
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.WARNING))
     }
 
     @Test

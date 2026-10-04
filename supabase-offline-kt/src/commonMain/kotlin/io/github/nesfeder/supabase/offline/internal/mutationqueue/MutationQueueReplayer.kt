@@ -778,7 +778,7 @@ internal class MutationQueueReplayer(
     ): ReplayOutcome =
         when {
             failure.isNetworkOrConnectivityFailure() -> {
-                engineLogger.warning { "Network unavailable, pausing sync for ${mutation.table}" }
+                engineLogger.info { "Network unavailable, pausing sync for ${mutation.table}" }
                 ReplayOutcome.Stopped(failure)
             }
 
