@@ -413,14 +413,14 @@ def stage_tree(root: Path, sha: str, version: str, archive: Path, out: Path) -> 
         raise ReleaseError(f"{out} is not empty: the tree is staged afresh")
     archive_checksum = checksum(archive)
     source = committed_tree(root, sha, SOURCE_PACKAGE)
-    licence = release.committed_file(root, sha, "LICENSE")
-    if f"{SOURCE_PACKAGE}/{MANIFEST}" not in source or f"{SOURCE_PACKAGE}/README.md" not in source or not licence:
+    license_text = release.committed_file(root, sha, "LICENSE")
+    if f"{SOURCE_PACKAGE}/{MANIFEST}" not in source or f"{SOURCE_PACKAGE}/README.md" not in source or not license_text:
         raise ReleaseError(f"{sha} lacks swift/{MANIFEST}, swift/README.md or LICENSE")
     files = {
         MANIFEST: render_manifest(source[f"{SOURCE_PACKAGE}/{MANIFEST}"].decode("utf-8"), version,
                                   archive_checksum).encode("utf-8"),
         "README.md": source[f"{SOURCE_PACKAGE}/README.md"],
-        "LICENSE": licence.encode("utf-8"),
+        "LICENSE": license_text.encode("utf-8"),
     }
     for name, content in source.items():
         if name.startswith(f"{SOURCE_PACKAGE}/Sources/"):
@@ -440,7 +440,7 @@ def swift_comments_and_strings(text: str) -> tuple[list[str], list[str]]:
 
     A small lexer: `//` and nested `/* */` comments; `"`, `\"\"\"` and raw `#"`-delimited strings,
     interpolations included; bare `/…/` and `#/…/#` regex literals, which are code, are skipped
-    whole so a quote or a slash inside one is not misread. A bare regex is recognised where an
+    whole so a quote or a slash inside one is not misread. A bare regex is recognized where an
     expression starts (after `=`, `(`, `,`, `[`, `:`, `{`, `;`, `return` or a line's start) and
     its first character is not a space; any other `/` is a division."""
     comments, strings = [], []
@@ -870,7 +870,7 @@ def self_test() -> int:
         expect(listing == ["LICENSE", "Package.swift", "README.md", "Sources/SupabaseOffline/Client.swift",
                            "Sources/SupabaseOffline/PrivacyInfo.xcprivacy",
                            "Sources/SupabaseOfflineTesting/Fake.swift"],
-               "the staged tree is the manifest, the readme, the licence and the sources, nothing else")
+               "the staged tree is the manifest, the readme, the license and the sources, nothing else")
         expect(not tree_problems(tree, "0.1.0", archive_checksum),
                "the words in Sources' code (a framework type, a regex) are allowed")
         expect(refused(lambda: stage_tree(root, sha, "0.1.0", archive, tree), "not empty"),
@@ -917,7 +917,7 @@ def self_test() -> int:
              "'kfun' in a string literal"),
             ("file-name", write("Sources/SupabaseOffline/KotlinBridge.swift", "struct A {}\n"),
              "the path Sources/SupabaseOffline/KotlinBridge.swift names"),
-            ("licence", edit("LICENSE", "MIT", "MIT (Kotlin)"), "LICENSE:1 names"),
+            ("license", edit("LICENSE", "MIT", "MIT (Kotlin)"), "LICENSE:1 names"),
         ]
         for name, change, phrase in cases:
             problems = mutated(name, change)

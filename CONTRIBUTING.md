@@ -283,7 +283,7 @@ scripts/test-swift-package.sh --simulator <simulator UDID> --derived-data <a scr
 ```
 
 The script copies the framework into `swift/LocalCore/`; `--framework <path>` tests against
-another build of it instead, such as the release's. To open the package in Xcode afterwards,
+another build of it instead, such as the release's. To open the package in Xcode afterward,
 start Xcode with the variable set: `SUPABASE_OFFLINE_LOCAL_CORE=1 open -a Xcode swift/Package.swift`.
 CI runs the same script in the iOS job on the self-hosted runner, and the release runs it on
 GitHub's macOS runner against the release framework. GitHub's own runners do not run it in CI (the

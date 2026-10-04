@@ -47,12 +47,9 @@ settings. The workflows never create or change any of them.
 - [x] The repository `nesfeder/supabase-offline-swift` exists, empty, with one deploy key that has
   write access; its private half is the `release` environment's secret `SWIFT_PACKAGE_DEPLOY_KEY`.
   Only the step that pushes the Swift package reads it (see [Release](#3-release)).
-- [ ] GitHub Pages: **Settings → Pages → Source: GitHub Actions**, which creates the
-  `github-pages` environment; then, in **Settings → Environments → github-pages**, restrict its
-  deployment branches to `main` (both release workflows run on `main`). Until Pages is on, the
-  `docs` job of a release fails after everything else is done; publish the site by hand afterwards
-  (see [After the release](#4-after-the-release)). A Pages site is public even while the repository
-  is private.
+- [x] GitHub Pages: **Settings → Pages → Source** is **GitHub Actions**, and the `github-pages`
+  environment allows deployments from `main` only, where both release workflows run. The release's
+  `docs` job publishes through it. A Pages site is public even while the repository is private.
 - [ ] Before the first release whose Swift package anyone else should resolve, make both
   repositories public: SwiftPM fetches the package and downloads the framework without signing in,
   so a package or a release asset in a private repository cannot be resolved.
@@ -225,7 +222,7 @@ Look at the run's summary, and at the deployment in the Central Portal.
 | `publish`, deployment **PUBLISHING** or **PUBLISHED** (the wait timed out, or the runner stopped) | The Maven artifacts, once PUBLISHED | The draft release | Wait for PUBLISHED, then run **Release resume** with the commit SHA from `verify`'s summary. |
 | `publish`, after PUBLISHED (the Swift package's push failed) | The Maven artifacts | The draft release; the Swift package's repository unchanged (the push is atomic) | Fix the cause (the deploy key, the repository), then run **Release resume** with the SHA. |
 | `finish` | The Maven artifacts, the Swift package and its tag, and whatever `finish` did before it stopped | The draft release, if `finish` stopped before publishing it | Run **Release resume** with the SHA. |
-| `docs` | Everything but the new site | Nothing | Run **Docs publish** by hand (after enabling Pages, if that was the cause); or Release resume, which publishes it too. |
+| `docs` | Everything but the new site | Nothing | Re-run the failed `docs` job, which builds the tag; or run **Release resume** with the SHA, which publishes the site at the tag too. |
 
 **Release resume** (**Actions → Release resume → Run workflow**, on `main`) takes that SHA. It
 checks that the commit is on `main`, that its `VERSION_NAME` is the release version with its
