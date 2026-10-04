@@ -481,7 +481,7 @@ class QueryReaderStrategyTest {
     }
 
     @Test
-    fun networkFirst_networkFailure_cacheHit_logsWarning() = runTest {
+    fun networkFirst_networkFailure_cacheHit_logsInfo() = runTest {
         // Given
         val recorder = RecordingLogSink()
         store.queryCache.cacheResponse(TABLE, cacheKey(), """[{"id":1}]""")
@@ -490,16 +490,18 @@ class QueryReaderStrategyTest {
         // When
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
-        // Then
-        val warnings = recorder.entriesAt(EngineLogLevel.WARNING)
-        assertEquals(1, warnings.size)
-        assertTrue(
-            warnings[0].message.contains("SELECT items network failed, falling back to cache")
+        // Then — an expected offline condition, so nothing above INFO
+        assertEquals(
+            1,
+            recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
+                entry.message.contains("SELECT items network failed, falling back to cache")
+            },
         )
+        assertEquals(emptyList(), recorder.entries.filter { it.level > EngineLogLevel.INFO })
     }
 
     @Test
-    fun networkFirst_networkFailure_noCache_logsError() = runTest {
+    fun networkFirst_networkFailure_noCache_logsInfo() = runTest {
         // Given
         val recorder = RecordingLogSink()
         failNetwork()
@@ -510,10 +512,14 @@ class QueryReaderStrategyTest {
             resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
         }
 
-        // Then
-        val errors = recorder.entriesAt(EngineLogLevel.ERROR)
-        assertEquals(1, errors.size)
-        assertTrue(errors[0].message.contains("SELECT items network failed and no cache available"))
+        // Then — an expected offline condition, so nothing above INFO
+        assertEquals(
+            1,
+            recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
+                entry.message.contains("SELECT items network failed and no cache available")
+            },
+        )
+        assertEquals(emptyList(), recorder.entries.filter { it.level > EngineLogLevel.INFO })
     }
 
     @Test
@@ -547,7 +553,7 @@ class QueryReaderStrategyTest {
     }
 
     @Test
-    fun cacheOnly_noCache_logsError() = runTest {
+    fun cacheOnly_noCache_logsInfo() = runTest {
         // Given
         val recorder = RecordingLogSink()
         val resolver = resolver(backgroundScope, recorder)
@@ -557,10 +563,14 @@ class QueryReaderStrategyTest {
             resolver.select(Columns.ALL, ReadStrategy.CacheOnly()) {}
         }
 
-        // Then
-        val errors = recorder.entriesAt(EngineLogLevel.ERROR)
-        assertEquals(1, errors.size)
-        assertTrue(errors[0].message.contains("SELECT items no cached data available"))
+        // Then — the outcome the read asked for, so nothing above INFO
+        assertEquals(
+            1,
+            recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
+                entry.message.contains("SELECT items no cached data available")
+            },
+        )
+        assertEquals(emptyList(), recorder.entries.filter { it.level > EngineLogLevel.INFO })
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

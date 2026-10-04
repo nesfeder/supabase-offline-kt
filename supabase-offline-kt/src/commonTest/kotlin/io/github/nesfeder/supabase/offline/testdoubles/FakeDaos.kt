@@ -8,6 +8,8 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryQueryCacheDao
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 
 /*
@@ -111,6 +113,18 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         return row
     }
 
+    /**
+     * Runs before [observe] hands each row to its collector, as a slow change notification would; a
+     * test delays it so a reader hears of a payload change after other changes. `null` hands it on
+     * at once.
+     */
+    var beforeObservedRowDelivered: (suspend (table: String, cacheKey: String) -> Unit)? = null
+
+    override fun observe(table: String, cacheKey: String): Flow<CachedQueryRow?> =
+        super.observe(table, cacheKey).onEach {
+            beforeObservedRowDelivered?.invoke(table, cacheKey)
+        }
+
     override suspend fun allForTable(table: String): List<CachedQueryRow> {
         val snapshot = super.allForTable(table)
         onAllForTableSnapshot?.invoke(table)
@@ -209,6 +223,12 @@ internal class FakeMutationDao : InMemoryMutationDao() {
      */
     var beforeTableRead: (suspend (table: String) -> Unit)? = null
 
+    /**
+     * When set, runs after each read of one table's mutation rows ([allForTable]), before they are
+     * returned: a test delays it so a reader is handed rows that have changed since.
+     */
+    var afterTableRead: (suspend (table: String) -> Unit)? = null
+
     /** When set, runs after each transaction has committed, before its caller goes on. */
     var afterTransaction: (suspend () -> Unit)? = null
 
@@ -245,7 +265,9 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     override suspend fun allForTable(table: String): List<MutationRow> {
         beforeTableRead?.invoke(table)
         tableListReadCounts[table] = (tableListReadCounts[table] ?: 0) + 1
-        return super.allForTable(table)
+        val rows = super.allForTable(table)
+        afterTableRead?.invoke(table)
+        return rows
     }
 
     override suspend fun deleteAll() {
