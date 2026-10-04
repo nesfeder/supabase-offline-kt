@@ -439,8 +439,9 @@ internal class OfflineClient(
     /**
      * The stored identity value for the current session status, computed once per status: while the
      * session restores or refreshes, telling it reads the stored session, through the reader the
-     * writes share, for at most [AUTH_SESSION_SETTLE_TIMEOUT]. A store that takes longer leaves the identity untold for that
-     * status: the caches are not served to it, so a read goes to the network instead of waiting.
+     * writes share, for at most [AUTH_SESSION_SETTLE_TIMEOUT]. A store that takes longer leaves the
+     * identity untold for that status: the caches are not served to it, so a read goes to the
+     * network instead of waiting.
      */
     private suspend fun overlayIdentityValue(): String? {
         val status = authPluginOrNull()?.sessionStatus?.value
