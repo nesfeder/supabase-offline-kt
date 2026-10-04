@@ -78,7 +78,7 @@ extension SyncStatus {
         lastSyncError: nil
     )
 
-    /// The core's `status`; runs on the caller's thread or the core's.
+    /// The engine's `status`; runs on the caller's thread or the engine's.
     init(core status: BridgeSyncStatus) {
         self.init(
             network: NetworkStatus(core: status.network),
@@ -110,7 +110,7 @@ public enum NetworkStatus: Sendable, Hashable, CaseIterable {
 
 extension NetworkStatus {
 
-    /// The core's `status`; a status this release does not know reads as ``unknown``.
+    /// The engine's `status`; a status this release does not know reads as ``unknown``.
     init(core status: BridgeNetworkStatus) {
         switch status {
         case .online: self = .online

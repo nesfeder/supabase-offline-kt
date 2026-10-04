@@ -28,7 +28,8 @@ extension SupabaseOfflineClient {
     /// - Parameters:
     ///   - table: The table the row belongs to.
     ///   - record: The row: anything that encodes as a JSON object, such as supabase-swift's
-    ///     Realtime record.
+    ///     Realtime record. A `UUID` in it is written in lower case, with the exceptions
+    ///     ``OfflinePostgrestQueryBuilder`` names.
     ///   - primaryKeys: The row's key columns; `nil` for the table's configured key, or `id` for a
     ///     table of another schema.
     ///   - schema: The table's schema; `nil` for the client's default.

@@ -31,7 +31,7 @@ public struct SyncReport: Sendable, Hashable {
 
 extension SyncReport {
 
-    /// The core's `report`; runs on the core's thread.
+    /// The engine's `report`; runs on the engine's thread.
     init(core report: BridgeSyncReport) throws {
         self.init(
             syncedCount: Int(report.syncedCount),

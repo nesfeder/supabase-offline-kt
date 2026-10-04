@@ -63,8 +63,8 @@ enum RowCoding {
 // MARK: - UUIDs in lower case
 
 /// A `JSONEncoder` that writes every `UUID` it meets, at any depth, as lower-case text, as the
-/// server and the core write ids. It cannot reach a `UUID` that a type's own `encode(to:)` hands its
-/// encoder to directly, rather than through a container.
+/// server writes ids. It cannot reach a `UUID` handed to an encoder directly rather than through a
+/// container: by a type's own `encode(to:)`, or by a property wrapper that passes its encoder on.
 final class LowercaseUUIDEncoder: JSONEncoder, @unchecked Sendable {
 
     /// `value` as JSON, its `UUID`s in lower case.

@@ -72,7 +72,7 @@ public struct RejectedMutation: Sendable, Hashable, Identifiable {
 
 extension RejectedMutation {
 
-    /// The core's rejected `mutation`; runs on the core's thread. The server's text is kept as sent.
+    /// The engine's rejected `mutation`; runs on the engine's thread. The server's text is kept as sent.
     init(core mutation: BridgeRejectedMutation) throws {
         self.init(
             id: mutation.id,
@@ -91,7 +91,7 @@ extension RejectedMutation {
 
 extension OfflineError.ServerError {
 
-    /// The core's kept `serverError`.
+    /// The engine's kept `serverError`, its text as the server sent it.
     init(core serverError: BridgeServerError) {
         self.init(
             status: Int(serverError.status),

@@ -21,6 +21,10 @@ extension SupabaseOfflineClient {
 ///
 /// Each verb takes its offline choice as a parameter with a default, so a chain written for
 /// supabase-swift reads the same: `from("todos").select().eq("done", value: false).execute()`.
+///
+/// A `UUID` in a row is written in lower case, as PostgREST writes ids, except one that a type's own
+/// `encode(to:)` hands straight to the encoder, or that sits behind a property wrapper passing the
+/// encoder on: encode `uuidString.lowercased()` there.
 public struct OfflinePostgrestQueryBuilder: Sendable {
 
     /// The client the requests go through.
