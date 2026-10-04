@@ -161,35 +161,41 @@ class BridgeErrorsTest {
     }
 
     @Test
-    fun a_key_or_token_with_a_control_character_is_refused_without_quoting_its_header() = bridgeTest {
-        // Given — a client whose token ends in a line break, and one whose key holds one
-        val token = "eyJhbGciOi.secret-token-tail\n"
-        val tokenClient = openTestClient(server) { accessTokenProvider = FakeAccessTokenProvider(token) }
-        val keyOpened =
-            BridgeTesting.openInMemory(
-                BridgeClientOptions(TEST_URL, "fixture-anon-key\nsecret-key-tail", "/in-memory/bridge-key"),
-                server,
-                null,
-            )
-        val keyClient = checkNotNull(keyOpened.client) { "the in-memory client did not open" }
+    fun a_key_or_token_with_a_control_character_is_refused_without_quoting_its_header() =
+        bridgeTest {
+            // Given — a client whose token ends in a line break, and one whose key holds one
+            val token = "eyJhbGciOi.secret-token-tail\n"
+            val tokenClient =
+                openTestClient(server) { accessTokenProvider = FakeAccessTokenProvider(token) }
+            val keyOpened =
+                BridgeTesting.openInMemory(
+                    BridgeClientOptions(
+                        TEST_URL,
+                        "fixture-anon-key\nsecret-key-tail",
+                        "/in-memory/bridge-key",
+                    ),
+                    server,
+                    null,
+                )
+            val keyClient = checkNotNull(keyOpened.client) { "the in-memory client did not open" }
 
-        // When
-        val (_, tokenError) = tokenClient.selectAndWait(readOf(strategy = "networkOnly"))
-        val (_, keyError) = keyClient.selectAndWait(readOf(strategy = "networkOnly"))
+            // When
+            val (_, tokenError) = tokenClient.selectAndWait(readOf(strategy = "networkOnly"))
+            val (_, keyError) = keyClient.selectAndWait(readOf(strategy = "networkOnly"))
 
-        // Then — refused before anything is sent, quoting neither the header nor its value
-        for (error in listOf(tokenError, keyError)) {
-            assertEquals(BridgeErrorKind.INVALID_ARGUMENT, error?.kind)
-            val message = error?.message.orEmpty()
-            assertTrue(message.contains("header cannot carry"), message)
-            assertFalse(message.contains("Bearer"), message)
-            assertFalse(message.contains("secret"), message)
-            assertFalse(message.contains("eyJ"), message)
+            // Then — refused before anything is sent, quoting neither the header nor its value
+            for (error in listOf(tokenError, keyError)) {
+                assertEquals(BridgeErrorKind.INVALID_ARGUMENT, error?.kind)
+                val message = error?.message.orEmpty()
+                assertTrue(message.contains("header cannot carry"), message)
+                assertFalse(message.contains("Bearer"), message)
+                assertFalse(message.contains("secret"), message)
+                assertFalse(message.contains("eyJ"), message)
+            }
+            assertTrue(server.requests.isEmpty())
+            tokenClient.closeAndWait()
+            keyClient.closeAndWait()
         }
-        assertTrue(server.requests.isEmpty())
-        tokenClient.closeAndWait()
-        keyClient.closeAndWait()
-    }
 
     @Test
     fun the_librarys_own_failures_keep_their_kinds() = bridgeTest {

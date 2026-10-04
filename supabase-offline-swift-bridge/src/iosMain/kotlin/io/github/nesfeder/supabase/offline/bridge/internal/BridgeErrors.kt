@@ -173,8 +173,8 @@ private fun connectivityError(failure: Throwable, type: String): BridgeError {
 }
 
 /**
- * What a request header holding a character HTTP forbids says: nothing of the header, which may
- * be the project key or the access token.
+ * What a request header holding a character HTTP forbids says: nothing of the header, which may be
+ * the project key or the access token.
  */
 private const val ILLEGAL_HEADER_MESSAGE =
     "A request header holds a character a header cannot carry, such as a line break; check the " +
