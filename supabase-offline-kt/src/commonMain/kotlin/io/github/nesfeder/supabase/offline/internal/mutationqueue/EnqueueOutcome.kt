@@ -1,9 +1,8 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-package io.github.nesfeder.supabase.offline.internal.cache
+package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 
 /** What [MutationQueue.enqueueOwnedBy] did with a write. */
 internal sealed interface EnqueueOutcome {

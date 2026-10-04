@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
-import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao

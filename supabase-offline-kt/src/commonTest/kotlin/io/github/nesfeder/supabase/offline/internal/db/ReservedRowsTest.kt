@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao

@@ -5,7 +5,6 @@
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
-import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.TableWriteLocks
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
@@ -127,21 +126,17 @@ internal class MutationQueue(
      */
     internal inner class MutationWriter(private val owner: String?) {
 
-        /** The last row this writer stored, with its id; `null` until it stores one. */
-        var lastStored: MutationRow? = null
-            private set
-
         /**
          * Queues an INSERT.
          *
-         * @return The mutation's id — the mutation row's autoincrement id, stable across restarts.
+         * @return The row as stored; its id is the row's autoincrement id, stable across restarts.
          */
         suspend fun enqueueInsert(
             table: String,
             body: JsonArray,
             filter: FilterDescriptor? = null,
             defaultToNull: Boolean = true,
-        ): Long =
+        ): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.INSERT,
@@ -153,7 +148,7 @@ internal class MutationQueue(
         /**
          * Queues an UPSERT.
          *
-         * @return The mutation's id.
+         * @return The row as stored.
          */
         suspend fun enqueueUpsert(
             table: String,
@@ -162,7 +157,7 @@ internal class MutationQueue(
             onConflict: String? = null,
             ignoreDuplicates: Boolean = false,
             defaultToNull: Boolean = true,
-        ): Long =
+        ): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.UPSERT,
@@ -176,13 +171,13 @@ internal class MutationQueue(
         /**
          * Queues an UPDATE, with an optional [filter] describing the targeted rows.
          *
-         * @return The mutation's id.
+         * @return The row as stored.
          */
         suspend fun enqueueUpdate(
             table: String,
             body: JsonElement,
             filter: FilterDescriptor? = null,
-        ): Long =
+        ): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.UPDATE,
@@ -193,9 +188,9 @@ internal class MutationQueue(
         /**
          * Queues a DELETE. [filter] describes which rows are removed.
          *
-         * @return The mutation's id.
+         * @return The row as stored.
          */
-        suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): Long =
+        suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.DELETE,
@@ -203,7 +198,7 @@ internal class MutationQueue(
                 filter = filter,
             )
 
-        /** Stores one pending mutation of [owner]'s and tells [table]'s readers. */
+        /** Stores one pending mutation of [owner]'s, tells [table]'s readers, and returns it. */
         private suspend fun insert(
             table: String,
             operation: String,
@@ -212,7 +207,7 @@ internal class MutationQueue(
             defaultToNull: Boolean? = null,
             onConflict: String? = null,
             ignoreDuplicates: Boolean? = null,
-        ): Long {
+        ): MutationRow {
             requireUserTable(table)
             val row =
                 MutationRow(
@@ -227,10 +222,9 @@ internal class MutationQueue(
                     ignoreDuplicates = ignoreDuplicates,
                     owner = owner,
                 )
-            val id = mutationDao.insert(row)
-            lastStored = row.copy(id = id)
+            val stored = row.copy(id = mutationDao.insert(row))
             noteMutationsChanged(table)
-            return id
+            return stored
         }
     }
 
@@ -248,20 +242,18 @@ internal class MutationQueue(
      *   (a store driven directly, with no session model).
      * @param startedAtTick [CacheFreshness.tickNow] as read before the write started, or `null` to
      *   skip the check.
-     * @param enqueue Queues the write and returns its id. Must make DAO calls only.
+     * @param enqueue Queues the write and returns its row as stored. Must make DAO calls only.
      * @return What happened.
      */
     suspend fun enqueueOwnedBy(
         identity: String?,
         startedAtTick: Long? = null,
-        enqueue: suspend MutationWriter.() -> Long,
+        enqueue: suspend MutationWriter.() -> MutationRow,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
         if (freshness.predatesQueueClear(startedAtTick))
             return@withLock EnqueueOutcome.LocalDataCleared
-        val writer = MutationWriter(owner = identity)
-        val id = writer.enqueue()
-        val row = checkNotNull(writer.lastStored) { "enqueue stored no mutation" }
-        EnqueueOutcome.Queued(id, row)
+        val row = MutationWriter(owner = identity).enqueue()
+        EnqueueOutcome.Queued(row.id, row)
     }
 
     /**

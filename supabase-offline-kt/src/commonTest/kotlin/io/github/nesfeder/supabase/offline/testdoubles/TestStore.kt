@@ -248,7 +248,7 @@ internal suspend fun MutationQueue.enqueueInsert(
     body: JsonArray,
     filter: FilterDescriptor? = null,
     defaultToNull: Boolean = true,
-): Long = MutationWriter(owner = null).enqueueInsert(table, body, filter, defaultToNull)
+): Long = MutationWriter(owner = null).enqueueInsert(table, body, filter, defaultToNull).id
 
 /** Queues an UPSERT with no recorded owner; see [enqueueInsert]. */
 internal suspend fun MutationQueue.enqueueUpsert(
@@ -261,19 +261,20 @@ internal suspend fun MutationQueue.enqueueUpsert(
 ): Long =
     MutationWriter(owner = null)
         .enqueueUpsert(table, bodyJson, filter, onConflict, ignoreDuplicates, defaultToNull)
+        .id
 
 /** Queues an UPDATE with no recorded owner; see [enqueueInsert]. */
 internal suspend fun MutationQueue.enqueueUpdate(
     table: String,
     body: JsonElement,
     filter: FilterDescriptor? = null,
-): Long = MutationWriter(owner = null).enqueueUpdate(table, body, filter)
+): Long = MutationWriter(owner = null).enqueueUpdate(table, body, filter).id
 
 /** Queues a DELETE with no recorded owner; see [enqueueInsert]. */
 internal suspend fun MutationQueue.enqueueDelete(
     table: String,
     filter: FilterDescriptor? = null,
-): Long = MutationWriter(owner = null).enqueueDelete(table, filter)
+): Long = MutationWriter(owner = null).enqueueDelete(table, filter).id
 
 /** Removes the rejected mutation [id] under the queue lock, whoever's it is. */
 internal suspend fun MutationQueue.dismissRejectedMutation(id: Long): Boolean = holdingQueueLock {

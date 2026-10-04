@@ -26,7 +26,6 @@ import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.TransportClosedException
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
-import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.returnedRowsOf
@@ -36,6 +35,7 @@ import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -478,7 +478,8 @@ internal class OfflineTable(
     private sealed interface QueueCapture {
 
         /** The write can be queued; [enqueue] inserts its mutation row and returns the id. */
-        class Queueable(val enqueue: suspend MutationQueue.MutationWriter.() -> Long) : QueueCapture
+        class Queueable(val enqueue: suspend MutationQueue.MutationWriter.() -> MutationRow) :
+            QueueCapture
 
         /**
          * The write cannot be queued faithfully. [reason] carries no filter value and may be logged
@@ -495,7 +496,7 @@ internal class OfflineTable(
      */
     private fun captureFilteredWrite(
         builder: PostgrestRequestBuilder,
-        enqueue: suspend MutationQueue.MutationWriter.(FilterDescriptor) -> Long,
+        enqueue: suspend MutationQueue.MutationWriter.(FilterDescriptor) -> MutationRow,
     ): QueueCapture {
         val descriptor =
             try {
