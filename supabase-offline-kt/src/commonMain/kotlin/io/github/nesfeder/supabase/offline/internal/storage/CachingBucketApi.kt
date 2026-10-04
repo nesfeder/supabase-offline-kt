@@ -315,8 +315,8 @@ internal class CachingBucketApi(
     /**
      * What a failed download returns instead of its failure. When the server says the object is
      * gone, nothing: its copies are dropped and the failure rethrown. Otherwise the cached copy of
-     * the variant asked for, or of the original when the request was never built. Offline, which
-     * is expected, is logged at INFO; any other failure at WARNING.
+     * the variant asked for, or of the original when the request was never built. Offline, which is
+     * expected, is logged at INFO; any other failure at WARNING.
      */
     private suspend fun <T : Any> recover(
         path: String,

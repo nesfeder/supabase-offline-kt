@@ -35,19 +35,22 @@ class ReadsWhileKnownOfflineTest {
         )
 
     @Test
-    fun a_cold_network_first_read_is_sent_once() = runTest(timeout = 2.minutes) {
-        assertSentOnceAndFailedAtTheTransport(ReadStrategy.NetworkFirst())
-    }
+    fun a_cold_network_first_read_is_sent_once() =
+        runTest(timeout = 2.minutes) {
+            assertSentOnceAndFailedAtTheTransport(ReadStrategy.NetworkFirst())
+        }
 
     @Test
-    fun a_cold_cache_first_read_is_sent_once() = runTest(timeout = 2.minutes) {
-        assertSentOnceAndFailedAtTheTransport(ReadStrategy.CacheFirst())
-    }
+    fun a_cold_cache_first_read_is_sent_once() =
+        runTest(timeout = 2.minutes) {
+            assertSentOnceAndFailedAtTheTransport(ReadStrategy.CacheFirst())
+        }
 
     @Test
-    fun a_network_only_read_is_sent_once() = runTest(timeout = 2.minutes) {
-        assertSentOnceAndFailedAtTheTransport(ReadStrategy.NetworkOnly)
-    }
+    fun a_network_only_read_is_sent_once() =
+        runTest(timeout = 2.minutes) {
+            assertSentOnceAndFailedAtTheTransport(ReadStrategy.NetworkOnly)
+        }
 
     private suspend fun assertSentOnceAndFailedAtTheTransport(strategy: ReadStrategy) {
         withContext(Dispatchers.Default) {
@@ -58,7 +61,9 @@ class ReadsWhileKnownOfflineTest {
 
             // When
             val failure =
-                withTimeout(30.seconds) { runCatching { client.from(TABLE).select(readStrategy = strategy) } }
+                withTimeout(30.seconds) {
+                        runCatching { client.from(TABLE).select(readStrategy = strategy) }
+                    }
                     .exceptionOrNull()
 
             // Then — sent once, and the transport's failure is what the app is handed

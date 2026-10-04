@@ -121,7 +121,9 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
     var beforeObservedRowDelivered: (suspend (table: String, cacheKey: String) -> Unit)? = null
 
     override fun observe(table: String, cacheKey: String): Flow<CachedQueryRow?> =
-        super.observe(table, cacheKey).onEach { beforeObservedRowDelivered?.invoke(table, cacheKey) }
+        super.observe(table, cacheKey).onEach {
+            beforeObservedRowDelivered?.invoke(table, cacheKey)
+        }
 
     override suspend fun allForTable(table: String): List<CachedQueryRow> {
         val snapshot = super.allForTable(table)

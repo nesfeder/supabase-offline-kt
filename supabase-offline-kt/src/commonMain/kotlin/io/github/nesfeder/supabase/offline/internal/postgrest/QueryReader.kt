@@ -15,6 +15,7 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.internal.TransportClosedException
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
@@ -24,7 +25,6 @@ import io.github.nesfeder.supabase.offline.internal.cache.ServedPayload
 import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
-import io.github.nesfeder.supabase.offline.internal.TransportClosedException
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
@@ -561,9 +561,9 @@ internal class QueryReader(
     /**
      * The refresh of a reactive read: a network SELECT written through to the cache. A response the
      * trust policy does not take as settled, one the cache refused while it passed to another
-     * identity, or one that left before local data was cleared, throws [UntrustedResponseException],
-     * so the loop asks again: the read shows the cache as it is now. A transport failure fails at
-     * once: the loop is what retries it.
+     * identity, or one that left before local data was cleared, throws
+     * [UntrustedResponseException], so the loop asks again: the read shows the cache as it is now.
+     * A transport failure fails at once: the loop is what retries it.
      */
     private suspend fun refreshFromNetwork(
         slot: CacheSlot,
@@ -595,12 +595,12 @@ internal class QueryReader(
     /**
      * The network first, then the cache as it changes. The bootstrap waits out a restoring session
      * like a one-shot read, as nothing retries it later; see [bootstrapFromNetwork] for its
-     * failures. A bootstrap that could not confirm the cache leaves it
-     * [RefreshState.Stalled] by its cause ([RefreshState.Paused] when the network is known down,
-     * [RefreshState.Refreshing] while the session settles), with a refresh retried as a cache-first
-     * read's until it succeeds; it counts as the first attempt, so the next waits. Then, as a
-     * cache-first read does, it fetches again on each refresh request for the table; an attempt in
-     * flight changes nothing it reports.
+     * failures. A bootstrap that could not confirm the cache leaves it [RefreshState.Stalled] by
+     * its cause ([RefreshState.Paused] when the network is known down, [RefreshState.Refreshing]
+     * while the session settles), with a refresh retried as a cache-first read's until it succeeds;
+     * it counts as the first attempt, so the next waits. Then, as a cache-first read does, it
+     * fetches again on each refresh request for the table; an attempt in flight changes nothing it
+     * reports.
      */
     private fun networkFirstThenCacheWithState(
         slot: CacheSlot,

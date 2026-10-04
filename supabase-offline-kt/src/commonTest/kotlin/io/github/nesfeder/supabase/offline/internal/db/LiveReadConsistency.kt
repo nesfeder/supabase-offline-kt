@@ -195,7 +195,8 @@ internal object LiveReadConsistency {
             val client = openClient(server.supabaseClient(), configFor(iteration))
             val emissions = refreshEmissions(client, server, warm)
             client.close()
-            if (!isIdleOnlyWithFetchedRows(emissions)) failures += "iteration $iteration: $emissions"
+            if (!isIdleOnlyWithFetchedRows(emissions))
+                failures += "iteration $iteration: $emissions"
         }
         failures
     }
@@ -232,8 +233,9 @@ internal object LiveReadConsistency {
     }
 
     /** Whether every emission whose refresh is [RefreshState.Idle] shows what it fetched. */
-    fun isIdleOnlyWithFetchedRows(emissions: List<Seen>): Boolean =
-        emissions.none { seen -> seen.refresh == RefreshState.Idle && seen.isFromCache }
+    fun isIdleOnlyWithFetchedRows(emissions: List<Seen>): Boolean = emissions.none { seen ->
+        seen.refresh == RefreshState.Idle && seen.isFromCache
+    }
 
     /** Fails the calling test with [failures], or passes when there are none. */
     fun assertNone(failures: List<String>, iterations: Int) {
@@ -295,12 +297,11 @@ internal data class Seen(
 internal class RecordedLiveList(client: Offline, table: String) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val recorded = MutableStateFlow<List<Seen>>(emptyList())
-    private val job =
-        scope.launch {
-            client.from(table).selectAsFlow().collect { snapshot ->
-                recorded.update { seen -> seen + seenOf(snapshot) }
-            }
+    private val job = scope.launch {
+        client.from(table).selectAsFlow().collect { snapshot ->
+            recorded.update { seen -> seen + seenOf(snapshot) }
         }
+    }
 
     /** How many emissions are recorded so far. */
     val count: Int

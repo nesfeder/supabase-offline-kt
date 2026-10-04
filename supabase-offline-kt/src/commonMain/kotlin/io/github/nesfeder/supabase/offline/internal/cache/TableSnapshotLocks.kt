@@ -8,7 +8,8 @@ import kotlinx.coroutines.sync.withLock
 /**
  * One lock per table between its readers and a change to both its cached payloads and its queued
  * mutations: a reader holds it while it reads the two, the change while it makes them, so no read
- * sees the change half made. Outermost of the cache's locks; a reader takes only leaf locks under it.
+ * sees the change half made. Outermost of the cache's locks; a reader takes only leaf locks under
+ * it.
  */
 internal class TableSnapshotLocks {
 

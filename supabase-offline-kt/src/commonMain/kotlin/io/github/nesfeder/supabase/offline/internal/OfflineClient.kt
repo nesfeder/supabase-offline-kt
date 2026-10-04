@@ -417,7 +417,9 @@ internal class OfflineClient(
         return identity
     }
 
-    /** An identity read from the stored session, `null` when it names none, as a timeout's result. */
+    /**
+     * An identity read from the stored session, `null` when it names none, as a timeout's result.
+     */
     private class StoredIdentity(val value: String?)
 
     /**

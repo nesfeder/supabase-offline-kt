@@ -46,8 +46,8 @@ private val DownloadStatusCheckInstallation =
 /**
  * Installs, once per client with the Storage plugin, an interceptor next to the engine that fails a
  * download made through [checkingDownloadStatus] whose response is not a success: with the
- * exception the Storage plugin makes of that response, which is what its bytes download throws.
- * The response is read whole first, so its connection is released. An HTTP retry plugin the app
+ * exception the Storage plugin makes of that response, which is what its bytes download throws. The
+ * response is read whole first, so its connection is released. An HTTP retry plugin the app
  * installed sits further from the engine, and sees the failure as an exception.
  */
 @OptIn(SupabaseInternal::class)
@@ -59,7 +59,10 @@ internal fun SupabaseClient.installDownloadStatusCheck() {
     if (!installation.compareAndSet(expectedValue = false, newValue = true)) return
     client.plugin(HttpSend).intercept { request ->
         val call = execute(request)
-        if (currentCoroutineContext()[CheckedDownloadKey] == null || call.response.status.isSuccess())
+        if (
+            currentCoroutineContext()[CheckedDownloadKey] == null ||
+                call.response.status.isSuccess()
+        )
             return@intercept call
         val saved = call.save()
         val refusal =

@@ -15,8 +15,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * A live read open through [Offline.clearLocalData] fetches again, as it does when the cache
- * passes to another identity: from the reader's side the two are the same event.
+ * A live read open through [Offline.clearLocalData] fetches again, as it does when the cache passes
+ * to another identity: from the reader's side the two are the same event.
  */
 class LiveReadsAfterClearTest {
 

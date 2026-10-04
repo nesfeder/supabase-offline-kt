@@ -390,7 +390,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * emptied unless open reads hold the log's checkpoint off for about a second, which is logged;
      * the old pages then stay in the log until its next checkpoint.
      *
-     * The client stays usable afterwards.
+     * The client stays usable afterwards. A live read open through the clear fetches again, as it
+     * does when the cache passes to another identity: at once online, and once the network is back
+     * offline, [RefreshState.Paused] meanwhile.
      *
      * @throws IllegalStateException when the client is closed.
      */

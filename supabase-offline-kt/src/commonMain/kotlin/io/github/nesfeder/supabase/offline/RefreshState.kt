@@ -14,7 +14,10 @@ public sealed interface RefreshState {
     /** No refresh is running or waiting: the last one succeeded, or the read does not refresh. */
     public data object Idle : RefreshState
 
-    /** A refresh is running, or is about to be tried again soon after a failure. */
+    /**
+     * A refresh is running, or is about to be tried again soon after a failure, or waits for a
+     * session that is still settling, which is not a failure.
+     */
     public data object Refreshing : RefreshState
 
     /**

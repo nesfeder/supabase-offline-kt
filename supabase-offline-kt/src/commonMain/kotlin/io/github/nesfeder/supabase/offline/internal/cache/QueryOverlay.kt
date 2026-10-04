@@ -220,7 +220,10 @@ internal class QueryOverlay(
         if (all.isEmpty()) return ServedOverlay(cachedJson, hasPendingMutations = false)
 
         val admission = cacheKey?.let { admissionOf(table, it, shape) } ?: QueryAdmission.EVERY_ROW
-        return overlayFor(admission, readWithIt?.unconfirmedSends ?: mutationQueue.unconfirmedSends())
+        return overlayFor(
+                admission,
+                readWithIt?.unconfirmedSends ?: mutationQueue.unconfirmedSends(),
+            )
             .overlayReportingChanges(
                 cachedJson,
                 all,
@@ -251,8 +254,8 @@ internal class QueryOverlay(
      * Every change of the payload, the table's mutations, the session or [alongside] reads all of
      * them again, as one view: [alongside] first, then the cache's owner, then the mutations and
      * the payload together ([readTogether]). So an emission never pairs a payload with mutations,
-     * an owner or a value of [alongside] it was not current with, whatever order the changes
-     * arrive in.
+     * an owner or a value of [alongside] it was not current with, whatever order the changes arrive
+     * in.
      *
      * @param alongside a value its writer publishes after writing the payload it describes, such as
      *   a refresh's progress.
@@ -265,19 +268,19 @@ internal class QueryOverlay(
     ): Flow<Pair<ServedPayload?, T>> {
         if (isReservedTable(table)) return alongside.map { value -> null to value }
         return flow {
-                val reader = LiveOverlay(table, cacheKey, shape)
-                // The view as the read starts; each source then emits once on subscription, so a
-                // change in between is read too
-                emit(reader.read(alongside))
-                merge(
-                        queryCacheDao.observe(table, cacheKey).map {},
-                        mutationQueue.mutationChangesOf(table),
-                        identityChanges.map {},
-                        alongside.map {},
-                    )
-                    .conflate()
-                    .collect { emit(reader.read(alongside)) }
-            }
+            val reader = LiveOverlay(table, cacheKey, shape)
+            // The view as the read starts; each source then emits once on subscription, so a
+            // change in between is read too
+            emit(reader.read(alongside))
+            merge(
+                    queryCacheDao.observe(table, cacheKey).map {},
+                    mutationQueue.mutationChangesOf(table),
+                    identityChanges.map {},
+                    alongside.map {},
+                )
+                .conflate()
+                .collect { emit(reader.read(alongside)) }
+        }
             .distinctUntilChanged()
     }
 
@@ -317,15 +320,14 @@ internal class QueryOverlay(
                     )
                 last = inputs
             }
-            val payload =
-                lastOverlaid?.let { overlay ->
-                    ServedPayload(
-                        payload = overlay.payload,
-                        fetchedAtMillis = servedRow?.let { stored -> fetchedAtOf(stored.updatedAt) },
-                        isStale = servedRow == null || isStaleStamp(servedRow.updatedAt),
-                        hasPendingMutations = overlay.hasPendingMutations,
-                    )
-                }
+            val payload = lastOverlaid?.let { overlay ->
+                ServedPayload(
+                    payload = overlay.payload,
+                    fetchedAtMillis = servedRow?.let { stored -> fetchedAtOf(stored.updatedAt) },
+                    isStale = servedRow == null || isStaleStamp(servedRow.updatedAt),
+                    hasPendingMutations = overlay.hasPendingMutations,
+                )
+            }
             return payload to value
         }
     }

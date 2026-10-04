@@ -491,9 +491,12 @@ class QueryReaderStrategyTest {
         resolver(backgroundScope, recorder).select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
         // Then — an expected offline condition, so nothing above INFO
-        assertEquals(1, recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
-            entry.message.contains("SELECT items network failed, falling back to cache")
-        })
+        assertEquals(
+            1,
+            recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
+                entry.message.contains("SELECT items network failed, falling back to cache")
+            },
+        )
         assertEquals(emptyList(), recorder.entries.filter { it.level > EngineLogLevel.INFO })
     }
 
@@ -510,9 +513,12 @@ class QueryReaderStrategyTest {
         }
 
         // Then — an expected offline condition, so nothing above INFO
-        assertEquals(1, recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
-            entry.message.contains("SELECT items network failed and no cache available")
-        })
+        assertEquals(
+            1,
+            recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
+                entry.message.contains("SELECT items network failed and no cache available")
+            },
+        )
         assertEquals(emptyList(), recorder.entries.filter { it.level > EngineLogLevel.INFO })
     }
 
@@ -558,9 +564,12 @@ class QueryReaderStrategyTest {
         }
 
         // Then — the outcome the read asked for, so nothing above INFO
-        assertEquals(1, recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
-            entry.message.contains("SELECT items no cached data available")
-        })
+        assertEquals(
+            1,
+            recorder.entriesAt(EngineLogLevel.INFO).count { entry ->
+                entry.message.contains("SELECT items no cached data available")
+            },
+        )
         assertEquals(emptyList(), recorder.entries.filter { it.level > EngineLogLevel.INFO })
     }
 

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.exceptions.NotFoundRestException
+import io.github.jan.supabase.exceptions.RestException
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
@@ -130,7 +130,10 @@ class ChannelDownloadStatusTest {
         assertContentEquals(CONTENT, bytes)
         assertContentEquals(CONTENT, receivedBytes(channel))
         val cached = assertNotNull(bucket.cachedFile(PATH))
-        assertContentEquals(CONTENT, FileSystem.SYSTEM.read(cached.path.toPath()) { readByteArray() })
+        assertContentEquals(
+            CONTENT,
+            FileSystem.SYSTEM.read(cached.path.toPath()) { readByteArray() },
+        )
     }
 
     @Test
