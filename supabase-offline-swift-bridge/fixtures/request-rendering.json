@@ -417,6 +417,19 @@
       }
     },
     {
+      "name": "a function call by GET keeps its arguments in the body, as supabase-kt 3.6 sends them",
+      "call": "rpc",
+      "description": {"v": 1, "function": "find_todo", "method": "get"},
+      "payload": "{\"todo_id\":7}",
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/rpc/find_todo",
+        "query": [],
+        "headers": {"Accept-Profile": "public"},
+        "body": {"todo_id": 7}
+      }
+    },
+    {
       "name": "an operator no supabase-kt has is refused",
       "call": "select",
       "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "regex", "value": "x"}]},
