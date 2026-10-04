@@ -164,16 +164,16 @@ extension OfflineBucketApi.FileUploadResponse {
 
 extension OfflineBucketApi.UploadSignedURL {
 
-    /// The core's answer `text`, `{"url", "path", "token"}`.
-    init(coreText text: String) throws {
+    /// The core's answer `text`, `{"url", "path", "token"}`, for the object at `path` as the caller
+    /// named it (the core's `path` is the name as it went into the URL).
+    init(coreText text: String, path: String) throws {
         let answer = try RowCoding.decode(Answer.self, from: text)
-        try self.init(url: CoreURL.parse(answer.url), path: answer.path, token: answer.token)
+        try self.init(url: CoreURL.parse(answer.url), path: path, token: answer.token)
     }
 
     /// The answer as the core writes it.
     private struct Answer: Decodable {
         let url: String
-        let path: String
         let token: String
     }
 }

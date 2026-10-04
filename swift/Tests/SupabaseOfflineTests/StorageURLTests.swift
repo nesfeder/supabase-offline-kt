@@ -92,4 +92,47 @@ struct StorageURLTests {
         #expect(upload.token == "up")
         try await client.close()
     }
+
+    @Test(arguments: ["why?.png", "a#b.png", "why? now.png", "notes/what?/x.png", "100%.png"])
+    func everyURLNamesTheObjectItWasGivenWhateverItsDelimiters(name: String) async throws {
+        // Given a Storage that signs the object the request names, as Storage does: in the URL's
+        // path as the request wrote it
+        let storage = FakeStorageServer()
+        storage.answer { request in
+            let sentPath = String(request.url.path(percentEncoded: true).dropFirst("/storage/v1".count))
+            if request.storagePath.hasPrefix("object/upload/sign/") {
+                return request.method == "POST"
+                    ? .json(#"{"url":"\#(sentPath)?token=up"}"#)
+                    : .json(#"{"Key":"avatars/x","Id":"object-1"}"#)
+            }
+            return .json(#"{"signedURL":"\#(sentPath)?token=t"}"#)
+        }
+        let client = SupabaseOfflineClient.inMemory(supabaseURL: URL(string: "https://project.supabase.co")!, server: storage.server)
+        let bucket = client.storage.from("avatars")
+
+        // When
+        let publicURL = try await bucket.publicURL(path: name)
+        let authenticatedURL = try await bucket.authenticatedURL(path: name)
+        let signed = try await bucket.createSignedURL(path: name, expiresIn: 60)
+        let upload = try await bucket.createSignedUploadURL(path: name)
+        try await bucket.uploadToSignedURL(name, token: upload.token, data: FakeStorageServer.photo)
+
+        // Then each URL's path decodes back to the name, with no query or fragment of its own
+        let base = "/storage/v1/object"
+        #expect(publicURL.path(percentEncoded: false) == "\(base)/public/avatars/\(name)")
+        #expect(publicURL.query() == nil && publicURL.fragment() == nil)
+        #expect(authenticatedURL.path(percentEncoded: false) == "\(base)/authenticated/avatars/\(name)")
+        #expect(authenticatedURL.query() == nil && authenticatedURL.fragment() == nil)
+        #expect(signed.path(percentEncoded: false) == "\(base)/sign/avatars/\(name)")
+        #expect(signed.query() == "token=t" && signed.fragment() == nil)
+        #expect(upload.url.path(percentEncoded: false) == "\(base)/upload/sign/avatars/\(name)")
+        #expect(upload.url.query() == "token=up")
+        #expect(upload.path == name)
+        let requests = storage.requests.values
+        #expect(requests.map(\.storagePath) == [
+            "object/sign/avatars/\(name)", "object/upload/sign/avatars/\(name)", "object/upload/sign/avatars/\(name)",
+        ])
+        #expect(requests.map { $0.url.query() } == [nil, nil, "token=up"])
+        try await client.close()
+    }
 }

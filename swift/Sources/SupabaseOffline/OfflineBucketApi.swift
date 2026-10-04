@@ -13,7 +13,9 @@ import SupabaseOfflineCore
 ///
 /// An object name that cannot be mapped onto a file safely (a leading `/`, an empty, `.` or `..`
 /// segment, a `\` or a control character) downloads uncached, and so does one holding `%`, `?` or
-/// `#`, which the request can mistake for another object: keep those characters out of names.
+/// `#`. The URL builders, signing and ``uploadToSignedURL(_:token:data:options:)`` encode those
+/// three, but every other request can mistake such a name for another object: keep them out of
+/// names.
 public struct OfflineBucketApi: Sendable {
 
     /// The client the requests go through.
@@ -73,7 +75,13 @@ public struct OfflineBucketApi: Sendable {
     ) async throws -> FileUploadResponse {
         let optionsText = try options.coreText()
         return try await client.connection.call { core, complete in
-            core.storage.uploadToSignedUrl(bucket: bucketId, path: path, token: token, data: data, options: optionsText) {
+            core.storage.uploadToSignedUrl(
+                bucket: bucketId,
+                path: escapingURLDelimiters(in: path),
+                token: token,
+                data: data,
+                options: optionsText
+            ) {
                 answer, failure in
                 complete(coreResult(answer, failure) { try FileUploadResponse(coreText: requiredValue($0)) })
             }
@@ -114,8 +122,9 @@ public struct OfflineBucketApi: Sendable {
     /// - Parameter upsert: Whether the upload may replace an object already at `path`.
     public func createSignedUploadURL(path: String, upsert: Bool = false) async throws -> UploadSignedURL {
         try await client.connection.call { core, complete in
-            core.storage.createSignedUploadUrl(bucket: bucketId, path: path, upsert: upsert) { answer, failure in
-                complete(coreResult(answer, failure) { try UploadSignedURL(coreText: requiredValue($0)) })
+            core.storage.createSignedUploadUrl(bucket: bucketId, path: escapingURLDelimiters(in: path), upsert: upsert) {
+                answer, failure in
+                complete(coreResult(answer, failure) { try UploadSignedURL(coreText: requiredValue($0), path: path) })
             }
         }
     }
@@ -127,7 +136,7 @@ public struct OfflineBucketApi: Sendable {
         return try await client.connection.call { core, complete in
             core.storage.createSignedUrl(
                 bucket: bucketId,
-                path: path,
+                path: escapingURLDelimiters(in: path),
                 expiresInSeconds: Int64(expiresIn),
                 imageTransform: transformText
             ) { answer, failure in
@@ -156,7 +165,8 @@ public struct OfflineBucketApi: Sendable {
     /// The URL comes from the opened client: the call waits for the client to finish opening, and
     /// after ``SupabaseOfflineClient/close()`` it throws ``OfflineError/Code/clientClosed``.
     public func publicURL(path: String) async throws -> URL {
-        let answer = try await client.connection.openedClient().client.storage.publicUrl(bucket: bucketId, path: path)
+        let answer = try await client.connection.openedClient().client.storage
+            .publicUrl(bucket: bucketId, path: escapingURLDelimiters(in: path))
         return try storageURL(answer)
     }
 
@@ -165,7 +175,8 @@ public struct OfflineBucketApi: Sendable {
     /// The URL comes from the opened client: the call waits for the client to finish opening, and
     /// after ``SupabaseOfflineClient/close()`` it throws ``OfflineError/Code/clientClosed``.
     public func authenticatedURL(path: String) async throws -> URL {
-        let answer = try await client.connection.openedClient().client.storage.authenticatedUrl(bucket: bucketId, path: path)
+        let answer = try await client.connection.openedClient().client.storage
+            .authenticatedUrl(bucket: bucketId, path: escapingURLDelimiters(in: path))
         return try storageURL(answer)
     }
 
@@ -261,6 +272,17 @@ extension CachedFile {
             sizeBytes: Int(coreFile.sizeBytes)
         )
     }
+}
+
+/// `name` as a URL path for a call that writes it into a URL: percent-encoded whole when it holds
+/// `%`, `?` or `#`, which would start an escape, a query or a fragment, and otherwise as it is.
+///
+/// The core writes the name into the URL unencoded (the pinned supabase-kt, below 3.8, encodes
+/// nothing; one that does would encode it twice). A name holding those three is never cached, so
+/// encoding it changes no cache key; any other name stays the key the cache knows it by.
+func escapingURLDelimiters(in name: String) -> String {
+    guard name.contains(where: { "%?#".contains($0) }) else { return name }
+    return name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
 }
 
 /// The URL in a synchronous answer of the core, or the failure it carries.

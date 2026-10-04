@@ -99,11 +99,15 @@ names differently. These do not compile:
 - `getPublicURL(path:…)`, which is `publicURL(path:)` here, `async`, with no transformation and no
   `download:`;
 - code that reads a result this package shapes differently: `FileUploadResponse.fullPath` (here
-  `key`) and its `id` as a non-optional `String`; the key `copy` returns and the objects `remove`
+  `key`) and its `id` as a non-optional `String`; `uploadToSignedURL`'s `SignedURLUploadResponse`
+  (`path`, `fullPath`; here a `FileUploadResponse`); the key `copy` returns and the objects `remove`
   returns (here both return nothing); `SignedUploadURL.signedURL` (here `url`); `createSignedURLs`'
   `[SignedURLResult]` enum (here `[SignedURL]` structs); `FileObject.id` as a `UUID` and its
   `bucketId`, `owner` and `buckets`; `FileObjectV2`'s optional `createdAt`, `size` and
   `contentType` (non-optional here, as Kotlin has them) and its non-optional `id`.
+
+One thing compiles and does not work: `catch let error as StorageError` in an app that also imports
+supabase-swift never matches, because Storage's refusals arrive as `OfflineError` (`server`).
 
 | Swift | Kotlin | Side / reason |
 | --- | --- | --- |
@@ -125,7 +129,7 @@ names differently. These do not compile:
 | `list(path:options:)` | `list(prefix, filter)` | supabase-swift's labels |
 | `info(path:)` | `info(path)` | The same name in both |
 | `exists(path:)` | `exists(path)` | The same name in both |
-| `publicURL(path:)` | `publicUrl(path)` | Kotlin's name (supabase-swift 2 says `getPublicURL`). `async` because the URL comes from the opened client, which opens in the background; for the same reason it throws `clientClosed` after `close()`, where Kotlin's still answers |
+| `publicURL(path:)` | `publicUrl(path)` | Kotlin's name (supabase-swift 2 says `getPublicURL`). `async` because the URL comes from the opened client, which opens in the background; for the same reason it throws `clientClosed` after `close()`, where Kotlin's still answers. `%`, `?` and `#` in the name are encoded, as supabase-swift encodes them, where Kotlin's (on supabase-kt 3.6) puts the name in as written; the same holds for `authenticatedURL`, `createSignedURL`, `createSignedUploadURL` and `uploadToSignedURL` |
 | `authenticatedURL(path:)` | `authenticatedUrl(path)` | Kotlin's name; `async` and `clientClosed` after `close()`, as `publicURL` |
 | `cachedFile(path:)` | `cachedFile(path)` | Kotlin's name |
 | `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Kotlin's name |
@@ -142,7 +146,7 @@ names differently. These do not compile:
 | `OfflineBucketApi.SignedURL` (`error`, `signedURL`, `path`) | supabase-kt's `SignedUrl` (the same) | Kotlin's names and shape (supabase-swift returns a `SignedURLResult` enum); `URL` for the URL string |
 | `OfflineBucketApi.FileObject` (`name`, `id`, `updatedAt`, `createdAt`, `lastAccessedAt`, `metadata`) | supabase-kt's `FileObject` (the same) | Kotlin's names and types; `Date` for `Instant`, `[String: OfflineJSON]` for `JsonObject` |
 | `OfflineBucketApi.FileObjectV2` (`name`, `id`, `version`, `bucketId`, `updatedAt`, `createdAt`, `lastAccessedAt`, `metadata`, `size`, `contentType`, `etag`, `lastModified`, `cacheControl`) | supabase-kt's `FileObjectV2` (the same, with `rawContentType`) | Kotlin's names and nullability; `contentType` is the text Kotlin calls `rawContentType`, as Swift has no parsed content-type type. Kotlin's `decodeMetadata()` has no counterpart |
-| A Storage refusal: `OfflineError` `server`, `serverError.status` / `.code` / `.message` | supabase-kt's `RestException` (`statusCode`, `error`, `description`) | Storage's own error code (`not_found`, `Duplicate`) is `code` and its message is `message`; supabase-kt keeps them only for a `400` and prints them into one string otherwise |
+| A Storage refusal: `OfflineError` `server`, `serverError.status` / `.code` / `.message` | supabase-kt's `RestException` (`statusCode`, `error`, `description`) | Storage's own error code (`not_found`, `Duplicate`) is `code` and its message is `message`; supabase-kt keeps them only for a `400` and prints them into one string otherwise. supabase-swift's `StorageError` is never thrown |
 
 ## The testing product
 

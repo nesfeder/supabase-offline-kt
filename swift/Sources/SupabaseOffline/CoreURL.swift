@@ -6,7 +6,9 @@ import Foundation
 /// upload URLs, which hold the object's name as it was written, spaces and all.
 ///
 /// Every OS reads them alike: a URL must be valid as written (iOS 16's rule, and iOS 17's with
-/// encoding turned off), or valid once the characters it cannot hold are percent-encoded.
+/// encoding turned off), or valid once the characters it cannot hold are percent-encoded. Only the
+/// part after the host is encoded, so a host that is not ASCII (an internationalized domain the app
+/// did not write in punycode) cannot be read and fails as ``OfflineError/Code/decoding``.
 enum CoreURL {
 
     /// `text` as a URL: as written when that is valid, otherwise with every character a URL cannot
