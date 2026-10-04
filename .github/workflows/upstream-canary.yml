@@ -343,6 +343,10 @@ jobs:
             echo "$marker"
             echo "supabase-kt $LATEST is on Maven Central. This library pins $PINNED (\`supabase-bom\` in \`gradle/libs.versions.toml\`), and $LATEST is newer than that minor."
             echo
+            if [[ "$CATALOG_PIN" == 3.6.* ]]; then
+              echo "**Why the pin is behind.** supabase-kt 3.7.0 and 3.8.0 carry two Realtime defects: a heartbeat tick that races \`disconnect()\` and ends the app's process with an uncaught exception (supabase-community/supabase-kt#1394, fixed by supabase-community/supabase-kt#1395), and a protocol-V2 channel leave sent without its \`join_ref\` (fixed by supabase-community/supabase-kt#1402). This library never uses Realtime, but its pin lifts an app's whole supabase-kt, Realtime included, so it stays on 3.6 and moves to the first release that contains both fixes. Until then this issue reports each newer release and how the library's tests fare on it, the tests that need 3.8 API included."
+              echo
+            fi
             if [[ "$PRETEND" == true ]]; then
               echo "> [!NOTE]"
               echo "> A manual test of this workflow: \`pretend_pinned\` set to $PINNED stood in for the catalog's pin, $CATALOG_PIN."
