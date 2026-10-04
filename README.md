@@ -136,8 +136,9 @@ not have: [supabase-kt](./docs/project/compatibility.md#supabase-kt).
   `io.github.nesfeder.supabase-offline:supabase-offline-kt:X.Y.Z` from Maven Central, and
   `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:X.Y.Z` for tests. See
   [Releasing](./docs/project/releasing.md).
-- **iOS (SwiftPM):** depend on `https://github.com/nesfeder/supabase-offline-kt.git` and add
-  the `SupabaseOffline` and `SupabaseOfflineSupport` products to your app target.
+- **iOS (Swift Package Manager):** depend on `https://github.com/nesfeder/supabase-offline-swift`
+  with `.upToNextMinor(from: "X.Y.Z")`, and add the `SupabaseOffline` product to your app target
+  (`SupabaseOfflineTesting` to its tests). iOS 16 and Xcode 26 or later.
 
 Maintainers release by following [RELEASING.md](./RELEASING.md).
 

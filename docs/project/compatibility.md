@@ -84,6 +84,16 @@ Semantic versioning in the usual sense:
 - The framework inside the Swift package. It is not a product and is not API, even though an app
   can import it by name.
 
+## Platforms
+
+The lowest versions each release supports. Raising one is a minor release.
+
+| Channel | Lowest supported |
+| --- | --- |
+| Maven, Android | API 23 |
+| Maven, iOS (`iosArm64`, `iosSimulatorArm64`) | iOS 15 |
+| Swift package | iOS 16, Xcode 26; the simulator on Apple silicon only (no x86_64 build) |
+
 ## supabase-kt
 
 supabase-offline-kt is built and tested against one supabase-kt minor. It is compiled against that

@@ -197,6 +197,12 @@ release.
 - Published on Maven Central as `io.github.nesfeder.supabase-offline:supabase-offline-kt` and
   `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing`, for Android, `iosArm64` and
   `iosSimulatorArm64`, each with its sources, an HTML API reference and a signature on every file.
+- The Swift package `SupabaseOffline` (and `SupabaseOfflineTesting` for tests), published by each
+  release to `https://github.com/nesfeder/supabase-offline-swift` under the same version. It needs
+  iOS 16 and Xcode 26 or later, and builds for the simulator on Apple silicon only (no x86_64
+  slice). Its framework is an asset of this repository's GitHub Release, and carries a privacy
+  manifest, as the `SupabaseOffline` target does, declaring the file-timestamp and user-defaults
+  APIs it references. It is not code-signed in 0.1.0.
 - `SyncReport.heldBehindOtherTablesCount`, and the testing artifact's
   `syncReport(heldBehindOtherTablesCount = …)`, defaulting to `0`.
 

@@ -8,6 +8,7 @@ in a queue and are sent when it comes back.
 
 - iOS 16 or later
 - Xcode 26 or later
+- For the simulator, a Mac with Apple silicon: the package has no x86_64 simulator build
 
 ## Installation
 
