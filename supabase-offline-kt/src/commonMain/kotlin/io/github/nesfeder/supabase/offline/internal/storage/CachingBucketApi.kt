@@ -9,7 +9,6 @@ import io.github.jan.supabase.storage.DownloadOptionBuilder
 import io.github.jan.supabase.storage.FileObject
 import io.github.jan.supabase.storage.FileObjectV2
 import io.github.jan.supabase.storage.FileUploadResponse
-import io.github.jan.supabase.storage.PurgeCacheOptions
 import io.github.jan.supabase.storage.SignedUrl
 import io.github.jan.supabase.storage.SignedUrlBuilder
 import io.github.jan.supabase.storage.SignedUrlsBuilder
@@ -56,7 +55,8 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * The offline client's [OfflineBucketApi]: supabase-kt's bucket, with downloads cached in the
  * client's [StorageFileCache]. Every member that can change the server's copy of a path is
  * overridden, its convenience overloads included, so stale copies are dropped; every member passes
- * the client's gate.
+ * the client's gate. `purgeCache` (supabase-kt 3.8) is not overridden, so this compiles on 3.6: on
+ * 3.8 it reaches the delegate past the gate, and a build on 3.6 run on 3.8 fails the call.
  *
  * @param engineLogger messages at INFO and above name the bucket, never the object path.
  * @param backgroundScope the client's own scope, which closing the client cancels.
@@ -610,12 +610,6 @@ internal class CachingBucketApi(
         operationGate.cancellableCall(backgroundScope) {
             networkAccess.ensureEnabled()
             delegate.changePublicStatusTo(public)
-        }
-
-    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
-        operationGate.cancellableCall(backgroundScope) {
-            networkAccess.ensureEnabled()
-            delegate.purgeCache(path, options)
         }
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */

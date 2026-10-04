@@ -34,6 +34,13 @@ private const val SCRATCH_SCHEMA = "public"
 private val SCRATCH_CONVERSION = PropertyConversionMethod.CAMEL_CASE_TO_SNAKE_CASE
 
 /**
+ * The operators [replayCondition] applies through the generic `filter(column, operator, value)`
+ * call, by identifier: supabase-kt has no typed entry point for them, and a name compiles on every
+ * supabase-kt minor, including those without the operator (`isdistinct` arrived in 3.8).
+ */
+internal val GENERICALLY_REPLAYED_OPERATORS: Set<String> = setOf("isdistinct")
+
+/**
  * Replays filters onto a live [PostgrestRequestBuilder].
  *
  * Used by MutationQueueReplayer when syncing UPDATE / DELETE operations.
@@ -111,12 +118,15 @@ internal fun replaysFully(descriptor: FilterDescriptor): Boolean {
  * use online.
  *
  * @return true when the condition landed on the builder; false when its stored value could not be
- *   parsed back into the shape the operator needs and the condition was skipped.
+ *   parsed back into the shape the operator needs, or the operator is one this replay does not
+ *   name, and the condition was skipped.
  */
+@Suppress("REDUNDANT_ELSE_IN_WHEN")
 private fun PostgrestFilterBuilder.replayCondition(condition: FilterDescriptor.Condition): Boolean {
     val operator = condition.operator ?: return false
     val rawValue = condition.value
 
+    // The `else` is redundant, hence the suppression, on a minor whose every operator has a branch.
     when (operator) {
         // Basic comparison
         FilterOperator.EQ -> eq(condition.column, rawValue)
@@ -193,9 +203,13 @@ private fun PostgrestFilterBuilder.replayCondition(condition: FilterDescriptor.C
         FilterOperator.PHFTS -> textSearch(condition.column, rawValue, TextSearchType.PHRASETO)
         FilterOperator.WFTS -> textSearch(condition.column, rawValue, TextSearchType.WEBSEARCH)
 
-        // No typed DSL entry point; the generic call encodes it exactly as the caller's
-        // `filter(column, ISDISTINCT, value)` did.
-        FilterOperator.ISDISTINCT -> filter(condition.column, FilterOperator.ISDISTINCT, rawValue)
+        // Named by identifier, so this compiles on every supabase-kt minor; the generic call encodes
+        // them as the caller's `filter(column, operator, value)` did. An operator named nowhere here
+        // is skipped, which [replaysFully] reports, so no mutation replays broader than captured.
+        else -> {
+            if (operator.identifier !in GENERICALLY_REPLAYED_OPERATORS) return false
+            filter(condition.column, operator, rawValue)
+        }
     }
     return true
 }
