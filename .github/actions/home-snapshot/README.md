@@ -32,8 +32,9 @@ listed or timed. macOS asks the user before a process reads inside them.
 
 The exclusion list in `home-snapshot.sh` names each path that something other than the job writes
 while the job runs. Each line gives its reason: what writes there, and why the job does not. The
-list was settled from samples of the runner's home taken every ten minutes with no job running.
-Everything else is watched, including:
+list was settled from samples of the runner's home taken every ten minutes with no job running;
+`Library/Safari` and `Library/Autosave Information` were added after runs failed on them, both
+written by applications the machine's user runs. Everything else is watched, including:
 
 - the rest of `~/Library`'s entries: `LaunchAgents` and each agent in it, `Application Support`,
   `Developer`, `Logs`, `Containers`;

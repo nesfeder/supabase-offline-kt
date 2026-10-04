@@ -13,5 +13,5 @@ io.github.nesfeder.supabase.offline.testing: fun rejectedMutation(id: Long, tabl
 io.github.nesfeder.supabase.offline.testing: fun serverError(status: Int, code: String? = …, message: String, details: String? = …, hint: String? = …)
 io.github.nesfeder.supabase.offline.testing: fun stalledRefresh(cause: Throwable)
 io.github.nesfeder.supabase.offline.testing: fun syncFailedException(message: String = …, httpStatus: Int? = …, code: String? = …, isConnectivityFailure: Boolean = …)
-io.github.nesfeder.supabase.offline.testing: fun syncReport(syncedCount: Int, rejected: List<RejectedMutation> = …, remainingCount: Int = …, alreadyOnServerCount: Int = …)
-io.github.nesfeder.supabase.offline.testing: fun syncStatus(network: NetworkStatus = …, pendingMutationCount: Int = …, rejectedMutationCount: Int = …, isSyncing: Boolean = …, lastSyncedAt: Instant? = …, lastSyncError: Throwable? = …)
+io.github.nesfeder.supabase.offline.testing: fun syncReport(syncedCount: Int, rejected: List<RejectedMutation> = …, remainingCount: Int = …, alreadyOnServerCount: Int = …, heldBehindOtherTablesCount: Int = …)
+io.github.nesfeder.supabase.offline.testing: fun syncStatus(network: NetworkStatus = …, pendingMutationCount: Int = …, rejectedMutationCount: Int = …, isSyncing: Boolean = …, lastSyncedAt: Instant? = …, lastSyncError: SyncFailedException? = …)
