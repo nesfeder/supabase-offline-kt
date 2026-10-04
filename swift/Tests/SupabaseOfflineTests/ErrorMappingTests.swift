@@ -36,7 +36,8 @@ struct ErrorMappingTests {
         for kind in kinds {
             // When
             let thrown = OfflineError.thrown(
-                kind: kind, message: "failed", httpStatus: nil, serverCode: nil, details: nil, hint: nil
+                kind: kind, message: "failed", httpStatus: nil, serverCode: nil, details: nil, hint: nil,
+                isConnectivityFailure: false
             )
 
             // Then
@@ -56,7 +57,8 @@ struct ErrorMappingTests {
             httpStatus: 409,
             serverCode: "23505",
             details: "Key (id)=(1) already exists.",
-            hint: "Pick another id"
+            hint: "Pick another id",
+            isConnectivityFailure: false
         )
 
         // Then
@@ -72,8 +74,34 @@ struct ErrorMappingTests {
                     hint: "Pick another id"
                 )
         )
+        #expect(error.httpStatus == 409)
+        #expect(!error.isNetworkOrConnectivityFailure)
         #expect(error.localizedDescription == "duplicate key value violates unique constraint")
         #expect(error.description == "server (status 409, code 23505): duplicate key value violates unique constraint")
+    }
+
+    @Test func aNetworkFailureSaysSoAndCarriesNoStatus() throws {
+        // When
+        let offline = OfflineError.thrown(
+            kind: .connectivity, message: "offline", httpStatus: nil, serverCode: nil, details: nil, hint: nil,
+            isConnectivityFailure: false
+        )
+        let stalledSync = OfflineError.thrown(
+            kind: .syncFailed, message: "offline", httpStatus: nil, serverCode: nil, details: nil, hint: nil,
+            isConnectivityFailure: true
+        )
+        let refusedSync = OfflineError.thrown(
+            kind: .syncFailed, message: "refused", httpStatus: 403, serverCode: "42501", details: nil, hint: nil,
+            isConnectivityFailure: false
+        )
+
+        // Then
+        #expect((offline as? OfflineError)?.isNetworkOrConnectivityFailure == true)
+        #expect((offline as? OfflineError)?.httpStatus == nil)
+        #expect((stalledSync as? OfflineError)?.isNetworkOrConnectivityFailure == true)
+        #expect((refusedSync as? OfflineError)?.isNetworkOrConnectivityFailure == false)
+        #expect((refusedSync as? OfflineError)?.httpStatus == 403)
+        #expect((refusedSync as? OfflineError)?.serverError?.code == "42501")
     }
 
     @Test func aMessageNamesNoRuntimeUnderThePackage() throws {
@@ -84,7 +112,8 @@ struct ErrorMappingTests {
             httpStatus: nil,
             serverCode: nil,
             details: nil,
-            hint: nil
+            hint: nil,
+            isConnectivityFailure: false
         )
 
         // Then
@@ -100,7 +129,8 @@ struct ErrorMappingTests {
 
         // When
         let thrown = OfflineError.thrown(
-            kind: kind, message: serverText, httpStatus: 404, serverCode: "42P01", details: nil, hint: nil
+            kind: kind, message: serverText, httpStatus: 404, serverCode: "42P01", details: nil, hint: nil,
+            isConnectivityFailure: false
         )
 
         // Then
@@ -142,6 +172,8 @@ struct ErrorMappingTests {
 
         // Then
         #expect(error?.code == .server)
+        #expect(error?.httpStatus == 403)
+        #expect(error?.isNetworkOrConnectivityFailure == false)
         #expect(error?.serverError?.status == 403)
         #expect(error?.serverError?.code == "42501")
         #expect(error?.serverError?.hint == "Grant select")
@@ -176,6 +208,7 @@ struct ErrorMappingTests {
 
         // Then
         #expect(error?.code == .connectivity)
+        #expect(error?.isNetworkOrConnectivityFailure == true)
     }
 
     @Test func aCacheOnlyReadOfNothingThrowsCacheMiss() async {

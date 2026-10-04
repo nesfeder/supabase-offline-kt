@@ -103,19 +103,30 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
     /// The server's refusal: set for ``Code/server``, and for a ``Code/syncFailed`` the server caused.
     public let serverError: ServerError?
 
-    /// The Swift error behind this one, such as a `DecodingError` or the access-token closure's own.
+    /// The Swift error behind this one: the `DecodingError` of a ``Code/decoding`` failure, or the
+    /// `EncodingError` of an ``Code/encoding`` one; otherwise `nil`.
     public let underlyingError: (any Error)?
+
+    /// Whether the network failed rather than the server: true for ``Code/connectivity``,
+    /// ``Code/networkDisabled`` and ``Code/mutationNotQueueable``, and for a ``Code/syncFailed``
+    /// the network caused.
+    public let isNetworkOrConnectivityFailure: Bool
+
+    /// The server's HTTP status, when the server answered: ``ServerError/status``.
+    public var httpStatus: Int? { serverError?.status }
 
     init(
         code: Code,
         message: String,
         serverError: ServerError? = nil,
-        underlyingError: (any Error)? = nil
+        underlyingError: (any Error)? = nil,
+        isNetworkOrConnectivityFailure: Bool = false
     ) {
         self.code = code
         self.message = message
         self.serverError = serverError
         self.underlyingError = underlyingError
+        self.isNetworkOrConnectivityFailure = isNetworkOrConnectivityFailure
     }
 
     /// The code and message, and the server's status and code when it refused; never its details.

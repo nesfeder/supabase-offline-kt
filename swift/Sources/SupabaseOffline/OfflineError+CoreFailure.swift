@@ -13,7 +13,8 @@ extension OfflineError {
             httpStatus: failure.httpStatus?.intValue,
             serverCode: failure.code,
             details: failure.details,
-            hint: failure.hint
+            hint: failure.hint,
+            isConnectivityFailure: failure.isConnectivityFailure
         )
     }
 
@@ -28,7 +29,8 @@ extension OfflineError {
         httpStatus: Int?,
         serverCode: String?,
         details: String?,
-        hint: String?
+        hint: String?,
+        isConnectivityFailure: Bool
     ) -> any Error {
         let code: Code
         var describesTheCore = false
@@ -51,6 +53,11 @@ extension OfflineError {
         let serverError = httpStatus.map {
             ServerError(status: $0, code: serverCode, message: message, details: details, hint: hint)
         }
-        return OfflineError(code: code, message: message, serverError: serverError)
+        return OfflineError(
+            code: code,
+            message: message,
+            serverError: serverError,
+            isNetworkOrConnectivityFailure: isConnectivityFailure || code == .connectivity
+        )
     }
 }

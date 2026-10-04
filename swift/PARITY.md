@@ -61,6 +61,8 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `OfflineError.message` | `Throwable.message` | Same |
 | `OfflineError.serverError` | `RejectedMutation.serverError` | Same |
 | `OfflineError.underlyingError` | `Throwable.cause` | Foundation's name for a wrapped error; Swift's `Error` has no `cause` |
+| `OfflineError.isNetworkOrConnectivityFailure` | `Throwable.isNetworkOrConnectivityFailure()` | Same; a property for an extension function |
+| `OfflineError.httpStatus` | `Throwable.httpStatusOrNull()` | An optional for `…OrNull` |
 | `OfflineError.errorDescription` | — | `LocalizedError` |
 | `OfflineError.ServerError` | `ServerError` | Same; nested because Swift has no packages and supabase-swift has a `ServerError` |
 | `ServerError.status`, `.code`, `.message`, `.details`, `.hint` | the same five | Same |
