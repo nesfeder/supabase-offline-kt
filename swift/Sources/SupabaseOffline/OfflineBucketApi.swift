@@ -255,6 +255,9 @@ public struct OfflineBucketApi: Sendable {
     /// - Parameter isPublic: Whether a download goes through the public URL rather than with the
     ///   user's session.
     public func ensureCachedFile(path: String, isPublic: Bool = false) async throws -> CachedFile {
+        // A copy of the core's rule, kept only for the wording: when the test
+        // `theCoreStillRefusesANameHoldingEachDelimiter` fails, the core caches these names, and
+        // this check and `escapingURLDelimiters` must go.
         guard !holdsURLDelimiters(path) else {
             throw OfflineError(
                 code: .invalidRequest,
@@ -285,18 +288,18 @@ extension CachedFile {
 /// `name` as a URL path for a call that writes it into a URL: percent-encoded whole when it holds
 /// `%`, `?` or `#`, which would start an escape, a query or a fragment, and otherwise as it is.
 ///
-/// The core writes the name into the URL unencoded (the pinned supabase-kt, below 3.8, encodes
-/// nothing; one that does would encode it twice). A name holding those three is never cached, so
-/// encoding it changes no cache key; any other name stays the key the cache knows it by.
+/// The core writes the name into the URL unencoded today; a core that encodes it would encode it
+/// twice. When the test `theCoreStillRefusesANameHoldingEachDelimiter` fails, the core has started
+/// to: remove this helper, `holdsURLDelimiters` and the refusal in `ensureCachedFile`.
 func escapingURLDelimiters(in name: String) -> String {
     guard holdsURLDelimiters(name) else { return name }
     return name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
 }
 
-/// Whether `name` holds `%`, `?` or `#`, which the core cannot put into a URL as they are, so it
-/// never caches such an object.
+/// Whether `name` holds `%`, `?` or `#` anywhere, as a scalar of its own or inside a character
+/// (the `#` of a keycap emoji), as the core sees them: it never caches such an object.
 func holdsURLDelimiters(_ name: String) -> Bool {
-    name.contains { "%?#".contains($0) }
+    name.unicodeScalars.contains { "%?#".unicodeScalars.contains($0) }
 }
 
 /// The URL in a synchronous answer of the core, or the failure it carries.

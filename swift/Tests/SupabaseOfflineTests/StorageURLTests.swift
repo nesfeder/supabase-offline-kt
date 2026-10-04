@@ -93,7 +93,7 @@ struct StorageURLTests {
         try await client.close()
     }
 
-    @Test(arguments: ["why?.png", "a#b.png", "why? now.png", "notes/what?/x.png", "100%.png"])
+    @Test(arguments: ["why?.png", "a#b.png", "why? now.png", "notes/what?/x.png", "100%.png", "#\u{FE0F}\u{20E3}.png"])
     func everyURLNamesTheObjectItWasGivenWhateverItsDelimiters(name: String) async throws {
         // Given a Storage that signs the object the request names, as Storage does: in the URL's
         // path as the request wrote it
@@ -117,7 +117,10 @@ struct StorageURLTests {
         let upload = try await bucket.createSignedUploadURL(path: name)
         try await bucket.uploadToSignedURL(name, token: upload.token, data: FakeStorageServer.photo)
 
-        // Then each URL's path decodes back to the name, with no query or fragment of its own
+        // Then each URL's path decodes back to the name, with no query or fragment of its own. A
+        // name encoded twice here means the core now encodes names itself: remove
+        // `escapingURLDelimiters`, `holdsURLDelimiters` and the refusal in `ensureCachedFile`
+        // (`theCoreStillRefusesANameHoldingEachDelimiter` fails then too).
         let base = "/storage/v1/object"
         #expect(publicURL.path(percentEncoded: false) == "\(base)/public/avatars/\(name)")
         #expect(publicURL.query() == nil && publicURL.fragment() == nil)

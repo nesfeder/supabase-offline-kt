@@ -1,6 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
 import Foundation
+import SupabaseOfflineCore
 import SupabaseOfflineTesting
 import Testing
 @testable import SupabaseOffline
@@ -68,8 +69,14 @@ struct StorageTests {
         try await client.close()
     }
 
-    @Test(arguments: ["photo?v=1.png", "100%.png", "a#b.png", "../a.png"])
-    func ensureCachedFileRefusesANameTheCacheCannotHoldAndSendsNothing(name: String) async throws {
+    @Test(arguments: [
+        ("photo?v=1.png", true), ("100%.png", true), ("a#b.png", true), ("#\u{FE0F}\u{20E3}.png", true),
+        ("a?\u{301}b.png", true), ("../a.png", false),
+    ])
+    func ensureCachedFileRefusesANameTheCacheCannotHoldAndSendsNothing(
+        name: String,
+        holdsADelimiter: Bool
+    ) async throws {
         // Given
         let storage = FakeStorageServer()
         let client = Self.makeClient(storage)
@@ -82,9 +89,32 @@ struct StorageTests {
         // Then
         #expect(error?.code == .invalidRequest)
         #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
-        if holdsURLDelimiters(name) {
-            #expect(error?.message.contains("keep those characters out of the names") == true)
+        #expect(error?.message.contains("keep those characters out of the names") == holdsADelimiter)
+        #expect(storage.requests.values.isEmpty)
+        try await client.close()
+    }
+
+    /// The package refuses these names in `ensureCachedFile` and encodes them in
+    /// `escapingURLDelimiters` because the core refuses to cache them. When this test fails, the
+    /// core caches names holding that character: remove the package's refusal in
+    /// `ensureCachedFile`, `escapingURLDelimiters` and `holdsURLDelimiters`, and the tests of them.
+    @Test(arguments: ["photo?v=1.png", "100%.png", "a#b.png"])
+    func theCoreStillRefusesANameHoldingEachDelimiter(name: String) async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+
+        // When the core is asked directly, past the package's own check
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.connection.call { core, complete in
+                core.storage.ensureCachedFile(bucket: "avatars", path: name, isPublic: false) { file, failure in
+                    complete(coreResult(file, failure) { _ in () })
+                }
+            }
         }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
         #expect(storage.requests.values.isEmpty)
         try await client.close()
     }
