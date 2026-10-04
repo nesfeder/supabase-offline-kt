@@ -841,6 +841,8 @@ internal class OfflineClient(
             rejected = rejected.map { rejection -> rejection.shown() },
             remainingCount = remainingCount,
             alreadyOnServerCount = alreadyOnServerCount,
+            heldBehindOtherTablesCount =
+                if (stop is SyncStop.HeldBehindOtherTables) remainingCount else 0,
         )
 
     override suspend fun applyServerRecord(

@@ -74,6 +74,7 @@ class TestValuesTest {
                 isRetryable = false,
             )
         val report = syncReport(syncedCount = 2, rejected = listOf(rejected), remainingCount = 1)
+        val held = syncReport(syncedCount = 0, remainingCount = 2, heldBehindOtherTablesCount = 2)
         val failure = syncFailedException(isConnectivityFailure = true)
         val status =
             syncStatus(
@@ -92,6 +93,8 @@ class TestValuesTest {
         assertFalse(rejected.isRetryable)
         assertEquals(listOf(rejected), report.rejected)
         assertEquals(0, report.alreadyOnServerCount)
+        assertEquals(0, report.heldBehindOtherTablesCount)
+        assertEquals(2, held.heldBehindOtherTablesCount)
         assertEquals(NetworkStatus.OFFLINE, status.network)
         assertSame(failure, status.lastSyncError)
         assertTrue(failure.isNetworkOrConnectivityFailure())

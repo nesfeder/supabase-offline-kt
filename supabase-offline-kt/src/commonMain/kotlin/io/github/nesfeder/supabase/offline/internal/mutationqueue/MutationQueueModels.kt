@@ -114,6 +114,14 @@ internal sealed interface SyncStop {
      */
     data object HeadInFlight : SyncStop
 
+    /**
+     * A pass for one table reached a write with an earlier write of the same identity still queued
+     * in another table, and stopped there: a write is never sent ahead of an earlier one.
+     *
+     * @property mutationId The first write held back.
+     */
+    data class HeldBehindOtherTables(val mutationId: Long) : SyncStop
+
     /** Local data was cleared while the pass was running; nothing was sent after that. */
     data object LocalDataCleared : SyncStop
 

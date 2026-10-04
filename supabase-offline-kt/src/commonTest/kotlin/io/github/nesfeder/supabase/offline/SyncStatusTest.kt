@@ -136,6 +136,24 @@ class SyncStatusTest {
     }
 
     @Test
+    fun clearing_local_data_clears_the_last_sync_error() = runTest {
+        // Given — a pass that stopped offline, with a write still queued
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val client = newTestOfflineClient(supabase = server.supabaseClient())
+        client.from(TABLE).insert(row(1))
+        client.syncPendingMutations()
+        val stopped = client.syncStatus.awaiting { it.lastSyncError != null }
+
+        // When
+        client.clearLocalData()
+
+        // Then — the writes it held back are gone, and so is the error
+        assertEquals(true, stopped.lastSyncError?.isNetworkOrConnectivityFailure())
+        assertNull(client.syncStatus.awaiting { it.pendingMutationCount == 0 }.lastSyncError)
+        client.close()
+    }
+
+    @Test
     fun the_status_says_a_pass_is_running_while_one_is() = runTest {
         // Given — a write queued offline, and a server that holds its replay
         val held = CompletableDeferred<Unit>()
