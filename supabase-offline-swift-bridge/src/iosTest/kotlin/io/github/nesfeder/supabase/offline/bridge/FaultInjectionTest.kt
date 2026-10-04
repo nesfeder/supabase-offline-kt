@@ -163,7 +163,12 @@ class FaultInjectionTest {
             val values = SubscriptionProbe<BridgeSyncStatus>()
 
             // When — a completion and a value handler throw
-            client.select(readOf()) { _, _ -> throw IllegalStateException("thrown by a caller") }
+            val answered = CompletionProbe<BridgeQueryResult>()
+            client.select(readOf()) { value, error ->
+                answered.completion(value, error)
+                throw IllegalStateException("thrown by a caller")
+            }
+            answered.await()
             client.observeSyncStatus(
                 onStatus = { status ->
                     values.onValue(status)
@@ -179,8 +184,8 @@ class FaultInjectionTest {
 
             // Then — both reported; the subscription went on, and the client still reads
             assertEquals(BridgeNetworkStatus.DISABLED, disabled.network)
-            assertTrue(sink.messages.any { "The completion of select" in it })
-            assertTrue(sink.messages.any { "A value handler of observeSyncStatus" in it })
+            awaitUntil { sink.messages.any { "The completion of select" in it } }
+            awaitUntil { sink.messages.any { "A value handler of observeSyncStatus" in it } }
             assertNull(error)
             assertNotNull(afterwards)
             client.closeAndWait()
@@ -202,7 +207,7 @@ class FaultInjectionTest {
         // Then
         assertNull(error)
         assertEquals(SERVER_ROWS, read?.data)
-        assertTrue(sink.messages.isNotEmpty())
+        awaitUntil { sink.messages.isNotEmpty() }
         client.closeAndWait()
     }
 

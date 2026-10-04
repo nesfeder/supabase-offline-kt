@@ -18,6 +18,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestResult
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -193,6 +194,11 @@ class SubscriptionProbe<T> {
             while (!matches(value)) value = values.receive()
             value
         }
+}
+
+/** Waits, for at most ten seconds, until [condition] holds; fails the test when it never does. */
+suspend fun awaitUntil(condition: () -> Boolean) {
+    withTimeout(10.seconds) { while (!condition()) delay(10) }
 }
 
 /** Records every log message, then throws [failure] when one is given. */
