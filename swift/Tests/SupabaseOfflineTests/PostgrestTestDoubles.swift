@@ -85,7 +85,8 @@ extension FakeServer.Request {
     /// The body as JSON; `nil` when there is none.
     var jsonBody: OfflineJSON? {
         get throws {
-            body.isEmpty ? nil : try JSONDecoder().decode(OfflineJSON.self, from: body)
+            guard !body.isEmpty else { return Optional.none }
+            return try JSONDecoder().decode(OfflineJSON.self, from: body)
         }
     }
 }

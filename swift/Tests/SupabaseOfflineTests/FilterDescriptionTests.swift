@@ -224,7 +224,7 @@ struct FilterDescriptionTests {
             "v": 1, "operation": "delete", "table": "todos", "strategy": "queueIfOffline",
             "filters": [["kind": "filter", "column": "id", "operator": "eq", "value": "1"]],
         ])
-        #expect(insert.body == #"{"id":1,"title":"Milk","done":false}"#)
+        #expect(insert.body == #"{"done":false,"id":1,"title":"Milk"}"#)
         #expect(delete.body == nil)
     }
 

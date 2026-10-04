@@ -94,7 +94,7 @@ extension RefreshState {
         case .paused: self = .paused
         case .stalled:
             let cause = state.cause.map(OfflineError.thrown(for:)) as? OfflineError
-            self = .stalled(cause: cause ?? OfflineError(code: .internal, message: "The refresh stalled for no reported reason"))
+            self = .stalled(cause: cause ?? OfflineError(code: .unexpected, message: "The refresh stalled for no reported reason"))
         default: self = .refreshing
         }
     }

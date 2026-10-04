@@ -52,17 +52,17 @@ public struct QuerySnapshotSequence<Value: Decodable & Sendable>: AsyncSequence,
 
     /// Subscribes: a new iteration of the read.
     public func makeAsyncIterator() -> Iterator {
-        let stream: AsyncThrowingStream<Element, any Error>
         do {
-            stream = target.client.querySnapshots(
+            let snapshots = target.client.querySnapshots(
                 description: try descriptionText(),
                 decode: BodyDecoding.decoding(Value.self),
                 onSubscriptionEnd: onSubscriptionEnd
             )
+            return Iterator(base: snapshots.makeAsyncIterator())
         } catch {
-            stream = AsyncThrowingStream { $0.finish(throwing: error) }
+            let refused = AsyncThrowingStream<Element, any Error> { $0.finish(throwing: error) }
+            return Iterator(base: refused.makeAsyncIterator())
         }
-        return Iterator(base: stream.makeAsyncIterator())
     }
 
     /// The read's description as the core reads it.

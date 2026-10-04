@@ -84,7 +84,7 @@ extension MutationOperation {
         case .update: self = .update
         case .delete_: self = .delete
         default:
-            throw OfflineError(code: .internal, message: "The core reported a write of a kind this release does not know")
+            throw OfflineError(code: .unexpected, message: "The core reported a write of a kind this release does not know")
         }
     }
 }

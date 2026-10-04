@@ -111,7 +111,7 @@ struct RequestRenderingFixtureTests {
             found.append("\(name): path \(request.url.path()), expected \(path)")
         }
         let query = expected["query"].map(stringPairs) ?? []
-        if request.queryParameters != query {
+        if request.queryParameters.map(columnsAsSet) != query.map(columnsAsSet) {
             found.append("\(name): query \(request.queryParameters), expected \(query)")
         }
         if case .object(let headers) = expected["headers"] {
@@ -124,6 +124,13 @@ struct RequestRenderingFixtureTests {
             found.append("\(name): body \(String(describing: body)), expected \(String(describing: expected["body"]))")
         }
         return found
+    }
+
+    /// A `columns` parameter with its names sorted: Swift writes a body's keys sorted, and PostgREST
+    /// reads the list as a set; any other parameter as it is.
+    private static func columnsAsSet(_ pair: [String]) -> [String] {
+        guard pair.count == 2, pair[0] == "columns" else { return pair }
+        return [pair[0], pair[1].split(separator: ",").sorted().joined(separator: ",")]
     }
 
     /// The code a Swift caller catches for the core's failure `kind`.

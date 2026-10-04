@@ -49,15 +49,15 @@ extension SupabaseOfflineClient {
     }
 
     /// A live read of `description`: every snapshot, its rows decoded by `decode`, newest unread
-    /// only. A snapshot that does not decode ends the stream with the decoding error and cancels
+    /// only. A snapshot that does not decode ends the iteration with the decoding error and cancels
     /// the core's subscription; `onSubscriptionEnd` hears how the core's subscription ended (the
     /// failure kind's name, or `nil`), for tests.
     func querySnapshots<Value: Sendable>(
         description: String,
         decode: @escaping @Sendable (String) throws -> Value,
         onSubscriptionEnd: (@Sendable (String?) -> Void)? = nil
-    ) -> AsyncThrowingStream<QuerySnapshot<Value>, any Error> {
-        connection.subscription { core, yield, finish in
+    ) -> SubscriptionSequence<QuerySnapshot<Value>> {
+        liveSequence { core, yield, finish in
             let stopper = SubscriptionStopper()
             let handle = core.observe(
                 query: description,

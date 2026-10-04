@@ -1,5 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+import Foundation
 
 extension SupabaseOfflineClient {
 
@@ -186,9 +187,18 @@ public struct OfflinePostgrestQueryBuilder: Sendable {
         )
     }
 
-    /// `values` as JSON text, encoded now, on the caller's actor, or why it could not be.
+    /// `values` as JSON text with its keys sorted, so a body is the same text every time; encoded
+    /// now, on the caller's actor, or why it could not be.
     static func bodyText(_ values: some Encodable) -> Result<String, any Error> {
-        Result { try RowCoding.jsonText(for: values) }
+        let encoder = RowCoding.makeEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        do {
+            return .success(String(decoding: try encoder.encode(values), as: UTF8.self))
+        } catch {
+            return .failure(
+                OfflineError(code: .encoding, message: "A \(type(of: values)) could not be encoded as JSON", underlyingError: error)
+            )
+        }
     }
 
     /// The description fields every request on this table carries: the table and its schema.
