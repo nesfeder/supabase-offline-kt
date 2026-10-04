@@ -303,8 +303,8 @@ class OfflineTaskRepository(
 
     override suspend fun clearLocalData() {
         offline.clearLocalData()
-        // A live read of an emptied cache waits to be asked again: ask now, so what the server
-        // holds comes back without a pull to refresh. Offline, or if it fails, the next refresh does.
+        // A live read of an emptied cache waits to be asked again: ask now, so the server's rows
+        // come back without a pull to refresh. Offline, or on a failure, the next refresh does it.
         if (canReachNetwork()) {
             for (table in listOf(Tables.TASKS, Tables.TASK_PHOTOS)) {
                 try {
@@ -338,7 +338,7 @@ class OfflineTaskRepository(
                 pendingRowIds(Tables.TASKS),
             ) { snapshot, pending ->
                 snapshot.toRowsSnapshot { result ->
-                    // A task still queued is listed after the server's rows; show it where it sorts.
+                    // A queued task is listed after the server's rows; show it where it sorts.
                     shown(result.decodeList<TaskRow>().map { it.toTask(pending) }.newestFirst())
                 }
             }

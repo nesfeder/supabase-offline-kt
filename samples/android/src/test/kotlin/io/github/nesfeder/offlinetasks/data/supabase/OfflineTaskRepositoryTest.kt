@@ -142,7 +142,9 @@ class OfflineTaskRepositoryTest {
         val sentAfter = server.requests.drop(sentBefore)
         assertTrue("GET /rest/v1/tasks" in sentAfter)
         assertTrue("GET /rest/v1/task_photos" in sentAfter)
-        withTimeout(WAIT) { shown.first { history -> history.drop(shownBefore).any { it?.size == 1 } } }
+        withTimeout(WAIT) {
+            shown.first { history -> history.drop(shownBefore).any { it?.size == 1 } }
+        }
         screen.cancel()
     }
 
