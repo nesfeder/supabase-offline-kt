@@ -1,33 +1,112 @@
-# Storage
+# Storage caching
 
-> **Written for an earlier engine.** This page describes the library as it was before 0.1.0: an
-> earlier engine, API and release process. Parts of it contradict what 0.1.0 will ship. It is
-> being rewritten for 0.1.0; until then, do not rely on it.
+A download through the offline bucket goes to the network first and is kept on disk; when the
+network fails, the kept copy is served instead. Writes (uploads, updates, deletes, moves and
+copies) are online only and never queued, and one that reaches the server drops the cached copies
+it made stale.
 
-The SDK wraps a Supabase Storage `BucketApi` with an offline-aware layer that caches successful
-downloads to disk, falls back to those files when the network is down, and tracks metadata in the
-local Room database.
+```kotlin
+--8<-- "StorageExamples.kt:bucket"
+```
 
-For internals (`OfflineBucketApi` + Okio file IO), see
-[architecture.md](../project/internals.md#storage-cache). For exception behavior, see
-[api-reference.md](../reference/supported-features.md#storage-downloads).
+`supabase.offline.storage.from(bucket)` is an `OfflineBucketApi`: every operation of supabase-kt's
+`BucketApi`, under its name, plus the file cache. Bucket management (creating, listing and
+emptying buckets) stays on `supabase.storage`.
 
-## Contents
+## Downloads
 
-- [Getting a bucket](#getting-a-bucket)
-- [Download caching](#download-caching)
-- [Local file layout](#local-file-layout)
-- [Path helpers](#path-helpers)
-- [Mutating ops (`delete`, `move`, `copy`)](#mutating-ops-delete-move-copy)
-- [Client-driven staleness](#client-driven-staleness)
-- [Behaviour matrix](#behaviour-matrix)
+```kotlin
+--8<-- "StorageExamples.kt:download"
+```
+
+`downloadAuthenticated` and `downloadPublic`, to bytes or to a channel, go to the network first:
+
+- **A success** is written to the cache, whole or not at all. A failure to write the copy is
+  logged and never fails the download.
+- **A "not found"** from the server drops the cached copy, and the error is rethrown.
+- **Any other failure** is answered from the cached copy when there is one, and thrown when there
+  is none.
+
+A download with an image transform is cached per transform, apart from the original. A channel
+download streams through a file on disk instead of being held in memory, and its answer's status
+is checked first: an error answer throws as the bytes download does, and nothing of it is cached
+or handed on.
+
+## Cached files
+
+```kotlin
+--8<-- "StorageExamples.kt:cached-file"
+```
+
+`cachedFile(path)` returns the cached copy, or `null`, and never touches the network.
+`ensureCachedFile(path)` downloads the object into the cache first when there is no copy; it
+streams to disk. Only an untransformed download or `ensureCachedFile` caches the copy these
+return.
+
+A `CachedFile` is the cache's own copy at an absolute `path`, with `fetchedAt` and `sizeBytes`.
+Read it, open it, hand it to an image loader, but do not move or write it. The cache may delete
+it when the object is uploaded, updated, deleted, moved or copied over through the offline bucket,
+when the server reports it gone, when the cache passes its bound and the file has not been used
+for 30 seconds, when the cache passes to another user, and when local data is cleared. Open it
+soon after you get it, or copy it if it must outlive those.
+
+**Nothing revalidates a cached file.** A copy is returned however old: compare `fetchedAt` with
+your own rule, and download again when it is too old.
+
+On Android, two helpers on any `BucketApi` from the offline client give the cached copy as a
+`file:` `Uri` (`ensureLocalFile` gives a `File`):
+
+```kotlin
+--8<-- "StorageExamples.kt:android-helpers"
+```
+
+On iOS, `ensureLocalPath(path)` and `localPathIfCached(path)` give the absolute path. Each returns
+`null` for a bucket that did not come from the offline client.
+
+## Writes
+
+Uploads, updates, deletes, moves and copies are online only, and nothing is queued:
+
+- **Offline**, a write fails with supabase-kt's own connectivity error, as it does without the
+  library.
+- **With network access off** (`disableNetwork()`), every Storage call other than a download
+  throws `NetworkDisabledException` and sends nothing; a download is answered from the file
+  cache, or throws `NetworkDisabledException` when nothing is cached.
+- **A write that reaches the server** drops the cached copies it made stale, so a later read never
+  serves the old bytes. A resumable upload drops them once it finishes.
+- **An upload does not put its bytes in the cache**, so the next read downloads them. A file
+  uploaded just before the device goes offline is not available offline until it is downloaded.
+
+Signed URLs, listings, `info` and `exists` always ask the server. `publicUrl` and the other URL
+builders send nothing.
+
+## Paths that are never cached
+
+An object path that cannot be mapped safely onto a file (a leading `/`, an empty, `.` or `..`
+segment, a `\`, a control character) still downloads and writes, uncached, and
+`ensureCachedFile` refuses it with `IllegalArgumentException`.
+
+So does a name holding `%`, `?` or `#` on supabase-kt 3.6, which puts the name in the URL as
+written: a `%` fails the request, and a `?` or `#` can fetch a different object, so the library
+never caches it. Keep these characters out of object names.
+
+## Whose files they are
+
+With Auth installed, the file cache belongs to one user at a time, like the query cache: when the
+session settles as someone else, the files are deleted, and a download that started before the
+change is not written into the new user's cache. `clearLocalData()` deletes every file. See
+[Signing out and switching users](sign-out.md).
+
+The bound, 256 MiB by default, is `fileCacheSizeBytes`; see
+[Cache size and eviction](eviction.md#the-file-cache). Where the files live is on
+[On-device data](../reference/on-device-data.md).
 
 ## Behaviour matrix
 
-Facts about the engine as it is now, unlike the rest of this page; one row per condition, the
-conditions those of the [one-shot read matrix](read-strategies.md#behaviour-matrix), with warm and
-cold saying whether the object is cached. Each cell names the test that pins it. Writes are
-`upload`, `update`, `delete`, `move`, `copy` and the resumable and signed-URL uploads.
+Facts about the engine; one row per condition, the conditions those of the
+[one-shot read matrix](read-strategies.md#behaviour-matrix), with warm and cold saying whether the
+object is cached. Each cell names the test that pins it. Writes are `upload`, `update`, `delete`,
+`move`, `copy` and the resumable and signed-URL uploads.
 
 | Condition | `downloadAuthenticated` / `downloadPublic` | `ensureCachedFile` | `cachedFile` | Writes |
 |---|---|---|---|---|
@@ -36,129 +115,10 @@ cold saying whether the object is cached. Each cell names the test that pins it.
 | **Offline, cold** | Throws the failure.<br><small>`OfflineBucketApiDownloadTest.downloadAuthenticated_throwsWhenNoCacheAndDelegateFails`, `OfflineBucketApiDownloadTest.downloadPublic_throwsWhenNoCacheAndDelegateFails`</small> | Throws the failure.<br><small>`StorageCachedFileTest.ensureCachedFile_throws_the_download_failure_when_nothing_is_cached`</small> | `null`.<br><small>`StorageCachedFileTest.cachedFile_is_null_before_anything_is_cached_and_never_downloads`</small> | As offline, warm.<br><small>`StorageWriteInvalidationTest.storage_writes_fail_offline_with_the_connectivity_error_and_leave_the_cache_alone`</small> |
 | **Session restoring** | Not held for the session: sent at once on the anon key, and its answer cached. Refused for authorization, as such a request may be: the cached copy, kept; cold, the refusal is thrown.<br><small>`StorageWhileRestoringTest.a_download_is_sent_at_once_on_the_anon_key_and_cached`, `OfflineBucketApiTest.transient_auth_failure_serves_cache_and_does_not_evict`, `OfflineBucketApiDownloadTest.downloadAuthenticated_throwsWhenNoCacheAndDelegateFails`</small> | As a download.<br><small>`StorageCachedFileTest.ensureCachedFile_streams_a_missing_object_to_disk_once`, `StorageCachedFileTest.ensureCachedFile_throws_the_download_failure_when_nothing_is_cached`</small> | Unchanged: never a request.<br><small>`StorageCachedFileTest.cachedFile_is_null_before_anything_is_cached_and_never_downloads`</small> | Sent at once on the anon key; a refusal keeps the cached copy.<br><small>`StorageWhileRestoringTest.an_upload_is_sent_at_once_on_the_anon_key`, `StorageWriteInvalidationTest.a_write_the_server_rejected_keeps_the_cached_copy`</small> |
 
-## Getting a bucket
+A channel download whose answer is an error throws it, and caches nothing.
+<small>`ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest`</small>
 
-```kotlin
-val bucket = offline.storage("public")
-```
-
-`SupabaseOfflineClient.storage(bucket)` returns a `BucketApi` (the supabase-kt type) backed by
-[OfflineBucketApi.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/OfflineBucketApi.kt).
-You can use every method `BucketApi` provides; the wrapper transparently caches downloads and
-mirrors writes locally.
-
-## Download caching
-
-Both `downloadAuthenticated(path)` and `downloadPublic(path)` cache successful responses to disk:
-
-1. Try the network call.
-2. On success, write the bytes to disk and `upsert` a `CachedFileRow` in the `storage_objects`
-   table.
-3. On failure, attempt to serve the bytes from disk; otherwise rethrow.
-
-Two byte-channel variants (`downloadAuthenticated(path, channel)` / `downloadPublic(path, channel)`)
-are also wrapped — they read the network into memory and then either stream cached bytes from
-disk or pipe the freshly-cached bytes back into the channel.
-
-## Local file layout
-
-Cached files live under the offline base directory at:
-
-```
-<baseDirectory>/storage/<bucketId>/<objectPath>
-```
-
-The path resolver is in
-[FileIO.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.kt):
-
-```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.kt" linenums="19"
-internal fun resolveLocalPath(baseDir: Path, bucketId: String, objectPath: String): Path {
-    val clean = objectPath
-        .removePrefix("/$bucketId/")
-        .removePrefix("$bucketId/")
-        .removePrefix("/")
-    return baseDir / "storage" / bucketId / clean
-}
-```
-
-`baseDirectory` is provided by `PlatformBaseDirectory` in each platform's source set:
-
-- **Android:** app private storage rooted at the `Context`-provided base. Implemented in
-  `shared/src/androidMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.android.kt`.
-- **iOS:** the Application Support directory. Implemented in
-  `shared/src/iosMain/kotlin/io/github/nesfeder/supabase/internal/storage/FileIO.ios.kt`.
-
-You can override the base by passing `offlineStoragePath` in
-[`SupabaseOfflineConfig`](../reference/configuration.md).
-
-## Path helpers
-
-Convenient extensions on `BucketApi` (which under the hood downcast to the internal
-`OfflineBucketApi`) let you skip the bytes-in-memory step when you just need a file URL.
-
-### Android
-
-Defined in
-[shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt):
-
-| Function | Returns | Behavior |
-|----------|---------|----------|
-| `ensureLocalFile(objectPath, isPublic)` | `File?` | Returns the cached `File` if present; otherwise downloads and returns the resulting file. Returns `null` on failure. |
-| `ensureLocalUri(objectPath, isPublic)` | `Uri?` | Same as `ensureLocalFile` but wraps in a `file://` `Uri`. |
-| `localUriIfCached(objectPath)` | `Uri?` | Returns the cached `Uri` only — never triggers a download. |
-| `storageCacheMetadata(objectPath)` | `StorageCacheMetadata?` | Returns metadata only if both the DB row exists and the file is still on disk. |
-
-### iOS
-
-Defined in
-[shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt):
-
-| Function | Returns | Behavior |
-|----------|---------|----------|
-| `ensureLocalPath(objectPath, isPublic)` | `String?` | Returns the cached absolute POSIX path; downloads if missing. |
-| `localPathIfCached(objectPath)` | `String?` | Cached path or `null`. No network. |
-| `storageCacheMetadata(objectPath)` | `StorageCacheMetadata?` | Same semantics as Android. |
-
-## Mutating ops (`delete`, `move`, `copy`)
-
-These pass through to the remote bucket and also keep the local cache consistent:
-
-- `delete(paths)` — deletes remotely, then removes the cached files **and** the corresponding
-  `storage_objects` rows.
-- `move(from, to, destinationBucket?)` — moves remotely, attempts an atomic file move locally
-  (falls back to copy+delete), retracks the new row.
-- `copy(from, to, destinationBucket?)` — copies remotely. Does **not** auto-populate the local
-  cache for the destination; the next download will fill it.
-
-## Client-driven staleness
-
-The SDK does not enforce a max age for cached storage files — it never deletes a file just
-because it's old. Use `StorageCacheMetadata.lastFetchedEpochMs` to make that decision yourself:
-
-```kotlin
-val metadata = bucket.storageCacheMetadata(objectPath)
-val cutoff = Clock.System.now().toEpochMilliseconds() - 24.hours.inWholeMilliseconds
-if (metadata == null || metadata.lastFetchedEpochMs < cutoff) {
-    // re-download
-    bucket.ensureLocalFile(objectPath, isPublic = true)
-}
-```
-
-The metadata type lives at
-[shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt):
-
-```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt" linenums="11"
-data class StorageCacheMetadata(
-    val bucketId: String,
-    /** Object key within the bucket (same string passed to download / path helpers). */
-    val objectPath: String,
-    /** Absolute path to the cached file on device. */
-    val localPath: String,
-    /** Epoch milliseconds when this cache entry was last written (successful download / track). */
-    val lastFetchedEpochMs: Long,
-)
-```
-
-`storageCacheMetadata` returns `null` whenever the file referenced by a row is no longer on disk
-(e.g. user cleared app data) — so a non-null return guarantees both the row and the file are
-intact.
+While network access is off, a download is answered from the file cache, and an upload, a delete
+or a move throws `NetworkDisabledException`, leaving the cache as it was.
+<small>`StorageWhileNetworkDisabledTest.a_download_while_access_is_off_is_answered_from_the_file_cache`,
+`StorageWhileNetworkDisabledTest.uploads_and_deletes_while_access_is_off_throw_and_leave_the_cache_alone`</small>

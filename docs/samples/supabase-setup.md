@@ -176,6 +176,60 @@ for up to a year. A few requests to the database each day, from the samples or t
 keep it from pausing. See
 [Project pausing](https://supabase.com/docs/guides/platform/free-project-pausing).
 
+## When the schema changes
+
+The file above is the samples' first migration, and it is never edited once released. A later
+change to the schema is a new file in `samples/supabase/migrations/`, named for the time it was
+written so it sorts after this one. `supabase db push` applies each file once, in order, and never
+runs one it has applied again. In the SQL Editor, run each new file once, in the same order. The
+first file can still be run again at any time and changes nothing.
+
+## Cleaning up files and users
+
+Two things pile up in a project the samples have used for a while, because nothing on the device
+can remove them:
+
+- **Files with no row.** A task deleted offline keeps its photos' files: Storage writes are never
+  queued, so the files stay in the bucket after the rows go.
+- **Anonymous users nobody can reach.** An anonymous user who signs out, or deletes the app, can
+  never sign back in, and their tasks, photos and files stay behind.
+
+The samples never hold the secret key, so they cannot clean up after themselves. Sweep by hand
+from the dashboard now and then, or, for a project that wants it done on a schedule, write an Edge
+Function that does the same with the secret key.
+
+**Files with no row.** List them in the SQL Editor:
+
+```sql
+select o.name
+from storage.objects o
+where o.bucket_id = 'task-photos'
+  and not exists (select 1 from public.task_photos p where p.object_path = o.name);
+```
+
+Then delete those files in **Storage**, under `task-photos`: Supabase does not let SQL delete
+stored files.
+
+**Anonymous users.** Files first: Supabase refuses to delete a user who still owns files. List the
+files of anonymous users who have not signed in for 30 days:
+
+```sql
+select o.name
+from storage.objects o
+join auth.users u on split_part(o.name, '/', 1) = u.id::text
+where o.bucket_id = 'task-photos'
+  and u.is_anonymous
+  and u.last_sign_in_at < now() - interval '30 days';
+```
+
+Delete those files in **Storage**, then the users. Their tasks and photo rows go with them:
+
+```sql
+delete from auth.users
+where is_anonymous
+  and last_sign_in_at < now() - interval '30 days';
+```
+
 ## Remove it all
 
 The end of the file has a commented-out "how to reset" section. Delete the `task-photos` bucket in

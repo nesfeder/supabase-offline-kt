@@ -1,325 +1,107 @@
-# Persistence
+# On-device data
 
-> **Written for an earlier engine.** This page describes the library as it was before 0.1.0: an
-> earlier engine, API and release process. Parts of it contradict what 0.1.0 will ship. It is
-> being rewritten for 0.1.0; until then, do not rely on it.
+Everything the library keeps on the device is in one SQLite database, `supabase_offline.db`, and
+one directory of downloaded files, both in the app's private storage. This page lists where they
+are, what they hold, and what removes it.
 
-The SDK stores everything in a single AndroidX Room (KMP) database file named
-`supabase_offline.db`. There are three tables. Schema is defined in
-[OfflineEntities.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt)
-and the database itself in
-[OfflineDatabase.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineDatabase.kt).
+## Where it lives
 
-## Contents
+| | Database | Downloaded files |
+| --- | --- | --- |
+| Android, by default | The app's database directory: `getDatabasePath("supabase_offline.db")` | `<filesDir>/supabase_offline/` |
+| iOS, by default | `Documents/supabase_offline.db` | `Documents/supabase_offline/` |
+| With `dataDirectory` set | `<dataDirectory>/supabase_offline.db` | `<dataDirectory>/` |
 
-- [Schema overview](#schema-overview)
-- [`object_cache`](#object_cache)
-- [`mutation_cache`](#mutation_cache)
-- [`storage_objects`](#storage_objects)
-- [Database bootstrap](#database-bootstrap)
-- [DB file locations](#db-file-locations)
-- [Migration policy](#migration-policy)
+Beside the database, SQLite keeps its write-ahead log and its index, `supabase_offline.db-wal` and
+`supabase_offline.db-shm`. On iOS the plugin excludes its files from iCloud and device backups; on
+Android you leave them out of Auto Backup yourself
+([Project setup](../getting-started/setup.md#backups)).
 
-## Schema overview
+The database runs on the SQLite the library bundles, so every install, on both platforms, runs
+the same SQLite version.
 
-```mermaid
-erDiagram
-    object_cache {
-        TEXT table_name PK
-        TEXT signature PK
-        TEXT payload
-        INTEGER updated_at
-    }
-    mutation_cache {
-        INTEGER id PK
-        TEXT table_name
-        TEXT operation
-        TEXT body_json
-        TEXT filter_json
-        INTEGER created_at_ms
-        INTEGER synced_at_ms
-        INTEGER default_to_null
-        TEXT on_conflict
-        INTEGER ignore_duplicates
-    }
-    storage_objects {
-        TEXT key PK
-        TEXT bucketId
-        TEXT path
-        TEXT localPath
-        INTEGER sizeBytes
-        TEXT eTag
-        INTEGER lastFetchedEpochMs
-    }
-```
+## The files
 
-## `object_cache`
+A downloaded object is stored at `storage/<bucket>/<object path>` under the files directory, when
+its bucket and path are short printable names. Any other name, and every image-transform variant,
+is stored under `storage-hashed/`, in a file named by a hash of its key. A download is written to
+a temporary file first and moved into place whole; a temporary file a crash left behind is
+deleted once it is more than a day old.
 
-Caches SELECT results, keyed by the deterministic
-[signature](../project/internals.md#cache-key-the-select-signature) of the request.
+## The database
 
-```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt" linenums="19"
-@Entity(
-    tableName = "object_cache",
-    primaryKeys = ["table_name", "signature"]
-)
-internal data class ObjectRow(
-    @ColumnInfo(name = "table_name") val table: String,
-    @ColumnInfo(name = "signature") val signature: String,
-    /** Full JSON payload from PostgREST (usually a JSON array string). */
-    @ColumnInfo(name = "payload") val payload: String,
-    @ColumnInfo(name = "updated_at") val updatedAt: Long
-)
-```
+Room schema version 1, identity hash `d82a2435c50b4595368573f8728a370b`.
 
-- **Primary key:** composite `(table_name, signature)`.
-- **`payload`:** raw JSON string returned by PostgREST (typically a JSON array).
-- **`updated_at`:** epoch ms when the row was last written. Used for TTL comparisons (TTL itself
-  is supplied per request — see
-  [`cacheDuration`](../project/internals.md#cacheduration-is-ttl-at-read-not-ttl-at-write)).
-- **DAO:** `ObjectDao` exposes `get`, `observe` (Flow), `upsert`, `delete`, `getAllForTable`,
-  `observeAllForTable`, `deleteTable`, and the size-eviction helper
-  `deleteOldestPayloadRows(limit)`.
+### `object_cache`
 
-## `mutation_cache`
+One cached list per row, and the library's own records in reserved rows. Primary key: `table_name`, `signature`.
 
-Pending mutations awaiting sync, plus already-synced mutations kept around for read-time overlay
-until the corresponding SELECT is refreshed.
+| Column | Type | Null | What it holds |
+| --- | --- | --- | --- |
+| `table_name` | TEXT | no | The table, as `schema.table` outside the default schema; or the reserved name of the library's records |
+| `signature` | TEXT | no | The cache key: the table, its sorted query parameters and its range |
+| `payload` | TEXT | no | The JSON array PostgREST answered, as text; for a reserved row, the record |
+| `updated_at` | INTEGER | no | When the server sent the list, in milliseconds since 1970; negated while the list is stale |
+| `synced_through` | INTEGER, default `0` | no | The newest replayed write the list has seen, so the overlay skips it |
 
-```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt" linenums="119"
-@Entity(tableName = "mutation_cache")
-internal data class MutationRow(
-    @PrimaryKey(autoGenerate = true)
-    val id: Long = 0L,
+### `storage_objects`
 
-    @ColumnInfo(name = "table_name")
-    val table: String,
+One downloaded Storage object per row; the file itself is on disk. Primary key: `key`.
+It is unique on (`bucketId`, `path`).
 
-    /** "INSERT", "UPSERT", "UPDATE", or "DELETE". */
-    val operation: String,
+| Column | Type | Null | What it holds |
+| --- | --- | --- | --- |
+| `key` | TEXT | no | `<bucket>::<path>` |
+| `bucketId` | TEXT | no | The bucket |
+| `path` | TEXT | no | The object's path in the bucket |
+| `localPath` | TEXT | no | Where the file was written; its place is always derived from the bucket and path |
+| `sizeBytes` | INTEGER | yes | The file's size |
+| `eTag` | TEXT | yes | Not used: always `NULL` |
+| `lastFetchedEpochMs` | INTEGER | no | When the file was downloaded, in milliseconds since 1970: `CachedFile.fetchedAt` |
 
-    /**
-     * Raw JSON body string. For INSERT/UPSERT usually a JSON array; for UPDATE a JSON object;
-     * for DELETE usually "{}".
-     */
-    @ColumnInfo(name = "body_json")
-    val bodyJson: String,
+### `mutation_cache`
 
-    /**
-     * Optional JSON-encoded filter descriptor:
-     *
-     * {
-     *   "mode": "AND" | "OR",
-     *   "conditions": [
-     *     { "column": "id", "operatorId": "eq", "value": "123" },
-     *     ...
-     *   ]
-     * }
-     *
-     * Here "operatorId" is the FilterOperator.identifier (e.g. "eq", "lt", "ilike", ...).
-     *
-     * Only used for UPDATE / DELETE. INSERT / UPSERT typically don't carry filters.
-     */
-    @ColumnInfo(name = "filter_json")
-    val filterJson: String?,
+The mutation queue: one write per row, in `id` order. Primary key: `id`, autoincrement.
+It is indexed on (`owner`, `synced_at_ms`) and indexed on (`table_name`).
 
-    /**
-     * Client-side timestamp (epoch millis) when the mutation was enqueued.
-     * Used to enforce FIFO ordering when syncing.
-     */
-    @ColumnInfo(name = "created_at_ms")
-    val createdAtMs: Long,
+| Column | Type | Null | What it holds |
+| --- | --- | --- | --- |
+| `id` | INTEGER | no | The write's id and its place in the queue: `PendingMutation.id` |
+| `table_name` | TEXT | no | The table the write targets |
+| `operation` | TEXT | no | `INSERT`, `UPSERT`, `UPDATE` or `DELETE` |
+| `body_json` | TEXT | no | The body the write sends, as JSON text; `{}` for a DELETE |
+| `filter_json` | TEXT | yes | The UPDATE's or DELETE's filter, encoded so a replay rebuilds it |
+| `created_at_ms` | INTEGER | no | When the write was made, by the device's clock |
+| `synced_at_ms` | INTEGER | yes | When a pass replayed it; `NULL` while it waits |
+| `default_to_null` | INTEGER | yes | The insert or upsert's `defaultToNull` |
+| `on_conflict` | TEXT | yes | The upsert's `onConflict` columns |
+| `ignore_duplicates` | INTEGER | yes | The upsert's `ignoreDuplicates` |
+| `owner` | TEXT | yes | Who made the write: `user:` and the user's id, or `anonymous` when nobody was signed in; `NULL` when none was recorded |
+| `sync_sequence` | INTEGER | yes | The order in which replayed writes were accepted, against the lists that have seen them |
+| `schema_cache_misses` | INTEGER, default `0` | no | How many times PostgREST's schema cache did not know the table or a column yet |
+| `send_unconfirmed` | INTEGER, default `0` | no | Whether a send may have reached the server without its answer arriving |
 
-    /**
-     * Timestamp (epoch millis) when this mutation was successfully synced to the
-     * server. A `null` value means the mutation is still *pending*.
-     *
-     * We keep synced mutations around so they can still participate in local
-     * overlays when we have to fall back to cached SELECT data while offline.
-     */
-    @ColumnInfo(name = "synced_at_ms")
-    val syncedAtMs: Long? = null,
 
-    /**
-     * Mirrors InsertRequestBuilder.defaultToNull / UpsertRequestBuilder.defaultToNull.
-     *
-     * - If true, missing fields default to `null`.
-     * - If false, missing fields use the column's default value in Postgres.
-     *
-     * Only meaningful for INSERT / UPSERT; ignored for UPDATE / DELETE.
-     * Nullable for backward compatibility and for non-INSERT/UPSERT rows.
-     */
-    @ColumnInfo(name = "default_to_null")
-    val defaultToNull: Boolean? = null,
+The library's own records (the rejected list, whose cache it is, and each cached list's query
+shape) are JSON text in reserved rows of `object_cache`, under a table name 94 bytes long:
+Postgres cuts identifiers at 63 bytes, so no table of yours can have that name, and `from()`
+refuses it. A reserved row is never evicted, counted against `cacheSizeBytes`, read as a query or
+overlaid.
 
-    /**
-     * Mirrors UpsertRequestBuilder.onConflict.
-     *
-     * Comma-separated UNIQUE column(s) that define how duplicate rows are detected
-     * during UPSERT.
-     *
-     * Only meaningful for UPSERT; ignored for other operations.
-     */
-    @ColumnInfo(name = "on_conflict")
-    val onConflict: String? = null,
+## What removes it
 
-    /**
-     * Mirrors UpsertRequestBuilder.ignoreDuplicates.
-     *
-     * - If true, duplicate rows are ignored on UPSERT.
-     * - If false, duplicate rows are merged with existing rows.
-     *
-     * Only meaningful for UPSERT; ignored for other operations.
-     */
-    @ColumnInfo(name = "ignore_duplicates")
-    val ignoreDuplicates: Boolean? = null
-)
-```
+| Event | What goes | What stays |
+| --- | --- | --- |
+| `clearLocalData()` | Every cached list, every downloaded file, every queued write (never sent) and the rejected list. The database is rewritten without them, as far as open reads allow ([details](../behaviours/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
+| A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists and the downloaded files | The mutation queue and the rejected list: each user's writes wait for that user |
+| Sign-out without Auth, or with your own token provider | Nothing: there is one identity for the life of the install | Everything |
+| `close()` | Nothing | Everything, for the next client |
+| Eviction | Cached lists fetched longest ago, past `cacheSizeBytes`; files used least recently, past `fileCacheSizeBytes` | The queue and the rejected list, which are never evicted |
+| Uninstalling the app | Everything: it is all in the app's private storage | |
 
-- **`operation`:** `"INSERT"`, `"UPSERT"`, `"UPDATE"`, or `"DELETE"` (constants in
-  `MutationOperation`).
-- **`bodyJson`:** the raw request body. INSERT/UPSERT use a JSON array string; UPDATE uses an
-  object string; DELETE typically uses `"{}"`.
-- **`filterJson`:** serialized `FilterDescriptor` (see
-  [OfflineFilters.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/OfflineFilters.kt))
-  describing the WHERE clause for UPDATE / DELETE.
-- **`syncedAtMs`:** `NULL` means **pending**. After a successful sync, the row is marked synced
-  but not immediately deleted — it stays around to participate in mutation overlay until the
-  affected SELECTs get a fresh response.
-- **`defaultToNull` / `onConflict` / `ignoreDuplicates`:** mirror the supabase-kt
-  `InsertRequestBuilder` / `UpsertRequestBuilder` options so replay preserves the original
-  semantics.
+## Schema versions
 
-`MutationDao` provides FIFO queries (`pendingAll`, `pendingForTable` — both `ORDER BY
-created_at_ms ASC`), reactive count Flows (`countPendingFlow`, `countPendingForTableFlow`),
-`markSynced`, `deleteById`, and `deleteSyncedForTable` (called after a fresh SELECT to prune).
-
-## `storage_objects`
-
-Tracks every file the storage download cache has on disk.
-
-```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineEntities.kt" linenums="75"
-@Entity(
-    tableName = "storage_objects",
-    indices = [Index(value = ["bucketId", "path"], unique = true)]
-)
-internal data class StorageRow(
-    @PrimaryKey val key: String,      // "$bucketId::$path"
-    val bucketId: String,
-    val path: String,
-    val localPath: String,            // absolute file path
-    val sizeBytes: Long?,
-    val eTag: String?,                // optional (if you add revalidation later)
-    val lastFetchedEpochMs: Long
-)
-```
-
-- **`key`:** `"$bucketId::$path"` — the primary key.
-- **`localPath`:** absolute path on the device.
-- **`lastFetchedEpochMs`:** exposed publicly through
-  [`StorageCacheMetadata`](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt)
-  for client-driven staleness checks. See [storage.md](../behaviours/storage.md#client-driven-staleness).
-- **`eTag`:** reserved for future HTTP revalidation; not used today.
-
-## Database bootstrap
-
-```kotlin title="shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineDatabase.kt" linenums="12"
-@ConstructedBy(OfflineDatabaseConstructor::class)
-@Database(
-    entities = [ObjectRow::class, StorageRow::class, MutationRow::class],
-    version = 1,
-    exportSchema = false
-)
-internal abstract class OfflineDatabase : RoomDatabase() {
-
-    abstract fun objectDao(): ObjectDao
-
-    abstract fun storageDao(): StorageDao
-
-    abstract fun mutationDao(): MutationDao
-}
-
-// The Room compiler generates the `actual` implementations.
-internal expect object OfflineDatabaseConstructor : RoomDatabaseConstructor<OfflineDatabase> {
-    override fun initialize(): OfflineDatabase
-}
-
-internal fun getRoomDatabase(
-    builder: RoomDatabase.Builder<OfflineDatabase>
-): OfflineDatabase {
-    return builder
-        .addMigrations()
-        .fallbackToDestructiveMigrationOnDowngrade(true)
-        .setDriver(BundledSQLiteDriver())
-        .setQueryCoroutineContext(Dispatchers.IO)
-        .build()
-}
-```
-
-- **SQLite driver:** `BundledSQLiteDriver()` — a SQLite binary bundled with the SDK so both
-  platforms use the same engine regardless of the OS-provided SQLite.
-- **Coroutine context:** all DAO suspend calls run on `Dispatchers.IO`.
-- **KMP plumbing:** `OfflineDatabaseConstructor` is the `expect object` that Room's compiler
-  generates the `actual` implementation for, per target.
-
-## DB file locations
-
-The path resolver `expect interface DbPathProvider` (in
-[OfflineCacheSettings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/db/OfflineCacheSettings.kt))
-has two platform implementations:
-
-```kotlin title="shared/src/androidMain/kotlin/io/github/nesfeder/supabase/internal/db/DbPathProvider.android.kt" linenums="11"
-internal class AndroidDbPathProvider(
-    private val context: Context,
-) : DbPathProvider {
-
-    override fun dbPath(): Path {
-        val appContext = context.applicationContext
-        val dbFile = appContext.getDatabasePath("supabase_offline.db")
-        return dbFile.absolutePath.toPath()
-    }
-}
-```
-
-```kotlin title="shared/src/iosMain/kotlin/io/github/nesfeder/supabase/internal/db/DbPathProvider.ios.kt" linenums="14"
-internal class IosDbPathProvider : DbPathProvider {
-
-    @OptIn(ExperimentalForeignApi::class)
-    override fun dbPath(): Path {
-        val url = NSFileManager.defaultManager.URLForDirectory(
-            directory = NSDocumentDirectory,
-            inDomain = NSUserDomainMask,
-            appropriateForURL = null,
-            create = false,
-            error = null,
-        )
-        val basePath = requireNotNull(url?.path) { "Could not resolve Documents directory path" }
-        return ("$basePath/supabase_offline.db").toPath()
-    }
-}
-```
-
-| Platform | Default location |
-|----------|------------------|
-| Android | App private databases dir (`Context.getDatabasePath("supabase_offline.db")`) |
-| iOS | `Documents/supabase_offline.db` |
-
-You can override the base directory (which contains both the DB and the storage file tree) by
-setting [`SupabaseOfflineConfig.offlineStoragePath`](configuration.md#offlinestoragepath).
-
-## Migration policy
-
-The schema is at **version 1** today.
-
-The database is built with `.fallbackToDestructiveMigrationOnDowngrade(true)` — downgrades wipe
-the database, but the SDK currently performs no explicit `addMigrations(...)`. When the schema
-changes:
-
-1. Bump `version` in `@Database` on `OfflineDatabase`.
-2. Add a migration or, for cache-only schemas, accept destructive migration (the data is a
-   recoverable cache).
-
-The Room compiler is configured with `exportSchema = false` (see
-[shared/build.gradle.kts](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/build.gradle.kts) `room { schemaDirectory(...) }`) — schemas
-are not currently checked into the repo. If you start writing real migrations, flip
-`exportSchema` to true so the JSON schemas can be diffed in PRs.
+0.1.0 ships schema version 1. A later schema change is a new version with a migration that keeps
+the queued writes, and a minor release of the library. Going back to an older version of the
+library across a schema version is not supported, and loses the writes queued since. See
+[Compatibility](../project/compatibility.md).

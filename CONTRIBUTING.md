@@ -321,10 +321,17 @@ Material for MkDocs prints a notice about MkDocs 2.0 on every run. Set
   `samples/supabase/migrations/20260930000000_offline_tasks.sql`. Edit those files, not the pages
   that include them. Links inside them must be absolute URLs, because they are resolved
   relative to the page that includes them.
-- A page that has not been written yet opens with a "Not written yet" note, and a page written
-  for the engine before 0.1.0 opens with a "Written for an earlier engine" note. Both are plain
-  Markdown blockquotes, so they show on GitHub as well as on the site. Remove the note when the
-  page is rewritten.
+- Every Kotlin sample on the Getting started, Behaviours and Reference pages is a named section of
+  a source file the build compiles, in
+  `supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/` (the
+  testing artifact's in its own `commonTest`), marked by start and end comments as the files
+  there show; a page includes the section by file and name, as it includes the root files. Edit
+  the sample there: `./gradlew :supabase-offline-kt:compileAndroidHostTest` compiles it, and the
+  strict build fails on a section that is gone. Gradle files, shell, SQL, XML and a sample that
+  needs a module the library does not bring stay inline in the page.
+- A page that has not been written yet opens with a "Not written yet" note. It is a plain Markdown
+  blockquote, so it shows on GitHub as well as on the site. Remove the note when the page is
+  written.
 
 ## Dependency updates
 
@@ -444,6 +451,21 @@ security update, which the `ignore` rules in `.github/dependabot.yml` do not blo
 Every pull request runs `.github/workflows/ci.yml`. Its last job, **All Green**, is the one check
 a pull request needs. Most failures are the change's own. This section covers two kinds that are
 not.
+
+### Pull requests from forks
+
+A pull request from a fork runs the workflow files as the fork's branch has them, not as `main`
+has them. GitHub gives such a run no secrets and a read-only token, but the steps are the
+contributor's: read every change under `.github/` in an outside pull request before you approve
+its run.
+
+### The two iOS routes
+
+The iOS tests run on one of two routes: GitHub's macOS runner, or the self-hosted Mac (the rule
+is at the top of `ci.yml`). The two can have different iOS simulator runtimes installed, and so
+different system SQLite versions under the suite's system-SQLite build. A failure that appears on
+one route only may be that difference: compare the runtime each run's simulator used before you
+look for anything else.
 
 ### When a run fails on a download
 
