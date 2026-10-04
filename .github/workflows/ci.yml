@@ -6,10 +6,11 @@ name: CI
 #            │                   │                    coverage; the Android sample's tests, lint and
 #            │                   │                    debug build (when `sample` says so); the
 #            │                   │                    public API records (Android and iOS); the
-#            │                   │                    build-tool floors check; the
-#            │                   │                    published-artifacts check
+#            │                   │                    Swift bridge's iOS klibs; the build-tool
+#            │                   │                    floors check; the published-artifacts check
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
-#            │                                        SQLite; iOS device framework link
+#            │                                        SQLite; iOS device framework link; the Swift
+#            │                                        bridge's tests, framework and header
 #            └─ docs                           Linux  docs-check.yml
 #   coverage-upload ──── after jvm-tests: sends the coverage report to Codecov (see the job)
 #   coverage-rehearsal ─ after jvm-tests: the upload as a dry run, when CI's configuration changed
@@ -20,8 +21,9 @@ name: CI
 #
 #   formatting     kempt check; skipped until .kempt.toml exists
 #   static-checks  API visibility and the classifier of API changes (each self-test first), and
-#                  the self-tests of the build-tool floors check, the published-artifacts check and
-#                  the release script (the checks themselves need Gradle, so they run in
+#                  the self-tests of the build-tool floors check, the published-artifacts check,
+#                  the Swift bridge's header check and the release script (the checks themselves
+#                  need Gradle or a Mac, so they run in
 #                  jvm-tests); when the workflows changed, zizmor, the CI scripts' self-tests and
 #                  the workflow structure check
 #
@@ -390,6 +392,11 @@ jobs:
         if: needs.changes.outputs.kotlin == 'true'
         run: python3 scripts/check-published-artifacts.py --self-test
 
+      # The header check itself reads a linked framework, so it runs in the iOS job.
+      - name: Test the Swift bridge's header check
+        if: needs.changes.outputs.kotlin == 'true'
+        run: python3 scripts/check-bridge-header.py --self-test
+
       - name: Test the release script
         if: needs.changes.outputs.kotlin == 'true' || needs.changes.outputs.workflows == 'true'
         run: python3 scripts/release.py self-test
@@ -498,6 +505,17 @@ jobs:
           ./gradlew
           :supabase-offline-kt:checkKotlinAbi
           :supabase-offline-kt-testing:checkKotlinAbi
+          --stacktrace
+
+      # The Swift bridge (supabase-offline-swift-bridge) has iOS targets only and is never
+      # published, so it has no API record; its iOS klibs cross-compile here, and the iOS job tests
+      # and links it.
+      - name: Compile the Swift bridge's iOS klibs
+        if: ${{ !cancelled() }}
+        run: >-
+          ./gradlew
+          :supabase-offline-swift-bridge:compileKotlinIosArm64
+          :supabase-offline-swift-bridge:compileKotlinIosSimulatorArm64
           --stacktrace
 
       # The build-tool floors (gradle/libs.versions.toml) hold in every classpath the plugins and
@@ -660,19 +678,29 @@ jobs:
           python3 .github/scripts/count-test-results.py "iOS simulator tests" iosSimulatorArm64Test
           supabase-offline-kt supabase-offline-kt-testing
 
-      # The engine suite again on the system SQLite, which the Swift package links. A separate
-      # build: see supabase-offline-kt/build.gradle.kts.
-      - name: Run the iOS suite on the system SQLite
+      # The engine suite again on the system SQLite, which the Swift package links, with the Swift
+      # bridge's suite and its framework, which builds only on that SQLite. A separate build: see
+      # supabase-offline-kt/build.gradle.kts.
+      - name: Run the iOS suites on the system SQLite and link the Swift bridge's framework
         id: system-sqlite
         run: >-
           bash .github/scripts/run-gradle.sh
-          :supabase-offline-kt:iosSimulatorArm64Test -Psupabase.offline.iosSqlite=system
+          :supabase-offline-kt:iosSimulatorArm64Test
+          :supabase-offline-swift-bridge:iosSimulatorArm64Test
+          :supabase-offline-swift-bridge:linkReleaseFrameworkIosArm64
+          -Psupabase.offline.iosSqlite=system
 
       - name: Count the tests that ran on the system SQLite
         if: ${{ !cancelled() && steps.system-sqlite.outcome != 'skipped' }}
         run: >-
           python3 .github/scripts/count-test-results.py "iOS simulator tests, system SQLite"
-          iosSimulatorArm64Test supabase-offline-kt
+          iosSimulatorArm64Test supabase-offline-kt supabase-offline-swift-bridge
+
+      # The framework's Objective-C header names nothing but the bridge's own types and the Kotlin
+      # runtime's, and is the one recorded (scripts/check-bridge-header.py; on failure after an
+      # intended change, run it with --update and commit the record).
+      - name: Check the Swift bridge's header
+        run: python3 scripts/check-bridge-header.py
 
       # Tests never compile the device target or link a framework; this does.
       - name: Link the iOS device framework

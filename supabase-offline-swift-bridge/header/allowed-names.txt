@@ -1,0 +1,37 @@
+# The names SupabaseOfflineCore.h may declare or name, read by scripts/check-bridge-header.py: a
+# name or glob, or `Class (Category)` for a category, per line; `#` starts a comment. Nothing of
+# the library, supabase-kt, Ktor, okio or kotlinx may appear here: the header holds the bridge's
+# own types and the Kotlin runtime's base types, and nothing else.
+
+# The bridge's own types (Kotlin/Native prefixes this framework's types with SOC).
+SOCBridge*
+
+# Foundation's own types, such as NSData for bytes.
+NS*
+
+# The Kotlin runtime's base types, which every Kotlin framework header declares.
+SOCBase
+SOCBase (SOCBaseCopying)
+NSError (NSErrorSOCKotlinException)
+SOCMutableSet
+SOCMutableDictionary
+SOCNumber
+SOCByte
+SOCUByte
+SOCShort
+SOCUShort
+SOCInt
+SOCUInt
+SOCLong
+SOCULong
+SOCFloat
+SOCDouble
+SOCBoolean
+
+# The runtime's types behind the bridge's enums (KotlinEnum, its companion, the array values()
+# returns, and the two protocols they adopt).
+SOCKotlinEnum
+SOCKotlinEnumCompanion
+SOCKotlinArray
+SOCKotlinComparable
+SOCKotlinIterator

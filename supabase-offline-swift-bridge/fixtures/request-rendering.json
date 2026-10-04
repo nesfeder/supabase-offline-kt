@@ -1,0 +1,556 @@
+{
+  "version": 1,
+  "about": [
+    "Descriptions the Swift package hands the bridge, and the request each must produce: the",
+    "method, the path, every query parameter in order (decoded), the headers listed (a header sent",
+    "more than once joined with commas, as BridgeHttpRequest joins it), and the body",
+    "as JSON. A case with an error names the BridgeErrorKind it must fail with before anything is",
+    "sent. The bridge's Kotlin tests and the Swift package's tests both read this file, so the two",
+    "sides cannot drift apart. Filter values are text, as the Swift side renders them: UUIDs in",
+    "lower case, dates as ISO 8601 in UTC."
+  ],
+  "baseUrl": "https://fixture.supabase.co",
+  "cases": [
+    {
+      "name": "every column, by default",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "strategy": {"kind": "networkOnly"}},
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["select", "*"]],
+        "headers": {"Accept-Profile": "public", "Prefer": ""}
+      }
+    },
+    {
+      "name": "columns lose the spaces outside quotes",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "columns": "id, title, \"due date\"", "strategy": {"kind": "networkOnly"}},
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["select", "id,title,\"due date\""]]
+      }
+    },
+    {
+      "name": "a boolean as text, newest first, twenty rows",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "columns": "id,title,done",
+        "filters": [{"kind": "filter", "column": "done", "operator": "eq", "value": "false"}],
+        "modifiers": [
+          {"kind": "order", "column": "created_at", "ascending": false},
+          {"kind": "limit", "count": 20}
+        ],
+        "strategy": {"kind": "networkFirst", "maxAgeMillis": 60000}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [
+          ["done", "eq.false"],
+          ["order", "created_at.desc.nullslast"],
+          ["limit", "20"],
+          ["select", "id,title,done"]
+        ]
+      }
+    },
+    {
+      "name": "the comparison operators",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [
+          {"kind": "filter", "column": "priority", "operator": "gte", "value": "2"},
+          {"kind": "filter", "column": "score", "operator": "lt", "value": "9.5"},
+          {"kind": "filter", "column": "title", "operator": "ilike", "value": "%milk%"},
+          {"kind": "filter", "column": "owner", "operator": "neq", "value": "7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11"},
+          {"kind": "filter", "column": "due", "operator": "lte", "value": "2026-10-04T12:00:00Z"}
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [
+          ["priority", "gte.2"],
+          ["score", "lt.9.5"],
+          ["title", "ilike.%milk%"],
+          ["owner", "neq.7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11"],
+          ["due", "lte.2026-10-04T12:00:00Z"],
+          ["select", "*"]
+        ]
+      }
+    },
+    {
+      "name": "a null value is rendered null",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [{"kind": "filter", "column": "notes", "operator": "is", "value": null}],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["notes", "is.null"], ["select", "*"]]
+      }
+    },
+    {
+      "name": "a list, quoting a value with a comma",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [
+          {"kind": "filter", "column": "id", "operator": "in", "values": ["7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11", "a,b"]}
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["id", "in.(7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11,\"a,b\")"], ["select", "*"]]
+      }
+    },
+    {
+      "name": "a negated list",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [{"kind": "filter", "column": "status", "operator": "in", "values": ["done", "archived"], "negated": true}],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["status", "not.in.(done,archived)"], ["select", "*"]]
+      }
+    },
+    {
+      "name": "array and range operators",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "events",
+        "filters": [
+          {"kind": "filter", "column": "tags", "operator": "cs", "values": ["work", "home"]},
+          {"kind": "filter", "column": "during", "operator": "ov", "range": ["2026-01-01", "2026-02-01"]},
+          {"kind": "filter", "column": "slot", "operator": "sl", "range": ["1", "5"]}
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/events",
+        "query": [
+          ["tags", "cs.{work,home}"],
+          ["during", "ov.[2026-01-01,2026-02-01]"],
+          ["slot", "sl.(1,5)"],
+          ["select", "*"]
+        ]
+      }
+    },
+    {
+      "name": "an or group",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [
+          {
+            "kind": "or",
+            "filters": [
+              {"kind": "filter", "column": "done", "operator": "eq", "value": "true"},
+              {"kind": "filter", "column": "title", "operator": "eq", "value": "Buy milk, eggs"}
+            ]
+          }
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["or", "(done.eq.true,title.eq.\"Buy milk, eggs\")"], ["select", "*"]]
+      }
+    },
+    {
+      "name": "a negated and group on a referenced table",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "books",
+        "columns": "title,authors(name)",
+        "filters": [
+          {
+            "kind": "and",
+            "negated": true,
+            "referencedTable": "authors",
+            "filters": [
+              {"kind": "filter", "column": "name", "operator": "like", "value": "A*"},
+              {"kind": "filter", "column": "born", "operator": "gt", "value": "1900"}
+            ]
+          }
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/books",
+        "query": [["not.authors.and", "(name.like.A*,born.gt.1900)"], ["select", "title,authors(name)"]]
+      }
+    },
+    {
+      "name": "pattern lists and text search",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "notes",
+        "filters": [
+          {"kind": "likeAll", "column": "body", "patterns": ["%cat%", "%dog%"]},
+          {"kind": "ilikeAny", "column": "title", "patterns": ["a%", "b%"]},
+          {"kind": "textSearch", "column": "tsv", "query": "cat & dog", "type": "websearch", "config": "english"},
+          {"kind": "filter", "column": "summary", "operator": "fts", "value": "cat"}
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/notes",
+        "query": [
+          ["body", "like(all).{%cat%,%dog%}"],
+          ["title", "ilike(any).{a%,b%}"],
+          ["tsv", "wfts(english).cat & dog"],
+          ["summary", "fts.cat"],
+          ["select", "*"]
+        ]
+      }
+    },
+    {
+      "name": "a range and an order on a referenced table",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "books",
+        "modifiers": [
+          {"kind": "order", "column": "name", "referencedTable": "authors"},
+          {"kind": "order", "column": "title", "nullsFirst": true},
+          {"kind": "range", "from": 10, "to": 19}
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/books",
+        "query": [
+          ["authors.order", "name.asc.nullslast"],
+          ["order", "title.asc.nullsfirst"],
+          ["offset", "10"],
+          ["limit", "10"],
+          ["select", "*"]
+        ]
+      }
+    },
+    {
+      "name": "an exact count, head only",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "count": "exact", "head": true, "strategy": {"kind": "networkOnly"}},
+      "request": {
+        "method": "HEAD",
+        "path": "/rest/v1/todos",
+        "query": [["select", "*"]],
+        "headers": {"Prefer": "count=exact"}
+      }
+    },
+    {
+      "name": "one row as an object",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "single": true,
+        "filters": [{"kind": "filter", "column": "id", "operator": "eq", "value": "1"}],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["id", "eq.1"], ["select", "*"]],
+        "headers": {"Accept": "application/vnd.pgrst.object+json,application/json"}
+      }
+    },
+    {
+      "name": "CSV",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "format": "csv", "strategy": {"kind": "networkOnly"}},
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["select", "*"]],
+        "headers": {"Accept": "text/csv,application/json"}
+      }
+    },
+    {
+      "name": "another schema",
+      "call": "select",
+      "description": {"v": 1, "schema": "app", "table": "todos", "strategy": {"kind": "networkOnly"}},
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["select", "*"]],
+        "headers": {"Accept-Profile": "app"}
+      }
+    },
+    {
+      "name": "an insert of rows, sent at once",
+      "call": "mutate",
+      "description": {"v": 1, "operation": "insert", "table": "todos"},
+      "payload": "[{\"id\":\"7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11\",\"title\":\"Buy milk\",\"done\":false}]",
+      "request": {
+        "method": "POST",
+        "path": "/rest/v1/todos",
+        "query": [["columns", "id,title,done"]],
+        "headers": {"Content-Profile": "public", "Prefer": "return=minimal"},
+        "body": [{"id": "7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11", "title": "Buy milk", "done": false}]
+      }
+    },
+    {
+      "name": "an insert of one object, returning a column",
+      "call": "mutate",
+      "description": {"v": 1, "operation": "insert", "table": "todos", "returning": "id", "strategy": "onlineOnly"},
+      "payload": "{\"id\":9007199254740993,\"title\":\"Tea\"}",
+      "request": {
+        "method": "POST",
+        "path": "/rest/v1/todos",
+        "query": [["select", "id"], ["columns", "id,title"]],
+        "headers": {"Prefer": "return=representation"},
+        "body": [{"id": 9007199254740993, "title": "Tea"}]
+      }
+    },
+    {
+      "name": "an upsert that ignores duplicates",
+      "call": "mutate",
+      "description": {"v": 1, "operation": "upsert", "table": "todos", "onConflict": "id", "ignoreDuplicates": true},
+      "payload": "[{\"id\":1,\"title\":\"Tea\"}]",
+      "request": {
+        "method": "POST",
+        "path": "/rest/v1/todos",
+        "query": [["on_conflict", "id"], ["columns", "id,title"]],
+        "headers": {"Prefer": "resolution=ignore-duplicates,return=minimal"},
+        "body": [{"id": 1, "title": "Tea"}]
+      }
+    },
+    {
+      "name": "an insert that fills missing columns with their defaults",
+      "call": "mutate",
+      "description": {"v": 1, "operation": "insert", "table": "todos", "defaultToNull": false},
+      "payload": "[{\"id\":2}]",
+      "request": {
+        "method": "POST",
+        "path": "/rest/v1/todos",
+        "query": [["columns", "id"]],
+        "headers": {"Prefer": "missing=default,return=minimal"},
+        "body": [{"id": 2}]
+      }
+    },
+    {
+      "name": "an update of one row, with an explicit null",
+      "call": "mutate",
+      "description": {
+        "v": 1,
+        "operation": "update",
+        "table": "todos",
+        "filters": [{"kind": "filter", "column": "id", "operator": "eq", "value": "1"}]
+      },
+      "payload": "{\"done\":true,\"notes\":null}",
+      "request": {
+        "method": "PATCH",
+        "path": "/rest/v1/todos",
+        "query": [["id", "eq.1"]],
+        "headers": {"Content-Profile": "public", "Prefer": "return=minimal"},
+        "body": {"done": true, "notes": null}
+      }
+    },
+    {
+      "name": "a delete of listed rows",
+      "call": "mutate",
+      "description": {
+        "v": 1,
+        "operation": "delete",
+        "table": "todos",
+        "filters": [{"kind": "filter", "column": "id", "operator": "in", "values": ["1", "2"]}]
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/rest/v1/todos",
+        "query": [["id", "in.(1,2)"]],
+        "headers": {"Prefer": "return=minimal"}
+      }
+    },
+    {
+      "name": "a function call with arguments",
+      "call": "rpc",
+      "description": {"v": 1, "function": "add_points", "filters": [{"kind": "filter", "column": "total", "operator": "gt", "value": "10"}]},
+      "payload": "{\"user_id\":\"7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11\",\"points\":5}",
+      "request": {
+        "method": "POST",
+        "path": "/rest/v1/rpc/add_points",
+        "query": [["total", "gt.10"]],
+        "headers": {"Content-Profile": "public"},
+        "body": {"user_id": "7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11", "points": 5}
+      }
+    },
+    {
+      "name": "a function call by GET with a count",
+      "call": "rpc",
+      "description": {"v": 1, "function": "list_open", "method": "get", "count": "planned"},
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/rpc/list_open",
+        "query": [],
+        "headers": {"Accept-Profile": "public", "Prefer": "count=planned"}
+      }
+    },
+    {
+      "name": "a function call by HEAD without arguments",
+      "call": "rpc",
+      "description": {"v": 1, "function": "count_open", "method": "head", "count": "exact"},
+      "request": {
+        "method": "HEAD",
+        "path": "/rest/v1/rpc/count_open",
+        "query": [],
+        "headers": {"Prefer": "count=exact"}
+      }
+    },
+    {
+      "name": "two or groups nested in one and group",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [
+          {
+            "kind": "and",
+            "filters": [
+              {"kind": "or", "filters": [
+                {"kind": "filter", "column": "a", "operator": "eq", "value": "1"},
+                {"kind": "filter", "column": "b", "operator": "eq", "value": "2"}
+              ]},
+              {"kind": "or", "filters": [
+                {"kind": "filter", "column": "c", "operator": "eq", "value": "3"},
+                {"kind": "filter", "column": "d", "operator": "eq", "value": "4"}
+              ]}
+            ]
+          }
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["and", "(or(c.eq.3,d.eq.4),or(a.eq.1,b.eq.2))"], ["select", "*"]]
+      }
+    },
+    {
+      "name": "two filters on one column in an and group",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "people",
+        "filters": [
+          {"kind": "and", "filters": [
+            {"kind": "filter", "column": "age", "operator": "gte", "value": "18"},
+            {"kind": "filter", "column": "age", "operator": "lt", "value": "65"}
+          ]}
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/people",
+        "query": [["and", "(age.gte.18,age.lt.65)"], ["select", "*"]]
+      }
+    },
+    {
+      "name": "an operator no supabase-kt has is refused",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "regex", "value": "x"}]},
+      "error": "UNSUPPORTED"
+    },
+    {
+      "name": "a filter kind this build lacks is refused",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "filters": [{"kind": "not", "filters": []}]},
+      "error": "UNSUPPORTED"
+    },
+    {
+      "name": "another description version is refused",
+      "call": "select",
+      "description": {"v": 2, "table": "todos"},
+      "error": "UNSUPPORTED"
+    },
+    {
+      "name": "an unknown field is refused",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "colums": "id"},
+      "error": "INVALID_REQUEST"
+    },
+    {
+      "name": "an unknown field of a filter is refused",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "value": "1", "nullsFirst": true}]},
+      "error": "INVALID_REQUEST"
+    },
+    {
+      "name": "two value forms are refused",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "in", "value": "1", "values": ["1"]}]},
+      "error": "INVALID_REQUEST"
+    },
+    {
+      "name": "a number where text belongs is refused",
+      "call": "select",
+      "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "value": 1}]},
+      "error": "INVALID_REQUEST"
+    },
+    {
+      "name": "a conflict target on an insert is refused",
+      "call": "mutate",
+      "description": {"v": 1, "operation": "insert", "table": "todos", "onConflict": "id"},
+      "payload": "[{\"id\":1}]",
+      "error": "INVALID_REQUEST"
+    },
+    {
+      "name": "a delete with a body is refused",
+      "call": "mutate",
+      "description": {"v": 1, "operation": "delete", "table": "todos", "filters": [{"kind": "filter", "column": "id", "operator": "eq", "value": "1"}]},
+      "payload": "{}",
+      "error": "INVALID_REQUEST"
+    },
+    {
+      "name": "an insert body that is not rows is refused",
+      "call": "mutate",
+      "description": {"v": 1, "operation": "insert", "table": "todos"},
+      "payload": "[1, 2]",
+      "error": "INVALID_REQUEST"
+    },
+    {"name": "a function call by GET with arguments is refused", "call": "rpc", "description": {"v": 1, "function": "find_todo", "method": "get"}, "payload": "{\"todo_id\":7}", "error": "INVALID_REQUEST"},
+    {"name": "a list for an operator that takes one value is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "values": ["x", "y"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "a range for an operator that takes one value is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "range": ["x", "y"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "a list for a range operator is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "sl", "values": ["1", "2", "3"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "one value for in is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "in", "value": "1"}]}, "error": "INVALID_REQUEST"},
+    {"name": "a filter with no value is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "eq"}]}, "error": "INVALID_REQUEST"},
+    {"name": "a null list is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "in", "values": null}]}, "error": "INVALID_REQUEST"},
+    {"name": "a range of three bounds is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "sl", "range": ["1", "2", "3"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "two or groups at the top level are refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "or", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "value": "1"}, {"kind": "filter", "column": "b", "operator": "eq", "value": "2"}]}, {"kind": "or", "filters": [{"kind": "filter", "column": "c", "operator": "eq", "value": "3"}, {"kind": "filter", "column": "d", "operator": "eq", "value": "4"}]}]}, "error": "INVALID_REQUEST"},
+    {"name": "an empty group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "or", "filters": []}]}, "error": "INVALID_REQUEST"},
+    {"name": "an empty group inside a group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "value": "1"}, {"kind": "or", "filters": []}]}]}, "error": "INVALID_REQUEST"},
+    {"name": "two filters on one column at the top level are refused", "call": "select", "description": {"v": 1, "table": "people", "filters": [{"kind": "filter", "column": "age", "operator": "gte", "value": "18"}, {"kind": "filter", "column": "age", "operator": "lt", "value": "65"}]}, "error": "INVALID_REQUEST"},
+    {"name": "a text search after a filter on its column is refused", "call": "select", "description": {"v": 1, "table": "notes", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "tsv", "operator": "neq", "value": "x"}, {"kind": "textSearch", "column": "tsv", "query": "cat"}]}]}, "error": "INVALID_REQUEST"}
+  ]
+}

@@ -53,6 +53,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# The published modules. supabase-offline-swift-bridge is left out on purpose: it is never
+# published and has no API record; its public declarations are the Swift package's Objective-C
+# surface, which scripts/check-bridge-header.py keeps to the bridge's own types.
 MODULES="supabase-offline-kt supabase-offline-kt-testing"
 
 # rule|path relative to the repository root|declaration name|reason
