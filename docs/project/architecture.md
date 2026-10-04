@@ -488,10 +488,11 @@ lambda, so supabase-kt's call shapes resolve unchanged. These need an edit:
 
 ### The components
 
-The plugin forwards every call to one internal `OfflineClient`, which wires the parts below and
-owns their lifecycle. Calls go downward. The cache reports back up only through callbacks the client
-wires in: which queries are live, which went stale, who the current identity is, and a cache
-another identity owns. The client also builds the public types it hands out.
+The plugin forwards every call to one internal `OfflineClient`, which builds the parts below over
+the database's tables and owns their lifecycle. Calls go downward. The cache reports back up only
+through callbacks the client wires in: which queries are live, which went stale, who the current
+identity is, and a cache another identity owns. The client also builds the public types it hands
+out.
 
 The client and its parts:
 
@@ -576,7 +577,7 @@ own locks.
 | `CacheFreshness` | The watermarks that say whether a response or a cache write is still current: each table's last write that changed the cache, and when local data was last cleared or the cache dropped. | The clear lock |
 | `CacheOwnership` | Whose the query cache and the file cache are, and whether the current identity may read or write them; asked on every cache read and write. | The owner record's, always last |
 | `MutationQueue` | The queue's rows and the records beside them: enqueue, the head checks, a send's outcome, rejection, retry, discard, the counts and lists the app is shown, the send record, the sync sequence, the rejected list, and retiring replayed writes. | The queue lock, and a read lock per table that its readers share |
-| `QueryCache` | The cached queries: writing a response behind its guards, reading, observing and deleting payloads, size eviction, and each query's shape record. | The per-table write locks, the eviction lock, and the query-shape records' own |
+| `QueryCache` | The cached queries: writing a response behind its guards, reading payloads, size eviction, and each query's shape record. | The per-table write locks, the eviction lock, and the query-shape records' own |
 | `QueryOverlay` | Every read served with the writes its payload does not hold laid over it, and the key indexes that find rows other queries hold. | None |
 | `CachePatcher` | Patching an online write into its table's cached queries, and marking stale the queries a write may have changed but cannot be patched into. | None of its own |
 | `LocalData` | Clearing local data, and dropping the cache for a new owner, in one transaction each. | None of its own |
@@ -586,12 +587,11 @@ own locks.
 Outermost first: the replayer's send lock, then the file cache's lock, then a table's write lock,
 then the queue lock, then the clear lock, then the owner record's and the query-shape records' own
 locks. Every commit, eviction, move and invalidation of a file takes the file cache's lock too, but
-only a clear or a drop holds it while taking the store's locks; its other users take none of them
-under it. A clear or a drop takes no table lock: a write that holds
-one checks the watermarks under the clear lock instead. The eviction lock and the queue's per-table
-read locks are taken with none of these held. No lock is held across a request: the send lock
-covers choosing a write and recording its outcome, and the queue lock short sections of database
-calls.
+only a clear or a drop holds it while taking the cache's and the queue's locks; its other users take
+none of them under it. A clear or a drop takes no table lock: a write that holds one checks the
+watermarks under the clear lock instead. The eviction lock and the queue's per-table read locks are
+taken with none of these held. No lock is held across a request: the send lock covers choosing a
+write and recording its outcome, and the queue lock short sections of database calls.
 
 ### The read path
 
@@ -920,15 +920,15 @@ The database is Room schema version 1, the one 0.1.0 ships, identity hash
 **What is `TEXT`, and why.** `payload` is the JSON array PostgREST answered, kept as text because a
 cached read is served back as a `PostgrestResult` of the same shape, and the overlay parses it once
 per change. `body_json` and `filter_json` are the JSON a replay sends and the filter it rebuilds,
-kept as written so a replay sends exactly what the caller made. `operation` is the stored word
-(`INSERT`, `UPSERT`, `UPDATE`, `DELETE`), a format pinned by tests. The engine's own records (the
-rejected list, the cache owner, each query's shape) are JSON text in reserved rows of
-`object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63 bytes, so no
-table can be named that, and `from()` refuses it. A reserved row is never evicted, counted, read as
-a query or overlaid. `localPath` records where a file was written, but a file's place is always
-derived from its bucket and path; the recorded one is read only to clean up a file an older mapping
-left. A schema change after 0.1.0 is a new version with a migration that keeps `mutation_cache`'s
-rows.
+kept as written so a replay sends exactly what the caller made. `operation` is the stored name of
+the `MutationOperation` (`INSERT`, `UPSERT`, `UPDATE`, `DELETE`), converted by Room, a format pinned
+by tests. The engine's own records (the rejected list, the cache owner, each query's shape) are JSON
+text in reserved rows of `object_cache`, under a table name 94 bytes long: Postgres truncates
+identifiers at 63 bytes, so no table can be named that, and `from()` refuses it. A reserved row is
+never evicted, counted, read as a query or overlaid. `localPath` records where a file was written,
+but a file's place is always derived from its bucket and path; the recorded one is read only to
+clean up a file an older mapping left. A schema change after 0.1.0 is a new version with a migration
+that keeps `mutation_cache`'s rows.
 
 ## Decisions
 
@@ -995,8 +995,8 @@ What the library promises, each with the tests that pin it:
 | No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
-| A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `OfflineStoreStaleRefreshWatermarkTest`, `OfflineStoreCacheOwnerTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
-| With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `OfflineStoreCacheOwnerTest` |
+| A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
+| With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
 | After `clearLocalData()`, the deleted rows cannot be read back from the database's files once its write-ahead log is checkpointed: at once when no open read holds the checkpoint off, and otherwise at the next checkpoint, with a warning logged. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest` |
 | Within one process, one database is open in one client at a time. | `OfflinePluginAndroidTest`, `OfflinePluginIosTest`, `IosClientLifecycleTest` |
 | `close()` returns within 10 seconds of real time, a clear that has begun completes, and a write whose answer arrives during it is applied and never sent again. | `SupabaseOfflineClientCloseTest`, `PluginCloseRaceAndroidTest`, `PluginCloseRaceIosTest`, `ClientCloseRaceAndroidTest`, `ClientCloseRaceIosTest`, `MutationQueueAcrossCloseTest` |
