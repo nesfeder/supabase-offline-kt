@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.bridge.internal
 
 import io.github.jan.supabase.postgrest.RpcMethod
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.InsertRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
@@ -12,7 +13,6 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.ReadStrategy
-import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 

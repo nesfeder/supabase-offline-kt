@@ -4,10 +4,10 @@ package io.github.nesfeder.supabase.offline.bridge
 
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import kotlin.test.Test
-import platform.Foundation.NSData
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import platform.Foundation.NSData
 
 /** How each kind of failure arrives: as one error value with the fields its kind promises. */
 class BridgeErrorsTest {
@@ -46,7 +46,12 @@ class BridgeErrorsTest {
     @Test
     fun a_storage_refusal_carries_its_status_and_never_the_url() = bridgeTest {
         // Given — a server with no such object
-        server.answer = { ScriptedAnswer.json(400, """{"statusCode":"404","error":"not_found","message":"Object not found"}""") }
+        server.answer = {
+            ScriptedAnswer.json(
+                400,
+                """{"statusCode":"404","error":"not_found","message":"Object not found"}""",
+            )
+        }
         val client = openTestClient(server)
 
         // When
@@ -72,7 +77,7 @@ class BridgeErrorsTest {
         val (_, error) =
             client.selectAndWait(
                 """{"v":1,"table":"todos","filters":[{"kind":"filter","column":"token",
-                   "operator":"eq","value":"secret-value"}],"strategy":{"kind":"networkOnly"}}""",
+                   "operator":"eq","value":"secret-value"}],"strategy":{"kind":"networkOnly"}}"""
             )
 
         // Then
@@ -134,7 +139,7 @@ class BridgeErrorsTest {
         val (_, error) =
             client.selectAndWait(
                 """{"v":1,"table":"todos","filters":[{"kind":"filter","column":"a",
-                   "operator":"isdistinct","value":"1"}],"strategy":{"kind":"networkOnly"}}""",
+                   "operator":"isdistinct","value":"1"}],"strategy":{"kind":"networkOnly"}}"""
             )
 
         // Then — refused with a clear error on a pin without it, sent on one with it

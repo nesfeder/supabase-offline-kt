@@ -46,7 +46,10 @@ class FaultInjectionTest {
                 val probe = call()
                 probes += probe
                 val error = probe.await().second
-                if (error?.kind != BridgeErrorKind.UNEXPECTED || error.debugType != thrown::class.simpleName) {
+                if (
+                    error?.kind != BridgeErrorKind.UNEXPECTED ||
+                        error.debugType != thrown::class.simpleName
+                ) {
                     mismatches += "$name with ${thrown::class.simpleName}: $error"
                 }
             }
@@ -219,66 +222,124 @@ class FaultInjectionTest {
     }
 
     /** Every asynchronous entry point, by the name its fault injector sees, as one call. */
-    private fun asynchronousCalls(client: BridgeClient): List<Pair<String, () -> CompletionProbe<*>>> {
+    private fun asynchronousCalls(
+        client: BridgeClient
+    ): List<Pair<String, () -> CompletionProbe<*>>> {
         val bytes: NSData = "x".encodeToByteArray().toNSData()
         val storage = client.storage
         return listOf(
             "select" to { valued<BridgeQueryResult> { client.select(readOf(), it) } },
-            "observe" to { subscribed<BridgeQuerySnapshot> { value, end -> client.observe(readOf(), value, end) } },
-            "mutate" to { valued<BridgeMutationResult> { client.mutate(INSERT_TODO, """{"id":1}""", it) } },
-            "rpc" to { valued<BridgeQueryResult> { client.rpc("""{"v":1,"function":"f"}""", null, it) } },
-            "pendingMutations" to { valued<List<BridgePendingMutation>> { client.pendingMutations(null, it) } },
-            "observePendingMutations" to {
-                subscribed<List<BridgePendingMutation>> { value, end -> client.observePendingMutations(null, value, end) }
-            },
+            "observe" to
+                {
+                    subscribed<BridgeQuerySnapshot> { value, end ->
+                        client.observe(readOf(), value, end)
+                    }
+                },
+            "mutate" to
+                {
+                    valued<BridgeMutationResult> { client.mutate(INSERT_TODO, """{"id":1}""", it) }
+                },
+            "rpc" to
+                {
+                    valued<BridgeQueryResult> { client.rpc("""{"v":1,"function":"f"}""", null, it) }
+                },
+            "pendingMutations" to
+                {
+                    valued<List<BridgePendingMutation>> { client.pendingMutations(null, it) }
+                },
+            "observePendingMutations" to
+                {
+                    subscribed<List<BridgePendingMutation>> { value, end ->
+                        client.observePendingMutations(null, value, end)
+                    }
+                },
             "pendingMutationCount" to { valued<Int> { client.pendingMutationCount(null, it) } },
-            "observePendingMutationCount" to {
-                subscribed<Int> { value, end -> client.observePendingMutationCount(null, value, end) }
-            },
+            "observePendingMutationCount" to
+                {
+                    subscribed<Int> { value, end ->
+                        client.observePendingMutationCount(null, value, end)
+                    }
+                },
             "discardPendingMutation" to { unvalued { client.discardPendingMutation(1, it) } },
-            "rejectedMutations" to { valued<List<BridgeRejectedMutation>> { client.rejectedMutations(it) } },
-            "observeRejectedMutations" to {
-                subscribed<List<BridgeRejectedMutation>> { value, end -> client.observeRejectedMutations(value, end) }
-            },
+            "rejectedMutations" to
+                {
+                    valued<List<BridgeRejectedMutation>> { client.rejectedMutations(it) }
+                },
+            "observeRejectedMutations" to
+                {
+                    subscribed<List<BridgeRejectedMutation>> { value, end ->
+                        client.observeRejectedMutations(value, end)
+                    }
+                },
             "dismissRejectedMutation" to { unvalued { client.dismissRejectedMutation(1, it) } },
             "retryRejectedMutation" to { unvalued { client.retryRejectedMutation(1, it) } },
-            "syncPendingMutations" to { valued<BridgeSyncReport> { client.syncPendingMutations(null, it) } },
-            "observeSyncStatus" to {
-                subscribed<BridgeSyncStatus> { value, end -> client.observeSyncStatus(value, end) }
-            },
+            "syncPendingMutations" to
+                {
+                    valued<BridgeSyncReport> { client.syncPendingMutations(null, it) }
+                },
+            "observeSyncStatus" to
+                {
+                    subscribed<BridgeSyncStatus> { value, end ->
+                        client.observeSyncStatus(value, end)
+                    }
+                },
             "disableNetwork" to { unvalued { client.disableNetwork(it) } },
             "enableNetwork" to { unvalued { client.enableNetwork(it) } },
             "clearLocalData" to { unvalued { client.clearLocalData(it) } },
-            "applyServerRecord" to { unvalued { client.applyServerRecord("todos", """{"id":1}""", null, null, it) } },
-            "applyServerDelete" to { unvalued { client.applyServerDelete("todos", """{"id":1}""", null, null, it) } },
+            "applyServerRecord" to
+                {
+                    unvalued { client.applyServerRecord("todos", """{"id":1}""", null, null, it) }
+                },
+            "applyServerDelete" to
+                {
+                    unvalued { client.applyServerDelete("todos", """{"id":1}""", null, null, it) }
+                },
             "upload" to { valued<String> { storage.upload("b", "p", bytes, null, it) } },
             "update" to { valued<String> { storage.update("b", "p", bytes, null, it) } },
-            "uploadToSignedUrl" to { valued<String> { storage.uploadToSignedUrl("b", "p", "t", bytes, null, it) } },
+            "uploadToSignedUrl" to
+                {
+                    valued<String> { storage.uploadToSignedUrl("b", "p", "t", bytes, null, it) }
+                },
             "delete" to { unvalued { storage.delete("b", listOf("p"), it) } },
             "moveObject" to { unvalued { storage.moveObject("b", "p", "q", null, it) } },
             "copyObject" to { unvalued { storage.copyObject("b", "p", "q", null, it) } },
-            "createSignedUploadUrl" to { valued<String> { storage.createSignedUploadUrl("b", "p", false, it) } },
-            "createSignedUrl" to { valued<String> { storage.createSignedUrl("b", "p", 60, null, it) } },
-            "createSignedUrls" to { valued<String> { storage.createSignedUrls("b", listOf("p"), 60, it) } },
+            "createSignedUploadUrl" to
+                {
+                    valued<String> { storage.createSignedUploadUrl("b", "p", false, it) }
+                },
+            "createSignedUrl" to
+                {
+                    valued<String> { storage.createSignedUrl("b", "p", 60, null, it) }
+                },
+            "createSignedUrls" to
+                {
+                    valued<String> { storage.createSignedUrls("b", listOf("p"), 60, it) }
+                },
             "download" to { valued<NSData> { storage.download("b", "p", false, null, it) } },
             "list" to { valued<String> { storage.list("b", "", null, it) } },
             "info" to { valued<String> { storage.info("b", "p", it) } },
             "exists" to { valued<Boolean> { storage.exists("b", "p", it) } },
             "cachedFile" to { valued<BridgeCachedFile> { storage.cachedFile("b", "p", it) } },
-            "ensureCachedFile" to { valued<BridgeCachedFile> { storage.ensureCachedFile("b", "p", false, it) } },
+            "ensureCachedFile" to
+                {
+                    valued<BridgeCachedFile> { storage.ensureCachedFile("b", "p", false, it) }
+                },
         )
     }
 
     /** A call answering with a value or an error. */
-    private fun <T> valued(start: ((T?, BridgeError?) -> Unit) -> BridgeCancellable): CompletionProbe<T> =
-        CompletionProbe<T>().also { start(it.completion) }
+    private fun <T> valued(
+        start: ((T?, BridgeError?) -> Unit) -> BridgeCancellable
+    ): CompletionProbe<T> = CompletionProbe<T>().also { start(it.completion) }
 
     /** A call answering with an error only. */
-    private fun unvalued(start: ((BridgeError?) -> Unit) -> BridgeCancellable): CompletionProbe<Unit> =
-        CompletionProbe<Unit>().also { start(it.errorCompletion) }
+    private fun unvalued(
+        start: ((BridgeError?) -> Unit) -> BridgeCancellable
+    ): CompletionProbe<Unit> = CompletionProbe<Unit>().also { start(it.errorCompletion) }
 
     /** A subscription: its completion is the probe. */
     private fun <T> subscribed(
-        start: (onValue: (T) -> Unit, onCompletion: (BridgeError?) -> Unit) -> BridgeCancellable,
-    ): CompletionProbe<Unit> = CompletionProbe<Unit>().also { probe -> start({}, probe.errorCompletion) }
+        start: (onValue: (T) -> Unit, onCompletion: (BridgeError?) -> Unit) -> BridgeCancellable
+    ): CompletionProbe<Unit> =
+        CompletionProbe<Unit>().also { probe -> start({}, probe.errorCompletion) }
 }

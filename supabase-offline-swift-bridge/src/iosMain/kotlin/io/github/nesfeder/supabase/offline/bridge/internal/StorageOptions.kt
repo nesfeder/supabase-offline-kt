@@ -68,8 +68,7 @@ internal fun uploadOptionsOf(text: String?): UploadOptions {
                     "${options.fieldPath("metadata")} must be an object"
                 )
         }
-    val upload =
-        UploadOptions(contentType, options.boolean("upsert", default = false), metadata)
+    val upload = UploadOptions(contentType, options.boolean("upsert", default = false), metadata)
     options.requireNoOtherFields()
     return upload
 }
@@ -175,22 +174,20 @@ internal fun listOptionsOf(text: String?): ListOptions {
 }
 
 /** An upload's response, `{"id", "path", "key"}`. */
-internal fun encodeUploadResponse(response: FileUploadResponse): String =
-    buildJsonObject {
-            put("id", response.id)
-            put("path", response.path)
-            put("key", response.key)
-        }
-        .toString()
+internal fun encodeUploadResponse(response: FileUploadResponse): String = buildJsonObject {
+    put("id", response.id)
+    put("path", response.path)
+    put("key", response.key)
+}
+    .toString()
 
 /** A signed upload URL, `{"url", "path", "token"}`. */
-internal fun encodeUploadSignedUrl(signed: UploadSignedUrl): String =
-    buildJsonObject {
-            put("url", signed.url)
-            put("path", signed.path)
-            put("token", signed.token)
-        }
-        .toString()
+internal fun encodeUploadSignedUrl(signed: UploadSignedUrl): String = buildJsonObject {
+    put("url", signed.url)
+    put("path", signed.path)
+    put("token", signed.token)
+}
+    .toString()
 
 /** Signed download URLs, as supabase-kt serializes them. */
 internal fun encodeSignedUrls(urls: List<SignedUrl>): String =

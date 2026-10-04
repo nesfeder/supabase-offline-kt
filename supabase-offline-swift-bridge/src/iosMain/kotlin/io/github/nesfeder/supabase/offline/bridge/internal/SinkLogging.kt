@@ -18,9 +18,9 @@ import kotlin.native.setUnhandledExceptionHook
 internal const val BRIDGE_LOG_TAG: String = "Supabase-Offline-Bridge"
 
 /**
- * Delivers supabase-kt's log messages, the library's included, to the app's [sink] at [minimum]
- * and above. A failure is named by its type; only at [LogLevel.DEBUG] does its message follow,
- * since supabase-kt's messages quote URLs and filter values.
+ * Delivers supabase-kt's log messages, the library's included, to the app's [sink] at [minimum] and
+ * above. A failure is named by its type; only at [LogLevel.DEBUG] does its message follow, since
+ * supabase-kt's messages quote URLs and filter values.
  */
 internal class SinkLoggingProcessor(
     private val sink: BridgeLogSink?,

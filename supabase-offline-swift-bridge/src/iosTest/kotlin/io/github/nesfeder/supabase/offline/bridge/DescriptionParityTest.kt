@@ -21,63 +21,66 @@ import kotlin.test.assertTrue
 class DescriptionParityTest {
 
     @Test
-    fun a_filtered_ordered_limited_read_matches_its_kotlin_call() = parity(
-        description =
-            """{"v":1,"table":"todos","columns":"id, title","filters":[
+    fun a_filtered_ordered_limited_read_matches_its_kotlin_call() =
+        parity(
+            description =
+                """{"v":1,"table":"todos","columns":"id, title","filters":[
                {"kind":"filter","column":"done","operator":"eq","value":"false"}],
                "modifiers":[{"kind":"order","column":"created_at","ascending":false},
                {"kind":"limit","count":20}]}""",
-        columns = Columns.raw("id,title"),
-    ) {
-        filter { eq("done", false) }
-        order("created_at", Order.DESCENDING)
-        limit(20)
-    }
+            columns = Columns.raw("id,title"),
+        ) {
+            filter { eq("done", false) }
+            order("created_at", Order.DESCENDING)
+            limit(20)
+        }
 
     @Test
-    fun lists_negations_and_groups_match_their_kotlin_calls() = parity(
-        description =
-            """{"v":1,"table":"todos","filters":[
+    fun lists_negations_and_groups_match_their_kotlin_calls() =
+        parity(
+            description =
+                """{"v":1,"table":"todos","filters":[
                {"kind":"filter","column":"id","operator":"in","values":["7","8"]},
                {"kind":"filter","column":"state","operator":"in","values":["a,b"],"negated":true},
                {"kind":"or","filters":[
                  {"kind":"filter","column":"done","operator":"is","value":"true"},
                  {"kind":"filter","column":"priority","operator":"gt","value":"2"}]}],
                "modifiers":[{"kind":"range","from":0,"to":9}]}""",
-        columns = Columns.ALL,
-    ) {
-        filter {
-            isIn("id", listOf(7, 8))
-            filterNot("state", FilterOperator.IN, listOf("a,b"))
-            or {
-                exact("done", true)
-                gt("priority", 2)
+            columns = Columns.ALL,
+        ) {
+            filter {
+                isIn("id", listOf(7, 8))
+                filterNot("state", FilterOperator.IN, listOf("a,b"))
+                or {
+                    exact("done", true)
+                    gt("priority", 2)
+                }
             }
+            range(0, 9)
         }
-        range(0, 9)
-    }
 
     @Test
-    fun ranges_and_pattern_lists_match_their_kotlin_calls() = parity(
-        description =
-            """{"v":1,"table":"events","filters":[
+    fun ranges_and_pattern_lists_match_their_kotlin_calls() =
+        parity(
+            description =
+                """{"v":1,"table":"events","filters":[
                {"kind":"filter","column":"slot","operator":"sl","range":["1","5"]},
                {"kind":"filter","column":"tags","operator":"cs","values":["x","y"]},
                {"kind":"ilikeAll","column":"title","patterns":["a%","%b"]}]}""",
-        table = "events",
-        columns = Columns.ALL,
-    ) {
-        filter {
-            sl("slot", 1 to 5)
-            contains("tags", listOf("x", "y"))
-            ilikeAll("title", listOf("a%", "%b"))
+            table = "events",
+            columns = Columns.ALL,
+        ) {
+            filter {
+                sl("slot", 1 to 5)
+                contains("tags", listOf("x", "y"))
+                ilikeAll("title", listOf("a%", "%b"))
+            }
         }
-    }
 
     /**
-     * Reads [description] through the bridge, then the same rows through [request] in Kotlin:
-     * both send one identical request, and offline the Kotlin call is answered from what the
-     * bridge's read cached.
+     * Reads [description] through the bridge, then the same rows through [request] in Kotlin: both
+     * send one identical request, and offline the Kotlin call is answered from what the bridge's
+     * read cached.
      */
     private fun parity(
         description: String,

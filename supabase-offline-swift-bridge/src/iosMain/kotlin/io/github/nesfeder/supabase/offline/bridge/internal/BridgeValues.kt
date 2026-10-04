@@ -75,7 +75,11 @@ internal fun MutationOutcome.toBridge(): BridgeMutationResult =
         is MutationOutcome.Applied ->
             BridgeMutationResult(isQueued = false, applied = result.toBridge(), queued = null)
         is MutationOutcome.Queued ->
-            BridgeMutationResult(isQueued = true, applied = null, queued = pendingMutation.toBridge())
+            BridgeMutationResult(
+                isQueued = true,
+                applied = null,
+                queued = pendingMutation.toBridge(),
+            )
     }
 
 /** A queued write. */
@@ -106,7 +110,13 @@ internal fun RejectedMutation.toBridge(): BridgeRejectedMutation =
 
 /** The server's answer to a rejected write. */
 private fun ServerError.toBridge(): BridgeServerError =
-    BridgeServerError(status = status, code = code, message = message, details = details, hint = hint)
+    BridgeServerError(
+        status = status,
+        code = code,
+        message = message,
+        details = details,
+        hint = hint,
+    )
 
 /** A write's operation. */
 private fun MutationOperation.toBridge(): BridgeMutationOperation =

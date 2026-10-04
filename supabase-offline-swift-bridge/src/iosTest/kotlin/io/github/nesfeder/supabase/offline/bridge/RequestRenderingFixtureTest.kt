@@ -49,7 +49,8 @@ class RequestRenderingFixtureTest {
         val expectedError = case["error"]?.jsonPrimitive?.content
         if (expectedError != null) {
             return buildList {
-                if (error?.kind?.name != expectedError) add("$name: expected $expectedError, got $error")
+                if (error?.kind?.name != expectedError)
+                    add("$name: expected $expectedError, got $error")
                 if (server.requests.isNotEmpty()) add("$name: a refused description sent a request")
             }
         }

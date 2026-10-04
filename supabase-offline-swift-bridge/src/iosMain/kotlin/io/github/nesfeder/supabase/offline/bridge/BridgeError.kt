@@ -15,7 +15,8 @@ package io.github.nesfeder.supabase.offline.bridge
  * @property hint the server's hint, when it sent one.
  * @property isConnectivityFailure whether the network, not the server, failed: `true` for
  *   [BridgeErrorKind.CONNECTIVITY], [BridgeErrorKind.NETWORK_DISABLED],
- *   [BridgeErrorKind.MUTATION_NOT_QUEUEABLE] and a [BridgeErrorKind.SYNC_FAILED] the network caused.
+ *   [BridgeErrorKind.MUTATION_NOT_QUEUEABLE] and a [BridgeErrorKind.SYNC_FAILED] the network
+ *   caused.
  * @property debugType the name of the failure's type, for diagnostics only; never matched on.
  */
 public class BridgeError
@@ -59,7 +60,9 @@ public enum class BridgeErrorKind {
     /** A write the mutation queue cannot hold could not be sent for want of a connection. */
     MUTATION_NOT_QUEUEABLE,
 
-    /** Why a sync pass stopped with writes still queued: status and code, when the server sent them. */
+    /**
+     * Why a sync pass stopped with writes still queued: status and code, when the server sent them.
+     */
     SYNC_FAILED,
 
     /** The app's access-token callback answered with a failure. */
@@ -71,7 +74,9 @@ public enum class BridgeErrorKind {
     /** A description asked for something this build does not offer, such as a filter operator. */
     UNSUPPORTED,
 
-    /** The library refused an argument, such as an uncacheable object path or a retry it forbids. */
+    /**
+     * The library refused an argument, such as an uncacheable object path or a retry it forbids.
+     */
     INVALID_ARGUMENT,
 
     /** A response could not be decoded. The message names no payload. */

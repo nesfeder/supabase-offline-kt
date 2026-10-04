@@ -46,7 +46,8 @@ class RecordedRequest(
 ) {
     /** The path, without the query. */
     val path: String
-        get() = url.substringAfter("://").substringAfter('/', "").let { "/" + it.substringBefore('?') }
+        get() =
+            url.substringAfter("://").substringAfter('/', "").let { "/" + it.substringBefore('?') }
 
     /** The query parameters, decoded, in the order they were sent. */
     val queryParameters: List<Pair<String, String>>
@@ -78,13 +79,13 @@ class ScriptedAnswer(
 }
 
 /**
- * A fake server for one test: records every request and answers it by [answer] (PostgREST reads
- * get [SERVER_ROWS], writes `[]`, Storage reads `a photo`). While [online] is `false`, every
- * request fails as if the connection were down. An answer of `null` holds the request in
- * [heldResponders] until the test answers it.
+ * A fake server for one test: records every request and answers it by [answer] (PostgREST reads get
+ * [SERVER_ROWS], writes `[]`, Storage reads `a photo`). While [online] is `false`, every request
+ * fails as if the connection were down. An answer of `null` holds the request in [heldResponders]
+ * until the test answers it.
  */
 class RecordingServer(
-    @Volatile var answer: (RecordedRequest) -> ScriptedAnswer? = ::defaultAnswer,
+    @Volatile var answer: (RecordedRequest) -> ScriptedAnswer? = ::defaultAnswer
 ) : BridgeFakeServer {
     private val recorded = AtomicReference(emptyList<RecordedRequest>())
     private val held = AtomicReference(emptyList<BridgeHttpResponder>())

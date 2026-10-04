@@ -24,7 +24,9 @@ public class BridgeClientOptions(
     /** Supplies the user's access token per request, or `null` to send the key alone. */
     public var accessTokenProvider: BridgeAccessTokenProvider? = null
 
-    /** The most the cached query results may hold, in bytes; [CACHE_SIZE_UNLIMITED] for no bound. */
+    /**
+     * The most the cached query results may hold, in bytes; [CACHE_SIZE_UNLIMITED] for no bound.
+     */
     public var cacheSizeBytes: Long = DEFAULT_CACHE_SIZE_BYTES
 
     /** The most the Storage file cache may hold, in bytes; [CACHE_SIZE_UNLIMITED] for no bound. */
@@ -80,7 +82,9 @@ internal constructor(private val answer: (token: String?, failure: String?) -> U
         answer(token, null)
     }
 
-    /** Answers with a failure: the request fails with [BridgeErrorKind.ACCESS_TOKEN] and [message]. */
+    /**
+     * Answers with a failure: the request fails with [BridgeErrorKind.ACCESS_TOKEN] and [message].
+     */
     public fun fail(message: String) {
         answer(null, message)
     }

@@ -21,7 +21,10 @@ class BridgeStorageTest {
     private val server = RecordingServer { request ->
         when {
             request.method == "POST" && request.path.startsWith("/storage/v1/object/list/") ->
-                ScriptedAnswer.json(200, """[{"name":"a.png","id":"1","updated_at":null,"created_at":null,"last_accessed_at":null,"metadata":null}]""")
+                ScriptedAnswer.json(
+                    200,
+                    """[{"name":"a.png","id":"1","updated_at":null,"created_at":null,"last_accessed_at":null,"metadata":null}]""",
+                )
             request.method == "POST" && request.path.startsWith("/storage/v1/object/sign/") ->
                 ScriptedAnswer.json(200, """{"signedURL":"/object/sign/avatars/a.png?token=t"}""")
             request.method == "POST" || request.method == "PUT" ->
@@ -91,9 +94,20 @@ class BridgeStorageTest {
 
         // When
         val listed = CompletionProbe<String>()
-        client.storage.list("avatars", "", """{"limit":10,"sortBy":{"column":"name","order":"desc"}}""", listed.completion)
+        client.storage.list(
+            "avatars",
+            "",
+            """{"limit":10,"sortBy":{"column":"name","order":"desc"}}""",
+            listed.completion,
+        )
         val signed = CompletionProbe<String>()
-        client.storage.createSignedUrl("avatars", "a.png", 60, """{"width":100,"resize":"cover"}""", signed.completion)
+        client.storage.createSignedUrl(
+            "avatars",
+            "a.png",
+            60,
+            """{"width":100,"resize":"cover"}""",
+            signed.completion,
+        )
         val exists = CompletionProbe<Boolean>()
         client.storage.exists("avatars", "a.png", exists.completion)
         val publicUrl = client.storage.publicUrl("avatars", "a.png")
@@ -119,9 +133,21 @@ class BridgeStorageTest {
 
         // When
         val probe = CompletionProbe<String>()
-        client.storage.upload("avatars", "a.png", "x".encodeToByteArray().toNSData(), """{"upsert":"yes"}""", probe.completion)
+        client.storage.upload(
+            "avatars",
+            "a.png",
+            "x".encodeToByteArray().toNSData(),
+            """{"upsert":"yes"}""",
+            probe.completion,
+        )
         val transform = CompletionProbe<NSData>()
-        client.storage.download("avatars", "a.png", false, """{"resize":"stretch"}""", transform.completion)
+        client.storage.download(
+            "avatars",
+            "a.png",
+            false,
+            """{"resize":"stretch"}""",
+            transform.completion,
+        )
 
         // Then
         assertEquals(BridgeErrorKind.INVALID_REQUEST, probe.awaitError().kind)

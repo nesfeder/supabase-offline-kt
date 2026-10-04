@@ -43,7 +43,11 @@ class BridgeClientTest {
         // Given — a live read that has the server's rows
         val client = openTestClient(server)
         val snapshots = SubscriptionProbe<BridgeQuerySnapshot>()
-        client.observe(readOf(strategy = "cacheFirstThenNetwork"), snapshots.onValue, snapshots.onCompletion)
+        client.observe(
+            readOf(strategy = "cacheFirstThenNetwork"),
+            snapshots.onValue,
+            snapshots.onCompletion,
+        )
         snapshots.awaitValue { it.data == SERVER_ROWS && it.refresh.kind == BridgeRefreshKind.IDLE }
 
         // When — a write made offline, then the client closes
@@ -115,7 +119,10 @@ class BridgeClientTest {
         // Given — a server that refuses every write, and one queued write replayed against it
         server.answer = { request ->
             if (request.method == "POST") {
-                ScriptedAnswer.json(409, """{"code":"23505","message":"duplicate key","details":"Key (id)=(1)","hint":null}""")
+                ScriptedAnswer.json(
+                    409,
+                    """{"code":"23505","message":"duplicate key","details":"Key (id)=(1)","hint":null}""",
+                )
             } else {
                 RecordingServer.defaultAnswer(request)
             }
@@ -137,7 +144,9 @@ class BridgeClientTest {
         client.observeRejectedMutations(rejections.onValue, rejections.onCompletion)
         rejections.awaitValue { it.isNotEmpty() }
         val retried = awaitErrorOnly { client.retryRejectedMutation(rejected.id, it) }
-        val again = rejections.awaitValue { list -> list.isNotEmpty() && list.single().id != rejected.id }
+        val again = rejections.awaitValue { list ->
+            list.isNotEmpty() && list.single().id != rejected.id
+        }
         val dismissed = awaitErrorOnly { client.dismissRejectedMutation(again.single().id, it) }
         rejections.awaitValue { it.isEmpty() }
         val relisted = CompletionProbe<List<BridgeRejectedMutation>>()
@@ -226,11 +235,13 @@ class BridgeClientTest {
         client.selectAndWait(readOf())
 
         // When — a record arrives, then the first row is deleted
-        val applied =
-            awaitErrorOnly { client.applyServerRecord("todos", """{"id":5,"title":"Jam"}""", null, null, it) }
+        val applied = awaitErrorOnly {
+            client.applyServerRecord("todos", """{"id":5,"title":"Jam"}""", null, null, it)
+        }
         val (withRecord, _) = client.selectAndWait(readOf(strategy = "cacheOnly"))
-        val deleted =
-            awaitErrorOnly { client.applyServerDelete("todos", """{"id":1}""", listOf("id"), null, it) }
+        val deleted = awaitErrorOnly {
+            client.applyServerDelete("todos", """{"id":1}""", listOf("id"), null, it)
+        }
         val (withoutFirst, _) = client.selectAndWait(readOf(strategy = "cacheOnly"))
 
         // Then
@@ -301,7 +312,8 @@ class BridgeClientTest {
     @Test
     fun the_apps_token_reaches_every_request() = bridgeTest {
         // Given
-        val client = openTestClient(server) { accessTokenProvider = FakeAccessTokenProvider("user-token") }
+        val client =
+            openTestClient(server) { accessTokenProvider = FakeAccessTokenProvider("user-token") }
 
         // When
         val (read, error) = client.selectAndWait(readOf())
@@ -336,14 +348,16 @@ class BridgeClientTest {
         // Given — one client logging at DEBUG and one at NONE
         val verbose = RecordingLogSink()
         val silent = RecordingLogSink()
-        val talking = openTestClient(server) {
-            logSink = verbose
-            logLevel = BridgeLogLevel.DEBUG
-        }
-        val quiet = openTestClient(RecordingServer()) {
-            logSink = silent
-            logLevel = BridgeLogLevel.NONE
-        }
+        val talking =
+            openTestClient(server) {
+                logSink = verbose
+                logLevel = BridgeLogLevel.DEBUG
+            }
+        val quiet =
+            openTestClient(RecordingServer()) {
+                logSink = silent
+                logLevel = BridgeLogLevel.NONE
+            }
 
         // When
         talking.selectAndWait(readOf())

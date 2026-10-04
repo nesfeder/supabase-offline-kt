@@ -3,8 +3,8 @@
 package io.github.nesfeder.supabase.offline.bridge
 
 /**
- * Where the library stands with the current user's queued writes and the network: one value to
- * draw a sync banner from.
+ * Where the library stands with the current user's queued writes and the network: one value to draw
+ * a sync banner from.
  *
  * @property network whether the library believes it can reach the network.
  * @property pendingMutationCount the current user's queued writes.

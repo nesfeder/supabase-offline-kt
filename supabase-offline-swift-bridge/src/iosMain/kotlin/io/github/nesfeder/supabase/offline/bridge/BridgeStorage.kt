@@ -20,9 +20,9 @@ import kotlin.time.Duration.Companion.seconds
 import platform.Foundation.NSData
 
 /**
- * Storage buckets through the offline client: every object operation of the offline bucket, and
- * its file cache. Downloads are kept on the device and served from there offline; uploads,
- * updates, deletes, moves and copies are online only and drop the cached copies they make stale.
+ * Storage buckets through the offline client: every object operation of the offline bucket, and its
+ * file cache. Downloads are kept on the device and served from there offline; uploads, updates,
+ * deletes, moves and copies are online only and drop the cached copies they make stale.
  *
  * Every call names its bucket. Options and transforms cross as JSON text, results that are not
  * bytes or files as JSON text too (the formats are in the contract note beside this module); bytes
@@ -48,7 +48,8 @@ internal constructor(
     ): BridgeCancellable =
         runner.runOnce("upload", completion) {
             val upload = uploadOptionsOf(options)
-            val response = bucketOf(bucket).upload(path, data.toByteArray()) { upload.applyTo(this) }
+            val response =
+                bucketOf(bucket).upload(path, data.toByteArray()) { upload.applyTo(this) }
             encodeUploadResponse(response)
         }
 
@@ -62,7 +63,8 @@ internal constructor(
     ): BridgeCancellable =
         runner.runOnce("update", completion) {
             val upload = uploadOptionsOf(options)
-            val response = bucketOf(bucket).update(path, data.toByteArray()) { upload.applyTo(this) }
+            val response =
+                bucketOf(bucket).update(path, data.toByteArray()) { upload.applyTo(this) }
             encodeUploadResponse(response)
         }
 
@@ -170,12 +172,12 @@ internal constructor(
         }
 
     /**
-     * Downloads the object at [path]: from the network first, cached on success, and from the
-     * cache when the network fails.
+     * Downloads the object at [path]: from the network first, cached on success, and from the cache
+     * when the network fails.
      *
      * @param isPublic whether to download through the public URL rather than the authenticated one.
-     * @param imageTransform an image transform as for [createSignedUrl], or `null`; a
-     *   transformed download is cached apart from the original.
+     * @param imageTransform an image transform as for [createSignedUrl], or `null`; a transformed
+     *   download is cached apart from the original.
      */
     public fun download(
         bucket: String,
@@ -203,8 +205,8 @@ internal constructor(
     /**
      * The objects under [prefix].
      *
-     * @param options `{"limit", "offset", "search", "sortBy": {"column", "order"}}`, each
-     *   optional, or `null`.
+     * @param options `{"limit", "offset", "search", "sortBy": {"column", "order"}}`, each optional,
+     *   or `null`.
      * @param completion a JSON array of supabase-kt's file objects, or the failure.
      */
     public fun list(
@@ -231,8 +233,7 @@ internal constructor(
         bucket: String,
         path: String,
         completion: (Boolean?, BridgeError?) -> Unit,
-    ): BridgeCancellable =
-        runner.runOnce("exists", completion) { bucketOf(bucket).exists(path) }
+    ): BridgeCancellable = runner.runOnce("exists", completion) { bucketOf(bucket).exists(path) }
 
     /** The public URL of [path]; builds a URL and sends nothing. */
     public fun publicUrl(bucket: String, path: String): BridgeStringResult =

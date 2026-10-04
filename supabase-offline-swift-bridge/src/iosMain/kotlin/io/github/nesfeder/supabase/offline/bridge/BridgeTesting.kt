@@ -38,8 +38,8 @@ public object BridgeTesting {
      * [BridgeClientOptions.dataDirectory], which nothing reads, and PostgREST's retries, which are
      * off so a failure the server scripts arrives at once.
      *
-     * The client watches no connectivity monitor: the network reads as unknown (treated as
-     * online) until the app reports it ([BridgeClientOptions.reportsNetworkAvailability]) or calls
+     * The client watches no connectivity monitor: the network reads as unknown (treated as online)
+     * until the app reports it ([BridgeClientOptions.reportsNetworkAvailability]) or calls
      * [BridgeClient.disableNetwork].
      *
      * @param clock the time the client sees, or `null` for the device's.
@@ -128,7 +128,8 @@ private fun fakeServerEngine(server: BridgeFakeServer, logSink: BridgeLogSink?):
                 respond(
                     content = answer.body,
                     status = HttpStatusCode.fromValue(answer.status),
-                    headers = headers { answer.headers.forEach { (name, value) -> append(name, value) } },
+                    headers =
+                        headers { answer.headers.forEach { (name, value) -> append(name, value) } },
                 )
             is FakeServerAnswer.NoConnection -> throw IOException(answer.message)
         }

@@ -42,7 +42,9 @@ internal sealed interface FilterNode {
         private val referencedTable: String?,
     ) : FilterNode {
         override fun applyTo(builder: PostgrestFilterBuilder) {
-            val nested: PostgrestFilterBuilder.() -> Unit = { children.forEach { it.applyTo(this) } }
+            val nested: PostgrestFilterBuilder.() -> Unit = {
+                children.forEach { it.applyTo(this) }
+            }
             if (isOr) builder.or(negated, referencedTable, nested)
             else builder.and(negated, referencedTable, nested)
         }
@@ -189,7 +191,9 @@ private fun readSingleValue(node: DescriptionObject): String? {
 private fun readRange(node: DescriptionObject): Pair<String, String> {
     val bounds = node.optionalStrings("range").orEmpty()
     if (bounds.size != 2) {
-        throw InvalidDescriptionException("${node.fieldPath("range")} must hold exactly two strings")
+        throw InvalidDescriptionException(
+            "${node.fieldPath("range")} must hold exactly two strings"
+        )
     }
     return bounds[0] to bounds[1]
 }

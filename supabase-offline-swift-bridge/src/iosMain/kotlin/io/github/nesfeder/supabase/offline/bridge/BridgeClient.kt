@@ -12,7 +12,6 @@ import io.github.nesfeder.supabase.offline.bridge.internal.InvalidDescriptionExc
 import io.github.nesfeder.supabase.offline.bridge.internal.OperationRunner
 import io.github.nesfeder.supabase.offline.bridge.internal.UnhandledFailureReporter
 import io.github.nesfeder.supabase.offline.bridge.internal.assembleSupabaseClient
-import io.github.nesfeder.supabase.offline.bridge.internal.bridgeError
 import io.github.nesfeder.supabase.offline.bridge.internal.bridgeErrorOf
 import io.github.nesfeder.supabase.offline.bridge.internal.mutationDescription
 import io.github.nesfeder.supabase.offline.bridge.internal.parseJsonText
@@ -44,10 +43,9 @@ import kotlinx.serialization.json.JsonObject
  * block and returning a [BridgeCancellable].
  *
  * Reads and writes are plain JSON descriptions the bridge applies onto supabase-kt's own builders
- * (the format is in the contract note beside this module); bodies and records cross as JSON text.
- * A completion fires exactly once, on a background thread; a live read's values arrive in order,
- * on a background thread, and never block it. Nothing here throws: a failure arrives as a
- * [BridgeError].
+ * (the format is in the contract note beside this module); bodies and records cross as JSON text. A
+ * completion fires exactly once, on a background thread; a live read's values arrive in order, on a
+ * background thread, and never block it. Nothing here throws: a failure arrives as a [BridgeError].
  *
  * Build one with [open]; [close] it when done, which frees its database for another client.
  */
@@ -124,7 +122,8 @@ internal constructor(
      * @param mutation the write's description, as JSON text.
      * @param body the rows of an insert or upsert (an array of objects, or one object) or the
      *   columns of an update (an object), as JSON text; `null` for a delete.
-     * @param completion the outcome (applied, with the server's response, or queued), or the failure.
+     * @param completion the outcome (applied, with the server's response, or queued), or the
+     *   failure.
      */
     public fun mutate(
         mutation: String,
@@ -226,7 +225,7 @@ internal constructor(
 
     /** The current user's writes the server refused for good on replay, oldest first. */
     public fun rejectedMutations(
-        completion: (List<BridgeRejectedMutation>?, BridgeError?) -> Unit,
+        completion: (List<BridgeRejectedMutation>?, BridgeError?) -> Unit
     ): BridgeCancellable =
         runner.runOnce("rejectedMutations", completion) {
             offline.rejectedMutations().first().map { it.toBridge() }
@@ -293,8 +292,8 @@ internal constructor(
         }
 
     /**
-     * The sync status as it changes, starting with the current one; [onCompletion] fires once,
-     * with `null`, when the client closes.
+     * The sync status as it changes, starting with the current one; [onCompletion] fires once, with
+     * `null`, when the client closes.
      */
     public fun observeSyncStatus(
         onStatus: (BridgeSyncStatus) -> Unit,
@@ -326,8 +325,8 @@ internal constructor(
     }
 
     /**
-     * Deletes everything the library keeps on this device: cached rows, downloaded files, and
-     * every queued write, which is never sent. The client stays usable.
+     * Deletes everything the library keeps on this device: cached rows, downloaded files, and every
+     * queued write, which is never sent. The client stays usable.
      */
     public fun clearLocalData(completion: (BridgeError?) -> Unit): BridgeCancellable =
         runner.runToCompletion("clearLocalData", completion) { offline.clearLocalData() }
@@ -376,23 +375,22 @@ internal constructor(
      */
     public fun close(completion: (BridgeError?) -> Unit): BridgeCancellable {
         val first = closing.compareAndSet(expectedValue = false, newValue = true)
-        val job =
-            lifecycleScope.launch {
-                withContext(NonCancellable) {
-                    val error =
-                        if (first) {
-                            closeEverything()
-                        } else {
-                            closed.await()
-                            null
-                        }
-                    try {
-                        completion(error)
-                    } catch (failure: Throwable) {
-                        runner.report(failure, "The completion of close")
+        val job = lifecycleScope.launch {
+            withContext(NonCancellable) {
+                val error =
+                    if (first) {
+                        closeEverything()
+                    } else {
+                        closed.await()
+                        null
                     }
+                try {
+                    completion(error)
+                } catch (failure: Throwable) {
+                    runner.report(failure, "The completion of close")
                 }
             }
+        }
         return BridgeCancellable(job) { runner.report(it, "Cancelling close") }
     }
 
@@ -452,8 +450,8 @@ public class BridgeOpenResult
 internal constructor(public val client: BridgeClient?, public val error: BridgeError?)
 
 /**
- * Opens a bridge client over the supabase-kt client [assemble] builds, given the app's
- * connectivity reports (or `null` when the options leave connectivity to the library).
+ * Opens a bridge client over the supabase-kt client [assemble] builds, given the app's connectivity
+ * reports (or `null` when the options leave connectivity to the library).
  */
 internal fun openBridgeClient(
     options: BridgeClientOptions,
@@ -481,7 +479,8 @@ private fun rowsOf(text: String?): JsonArray {
                 }
             }
         is JsonObject -> JsonArray(listOf(body))
-        else -> throw InvalidDescriptionException("The body must be an array of objects or an object")
+        else ->
+            throw InvalidDescriptionException("The body must be an array of objects or an object")
     }
 }
 

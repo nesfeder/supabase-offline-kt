@@ -85,7 +85,10 @@ internal class OperationRunner(
             return BridgeCancellable(null, ::reportCancelFailure)
         }
         val job =
-            launchCatching(delivery, endingOf = { cause -> errorOf(cause, ownCancellation = true) }) {
+            launchCatching(
+                delivery,
+                endingOf = { cause -> errorOf(cause, ownCancellation = true) },
+            ) {
                 val value =
                     try {
                         faultInjector?.invoke(operation)
@@ -105,8 +108,7 @@ internal class OperationRunner(
         operation: String,
         completion: (BridgeError?) -> Unit,
         work: suspend () -> Unit,
-    ): BridgeCancellable =
-        runOnce<Unit>(operation, { _, error -> completion(error) }) { work() }
+    ): BridgeCancellable = runOnce<Unit>(operation, { _, error -> completion(error) }) { work() }
 
     /**
      * Collects [values], handing each to [onValue], and ends with [onCompletion] exactly once:

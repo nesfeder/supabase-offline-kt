@@ -26,7 +26,9 @@ internal fun parseDescriptionObject(text: String, what: String): DescriptionObje
         try {
             Json.parseToJsonElement(text)
         } catch (failure: SerializationException) {
-            throw InvalidDescriptionException("The $what is not valid JSON (${failure::class.simpleName})")
+            throw InvalidDescriptionException(
+                "The $what is not valid JSON (${failure::class.simpleName})"
+            )
         }
     if (element !is JsonObject) throw InvalidDescriptionException("The $what is not a JSON object")
     return DescriptionObject(element, what)
@@ -41,7 +43,9 @@ internal fun parseJsonText(text: String, what: String): JsonElement =
     try {
         Json.parseToJsonElement(text)
     } catch (failure: SerializationException) {
-        throw InvalidDescriptionException("The $what is not valid JSON (${failure::class.simpleName})")
+        throw InvalidDescriptionException(
+            "The $what is not valid JSON (${failure::class.simpleName})"
+        )
     }
 
 /**

@@ -24,8 +24,8 @@ internal constructor(
 )
 
 /**
- * One emission of a live read ([BridgeClient.observe]): the rows as they stand, and how the
- * refresh behind them stands.
+ * One emission of a live read ([BridgeClient.observe]): the rows as they stand, and how the refresh
+ * behind them stands.
  *
  * @property data the rows as JSON text with the user's queued writes applied, or `null` while
  *   nothing is known for the query; `[]` when the server returned no rows.
