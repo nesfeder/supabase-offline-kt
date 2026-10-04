@@ -10,9 +10,13 @@ import kotlinx.coroutines.CompletableDeferred
 /**
  * A session store whose first load, the Auth plugin's own, waits for [release], keeping the plugin
  * `Initializing` as long as a test needs. Every load answers [stored], and each after the first
- * answers at once, as a real store would while the first is in flight.
+ * answers at once, as a real store would while the first is in flight; with [holdsEveryLoad],
+ * every load waits for [release], as a store that hangs would.
  */
-internal class FakeHeldSessionManager(private val stored: UserSession?) : SessionManager {
+internal class FakeHeldSessionManager(
+    private val stored: UserSession?,
+    private val holdsEveryLoad: Boolean = false,
+) : SessionManager {
 
     private val released = CompletableDeferred<Unit>()
     private var loads = 0
@@ -23,7 +27,7 @@ internal class FakeHeldSessionManager(private val stored: UserSession?) : Sessio
     }
 
     override suspend fun loadSession(): UserSession {
-        if (loads++ == 0) released.await()
+        if (loads++ == 0 || holdsEveryLoad) released.await()
         return stored ?: throw NoSessionFoundException()
     }
 

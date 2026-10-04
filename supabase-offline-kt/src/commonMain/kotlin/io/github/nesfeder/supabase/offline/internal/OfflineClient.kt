@@ -39,6 +39,7 @@ import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.AUTH_SESSION_SETTLE_TIMEOUT
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
@@ -398,17 +399,26 @@ internal class OfflineClient(
 
     /**
      * The stored identity value for the current session status, computed once per status: while the
-     * session restores or refreshes, telling it reads the stored session.
+     * session restores or refreshes, telling it reads the stored session, for at most
+     * [AUTH_SESSION_SETTLE_TIMEOUT]. A store that takes longer leaves the identity untold for that
+     * status: the caches are not served to it, so a read goes to the network instead of waiting.
      */
     private suspend fun overlayIdentityValue(): String? {
         val status = authPluginOrNull()?.sessionStatus?.value
         overlayIdentity.value?.let { (cachedStatus, identity) ->
             if (cachedStatus == status) return identity
         }
-        val identity = supabaseClient.currentQueueIdentity()?.storedValue
+        val identity =
+            withTimeoutOrNull(AUTH_SESSION_SETTLE_TIMEOUT) {
+                    StoredIdentity(supabaseClient.currentQueueIdentity()?.storedValue)
+                }
+                ?.value
         overlayIdentity.value = status to identity
         return identity
     }
+
+    /** An identity read from the stored session, `null` when it names none, as a timeout's result. */
+    private class StoredIdentity(val value: String?)
 
     /**
      * Starts a pass when the session settles into an identity with mutations queued, in the

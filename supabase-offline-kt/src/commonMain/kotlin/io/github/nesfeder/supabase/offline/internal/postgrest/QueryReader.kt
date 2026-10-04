@@ -272,7 +272,7 @@ internal class QueryReader(
                 }
                 return NetworkAnswer(overlaidResponse(slot, fetched), wasCached = false)
             }
-            engineLogger.warning {
+            engineLogger.info {
                 "SELECT $table answered while the session was not settled; waiting for the session"
             }
             if (fetched.sessionBefore is RequestSession.Restoring) {
