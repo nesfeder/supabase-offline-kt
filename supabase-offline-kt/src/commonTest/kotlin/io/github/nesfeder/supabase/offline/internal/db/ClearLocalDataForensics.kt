@@ -12,10 +12,17 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.ktor.http.HttpStatusCode
 import kotlin.random.Random
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.measureTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -158,6 +165,106 @@ internal suspend fun runClearLocalDataForensics(
         client.close()
     }
 }
+
+/**
+ * What a clear did while a read on another connection held the database's write-ahead log.
+ *
+ * @property clearTook how long `clearLocalData()` took.
+ * @property heldReadKeptTheMarker whether the marker could still be read from the files while the
+ *   read was held: `true` shows the read did hold the log, so the rest of the report means
+ *   something.
+ * @property cleanAfterTheReadEnded whether, once the read ended and with the client still open, the
+ *   marker left the files and the write-ahead log was emptied, within the wait.
+ */
+internal data class ClearUnderAHeldReadReport(
+    val clearTook: Duration,
+    val heldReadKeptTheMarker: Boolean,
+    val cleanAfterTheReadEnded: Boolean,
+)
+
+/**
+ * Opens a client in [directory] with [openClient], caches rows carrying one marker, then opens a
+ * second connection to the database file and holds a read on it across `clearLocalData()`, as
+ * another reader of the file would. Once the clear has returned it lets the read go, and waits up
+ * to [settle] for the marker to leave the files with the client still open.
+ *
+ * @param directory the client's data directory; the database is created in it.
+ * @param openClient the platform's open path.
+ * @return what the clear did.
+ */
+internal suspend fun runClearUnderAHeldRead(
+    directory: Path,
+    settle: Duration = 15.seconds,
+    openClient: (SupabaseClient, Offline.Config) -> Offline,
+): ClearUnderAHeldReadReport {
+    val marker = "MARKER${Random.nextLong().toULong().toString(16)}"
+    val padding = "lorem ".repeat(60)
+    val server =
+        RecordingPostgrestServer(
+            answer = { request ->
+                val id = request.query["id"]?.removePrefix("eq.") ?: "0"
+                okJson("""[{"id":$id,"email":"$marker-$id@example.com","bio":"$padding"}]""")
+            }
+        )
+    val client =
+        openClient(
+            server.supabaseClient(),
+            Offline.createConfig { dataDirectory = directory.toString() },
+        )
+    val databasePath = directory / OFFLINE_DATABASE_FILE_NAME
+    val wal = "$databasePath-wal".toPath()
+    try {
+        val profiles = client.from("profiles")
+        repeat(CACHED_PAYLOADS) { index -> profiles.select { filter { eq("id", index) } } }
+        check(containsMarker(databasePath, marker) || containsMarker(wal, marker)) {
+            "the marker never reached the database"
+        }
+
+        // A read on its own connection, holding the write-ahead log until it is let go
+        val reader = defaultSQLiteDriver().open(databasePath.toString())
+        val clearTook: Duration
+        val heldReadKeptTheMarker: Boolean
+        try {
+            reader.execSQL("BEGIN")
+            val statement = reader.prepare("SELECT COUNT(*) FROM object_cache")
+            try {
+                check(statement.step())
+            } finally {
+                statement.close()
+            }
+            clearTook = measureTime { client.clearLocalData() }
+            heldReadKeptTheMarker =
+                containsMarker(databasePath, marker) || containsMarker(wal, marker)
+            reader.execSQL("COMMIT")
+        } finally {
+            reader.close()
+        }
+
+        val clean =
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(settle) {
+                    while (
+                        containsMarker(databasePath, marker) ||
+                            containsMarker(wal, marker) ||
+                            (FileSystem.SYSTEM.metadataOrNull(wal)?.size ?: 0L) > 0L
+                    ) {
+                        delay(POLL)
+                    }
+                    true
+                }
+            }
+        return ClearUnderAHeldReadReport(
+            clearTook = clearTook,
+            heldReadKeptTheMarker = heldReadKeptTheMarker,
+            cleanAfterTheReadEnded = clean == true,
+        )
+    } finally {
+        client.close()
+    }
+}
+
+/** How often the files are searched again while the log empties. */
+private val POLL: Duration = 50.milliseconds
 
 /** What the forensics server answers. */
 private enum class Phase {
