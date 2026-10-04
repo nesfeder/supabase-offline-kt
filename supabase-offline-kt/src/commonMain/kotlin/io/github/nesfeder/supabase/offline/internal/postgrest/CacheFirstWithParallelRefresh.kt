@@ -101,8 +101,8 @@ internal fun refreshBackoff(failures: Int): Duration =
  * @param onRefreshState Callback invoked on each refresh lifecycle transition.
  * @param backoff Backoff schedule; injectable so tests can shrink or reshape delays.
  * @param refreshRequests The query's count of refresh requests, emitting it at once and as it
- *   moves: the refresh runs again whenever it moved since the last refresh began, so a request
- *   made while a refresh runs, or before the loop got to wait for one, is never lost.
+ *   moves: the refresh runs again whenever it moved since the last refresh began, so a request made
+ *   while a refresh runs, or before the loop got to wait for one, is never lost.
  * @param networkAccess whether the network is known down, or access to it off.
  * @param isWaiting see [refreshUntilSuccess].
  */

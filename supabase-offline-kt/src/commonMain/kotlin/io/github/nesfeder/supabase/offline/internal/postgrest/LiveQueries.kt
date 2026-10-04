@@ -94,10 +94,12 @@ internal class LiveQueries(
                 counts.copy(
                     byQuery =
                         counts.byQuery +
-                            cacheKeys.filter { cacheKey -> cacheKey in live }.associate { cacheKey ->
-                                val key = Key(table, cacheKey)
-                                key to (counts.byQuery[key] ?: 0L) + 1
-                            }
+                            cacheKeys
+                                .filter { cacheKey -> cacheKey in live }
+                                .associate { cacheKey ->
+                                    val key = Key(table, cacheKey)
+                                    key to (counts.byQuery[key] ?: 0L) + 1
+                                }
                 )
             }
         }
