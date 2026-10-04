@@ -7,7 +7,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Clock
@@ -46,10 +45,7 @@ class OverlayFreshnessTest {
     private val items =
         newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store =
-                    newTestOfflineStore(
-                        nowMillis = { (Clock.System.now() - storeClockLag).toEpochMilliseconds() }
-                    ),
+                nowMillis = { (Clock.System.now() - storeClockLag).toEpochMilliseconds() },
                 coordinatorScope = idleCoroutineScope(),
             )
             .from(TABLE)

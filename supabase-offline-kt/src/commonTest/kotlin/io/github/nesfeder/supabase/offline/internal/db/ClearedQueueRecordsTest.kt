@@ -4,7 +4,8 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -26,15 +27,18 @@ class ClearedQueueRecordsTest {
         // Given — a store holding the rejected list and a keyed insert whose send started
         val queryCacheDao = FakeQueryCacheDao()
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "{}")
-        val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+        val store = newTestStore(queryCacheDao = queryCacheDao)
         val id =
-            store.enqueueInsert("todos", Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray)
-        store.markSendUnconfirmed(id)
+            store.mutationQueue.enqueueInsert(
+                "todos",
+                Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray,
+            )
+        store.mutationQueue.markSendUnconfirmed(id)
 
         // When — cleared, then read the way the overlay and the counts read them
-        store.clearLocalData()
-        val unconfirmed = store.unconfirmedSends()
-        val rejections = store.rejectedList.rejections()
+        store.localData.clearLocalData()
+        val unconfirmed = store.mutationQueue.unconfirmedSends()
+        val rejections = store.mutationQueue.rejectedList.rejections()
 
         // Then — every record reads empty, and nothing was written back
         assertTrue(unconfirmed.isEmpty() && rejections.isEmpty())
@@ -46,27 +50,33 @@ class ClearedQueueRecordsTest {
         // Given — a keyed insert whose send started, and a first read of the started sends parked
         // after it read the rows
         val mutationDao = FakeMutationDao()
-        val writer = newTestOfflineStore(mutationDao = mutationDao)
+        val writer = newTestStore(mutationDao = mutationDao)
         val id =
-            writer.enqueueInsert("todos", Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray)
-        writer.markSendUnconfirmed(id)
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+            writer.mutationQueue.enqueueInsert(
+                "todos",
+                Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray,
+            )
+        writer.mutationQueue.markSendUnconfirmed(id)
+        val store = newTestStore(mutationDao = mutationDao)
         val parked = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         mutationDao.afterUnconfirmedSendIdsRead = {
             parked.complete(Unit)
             release.await()
         }
-        val firstRead = async { store.unconfirmedSends() }
+        val firstRead = async { store.mutationQueue.unconfirmedSends() }
         parked.await()
 
         // When — the clear runs while that read is parked, and then the read finishes
         mutationDao.afterUnconfirmedSendIdsRead = null
-        store.clearLocalData()
+        store.localData.clearLocalData()
         release.complete(Unit)
         firstRead.await()
 
         // Then — the record still reads as the clear left it
-        assertTrue(store.unconfirmedSends().isEmpty(), "read the values from before the clear")
+        assertTrue(
+            store.mutationQueue.unconfirmedSends().isEmpty(),
+            "read the values from before the clear",
+        )
     }
 }

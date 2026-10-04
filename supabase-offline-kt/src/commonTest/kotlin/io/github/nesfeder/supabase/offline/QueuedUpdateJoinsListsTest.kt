@@ -9,7 +9,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.first
@@ -49,7 +48,6 @@ class QueuedUpdateJoinsListsTest {
     private val client =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
-            store = newTestOfflineStore(),
             coordinatorScope = idleCoroutineScope(),
         )
     private val items = client.from(TABLE)

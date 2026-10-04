@@ -3,20 +3,25 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -28,17 +33,27 @@ import kotlinx.serialization.json.JsonArray
  */
 class PerIdentityQueueTest {
 
-    private val store = newTestOfflineStore()
+    /** The identity the store's counts and overlay follow; none, until a test says. */
+    private var storeIdentity: suspend () -> String? = { null }
+
+    /** Emits when [storeIdentity] may have changed. */
+    private var storeIdentityChanges: Flow<Any?> = flowOf(Unit)
+
+    private val store =
+        newTestStore(
+            identityProvider = { storeIdentity() },
+            identityChanges = flow { emitAll(storeIdentityChanges) },
+        )
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
     private val builder =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
         )
     private val replayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
             currentIdentity = { session },
@@ -63,7 +78,7 @@ class PerIdentityQueueTest {
 
         // Then — A's write is queued, not refused because the anonymous one is pending
         assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(2, store.allPendingMutations().size)
+        assertEquals(2, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -83,7 +98,7 @@ class PerIdentityQueueTest {
         assertEquals(listOf("""[{"title":"A's note"}]"""), sentBodies().drop(sentBefore))
         assertEquals(
             listOf("""[{"title":"anonymous note"}]"""),
-            store.allPendingMutations().map { it.bodyJson },
+            store.mutationQueue.allPendingMutations().map { it.bodyJson },
         )
     }
 
@@ -101,7 +116,7 @@ class PerIdentityQueueTest {
 
         // Then
         assertEquals(1, report.syncedCount)
-        assertEquals(0, store.allPendingMutations().size)
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -136,8 +151,8 @@ class PerIdentityQueueTest {
     fun counts_and_the_overlay_show_only_the_current_identitys_writes() = runTest {
         // Given — a store that follows the session, one offline write each from nobody and from A
         val sessionChanges = MutableStateFlow<QueueIdentity>(session)
-        store.identityProvider = { session.storedValue }
-        store.identityChanges = sessionChanges
+        storeIdentity = { session.storedValue }
+        storeIdentityChanges = sessionChanges
         writeOffline("anonymous note")
         session = USER_A
         sessionChanges.value = session
@@ -158,7 +173,7 @@ class PerIdentityQueueTest {
         )
         assertEquals(
             """[{"title":"anonymous note"}]""",
-            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 

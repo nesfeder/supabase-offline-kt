@@ -5,16 +5,17 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -32,18 +33,17 @@ class QueueOwnershipTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity? = USER_A
     private val replayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
             currentIdentity = { session },
         )
     private val builder =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
@@ -70,7 +70,7 @@ class QueueOwnershipTest {
         assertEquals(null, report.stop)
         assertEquals(0, report.syncedCount)
         assertEquals(0, report.remainingCount)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -101,7 +101,7 @@ class QueueOwnershipTest {
 
         // Then — B's write is queued as B's, and A's stays A's
         assertIs<MutationOutcome.Queued>(outcome)
-        val pending = store.allPendingMutations()
+        val pending = store.mutationQueue.allPendingMutations()
         assertEquals(listOf(USER_A.storedValue, USER_B.storedValue), pending.map { it.owner })
     }
 
@@ -132,7 +132,10 @@ class QueueOwnershipTest {
     fun a_queue_written_before_owners_were_recorded_is_adopted_by_the_first_identity_to_replay() =
         runTest {
             // Given — a pending write with no recorded owner, as an older build leaves it
-            store.enqueueInsert(table = TABLE, body = rows("""[{"title":"legacy"}]"""))
+            store.mutationQueue.enqueueInsert(
+                table = TABLE,
+                body = rows("""[{"title":"legacy"}]"""),
+            )
 
             // When — A's pass sees it but cannot reach the server; then B and A sync online
             server.answer = { connectivityFailure() }
@@ -170,12 +173,16 @@ class QueueOwnershipTest {
         // Given — user A's write was rejected
         writeOffline("A's note")
         server.answer = { okJson("[]") }
-        val id = store.allPendingMutations().single().id
-        store.rejectMutation(store.allPendingMutations().single(), "refused", serverError = null)
+        val id = store.mutationQueue.allPendingMutations().single().id
+        store.mutationQueue.rejectMutation(
+            store.mutationQueue.allPendingMutations().single(),
+            "refused",
+            serverError = null,
+        )
 
         // When / Then
-        assertEquals(null, store.retryRejectedMutation(id, USER_B.storedValue))
-        assertTrue(store.retryRejectedMutation(id, USER_A.storedValue) != null)
+        assertEquals(null, store.mutationQueue.retryRejectedMutation(id, USER_B.storedValue))
+        assertTrue(store.mutationQueue.retryRejectedMutation(id, USER_A.storedValue) != null)
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

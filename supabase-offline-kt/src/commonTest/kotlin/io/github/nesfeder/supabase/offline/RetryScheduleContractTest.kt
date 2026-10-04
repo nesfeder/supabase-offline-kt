@@ -10,7 +10,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
@@ -67,7 +66,6 @@ class RetryScheduleContractTest {
                         newTestSupabaseClient(engine = server.engine) {
                             install(Postgrest) { this.maxRetries = maxRetries }
                         },
-                    store = newTestOfflineStore(),
                     coordinatorScope = idleCoroutineScope(),
                 )
                 .from(TABLE)

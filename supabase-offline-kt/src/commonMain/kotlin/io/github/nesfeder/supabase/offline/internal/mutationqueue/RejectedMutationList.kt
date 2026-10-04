@@ -97,8 +97,8 @@ internal data class StoredRejection(
     val bodyOmittedChars: Int? = null,
 ) {
     /**
-     * The mutation row this rejection re-queues as: every stored field, a fresh id (`0`, so the
-     * queue assigns the next one and the write goes to the tail), a new creation time and [owner].
+     * The row this rejection re-queues as, at the tail: its stored fields, id `0` for the queue to
+     * assign, a new creation time and [owner].
      *
      * @param createdAtMs When it is re-queued.
      * @param owner The identity it is re-queued for, or `null` to record none.
@@ -147,7 +147,7 @@ internal class RejectedMutationList(
     private val queryCacheDao: QueryCacheDao,
     private val json: Json,
     private val nowMillis: () -> Long,
-    private val logger: () -> EngineLogger,
+    private val logger: EngineLogger,
 ) {
 
     private val rejectedCache = MutableStateFlow<StoredRejectionList?>(null)
@@ -183,18 +183,6 @@ internal class RejectedMutationList(
     suspend fun resetDroppedCount() {
         val current = rejectedList()
         writeRejected(current.copy(droppedCount = 0))
-    }
-
-    /**
-     * Adds [entry] as the newest rejection and writes the list. See [rejectedRowWith].
-     *
-     * @param entry The rejection.
-     */
-    // test-only: moves in C3b
-    suspend fun addRejection(entry: StoredRejection) {
-        val (row, list) = rejectedRowWith(add = entry)
-        queryCacheDao.upsert(row)
-        rejectedWritten(list)
     }
 
     /**
@@ -250,7 +238,7 @@ internal class RejectedMutationList(
         var droppedCount = current.droppedCount
         while (entries.size - first > MAX_REJECTED_MUTATIONS || total > MAX_REJECTED_LIST_CHARS) {
             val dropped = entries[first]
-            logger().warning {
+            logger.warning {
                 "Rejected list full: dropped rejected ${dropped.operation} ${dropped.id} on ${dropped.table}"
             }
             total -= sizes[first]
@@ -308,7 +296,7 @@ internal class RejectedMutationList(
     private suspend fun keepAsideUnreadable(cacheKey: String, payload: String) {
         val asideCacheKey = "$cacheKey.unreadable.${nowMillis()}"
         queryCacheDao.upsert(reservedRow(asideCacheKey, payload))
-        logger().error {
+        logger.error {
             "The mutation queue's $cacheKey record could not be read; kept it aside as $asideCacheKey and started a new one"
         }
     }
@@ -348,7 +336,7 @@ internal class RejectedMutationList(
                     },
             )
         if (entry.bodyJson.length > MAX_REJECTED_BODY_CHARS) {
-            logger().warning {
+            logger.warning {
                 "Rejected ${entry.operation} ${entry.id} on ${entry.table}: its body of " +
                     "${entry.bodyJson.length} characters is too long to keep, so it cannot be retried"
             }

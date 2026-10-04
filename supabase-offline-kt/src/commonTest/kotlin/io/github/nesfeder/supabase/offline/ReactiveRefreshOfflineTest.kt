@@ -9,7 +9,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,7 +29,7 @@ import kotlinx.coroutines.test.runTest
 class ReactiveRefreshOfflineTest {
 
     @Test
-    fun offline_the_refresh_says_stalled_once_its_fast_ladder_is_spent() = runTest {
+    fun offline_the_refresh_says_stalled_once_its_fast_retries_are_spent() = runTest {
         listOf(true, false).forEach { cached ->
             // Given — no network, supabase-kt's default retries, the list cached or not
             val queryCacheDao = FakeQueryCacheDao()
@@ -48,7 +47,7 @@ class ReactiveRefreshOfflineTest {
                                 coroutineDispatcher = dispatcher
                                 install(Postgrest)
                             },
-                        store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                        queryCacheDao = queryCacheDao,
                         coordinatorScope = backgroundScope,
                     )
                     .from(TABLE)

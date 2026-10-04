@@ -6,13 +6,14 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import kotlin.test.Test
@@ -33,8 +34,8 @@ import kotlinx.serialization.json.put
  * Behavioral contract for the mutation verbs on [OfflineTable], which return a [MutationOutcome]
  * ([MutationOutcome.Applied] online / [MutationOutcome.Queued] offline).
  *
- * Verbs run against a scripted [FakeRemoteTable] delegate (no HTTP transport) and a real
- * [OfflineStore] over in-memory DAO fakes, so the enqueue side effect is observable via the fake
+ * Verbs run against a scripted [FakeRemoteTable] delegate (no HTTP transport) and a real cache and
+ * queue components over in-memory DAO fakes, so the enqueue side effect is observable via the fake
  * mutation DAO. A connectivity failure is scripted as a [kotlinx.io.IOException] — the shape
  * `isNetworkOrConnectivityFailure` classifies as a transport failure and therefore queues.
  */
@@ -311,13 +312,13 @@ class MutationOutcomeTest {
         remoteTable: FakeRemoteTable,
         mutationDao: MutationDao,
     ): OfflineTable =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = remoteTable,
             store = buildStore(mutationDao),
         )
 
-    private fun buildStore(mutationDao: MutationDao): OfflineStore =
-        newTestOfflineStore(mutationDao = mutationDao)
+    private fun buildStore(mutationDao: MutationDao): TestStore =
+        newTestStore(mutationDao = mutationDao)
 
     private fun testPostgrest(): Postgrest = newTestSupabaseClient().postgrest
 }

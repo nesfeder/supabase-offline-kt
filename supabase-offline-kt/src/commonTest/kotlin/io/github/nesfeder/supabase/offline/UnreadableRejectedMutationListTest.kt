@@ -4,12 +4,13 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,27 +27,28 @@ import kotlinx.serialization.json.JsonArray
 class UnreadableRejectedMutationListTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
-    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
 
     @Test
     fun an_unreadable_rejected_list_is_moved_aside_so_the_queue_does_not_wedge() = runTest {
         // Given — an unreadable list, and a queued write the server refuses
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"refused"}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"fine"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"refused"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"fine"}]"""))
         server.answer = { request ->
             if ("refused" in request.body) postgrestError(HttpStatusCode.BadRequest)
             else okJson("[]")
         }
 
         // When
-        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+        val report =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then — the refusal is recorded on a fresh list, the next write went out, and the old
         // payload was kept aside rather than discarded
         assertEquals(1, report.syncedCount)
-        assertEquals(1, store.rejectedList.rejections().size)
+        assertEquals(1, store.mutationQueue.rejectedList.rejections().size)
         assertTrue(queryCacheDao.rowsOf(RESERVED_TABLE_NAME).any { it.payload == "not a list" })
     }
 

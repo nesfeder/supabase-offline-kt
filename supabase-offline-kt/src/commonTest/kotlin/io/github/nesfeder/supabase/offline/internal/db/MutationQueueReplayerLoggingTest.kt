@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -27,9 +29,9 @@ class MutationQueueReplayerLoggingTest {
 
     private val server = RecordingPostgrestServer()
     private val logger = RecordingLogSink()
-    private val store = newTestOfflineStore()
+    private val store = newTestStore()
     private val replayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
             engineLogger = logger.asEngineLogger(),
@@ -41,8 +43,8 @@ class MutationQueueReplayerLoggingTest {
     @Test
     fun syncTable_success_logsInfoStartAndComplete() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = ROWS)
-        store.enqueueInsert(table = TABLE, body = ROWS)
+        store.mutationQueue.enqueueInsert(table = TABLE, body = ROWS)
+        store.mutationQueue.enqueueInsert(table = TABLE, body = ROWS)
 
         // When
         replayer.syncTable(table = TABLE)
@@ -60,7 +62,7 @@ class MutationQueueReplayerLoggingTest {
     @Test
     fun syncTable_success_logsDebugPerMutation() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = ROWS)
+        store.mutationQueue.enqueueInsert(table = TABLE, body = ROWS)
 
         // When
         replayer.syncTable(table = TABLE)
@@ -72,7 +74,7 @@ class MutationQueueReplayerLoggingTest {
     @Test
     fun syncTable_permanentFailure_logsWarning() = runTest {
         // Given — the server rejects the write for good
-        store.enqueueInsert(table = TABLE, body = ROWS)
+        store.mutationQueue.enqueueInsert(table = TABLE, body = ROWS)
         server.answer = { postgrestError(HttpStatusCode.Conflict) }
 
         // When
@@ -88,7 +90,7 @@ class MutationQueueReplayerLoggingTest {
     @Test
     fun syncTable_networkFailure_logsWarningPaused() = runTest {
         // Given — the network is down
-        store.enqueueInsert(table = TABLE, body = ROWS)
+        store.mutationQueue.enqueueInsert(table = TABLE, body = ROWS)
         server.answer = { connectivityFailure() }
 
         // When
@@ -106,18 +108,18 @@ class MutationQueueReplayerLoggingTest {
         runTest {
             // Given — a stored INSERT body that is not a JSON array, carrying a private value
             val mutationDao = FakeMutationDao()
-            val storeWithCorruptRow = newTestOfflineStore(mutationDao = mutationDao)
+            val storeWithCorruptRow = newTestStore(mutationDao = mutationDao)
             mutationDao.insert(
                 MutationRow(
                     table = TABLE,
-                    operation = MutationOperation.INSERT,
+                    operation = MutationOperation.INSERT.storedName,
                     bodyJson = "not-json $PRIVATE_VALUE",
                     filterJson = null,
                     createdAtMs = 0L,
                 )
             )
             val corruptSyncer =
-                MutationQueueReplayer(
+                newTestMutationQueueReplayer(
                     store = storeWithCorruptRow,
                     supabase = server.supabaseClient(),
                     engineLogger = logger.asEngineLogger(),

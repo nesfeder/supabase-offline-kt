@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
 import io.github.nesfeder.supabase.offline.internal.db.staleStampOf
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -57,27 +59,21 @@ internal class CachePatcher(
 
     /**
      * Patches a write the server accepted, or a row it sent, into every cached query of [table]
-     * that admits its rows, and gives each live query without a payload one, stale. Rows other
-     * queries hold with the same [Projection] stand in for rows the write brings in; a patched
-     * payload keeps its fetch time; a query the patch may leave wrong is marked stale and fetched
-     * again. Runs under the table's write lock, after moving its watermark, so a response already
-     * in flight cannot roll the patch back.
+     * that admits its rows. A live query with no payload gets one; one the patch may leave wrong is
+     * marked stale. Runs under the table's lock after moving its watermark.
      *
-     * @param operation one of the [MutationOperation] values.
      * @param bodyJson rows for INSERT and UPSERT, the changed columns for UPDATE, `"{}"` for
      *   DELETE.
-     * @param filterJson the encoded [FilterDescriptor] of an UPDATE or DELETE; one that is missing
-     *   touches nothing.
-     * @param onConflict an UPSERT's conflict columns; `null` matches rows by the table's primary
-     *   key.
-     * @param liveCacheKeys the table's queries with a live reader; by default those
-     *   [liveCacheKeysOf] gives.
-     * @param startedAtTick [CacheFreshness.tickNow] as read when the write started; nothing is
-     *   written if the cache was cleared or dropped since. `null` takes the tick now.
+     * @param filterJson an UPDATE's or DELETE's encoded [FilterDescriptor]; with none, it patches
+     *   nothing.
+     * @param onConflict an UPSERT's conflict columns; `null` is the table's primary key.
+     * @param liveCacheKeys the table's live queries; by default those [liveCacheKeysOf] gives.
+     * @param startedAtTick the tick the write started at; a clear since then voids it. `null` is
+     *   now.
      */
     suspend fun patchCachedQueries(
         table: String,
-        operation: String,
+        operation: MutationOperation,
         bodyJson: String,
         filterJson: String?,
         defaultToNull: Boolean? = null,
@@ -94,7 +90,7 @@ internal class CachePatcher(
             MutationRow(
                 id = nextPatchId(),
                 table = table,
-                operation = operation,
+                operation = operation.storedName,
                 bodyJson = bodyJson,
                 filterJson = filterJson,
                 createdAtMs = nowMillis(),
@@ -142,7 +138,7 @@ internal class CachePatcher(
                 MutationRow(
                     id = nextPatchId(),
                     table = table,
-                    operation = MutationOperation.UPDATE,
+                    operation = MutationOperation.UPDATE.storedName,
                     bodyJson = JsonObject(bodyColumns + row).toString(),
                     filterJson = encodeFilter(byKey, json),
                     createdAtMs = nowMillis(),
@@ -241,7 +237,7 @@ internal class CachePatcher(
         shape: QueryShape?,
         batch: PatchWrites,
     ): Boolean =
-        when (write.operation) {
+        when (write.knownOperation) {
             MutationOperation.UPSERT -> true
             MutationOperation.UPDATE ->
                 batch.patchOf(write)?.let { patch -> mayGainRowsBy(patch, shape) } ?: true
@@ -337,7 +333,7 @@ internal class CachePatcher(
      */
     suspend fun markQueriesAWriteMayReach(
         table: String,
-        operation: String,
+        operation: MutationOperation,
         bodyJson: String,
         narrowing: FilterDescriptor?,
         startedAtTick: Long,

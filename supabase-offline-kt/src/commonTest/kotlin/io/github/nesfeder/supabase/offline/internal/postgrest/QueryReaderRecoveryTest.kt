@@ -8,16 +8,17 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.ktor.client.engine.mock.MockEngine
@@ -50,10 +51,10 @@ import kotlinx.serialization.json.put
 
 /**
  * Integration tests across the real read stack: [QueryReader], [cacheFirstWithParallelRefresh], a
- * real [OfflineStore] over in-memory DAOs and a real [LiveQueries], with only the network SELECT
- * scripted. They pin what unit tests cannot: the wiring of the accelerator and the coordinator into
- * the refresh, the per-query [QuerySnapshot], single-flight sharing, and that nothing seeds an
- * empty cache with `[]`. They run under the non-default
+ * the real cache and queue components over in-memory DAOs and a real [LiveQueries], with only the
+ * network SELECT scripted. They pin what unit tests cannot: the wiring of the accelerator and the
+ * coordinator into the refresh, the per-query [QuerySnapshot], single-flight sharing, and that
+ * nothing seeds an empty cache with `[]`. They run under the non-default
  * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], whose rules their expectations assume.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -148,7 +149,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun two_collectors_on_one_signature_share_a_single_refresh() =
+    fun two_collectors_on_one_query_share_a_single_refresh() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a scripted network counter
             val postgrest = testPostgrest()
@@ -578,7 +579,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun every_network_bound_one_shot_strategy_walks_the_restore_ladder() =
+    fun every_network_bound_one_shot_strategy_waits_out_the_restore_window() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: the three one-shot strategies that can reach the network. CacheOnly is
             // excluded by design — it never issues a request, so it has nothing to retry. Running
@@ -650,7 +651,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun one_shot_restore_window_ladder_waits_before_it_spends_a_second_request() =
+    fun one_shot_restore_window_waits_before_it_spends_a_second_request() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a session that never finishes restoring, so RLS filters every request
             val postgrest = testPostgrest()
@@ -707,7 +708,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun one_shot_ladder_fires_at_the_next_boundary_when_the_session_returns_without_an_edge() =
+    fun one_shot_retry_fires_at_the_next_boundary_when_the_session_returns_without_a_wake_up() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a restore-window empty on the first attempt. The production accelerator is a
             // cold `drop(1)` flow, so an auth-ready transition that lands between two collections
@@ -769,7 +770,7 @@ class QueryReaderRecoveryTest {
                     },
                 )
             val store = buildStore()
-            store.enqueueInsert(
+            store.mutationQueue.enqueueInsert(
                 table = "plans",
                 body =
                     buildJsonArray {
@@ -816,7 +817,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun one_shot_teardown_refused_response_is_never_retried() =
+    fun one_shot_response_refused_after_a_clear_is_never_retried() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a one-shot read whose request parks in flight during the restore window
             val postgrest = testPostgrest()
@@ -847,7 +848,7 @@ class QueryReaderRecoveryTest {
 
             // When: the user signs out and the cache is wiped while the request is out, and the
             // parked response is then delivered
-            store.clearLocalData()
+            store.localData.clearLocalData()
             inFlight.complete(Unit)
             advanceUntilIdle()
 
@@ -1000,7 +1001,7 @@ class QueryReaderRecoveryTest {
             primingCollector.cancelAndJoin()
             advanceUntilIdle()
 
-            store.enqueueInsert(
+            store.mutationQueue.enqueueInsert(
                 table = "plans",
                 body =
                     buildJsonArray {
@@ -1012,7 +1013,10 @@ class QueryReaderRecoveryTest {
                         )
                     },
             )
-            store.markMutationSynced(id = mutationDao.inserted.single().id, table = "plans")
+            store.mutationQueue.recordReplayed(
+                id = mutationDao.inserted.single().id,
+                table = "plans",
+            )
 
             // When: the next SELECT comes back RLS-shaped empty and the cache refuses it
             serverRows = "[]"
@@ -1145,7 +1149,7 @@ class QueryReaderRecoveryTest {
             }
             runCurrent()
             assertEquals(2, networkCalls, "the second subscription's refresh must be in flight")
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 table = "projects",
                 operation = MutationOperation.INSERT,
                 bodyJson = """[{"id":"project-2"}]""",
@@ -1184,7 +1188,7 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
-    fun a_refresh_parked_across_sign_out_does_not_repopulate_the_wiped_cache() =
+    fun a_refresh_parked_across_sign_out_does_not_repopulate_the_cleared_cache() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a subscription whose first refresh goes out and parks in flight
             val postgrest = testPostgrest()
@@ -1212,7 +1216,7 @@ class QueryReaderRecoveryTest {
             assertEquals(1, networkCalls, "the refresh must be in flight before teardown")
 
             // When: the user signs out (or switches accounts) and the cache is wiped mid-flight
-            store.clearLocalData()
+            store.localData.clearLocalData()
 
             // And: the parked response — the outgoing account's rows — is finally delivered
             inFlight.complete(Unit)
@@ -1238,11 +1242,14 @@ class QueryReaderRecoveryTest {
         wakeUps: MutableSharedFlow<Unit> = MutableSharedFlow(),
         authState: () -> RequestSession = { SIGNED_IN },
         queryCacheDao: FakeQueryCacheDao = FakeQueryCacheDao(),
-        store: OfflineStore = buildStore(queryCacheDao),
+        store: TestStore = buildStore(queryCacheDao),
     ): QueryReader =
         QueryReader(
             delegate = remoteTable,
-            store = store,
+            queryCache = store.queryCache,
+            queryOverlay = store.queryOverlay,
+            mutationQueue = store.mutationQueue,
+            freshness = store.freshness,
             requestSession = authState,
             trustPolicy = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
             liveQueries = LiveQueries(scope),
@@ -1259,8 +1266,8 @@ class QueryReaderRecoveryTest {
     private fun buildStore(
         queryCacheDao: FakeQueryCacheDao = FakeQueryCacheDao(),
         mutationDao: FakeMutationDao = FakeMutationDao(),
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
         )

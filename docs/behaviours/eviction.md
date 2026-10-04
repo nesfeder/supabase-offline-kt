@@ -28,4 +28,4 @@ drops to "no data". Up to 500 live queries are protected this way; past that, or
 starts while an eviction pass is deleting, a `CacheFirstThenNetwork` reader fetches its list again
 and a `CacheOnly` one shows no data.
 <small>`LiveEvictionTest.eviction_keeps_the_oldest_payload_while_a_reader_shows_it`,
-`OfflineStoreEvictionTest.eviction_removes_oldest_rows_until_within_limit_keeping_newest`</small>
+`QueryCacheEvictionTest.eviction_removes_oldest_rows_until_within_limit_keeping_newest`</small>

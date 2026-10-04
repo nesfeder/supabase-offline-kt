@@ -5,13 +5,11 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogSink
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -35,7 +33,7 @@ import kotlinx.serialization.json.put
  * that merge a server-authored row into every cached SELECT payload for a table by primary key,
  * without a caller-visible cache signature.
  *
- * These run the real [OfflineClient] over a real [OfflineStore] backed by in-memory fake DAOs; the
+ * These run the real [OfflineClient] over in-memory fake DAOs; the
  * [SupabaseClient][io.github.jan.supabase.SupabaseClient] is a mock-engine stub that these methods
  * never touch (they read/write only the local store).
  */
@@ -166,7 +164,7 @@ class ApplyServerRecordTest {
     }
 
     @Test
-    fun applyServerRecord_patches_every_cached_signature_for_the_table() = runTest {
+    fun applyServerRecord_patches_every_cached_query_for_the_table() = runTest {
         // Given — the same reports row cached under two different signatures (two live observers)
         val queryCacheDao = FakeQueryCacheDao()
         queryCacheDao.seedPayload("reports", "sig-A", """[{"id":"rep-1","total":80}]""")
@@ -365,7 +363,7 @@ class ApplyServerRecordTest {
         engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     ): OfflineClient =
         newTestOfflineClient(
-            store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+            queryCacheDao = queryCacheDao,
             engineLogger = engineLogger,
         )
 }

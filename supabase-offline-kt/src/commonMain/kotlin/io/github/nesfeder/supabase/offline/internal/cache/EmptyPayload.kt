@@ -22,12 +22,11 @@ internal const val EMPTY_JSON_ARRAY: String = "[]"
  * tolerated so a re-encoded or pretty-printed body is classified the same way.
  *
  * This is the single definition shared by the two seams that both have to agree on "is this
- * response empty": the cache-write guard in
- * [io.github.nesfeder.supabase.offline.internal.cache.OfflineStore.addPayload], which never
- * persists an empty that wasn't attributed to an authenticated session, and the restore-window
- * retries in [io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader], which re-issue a
- * SELECT whose emptiness may be a cold-start auth artifact. They were byte-identical private
- * copies; a divergence between them would let one seam retry a body the other happily cached.
+ * response empty": the cache-write guard in [QueryCache.cacheResponse], which never persists an
+ * empty that wasn't attributed to an authenticated session, and the restore-window retries in
+ * [io.github.nesfeder.supabase.offline.internal.postgrest.QueryReader], which re-issue a SELECT
+ * whose emptiness may be a cold-start auth artifact. They were byte-identical private copies; a
+ * divergence between them would let one seam retry a body the other happily cached.
  *
  * A `head` or count read, whose blank body is not "no rows", never reaches it: reads whose response
  * is not a row list bypass the cache (see `ReadShape`).

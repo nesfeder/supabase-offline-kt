@@ -4,7 +4,10 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.first
@@ -22,8 +25,7 @@ class OverlayPrimaryKeyTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_replayed_insert_of_a_row_the_payload_already_holds_is_shown_once() = runTest {
@@ -31,16 +33,16 @@ class OverlayPrimaryKeyTest {
         queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"from the server"}]""")
 
         // When — an insert already replayed, kept for queries fetched before it
-        store.enqueueInsert(
+        store.mutationQueue.enqueueInsert(
             table = TABLE,
             body = rows("""[{"id":"x","title":"from the server"}]"""),
         )
-        store.markMutationSynced(id = mutationDao.inserted.single().id, table = TABLE)
+        store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // Then
         assertEquals(
             """[{"id":"x","title":"from the server"}]""",
-            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -50,12 +52,15 @@ class OverlayPrimaryKeyTest {
         queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"old","done":false}]""")
 
         // When
-        store.enqueueUpsert(table = TABLE, bodyJson = rows("""[{"id":"x","title":"new"}]"""))
+        store.mutationQueue.enqueueUpsert(
+            table = TABLE,
+            bodyJson = rows("""[{"id":"x","title":"new"}]"""),
+        )
 
         // Then
         assertEquals(
             """[{"id":"x","title":"new","done":false}]""",
-            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -65,7 +70,7 @@ class OverlayPrimaryKeyTest {
         queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"x","title":"old"}]""")
 
         // When
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueUpsert(
             table = TABLE,
             bodyJson = rows("""[{"id":"x","title":"new"}]"""),
             ignoreDuplicates = true,
@@ -74,7 +79,7 @@ class OverlayPrimaryKeyTest {
         // Then
         assertEquals(
             """[{"id":"x","title":"old"}]""",
-            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -84,12 +89,15 @@ class OverlayPrimaryKeyTest {
         queryCacheDao.seedPayload(TABLE, TABLE, """[{"list_id":"A","id":1,"title":"a1"}]""")
 
         // When — a new row in list B with id 1, not sent yet
-        store.enqueueInsert(table = TABLE, body = rows("""[{"list_id":"B","id":1,"title":"b1"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"list_id":"B","id":1,"title":"b1"}]"""),
+        )
 
         // Then — nothing on the server can be it, so it is shown
         assertEquals(
             """[{"list_id":"A","id":1,"title":"a1"},{"list_id":"B","id":1,"title":"b1"}]""",
-            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 
@@ -99,12 +107,12 @@ class OverlayPrimaryKeyTest {
         queryCacheDao.seedPayload(TABLE, TABLE, """[{"title":"same"}]""")
 
         // When
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"same"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"same"}]"""))
 
         // Then
         assertEquals(
             """[{"title":"same"},{"title":"same"}]""",
-            store.overlaidPayloadFlow(TABLE, TABLE).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, TABLE).first(),
         )
     }
 

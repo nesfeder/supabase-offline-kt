@@ -13,12 +13,13 @@ import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -113,9 +114,9 @@ class IsDistinctOperatorTest {
         // Given — the network is down
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+        val store = newTestStore(mutationDao = mutationDao)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from("todos"),
                 store = store,
             )
@@ -130,7 +131,8 @@ class IsDistinctOperatorTest {
             }
         server.answer = { okJson("[]") }
         val synced =
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .syncAllTables()
 
         // Then — it was queued, and the replay carries the caller's own filter
         assertIs<MutationOutcome.Queued>(outcome)

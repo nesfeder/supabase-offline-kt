@@ -11,9 +11,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,13 +38,12 @@ class ClearLocalDataDuringWritesTest {
     private val server = RecordingPostgrestServer()
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
     /** Passes run only when a test starts one, so none the engine starts can race the clear. */
     private val client =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
-            store = store,
+            queryCacheDao = queryCacheDao,
+            mutationDao = mutationDao,
             coordinatorScope = idleCoroutineScope(),
         )
     private val parked = CompletableDeferred<Unit>()
@@ -53,8 +52,8 @@ class ClearLocalDataDuringWritesTest {
     @Test
     fun clearing_local_data_during_a_parked_sweep_sends_nothing_further() = runTest {
         // Given — two queued writes; the server holds the first request open
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"first"}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"second"}]"""))
+        client.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"first"}]"""))
+        client.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"second"}]"""))
         server.answer = {
             parked.complete(Unit)
             release.await()
@@ -76,7 +75,10 @@ class ClearLocalDataDuringWritesTest {
     @Test
     fun a_refusal_that_arrives_after_clearing_is_not_recorded_for_the_next_user() = runTest {
         // Given — the server holds the outgoing user's replay open, then refuses it
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"outgoing user's write"}]"""))
+        client.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"title":"outgoing user's write"}]"""),
+        )
         server.answer = {
             parked.complete(Unit)
             release.await()
@@ -91,7 +93,7 @@ class ClearLocalDataDuringWritesTest {
         sweep.join()
 
         // Then — the pass was stopped before it could record the outgoing user's write on the list
-        assertEquals(emptyList(), store.rejectedList.rejections())
+        assertEquals(emptyList(), client.mutationQueue.rejectedList.rejections())
         assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
     }
 
@@ -111,12 +113,12 @@ class ClearLocalDataDuringWritesTest {
 
             // When — the cache is cleared, the next user's first read lands, then the old response
             client.clearLocalData()
-            store.addPayload(
+            client.queryCache.cacheResponse(
                 table = TABLE,
                 cacheKey = CACHE_KEY,
                 payload = "[]",
                 authoritativeEmpty = true,
-                requestStartedAtTick = store.monotonicTickNow(),
+                requestStartedAtTick = client.freshness.tickNow(),
             )
             release.complete(Unit)
             write.await()

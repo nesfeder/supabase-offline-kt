@@ -3,10 +3,10 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.storage.storage
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.discard
 import kotlin.random.Random
@@ -37,7 +37,7 @@ import okio.SYSTEM
 class StorageResumableUploadTest {
 
     private lateinit var dataDirectory: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var server: RecordingStorageServer
 
     @BeforeTest
@@ -45,7 +45,7 @@ class StorageResumableUploadTest {
         dataDirectory =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-resumable-${Random.nextLong().toULong()}"
-        store = newTestOfflineStore()
+        store = newTestStore()
         server = RecordingStorageServer()
         server.objects["$BUCKET/$PATH"] = "OLD".encodeToByteArray()
     }

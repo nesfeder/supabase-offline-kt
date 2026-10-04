@@ -267,7 +267,7 @@ internal class CachingBucketApi(
                 }
             when (download) {
                 is StreamedDownload.Written ->
-                    deliver(file, download.temporary, generation, channel)
+                    commitAndStream(file, download.temporary, generation, channel)
                 is StreamedDownload.CacheRefused,
                 StreamedDownload.Uncacheable -> {
                     // The disk refused the copy (logged), or the variant is unknown: rather than
@@ -283,7 +283,7 @@ internal class CachingBucketApi(
     }
 
     /** Commits a finished download, then streams the cache's copy (or the uncommitted file) out. */
-    private suspend fun deliver(
+    private suspend fun commitAndStream(
         file: OwnedTemporaryFile,
         temporary: TemporaryDownload,
         generation: Long,

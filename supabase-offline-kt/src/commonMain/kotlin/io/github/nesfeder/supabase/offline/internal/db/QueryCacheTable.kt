@@ -8,7 +8,9 @@ import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -58,7 +60,7 @@ internal interface QueryCacheDao {
     /**
      * All cached SELECT payloads for [table], across every signature currently observed.
      *
-     * Used by [OfflineStore.patchCachedQueries] so a successful online mutation can patch every
+     * Used by [CachePatcher.patchCachedQueries] so a successful online mutation can patch every
      * live `selectAsFlow` subscription's underlying cache without requiring a round-trip SELECT.
      */
     @Query("SELECT * FROM object_cache WHERE table_name = :table")
@@ -78,7 +80,7 @@ internal interface QueryCacheDao {
     /**
      * The signature of every cached SELECT payload for [table], without loading the payloads.
      *
-     * Used by [OfflineStore.retireCoveredSyncedMutations] to decide which cached queries a synced
+     * Used by [MutationQueue.retireCoveredSyncedMutations] to decide which cached queries a synced
      * mutation's overlay still stands in for.
      *
      * @param table Table whose cached signatures are listed.
@@ -140,9 +142,9 @@ internal interface QueryCacheDao {
      * leaving out the engine's reserved rows (see [RESERVED_TABLE_NAME]): they are engine state,
      * not cache, and must never push a real payload out.
      *
-     * This is the **logical** size of the object cache, used by [OfflineStore.evictOverBudget] as
-     * the eviction signal. The on-disk database file size can't be used: SQLite returns pages freed
-     * by `DELETE` to its internal freelist rather than to the operating system, so the file never
+     * This is the **logical** size of the object cache, used by [QueryCache.evictOverBudget] as the
+     * eviction signal. The on-disk database file size can't be used: SQLite returns pages freed by
+     * `DELETE` to its internal freelist rather than to the operating system, so the file never
      * shrinks after eviction and would make the eviction loop spin forever. Summed payload length,
      * by contrast, decreases as rows are deleted. For the ASCII JSON payloads PostgREST returns,
      * character length is a close proxy for byte size.
@@ -157,7 +159,7 @@ internal interface QueryCacheDao {
 
     /**
      * Delete up to [limit] oldest payload rows across all tables, ordered by when each was fetched
-     * ([fetchedAtOf]), stale or not. Used by [OfflineStore.evictOverBudget] to evict old cache
+     * ([fetchedAtOf]), stale or not. Used by [QueryCache.evictOverBudget] to evict old cache
      * entries when the summed payload size grows beyond the configured limit. The engine's reserved
      * rows (see [RESERVED_TABLE_NAME]) are never candidates: they hold the rejected-mutation list,
      * the cache's owner and the query shapes, which no refetch restores.

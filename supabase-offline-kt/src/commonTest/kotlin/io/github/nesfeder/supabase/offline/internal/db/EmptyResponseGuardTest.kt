@@ -5,9 +5,10 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -16,7 +17,7 @@ import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 
 /**
- * Tests for the empty-clobber guard in [OfflineStore.addPayload]: **an unattributed empty never
+ * Tests for the empty-clobber guard in [QueryCache.cacheResponse]: **an unattributed empty never
  * persists.**
  *
  * The dominant cause of an empty SELECT response in practice is a cold-start auth race — a refresh
@@ -35,7 +36,7 @@ import kotlinx.coroutines.test.runTest
  * attributed empty writes into a cold slot too, which is how a legitimately-empty first read still
  * seeds the cache for collectors.
  */
-class OfflineStoreAddPayloadGuardTest {
+class EmptyResponseGuardTest {
 
     @Test
     fun authoritative_empty_replaces_non_empty_cache() = runTest {
@@ -50,7 +51,7 @@ class OfflineStoreAddPayloadGuardTest {
 
         // When — a refresh whose request carried an authenticated session returns an empty
         // array (every row matching the query was deleted from another device)
-        store.addPayload(
+        store.queryCache.cacheResponse(
             table = "plans",
             cacheKey = "sig-A",
             payload = "[]",
@@ -71,7 +72,7 @@ class OfflineStoreAddPayloadGuardTest {
         val store = buildStore(queryCacheDao)
 
         // When — an auth-ready refresh returns different non-empty data
-        store.addPayload(
+        store.queryCache.cacheResponse(
             table = "plans",
             cacheKey = "sig-A",
             payload = """[{"id":"plan-2"}]""",
@@ -97,7 +98,7 @@ class OfflineStoreAddPayloadGuardTest {
 
         // When — a refresh fires before the auth session is restored and the server
         // responds 200 OK with an empty array (RLS-filtered)
-        store.addPayload(table = "ratings", cacheKey = "sig-A", payload = "[]")
+        store.queryCache.cacheResponse(table = "ratings", cacheKey = "sig-A", payload = "[]")
 
         // Then — the previously-cached non-empty payload is preserved
         val row = queryCacheDao.getRow("ratings", "sig-A")
@@ -113,7 +114,7 @@ class OfflineStoreAddPayloadGuardTest {
         val store = buildStore(queryCacheDao)
 
         // When — a refresh returns a whitespace-only body (some PostgREST proxy edge cases)
-        store.addPayload(table = "projects", cacheKey = "sig-A", payload = "   ")
+        store.queryCache.cacheResponse(table = "projects", cacheKey = "sig-A", payload = "   ")
 
         // Then — the cache row is unchanged
         val row = queryCacheDao.getRow("projects", "sig-A")
@@ -130,7 +131,12 @@ class OfflineStoreAddPayloadGuardTest {
         // When — a refresh that could not attribute its emptiness to an authenticated session
         // returns `[]` (the restore-window / signed-out shape, indistinguishable on the wire
         // from a genuinely-empty table)
-        val outcome = store.addPayload(table = "attachments", cacheKey = "sig-A", payload = "[]")
+        val outcome =
+            store.queryCache.cacheResponse(
+                table = "attachments",
+                cacheKey = "sig-A",
+                payload = "[]",
+            )
 
         // Then — nothing is written. A cold slot is exactly where an RLS-shaped empty does its
         // damage: with no prior row to protect, it used to be upserted with a fresh updatedAt and
@@ -149,7 +155,8 @@ class OfflineStoreAddPayloadGuardTest {
         val store = buildStore(queryCacheDao)
 
         // When — an unattributed refresh returns an empty array
-        val outcome = store.addPayload(table = "ratings", cacheKey = "sig-A", payload = "[]")
+        val outcome =
+            store.queryCache.cacheResponse(table = "ratings", cacheKey = "sig-A", payload = "[]")
 
         // Then — refused as well. Nothing is lost by dropping it (the payload is identical), and
         // rewriting would only stamp a fresh updatedAt, keeping a possibly-phantom empty alive
@@ -169,7 +176,7 @@ class OfflineStoreAddPayloadGuardTest {
 
         // When — the request carried an authenticated session and the user genuinely has no rows
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "attachments",
                 cacheKey = "sig-A",
                 payload = "[]",
@@ -194,7 +201,7 @@ class OfflineStoreAddPayloadGuardTest {
 
         // When — an auth-ready refresh confirms the table is still empty
         val outcome =
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "ratings",
                 cacheKey = "sig-A",
                 payload = "[]",
@@ -220,7 +227,7 @@ class OfflineStoreAddPayloadGuardTest {
         val store = buildStore(queryCacheDao)
 
         // When — a refresh succeeds with new server data
-        store.addPayload(
+        store.queryCache.cacheResponse(
             table = "ratings",
             cacheKey = "sig-A",
             payload = """[{"id":1,"rating":92}]""",
@@ -233,14 +240,14 @@ class OfflineStoreAddPayloadGuardTest {
     }
 
     @Test
-    fun guard_is_scoped_per_signature() = runTest {
+    fun guard_is_scoped_per_cache_key() = runTest {
         // Given — the same table has two distinct cached signatures (e.g. one per user_id)
         val queryCacheDao = FakeQueryCacheDao()
         queryCacheDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")
         val store = buildStore(queryCacheDao)
 
         // When — an authoritative empty arrives for a *different* signature (no prior row)
-        store.addPayload(
+        store.queryCache.cacheResponse(
             table = "ratings",
             cacheKey = "sig-B",
             payload = "[]",
@@ -276,8 +283,8 @@ class OfflineStoreAddPayloadGuardTest {
     private fun buildStore(
         queryCacheDao: QueryCacheDao,
         nowMillis: () -> Long = { 0L },
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             nowMillis = nowMillis,
         )

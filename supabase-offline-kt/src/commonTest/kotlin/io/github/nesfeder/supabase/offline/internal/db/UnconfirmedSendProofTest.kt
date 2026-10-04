@@ -9,8 +9,6 @@ import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -18,7 +16,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestSe
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.network.sockets.ConnectTimeoutException
@@ -47,8 +48,7 @@ class UnconfirmedSendProofTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_retried_send_whose_first_attempt_committed_is_not_taken_for_never_sent() = runTest {
@@ -75,7 +75,8 @@ class UnconfirmedSendProofTest {
         server.recorder.answer = answer
 
         // When
-        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+        val report =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then — the replay took the committed row as its own rather than refusing it as a
         // duplicate
@@ -113,7 +114,11 @@ class UnconfirmedSendProofTest {
         // Then — something answered, so the send stays possibly delivered
         assertIs<MutationOutcome.Queued>(outcome)
         assertEquals(2, attempts)
-        assertTrue(store.hasUnconfirmedSend(store.allPendingMutations().single().id))
+        assertTrue(
+            store.mutationQueue.hasUnconfirmedSend(
+                store.mutationQueue.allPendingMutations().single().id
+            )
+        )
     }
 
     @Test
@@ -141,7 +146,8 @@ class UnconfirmedSendProofTest {
 
             // When
             val report =
-                MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+                newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                    .sync()
 
             // Then
             assertIs<MutationOutcome.Queued>(outcome)
@@ -173,7 +179,8 @@ class UnconfirmedSendProofTest {
             builderOn(server.supabaseClient()).insert(rows("""[{"id":"k1","title":"Buy milk"}]"""))
 
         // When
-        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+        val report =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -193,7 +200,7 @@ class UnconfirmedSendProofTest {
         server.answer = { okJson("[]") }
 
         // When
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then — the replay is the plain INSERT, so a duplicate id would be refused
         assertEquals("return=minimal", server.requests.last().prefer)
@@ -210,7 +217,7 @@ class UnconfirmedSendProofTest {
         server.answer = { okJson("[]") }
 
         // When
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then
         assertTrue(
@@ -221,14 +228,15 @@ class UnconfirmedSendProofTest {
     @Test
     fun a_replay_that_never_connected_clears_its_record() = runTest {
         // Given — a queued keyed INSERT whose first replay cannot connect
-        store.enqueueOwnedBy(null) {
+        store.mutationQueue.enqueueOwnedBy(null) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val server =
             RecordingPostgrestServer(
                 answer = { throw ConnectTimeoutException("connect timed out", null) }
             )
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
         replayer.sync()
         server.answer = { okJson("[]") }
 
@@ -242,14 +250,15 @@ class UnconfirmedSendProofTest {
     @Test
     fun a_replay_answered_by_postgrest_own_503_clears_its_record() = runTest {
         // Given
-        store.enqueueOwnedBy(null) {
+        store.mutationQueue.enqueueOwnedBy(null) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val server =
             RecordingPostgrestServer(
                 answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST000") }
             )
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
         replayer.sync()
         server.answer = { okJson("[]") }
 
@@ -269,7 +278,8 @@ class UnconfirmedSendProofTest {
 
         // When — the next launch replays it
         val report =
-            MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
+            newTestMutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient())
+                .sync()
 
         // Then — it takes the row the lost send committed as its own
         assertEquals(emptyList(), report.rejected)
@@ -281,7 +291,7 @@ class UnconfirmedSendProofTest {
     fun an_insert_this_build_queued_and_never_sent_is_still_refused_as_a_duplicate_after_a_relaunch() =
         runTest {
             // Given — another row already has the id of an insert that was queued and never sent
-            store.enqueueOwnedBy(null) {
+            store.mutationQueue.enqueueOwnedBy(null) {
                 enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
             }
             val server = FakeRelationalPostgrestServer()
@@ -289,7 +299,8 @@ class UnconfirmedSendProofTest {
 
             // When — the next launch replays it
             val report =
-                MutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient()).sync()
+                newTestMutationQueueReplayer(store = relaunch(), supabase = server.supabaseClient())
+                    .sync()
 
             // Then — nothing on the server can be its own, so the duplicate is refused
             assertEquals("23505", report.rejected.single().serverError?.code)
@@ -300,29 +311,30 @@ class UnconfirmedSendProofTest {
         // Given — an insert refused as a duplicate, then a new launch
         val server = FakeRelationalPostgrestServer()
         server.seed(TABLE, row("""{"id":"k1","title":"someone else's"}"""))
-        store.enqueueOwnedBy(null) {
+        store.mutationQueue.enqueueOwnedBy(null) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val refused =
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
                 .sync()
                 .rejected
                 .single()
         val next = relaunch()
 
         // When — the app retries it first thing
-        next.retryRejectedMutation(refused.id, identity = null)
-        val report = MutationQueueReplayer(store = next, supabase = server.supabaseClient()).sync()
+        next.mutationQueue.retryRejectedMutation(refused.id, identity = null)
+        val report =
+            newTestMutationQueueReplayer(store = next, supabase = server.supabaseClient()).sync()
 
         // Then — the retry was never sent, so it is refused again rather than taken as delivered
         assertEquals("23505", report.rejected.single().serverError?.code)
     }
 
-    private fun relaunch(): OfflineStore =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private fun relaunch(): TestStore =
+        newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     private fun builderOn(supabase: SupabaseClient): OfflineTable =
-        OfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)
+        newTestOfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)
 
     /** A client on [server] whose app retries a failed request once, on an exception or a 5xx. */
     private fun clientRetryingOn(server: RecordingPostgrestServer): SupabaseClient =

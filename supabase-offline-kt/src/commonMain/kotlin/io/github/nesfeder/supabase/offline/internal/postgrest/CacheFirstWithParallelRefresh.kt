@@ -95,7 +95,7 @@ internal fun refreshBackoff(failures: Int): Duration =
  *
  * @param cache Flow of cached values to forward downstream as they arrive.
  * @param refresh Suspend operation that refreshes the cache (typically a network SELECT whose side
- *   effect is a `store.addPayload` that triggers a new [cache] emission).
+ *   effect is a `QueryCache.cacheResponse` that triggers a new [cache] emission).
  * @param wakeUps Edge-triggered wake-ups that short-circuit the current backoff sleep.
  * @param onRefreshState Callback invoked on each refresh lifecycle transition.
  * @param backoff Backoff schedule; injectable so tests can shrink or reshape delays.

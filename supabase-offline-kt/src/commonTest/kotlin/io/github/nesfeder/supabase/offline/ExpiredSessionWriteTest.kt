@@ -4,16 +4,16 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.TOKEN_ENDPOINT
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.refreshRefused
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -38,7 +38,7 @@ import kotlinx.serialization.json.JsonElement
 class ExpiredSessionWriteTest {
 
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(mutationDao = mutationDao)
+    private val store = newTestStore(mutationDao = mutationDao)
 
     @Test
     fun a_write_with_an_expired_session_offline_is_queued_as_its_users() = runTest {
@@ -47,7 +47,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
@@ -70,7 +70,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
@@ -96,7 +96,7 @@ class ExpiredSessionWriteTest {
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = supabase.postgrest.from(TABLE),
                 store = store,
             )
@@ -107,8 +107,8 @@ class ExpiredSessionWriteTest {
         // Then — queued, unsent, and not recorded as possibly on the server
         assertIs<MutationOutcome.Queued>(inserted)
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
-        val queued = store.allPendingMutations().single()
-        assertFalse(store.hasUnconfirmedSend(queued.id))
+        val queued = store.mutationQueue.allPendingMutations().single()
+        assertFalse(store.mutationQueue.hasUnconfirmedSend(queued.id))
 
         // And — with A's session good again it replays as the plain INSERT it is
         assertEquals("return=minimal", replayedPreferOnceSignedIn(server, supabase))
@@ -117,22 +117,22 @@ class ExpiredSessionWriteTest {
     @Test
     fun online_a_replay_whose_refresh_is_refused_is_kept_as_never_sent() = runTest {
         // Given — A's INSERT queued and never sent; A's session expired, its refresh refused
-        store.enqueueOwnedBy("user:user-a") {
+        store.mutationQueue.enqueueOwnedBy("user:user-a") {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
-        val queued = store.allPendingMutations().single()
+        val queued = store.mutationQueue.allPendingMutations().single()
         val server =
             RecordingPostgrestServer(answer = { request -> answerRefusingRefresh(request) })
         val supabase = newTestSupabaseClientWithAuth(server.engine, alwaysAutoRefresh = true)
         supabase.signInForTest("user-a", expiresInSeconds = -60)
 
         // When
-        val report = MutationQueueReplayer(store = store, supabase = supabase).sync()
+        val report = newTestMutationQueueReplayer(store = store, supabase = supabase).sync()
 
         // Then — the pass stops before sending, and the write is not recorded as possibly sent
         assertIs<SyncStop.TransientFailure>(report.stop)
         assertTrue(server.requests.none { it.table == TABLE }, "${server.requests}")
-        assertFalse(store.hasUnconfirmedSend(queued.id))
+        assertFalse(store.mutationQueue.hasUnconfirmedSend(queued.id))
 
         // And
         assertEquals("return=minimal", replayedPreferOnceSignedIn(server, supabase))
@@ -145,7 +145,7 @@ class ExpiredSessionWriteTest {
     ): String? {
         server.answer = { okJson("[]") }
         supabase.signInForTest("user-a")
-        MutationQueueReplayer(store = store, supabase = supabase).sync()
+        newTestMutationQueueReplayer(store = store, supabase = supabase).sync()
         return server.requests.single { it.table == TABLE }.prefer
     }
 

@@ -4,9 +4,11 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -25,7 +27,7 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * Tests that the object cache's read-modify-write paths are serialized per table.
  *
- * [OfflineStore.patchCachedQueries] snapshots every cached payload for a table, patches each in
+ * [CachePatcher.patchCachedQueries] snapshots every cached payload for a table, patches each in
  * memory, and writes each back whole. Two of those running at once on the same table — a batch job
  * persists its rows from several parallel workers, and two sync runs can drive that job
  * concurrently — used to interleave freely: the second writer read the payload before the first had
@@ -39,7 +41,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * timing-dependent.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class OfflineStoreConcurrentWriteTest {
+class ConcurrentPatchTest {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -97,9 +99,9 @@ class OfflineStoreConcurrentWriteTest {
         // payload is the server's view: the overlaid row is already there, and so is a row
         // another device wrote in the meantime.
         tick = 20L
-        val requestStartedAtTick = store.monotonicTickNow()
+        val requestStartedAtTick = store.freshness.tickNow()
         val refresh = launch {
-            store.addPayload(
+            store.queryCache.cacheResponse(
                 table = "ratings",
                 cacheKey = "sig-A",
                 payload = ratingsPayload(1, 2, 9),
@@ -116,8 +118,8 @@ class OfflineStoreConcurrentWriteTest {
         assertEquals(listOf(1, 2, 9), queryCacheDao.itemIds("ratings", "sig-A"))
     }
 
-    private suspend fun OfflineStore.insertRating(itemId: Int) {
-        patchCachedQueries(
+    private suspend fun TestStore.insertRating(itemId: Int) {
+        cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = ratingsPayload(itemId),
@@ -144,8 +146,8 @@ class OfflineStoreConcurrentWriteTest {
     private fun buildStore(
         queryCacheDao: FakeQueryCacheDao,
         tick: () -> Long,
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             monotonicTick = tick,
         )

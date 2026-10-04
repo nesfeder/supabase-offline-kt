@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
@@ -10,7 +11,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -32,14 +35,14 @@ class PersistedNamesTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
     private val store =
-        newTestOfflineStore(
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             nowMillis = { NOW },
         )
 
     @Test
-    fun the_reserved_table_and_its_signatures_are_these() {
+    fun the_reserved_table_and_its_cache_keys_are_these() {
         assertEquals(
             "__supabase_offline_kt__.reserved_engine_state.this_name_is_longer_than_any_postgres_identifier",
             RESERVED_TABLE_NAME,
@@ -53,9 +56,9 @@ class PersistedNamesTest {
     @Test
     fun whose_the_cache_is_is_written_under_this_name_with_these_keys() = runTest {
         // When — the cache dropped for a user, then for nobody signed in
-        store.dropCacheFor(QueueIdentity.User("u-1").storedValue)
+        store.localData.dropCacheFor(QueueIdentity.User("u-1").storedValue)
         val forUser = queryCacheDao.getRow(RESERVED_TABLE_NAME, "cache_owner")?.payload
-        store.dropCacheFor(QueueIdentity.Anonymous.storedValue)
+        store.localData.dropCacheFor(QueueIdentity.Anonymous.storedValue)
         val forNobody = queryCacheDao.getRow(RESERVED_TABLE_NAME, "cache_owner")?.payload
 
         // Then
@@ -73,15 +76,21 @@ class PersistedNamesTest {
                 conditions = listOf(FilterDescriptor.Condition("done", "eq", "false")),
                 hasOtherFilters = false,
             )
-        store.addPayload(
+        store.queryCache.cacheResponse(
             "todos",
             "todos?done=eq.false",
             "[]",
             authoritativeEmpty = true,
             shape = shape,
         )
-        store.addPayload("todos", "todos?shared", "[]", authoritativeEmpty = true, shape = shape)
-        store.addPayload(
+        store.queryCache.cacheResponse(
+            "todos",
+            "todos?shared",
+            "[]",
+            authoritativeEmpty = true,
+            shape = shape,
+        )
+        store.queryCache.cacheResponse(
             "todos",
             "todos?shared",
             "[]",
@@ -118,10 +127,10 @@ class PersistedNamesTest {
         assertEquals(
             listOf("INSERT", "UPSERT", "UPDATE", "DELETE"),
             listOf(
-                MutationOperation.INSERT,
-                MutationOperation.UPSERT,
-                MutationOperation.UPDATE,
-                MutationOperation.DELETE,
+                MutationOperation.INSERT.storedName,
+                MutationOperation.UPSERT.storedName,
+                MutationOperation.UPDATE.storedName,
+                MutationOperation.DELETE.storedName,
             ),
         )
     }
@@ -129,11 +138,11 @@ class PersistedNamesTest {
     @Test
     fun a_rejected_list_is_written_with_these_keys() = runTest {
         // Given / When — an entry with every field set
-        store.rejectedList.addRejection(
+        store.addRejection(
             StoredRejection(
                 id = 7,
                 table = "todos",
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = "{}",
                 filterJson = "f",
                 createdAtMs = 1,
@@ -171,7 +180,7 @@ class PersistedNamesTest {
     fun the_count_of_dropped_rejections_is_written_under_this_key() = runTest {
         // Given / When — one more rejection than the list keeps
         repeat(MAX_REJECTED_MUTATIONS + 1) { index ->
-            store.rejectedList.addRejection(
+            store.addRejection(
                 StoredRejection(
                     id = index + 1L,
                     table = "t",
@@ -194,10 +203,10 @@ class PersistedNamesTest {
     @Test
     fun a_mutations_owner_is_stored_as_these_values() = runTest {
         // Given / When — one write by a user, one by nobody signed in
-        store.enqueueOwnedBy(QueueIdentity.User("user-a").storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.User("user-a").storedValue) {
             enqueueDelete(table = "todos", filter = null)
         }
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueDelete(table = "todos", filter = null)
         }
 
@@ -209,21 +218,21 @@ class PersistedNamesTest {
     fun a_replay_and_a_payload_that_holds_it_store_one_sequence() = runTest {
         // Given — two replayed mutations, then a network response for a cached query of their table
         repeat(2) {
-            store.enqueueUpdate(
+            store.mutationQueue.enqueueUpdate(
                 table = "todos",
                 body = Json.parseToJsonElement("""{"title":"x"}"""),
                 filter = null,
             )
         }
-        store.markMutationSynced(id = 1, table = "todos")
-        store.markMutationSynced(id = 2, table = "todos")
+        store.mutationQueue.recordReplayed(id = 1, table = "todos")
+        store.mutationQueue.recordReplayed(id = 2, table = "todos")
 
         // When
-        store.addPayload(
+        store.queryCache.cacheResponse(
             "todos",
             "todos?id=eq.1",
             """[{"id":1}]""",
-            requestStartedAtTick = store.monotonicTickNow(),
+            requestStartedAtTick = store.freshness.tickNow(),
         )
 
         // Then — the replays are numbered from 1 in order, and the payload holds both
@@ -234,15 +243,15 @@ class PersistedNamesTest {
     @Test
     fun a_started_send_is_recorded_in_its_row_until_it_replays() = runTest {
         // Given — a keyed INSERT whose send is starting
-        store.enqueueInsert(
+        store.mutationQueue.enqueueInsert(
             table = "todos",
             body = Json.parseToJsonElement("""[{"id":"t1"}]""") as JsonArray,
         )
 
         // When — its send starts, and later it replays
-        store.markSendUnconfirmed(1)
+        store.mutationQueue.markSendUnconfirmed(1)
         val started = mutationDao.inserted.single().sendUnconfirmed
-        store.markMutationSynced(1, "todos")
+        store.mutationQueue.recordReplayed(1, "todos")
 
         // Then — the row's `send_unconfirmed` column holds it, and no reserved row does
         assertTrue(started)
@@ -256,7 +265,7 @@ class PersistedNamesTest {
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
 
         // When
-        store.rejectedList.rejections()
+        store.mutationQueue.rejectedList.rejections()
 
         // Then
         assertEquals(

@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -21,15 +22,27 @@ import kotlinx.serialization.json.Json
  */
 class SessionChangeDuringPassTest {
 
-    private val store = newTestOfflineStore()
+    private val store = newTestStore()
 
     @Test
     fun no_write_is_sent_after_the_session_changes_mid_pass() = runTest {
         // Given — three of user A's edits queued; the session changes after the first replay
         var session: QueueIdentity = USER_A
-        store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"1"}"""), byId("a"))
-        store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"2"}"""), byId("b"))
-        store.enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"3"}"""), byId("c"))
+        store.mutationQueue.enqueueUpdate(
+            TABLE,
+            Json.parseToJsonElement("""{"title":"1"}"""),
+            byId("a"),
+        )
+        store.mutationQueue.enqueueUpdate(
+            TABLE,
+            Json.parseToJsonElement("""{"title":"2"}"""),
+            byId("b"),
+        )
+        store.mutationQueue.enqueueUpdate(
+            TABLE,
+            Json.parseToJsonElement("""{"title":"3"}"""),
+            byId("c"),
+        )
         val server =
             RecordingPostgrestServer(
                 answer = {
@@ -38,7 +51,7 @@ class SessionChangeDuringPassTest {
                 }
             )
         val replayer =
-            MutationQueueReplayer(
+            newTestMutationQueueReplayer(
                 store = store,
                 supabase = server.supabaseClient(),
                 currentIdentity = { session },
@@ -51,7 +64,7 @@ class SessionChangeDuringPassTest {
         assertEquals(1, server.requests.size, "requests sent: ${server.requests.map { it.body }}")
         assertEquals(
             listOf("""{"title":"2"}""", """{"title":"3"}"""),
-            store.allPendingMutations().map { it.bodyJson },
+            store.mutationQueue.allPendingMutations().map { it.bodyJson },
         )
     }
 

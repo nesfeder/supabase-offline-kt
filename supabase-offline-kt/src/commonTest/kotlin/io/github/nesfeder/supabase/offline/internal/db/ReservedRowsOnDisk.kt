@@ -4,9 +4,10 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 
 /**
  * Raw-driver reads and writes of a database file beside Room, for the platform tests that check
@@ -56,7 +57,7 @@ internal val ON_DISK_REJECTION: StoredRejection =
     StoredRejection(
         id = 99,
         table = "todos",
-        operation = MutationOperation.INSERT,
+        operation = MutationOperation.INSERT.storedName,
         bodyJson = """[{"title":"refused"}]""",
         createdAtMs = 1_727_000_005_000,
         rejectedAtMs = 1_727_000_006_000,
@@ -84,15 +85,15 @@ internal val ON_DISK_OWNERS: Map<Long, String> = mapOf(1L to "user:user-a", 2L t
  */
 internal suspend fun OfflineDatabase.writeReservedRows() {
     val store =
-        newTestOfflineStore(
+        newTestStore(
             queryCacheDao = queryCacheDao(),
             cachedFileDao = cachedFileDao(),
             mutationDao = mutationDao(),
             nowMillis = { 1_600_000_000_000 },
         )
     ON_DISK_OWNERS.forEach { (id, owner) -> mutationDao().setOwner(id, owner) }
-    store.rejectedList.addRejection(ON_DISK_REJECTION)
-    store.markSendUnconfirmed(1L)
+    store.addRejection(ON_DISK_REJECTION)
+    store.mutationQueue.markSendUnconfirmed(1L)
 }
 
 /** Each pending mutation's id and recorded owner, in insertion order. */

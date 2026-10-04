@@ -4,20 +4,21 @@
 
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
-import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.TableWriteLocks
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.ChangeCounts
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.inTransaction
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
@@ -39,10 +40,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 
 /**
- * The mutation queue over its rows and the records kept beside them: enqueue, the head checks, a
- * send's outcome, rejection, retry, discard, the counts and flows the app is shown, the
- * send-unconfirmed record, and the retirement of replayed mutations. Owns the queue lock; takes a
- * table's write lock only to retire, and never while holding its own.
+ * The mutation queue: its rows, the records kept beside them, and every change to either, from
+ * enqueue to the retirement of replayed mutations. Owns the queue lock; takes a table's write lock
+ * only to retire, and never while holding its own.
  *
  * @param queryCacheDao where the rejected list is kept and payloads' coverage is read.
  * @param primaryKeys each table's key columns, which tell a keyed INSERT.
@@ -52,6 +52,7 @@ import kotlinx.serialization.json.JsonElement
  * @param ownerlessMutationsAreAnonymous whether mutations queued with no owner are the anonymous
  *   identity's: without the Auth plugin there is no other.
  * @param liveCacheKeysOf a table's queries with a live reader; retirement keeps what they wait for.
+ * @param engineLogger where the rejected list reports a row it could not read.
  */
 internal class MutationQueue(
     private val mutationDao: MutationDao,
@@ -63,9 +64,9 @@ internal class MutationQueue(
     private val primaryKeys: PrimaryKeys,
     private val identityProvider: suspend () -> String?,
     private val identityChanges: Flow<Any?>,
-    private val ownerlessMutationsAreAnonymous: () -> Boolean,
+    private val ownerlessMutationsAreAnonymous: Boolean,
     private val liveCacheKeysOf: (table: String) -> Set<String>,
-    engineLogger: () -> EngineLogger,
+    engineLogger: EngineLogger,
 ) {
 
     /** The mutation queue's record kept beside the rows: the rejected list. */
@@ -117,37 +118,6 @@ internal class MutationQueue(
 
     /* ────────────────────────────── Mutation queue ────────────────────────────── */
 
-    /** Queues an INSERT with no recorded owner; see [MutationWriter.enqueueInsert]. */
-    suspend fun enqueueInsert(
-        table: String,
-        body: JsonArray,
-        filter: FilterDescriptor? = null,
-        defaultToNull: Boolean = true,
-    ): Long = MutationWriter(owner = null).enqueueInsert(table, body, filter, defaultToNull)
-
-    /** Queues an UPSERT with no recorded owner; see [MutationWriter.enqueueUpsert]. */
-    suspend fun enqueueUpsert(
-        table: String,
-        bodyJson: JsonArray,
-        filter: FilterDescriptor? = null,
-        onConflict: String? = null,
-        ignoreDuplicates: Boolean = false,
-        defaultToNull: Boolean = true,
-    ): Long =
-        MutationWriter(owner = null)
-            .enqueueUpsert(table, bodyJson, filter, onConflict, ignoreDuplicates, defaultToNull)
-
-    /** Queues an UPDATE with no recorded owner; see [MutationWriter.enqueueUpdate]. */
-    suspend fun enqueueUpdate(
-        table: String,
-        body: JsonElement,
-        filter: FilterDescriptor? = null,
-    ): Long = MutationWriter(owner = null).enqueueUpdate(table, body, filter)
-
-    /** Queues a DELETE with no recorded owner; see [MutationWriter.enqueueDelete]. */
-    suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): Long =
-        MutationWriter(owner = null).enqueueDelete(table, filter)
-
     /**
      * Queues writes for [owner]: each row is stored with its owner in one insert, and the readers
      * of its table are told.
@@ -157,21 +127,17 @@ internal class MutationQueue(
      */
     internal inner class MutationWriter(private val owner: String?) {
 
-        /** The last row this writer stored, with its id; `null` until it stores one. */
-        var lastStored: MutationRow? = null
-            private set
-
         /**
          * Queues an INSERT.
          *
-         * @return The mutation's id — the mutation row's autoincrement id, stable across restarts.
+         * @return The row as stored; its id is the row's autoincrement id, stable across restarts.
          */
         suspend fun enqueueInsert(
             table: String,
             body: JsonArray,
             filter: FilterDescriptor? = null,
             defaultToNull: Boolean = true,
-        ): Long =
+        ): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.INSERT,
@@ -183,7 +149,7 @@ internal class MutationQueue(
         /**
          * Queues an UPSERT.
          *
-         * @return The mutation's id.
+         * @return The row as stored.
          */
         suspend fun enqueueUpsert(
             table: String,
@@ -192,7 +158,7 @@ internal class MutationQueue(
             onConflict: String? = null,
             ignoreDuplicates: Boolean = false,
             defaultToNull: Boolean = true,
-        ): Long =
+        ): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.UPSERT,
@@ -206,13 +172,13 @@ internal class MutationQueue(
         /**
          * Queues an UPDATE, with an optional [filter] describing the targeted rows.
          *
-         * @return The mutation's id.
+         * @return The row as stored.
          */
         suspend fun enqueueUpdate(
             table: String,
             body: JsonElement,
             filter: FilterDescriptor? = null,
-        ): Long =
+        ): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.UPDATE,
@@ -223,9 +189,9 @@ internal class MutationQueue(
         /**
          * Queues a DELETE. [filter] describes which rows are removed.
          *
-         * @return The mutation's id.
+         * @return The row as stored.
          */
-        suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): Long =
+        suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.DELETE,
@@ -233,21 +199,21 @@ internal class MutationQueue(
                 filter = filter,
             )
 
-        /** Stores one pending mutation of [owner]'s and tells [table]'s readers. */
+        /** Stores one pending mutation of [owner]'s, tells [table]'s readers, and returns it. */
         private suspend fun insert(
             table: String,
-            operation: String,
+            operation: MutationOperation,
             bodyJson: String,
             filter: FilterDescriptor?,
             defaultToNull: Boolean? = null,
             onConflict: String? = null,
             ignoreDuplicates: Boolean? = null,
-        ): Long {
+        ): MutationRow {
             requireUserTable(table)
             val row =
                 MutationRow(
                     table = table,
-                    operation = operation,
+                    operation = operation.storedName,
                     bodyJson = bodyJson,
                     filterJson = filter?.let { encodeFilter(it, json) },
                     createdAtMs = nowMillis(),
@@ -257,41 +223,30 @@ internal class MutationQueue(
                     ignoreDuplicates = ignoreDuplicates,
                     owner = owner,
                 )
-            val id = mutationDao.insert(row)
-            lastStored = row.copy(id = id)
+            val stored = row.copy(id = mutationDao.insert(row))
             noteMutationsChanged(table)
-            return id
+            return stored
         }
     }
 
     /**
-     * Runs [enqueue], which queues one write with [identity] recorded as its owner.
+     * Runs [enqueue], which queues one write with [identity] as its owner: a replay pass sends only
+     * the current identity's writes. Refused when local data was cleared since [startedAtTick]; the
+     * check and the insert run under the queue lock, which a clear holds.
      *
-     * The queue is kept per identity: each write records who made it, a replay pass sends only the
-     * current identity's writes, and another identity's writes neither block it nor are sent by it.
-     *
-     * The write is refused when local data was cleared since [startedAtTick]: it belongs to the
-     * identity that was cleared. The check and the insert run under the queue lock, which a clear
-     * holds, so no clear can fall between them.
-     *
-     * @param identity The stored value of the identity making the write, or `null` to record none
-     *   (a store driven directly, with no session model).
-     * @param startedAtTick [monotonicTickNow] as read before the write started, or `null` to skip
-     *   the check.
-     * @param enqueue Queues the write and returns its id. Must make DAO calls only.
-     * @return What happened.
+     * @param identity the owner's stored value, or `null` to record none (no session model).
+     * @param startedAtTick the tick the write started at, or `null` to skip the check.
+     * @param enqueue queues the write and returns its row as stored; DAO calls only.
      */
     suspend fun enqueueOwnedBy(
         identity: String?,
         startedAtTick: Long? = null,
-        enqueue: suspend MutationWriter.() -> Long,
+        enqueue: suspend MutationWriter.() -> MutationRow,
     ): EnqueueOutcome = mutationQueueMutex.withLock {
         if (freshness.predatesQueueClear(startedAtTick))
             return@withLock EnqueueOutcome.LocalDataCleared
-        val writer = MutationWriter(owner = identity)
-        val id = writer.enqueue()
-        val row = checkNotNull(writer.lastStored) { "enqueue stored no mutation" }
-        EnqueueOutcome.Queued(id, row)
+        val row = MutationWriter(owner = identity).enqueue()
+        EnqueueOutcome.Queued(row.id, row)
     }
 
     /**
@@ -443,7 +398,7 @@ internal class MutationQueue(
      * installed they are a signed-in user's, so the anonymous identity adopts them only without it.
      */
     private fun mayAdoptOwnerlessMutations(identity: String): Boolean =
-        identity != QueueIdentity.Anonymous.storedValue || ownerlessMutationsAreAnonymous()
+        identity != QueueIdentity.Anonymous.storedValue || ownerlessMutationsAreAnonymous
 
     /**
      * Whether [id] is the first of [identity]'s pending mutations, in any table. Reads the owner
@@ -616,16 +571,6 @@ internal class MutationQueue(
             newId
         }
 
-    /**
-     * Removes the rejected mutation [id] from the list.
-     *
-     * @param id The rejected mutation's id.
-     * @return `true` when an entry was removed.
-     */
-    suspend fun dismissRejectedMutation(id: Long): Boolean = mutationQueueMutex.withLock {
-        rejectedList.removeRejection(id) != null
-    }
-
     /** [table]'s pending mutations, whatever their owner, in insertion order. */
     suspend fun pendingMutationsForTable(table: String): List<MutationRow> =
         mutationDao.pendingForTable(table)
@@ -634,36 +579,6 @@ internal class MutationQueue(
      * Returns all pending mutations in insertion order across **all tables**, whatever their owner.
      */
     suspend fun allPendingMutations(): List<MutationRow> = mutationDao.pendingAll()
-
-    /**
-     * The current identity's pending mutations — of [table], or of every table when it is `null` —
-     * in insertion order, re-emitted on each change.
-     *
-     * @param table The table to observe, or `null` for the whole queue.
-     * @return A flow of pending mutation rows.
-     */
-    fun pendingMutationsFlow(table: String?): Flow<List<MutationRow>> =
-        combine(mutationDao.pendingAllFlow(), identityChanges) { rows, _ ->
-                visibleTo(identityProvider(), rows).filter { row ->
-                    table == null || row.table == table
-                }
-            }
-            .distinctUntilChanged()
-
-    /** The current identity's pending mutations across all tables. */
-    suspend fun pendingMutationCount(): Int =
-        visibleTo(identityProvider(), mutationDao.pendingAll()).size
-
-    /** Flow of the current identity's pending mutations across all tables. */
-    fun pendingMutationCountFlow(): Flow<Int> = pendingMutationsFlow(null).map { rows -> rows.size }
-
-    /** The current identity's pending mutations for a specific [table]. */
-    suspend fun pendingMutationCountForTable(table: String): Int =
-        visibleTo(identityProvider(), mutationDao.pendingForTable(table)).size
-
-    /** Flow of the current identity's pending mutations for a specific [table]. */
-    fun pendingMutationCountForTableFlow(table: String): Flow<Int> =
-        pendingMutationsFlow(table).map { rows -> rows.size }
 
     /*
      * What the app is shown of the queue: the current identity's mutations and the ownerless ones
@@ -821,7 +736,7 @@ internal class MutationQueue(
      * whose replay can take rows already on the server as its own.
      */
     private fun isKeyedInsert(mutation: MutationRow): Boolean {
-        if (mutation.operation != MutationOperation.INSERT) return false
+        if (mutation.knownOperation != MutationOperation.INSERT) return false
         val body =
             try {
                 json.parseToJsonElement(mutation.bodyJson) as? JsonArray

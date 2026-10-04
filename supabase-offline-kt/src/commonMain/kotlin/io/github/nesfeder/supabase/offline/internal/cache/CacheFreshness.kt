@@ -119,7 +119,7 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
 
     /**
      * Runs [write] unless the cache was cleared or dropped since [guardTick], as one step with the
-     * clear.
+     * clear. [write] runs under the clear lock, so it takes no lock but the records'.
      *
      * @return `false` when a clear voided the write.
      */

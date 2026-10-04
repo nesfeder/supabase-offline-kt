@@ -4,13 +4,14 @@
 
 package io.github.nesfeder.supabase.offline.internal.cache
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -81,24 +82,16 @@ internal class QueryOverlay(
     private val primaryKeys: PrimaryKeys,
     private val identityProvider: suspend () -> String?,
     private val identityChanges: Flow<Any?>,
-    private val engineLogger: () -> EngineLogger,
+    private val engineLogger: EngineLogger,
 ) {
 
     /**
      * Overlays the current identity's pending mutations of [table] onto a fresh network
-     * [serverJson] for the query [cacheKey]. Synced ones are left out: the server already reflects
-     * them.
+     * [serverJson] for the query [cacheKey], saying whether one changed a row it shows. Synced ones
+     * are left out: the server already reflects them.
      *
      * @param shape the query's shape; `null` looks up the one recorded for [cacheKey].
      */
-    suspend fun overlayPendingOnResponse(
-        table: String,
-        cacheKey: String,
-        serverJson: String,
-        shape: QueryShape? = null,
-    ): String = overlayPendingOnResponseReporting(table, cacheKey, serverJson, shape).payload
-
-    /** [overlayPendingOnResponse], saying whether a pending mutation changed a row it shows. */
     suspend fun overlayPendingOnResponseReporting(
         table: String,
         cacheKey: String,
@@ -124,20 +117,12 @@ internal class QueryOverlay(
     }
 
     /**
-     * Overlays the current identity's pending mutations, and the synced ones [cachedJson] does not
-     * already contain, onto a cached payload served while offline.
+     * Overlays the identity's pending mutations, and synced ones newer than [cachedJson], onto that
+     * cached payload; says whether a pending one changed a row it shows.
      *
      * @param cacheKey The payload's query, or `null` when not known: every synced mutation applies.
      * @param shape the query's shape, recorded with the payload; `null` looks up the one recorded.
      */
-    suspend fun overlayCachedPayload(
-        table: String,
-        cacheKey: String?,
-        cachedJson: String,
-        shape: QueryShape? = null,
-    ): String = overlayCachedPayloadReporting(table, cacheKey, cachedJson, shape).payload
-
-    /** [overlayCachedPayload], saying whether a pending mutation changed a row it shows. */
     suspend fun overlayCachedPayloadReporting(
         table: String,
         cacheKey: String?,
@@ -178,31 +163,11 @@ internal class QueryOverlay(
         return ServedOverlay(payload, shownChangedBy.any { id -> id in pendingIds })
     }
 
-    /** [overlayCachedPayload] for a payload whose signature is not known. */
-    suspend fun overlayCachedPayload(table: String, cachedJson: String): String =
-        overlayCachedPayload(table, cacheKey = null, cachedJson = cachedJson)
-
     /**
      * The cached payload of [table]/[cacheKey] with the current identity's mutations overlaid, as
-     * it changes; `null` while nothing is known. With no payload but mutations that produce rows,
-     * the overlay onto an empty list is emitted without being stored. A cache that is not the
-     * current identity's counts as no payload. The overlay is recomputed only when the payload
-     * served, or the mutations of [table] visible to the identity, change: a write to another
-     * table, or another identity's, costs a comparison.
-     */
-    fun overlaidPayloadFlow(
-        table: String,
-        cacheKey: String,
-        shape: QueryShape? = null,
-    ): Flow<String?> =
-        servedPayloadFlow(table, cacheKey, shape)
-            .map { served -> served?.payload }
-            .distinctUntilChanged()
-
-    /**
-     * [overlaidPayloadFlow], each payload with what a reader reports of it: when the cached payload
-     * under it was fetched, whether it is stale, and whether a pending mutation changed a row it
-     * shows. A change to any of these emits, a refresh that fetched the same rows included.
+     * it changes, or `null` while nothing is known. Each carries its fetch time, staleness and
+     * whether a pending mutation changed a shown row; with no payload, mutations are overlaid onto
+     * an empty list, and another identity's cache counts as none.
      */
     fun servedPayloadFlow(
         table: String,
@@ -409,7 +374,7 @@ internal class QueryOverlay(
     ): Set<List<String>>? {
         val keys = LinkedHashSet<List<String>>()
         for (mutation in mutations) {
-            if (mutation.operation != MutationOperation.UPSERT) return null
+            if (mutation.knownOperation != MutationOperation.UPSERT) return null
             if (conflictColumnsOf(mutation) != keyColumns) return null
             upsertRowsOf(mutation, json).forEach { row -> keyOf(row, keyColumns)?.let(keys::add) }
         }
@@ -521,7 +486,7 @@ internal class QueryOverlay(
         keyColumns: List<String>,
         ownKeys: () -> Set<List<String>>,
     ): Boolean =
-        when (mutation.operation) {
+        when (mutation.knownOperation) {
             // A row the query holds merges there; one it excludes on what the upsert sets stays
             // out, whatever row it merges with
             MutationOperation.UPSERT -> {
@@ -630,7 +595,7 @@ internal class QueryOverlay(
         if (keyColumns.isEmpty()) return null
         val keys = HashMap<Long, List<String>>()
         val named = writes.map { write ->
-            if (write.operation != MutationOperation.UPDATE) return null
+            if (write.knownOperation != MutationOperation.UPDATE) return null
             val filter = batch.filterOf(write) ?: return null
             keys[write.id] = keyNamedBy(filter, keyColumns) ?: return null
             filter.conditions.associate { condition -> condition.column to condition.value }
@@ -663,7 +628,7 @@ internal class QueryOverlay(
      */
     private fun logSkippedOverlay(mutation: MutationRow, failure: Exception) {
         if (!mutationQueue.claimOverlaySkipReport(mutation.id)) return
-        engineLogger().warning {
+        engineLogger.warning {
             if (mutation.id < 0) {
                 "Cache patch skipped an accepted ${mutation.operation} on ${mutation.table}: " +
                     "${failure::class.simpleName}"

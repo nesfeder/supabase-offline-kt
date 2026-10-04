@@ -4,15 +4,15 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -34,10 +34,10 @@ import kotlinx.serialization.json.JsonArray
 class InFlightReleaseTest {
 
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(mutationDao = mutationDao)
+    private val store = newTestStore(mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private val replayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
             currentIdentity = { QueueIdentity.Anonymous },
@@ -46,7 +46,7 @@ class InFlightReleaseTest {
     @Test
     fun a_store_failure_during_a_pass_does_not_stop_the_passes_after_it() = runTest {
         // Given — a queued keyed INSERT, and a disk that fails the write recording its send, once
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         mutationDao.failNextMarkSendUnconfirmed = true
@@ -69,7 +69,7 @@ class InFlightReleaseTest {
     @Test
     fun a_store_failure_during_a_pass_does_not_hold_back_later_writes_at_the_head() = runTest {
         // Given — a pass that met a failing disk
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         mutationDao.failNextMarkSendUnconfirmed = true
@@ -78,7 +78,7 @@ class InFlightReleaseTest {
 
         // When — the app writes again
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
                 queueIdentity = { QueueIdentity.Anonymous },
@@ -95,7 +95,7 @@ class InFlightReleaseTest {
     fun a_pass_cancelled_while_its_request_is_on_the_wire_does_not_stop_the_next() = runTest {
         // Given — a queued write whose first send is on the wire when its caller gives up; the pass
         // finishes that request, which then fails without an answer
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows("""[{"id":"k1","title":"Buy milk"}]"""))
         }
         val onTheWire = CompletableDeferred<Unit>()
@@ -156,7 +156,7 @@ class InFlightReleaseTest {
      * only then lets the server accept it.
      */
     private suspend fun TestScope.cancelPassThenAccept(body: String) {
-        store.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
             enqueueInsert(table = TABLE, body = rows(body))
         }
         val onTheWire = CompletableDeferred<Unit>()

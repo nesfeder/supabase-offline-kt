@@ -5,16 +5,16 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -44,9 +44,9 @@ class OfflineMutationQueueDecisionTest {
     private val mutationDao = FakeMutationDao()
     private val logger = RecordingLogSink()
     private val builder =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
-            store = newTestOfflineStore(mutationDao = mutationDao),
+            store = newTestStore(mutationDao = mutationDao),
             engineLogger = logger.asEngineLogger(),
         )
 
@@ -94,7 +94,7 @@ class OfflineMutationQueueDecisionTest {
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(MutationOperation.INSERT, mutationDao.inserted.single().operation)
+        assertEquals(MutationOperation.INSERT.storedName, mutationDao.inserted.single().operation)
     }
 
     @Test
@@ -152,7 +152,7 @@ class OfflineMutationQueueDecisionTest {
         // Then — queued with its onConflict
         assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
-        assertEquals(MutationOperation.UPSERT, queued.operation)
+        assertEquals(MutationOperation.UPSERT.storedName, queued.operation)
         assertEquals("id", queued.onConflict)
     }
 
@@ -211,7 +211,7 @@ class OfflineMutationQueueDecisionTest {
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
-        assertEquals(MutationOperation.UPDATE, queued.operation)
+        assertEquals(MutationOperation.UPDATE.storedName, queued.operation)
         assertEquals(ID_FILTER_JSON, queued.filterJson)
     }
 
@@ -270,7 +270,7 @@ class OfflineMutationQueueDecisionTest {
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
-        assertEquals(MutationOperation.DELETE, queued.operation)
+        assertEquals(MutationOperation.DELETE.storedName, queued.operation)
         assertEquals(ID_FILTER_JSON, queued.filterJson)
     }
 

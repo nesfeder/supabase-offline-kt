@@ -10,16 +10,16 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.openInMemory
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
@@ -65,16 +65,16 @@ class OfflinePluginTest {
 
     @Serializable private data class AddArguments(val a: Int, val b: Int)
 
-    /** A client on [server] with PostgREST and the plugin, its data in [store]. */
+    /** A client on [server] with PostgREST and the plugin, its queue in [store]'s table. */
     private fun pluginClient(
         server: RecordingPostgrestServer,
-        store: OfflineStore = newTestOfflineStore(),
+        store: TestStore = newTestStore(),
         configure: Offline.Config.() -> Unit = {},
     ): SupabaseClient =
         newTestSupabaseClient(engine = server.engine) {
             install(Postgrest) { maxRetries = 0 }
             install(Offline) {
-                openInMemory(store)
+                openInMemory(mutationDao = store.mutationDao)
                 configure()
             }
         }
@@ -175,7 +175,7 @@ class OfflinePluginTest {
                     okJson("[]")
                 }
             )
-        val store = newTestOfflineStore()
+        val store = newTestStore()
         val supabase = pluginClient(server, store)
         val write = async {
             supabase.offline.from("todos").insert(buildJsonArray { add(buildJsonObject {}) })

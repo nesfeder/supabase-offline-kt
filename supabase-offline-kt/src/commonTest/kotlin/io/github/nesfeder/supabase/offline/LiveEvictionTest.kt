@@ -11,7 +11,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -60,19 +59,15 @@ class LiveEvictionTest {
                         newTestSupabaseClient(engine = server.engine) {
                             install(Postgrest) { maxRetries = 0 }
                         },
-                    store =
-                        newTestOfflineStore(
-                            queryCacheDao = queryCacheDao,
-                            // The large list and list A fit together; one more list does not
-                            queryCacheLimits =
-                                QueryCacheLimits(
-                                    maxPayloadBytes =
-                                        (LARGE_LIST.length + LIST_A.length + 1).toLong(),
-                                    evictionBatchSize = 1,
-                                    evictionHeadroomBytes = 0,
-                                ),
-                            nowMillis = { clock },
+                    queryCacheDao = queryCacheDao,
+                    // The large list and list A fit together; one more list does not
+                    queryCacheLimits =
+                        QueryCacheLimits(
+                            maxPayloadBytes = (LARGE_LIST.length + LIST_A.length + 1).toLong(),
+                            evictionBatchSize = 1,
+                            evictionHeadroomBytes = 0,
                         ),
+                    nowMillis = { clock },
                     coordinatorScope = scope,
                 )
                 .from(TABLE)

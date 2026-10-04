@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.MutationOperation as MutationQueueOperation
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
@@ -14,7 +13,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.dismissRejectedMutation
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -41,18 +43,23 @@ class RejectedMutationListTest {
     private val mutationDao = FakeMutationDao()
     private var clock = 1_000L
     private val store =
-        newTestOfflineStore(
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             nowMillis = { clock },
         )
     private val server = RecordingPostgrestServer()
-    private val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+    private val replayer =
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
     @Test
     fun a_permanent_rejection_keeps_the_write_and_the_servers_reason() = runTest {
         // Given — a queued insert the server refuses with a check violation
-        val id = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":""}]"""))
+        val id =
+            store.mutationQueue.enqueueInsert(
+                table = TABLE,
+                body = rows("""[{"id":"t1","title":""}]"""),
+            )
         server.answer = {
             postgrestError(
                 HttpStatusCode.BadRequest,
@@ -72,7 +79,7 @@ class RejectedMutationListTest {
         val rejected = report.rejected.single()
         assertEquals(id, rejected.id)
         assertEquals(TABLE, rejected.table)
-        assertEquals(MutationQueueOperation.INSERT, rejected.operation)
+        assertEquals(MutationOperation.INSERT, rejected.operation)
         assertEquals(Instant.fromEpochMilliseconds(1_000L), rejected.createdAt)
         assertEquals(Instant.fromEpochMilliseconds(5_000L), rejected.rejectedAt)
         assertEquals(rows("""[{"id":"t1","title":""}]"""), rejected.body)
@@ -93,17 +100,20 @@ class RejectedMutationListTest {
     @Test
     fun the_rejected_list_survives_a_restart() = runTest {
         // Given — a write rejected in one process
-        val id = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
+        val id =
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
         server.answer = { postgrestError(HttpStatusCode.UnprocessableEntity) }
         replayer.sync()
 
         // When — a new process opens the same database
-        val restarted =
-            newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+        val restarted = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
         // Then
-        assertEquals(listOf(id), restarted.rejectedList.rejections().map { it.id })
-        assertEquals(422, restarted.rejectedList.rejections().single().serverError?.status)
+        assertEquals(listOf(id), restarted.mutationQueue.rejectedList.rejections().map { it.id })
+        assertEquals(
+            422,
+            restarted.mutationQueue.rejectedList.rejections().single().serverError?.status,
+        )
     }
 
     @Test
@@ -113,7 +123,7 @@ class RejectedMutationListTest {
             mutationDao.insert(
                 MutationRow(
                     table = TABLE,
-                    operation = MutationOperation.INSERT,
+                    operation = MutationOperation.INSERT.storedName,
                     bodyJson = "{broken",
                     filterJson = null,
                     createdAtMs = 0L,
@@ -138,7 +148,7 @@ class RejectedMutationListTest {
         mutationDao.insert(
             MutationRow(
                 table = TABLE,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"done":true}""",
                 filterJson = null,
                 createdAtMs = 0L,
@@ -149,7 +159,7 @@ class RejectedMutationListTest {
         val report = replayer.sync()
 
         // Then
-        assertEquals(MutationQueueOperation.UPDATE, report.rejected.single().operation)
+        assertEquals(MutationOperation.UPDATE, report.rejected.single().operation)
         assertNull(report.rejected.single().serverError)
         assertTrue(server.requests.isEmpty())
     }
@@ -160,7 +170,7 @@ class RejectedMutationListTest {
         mutationDao.insert(
             MutationRow(
                 table = TABLE,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"done":true}""",
                 filterJson = "{not a filter",
                 createdAtMs = 0L,
@@ -169,7 +179,7 @@ class RejectedMutationListTest {
         mutationDao.insert(
             MutationRow(
                 table = TABLE,
-                operation = MutationOperation.INSERT,
+                operation = MutationOperation.INSERT.storedName,
                 bodyJson = """[{"id":"t1"}]""",
                 filterJson = "{not a filter",
                 createdAtMs = 0L,
@@ -194,7 +204,7 @@ class RejectedMutationListTest {
     fun the_list_keeps_the_newest_hundred() = runTest {
         // Given — 105 writes the server refuses
         repeat(105) { index ->
-            store.enqueueInsert(table = TABLE, body = rows("""[{"n":$index}]"""))
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"n":$index}]"""))
         }
         server.answer = { postgrestError(HttpStatusCode.BadRequest, code = "22P02") }
 
@@ -202,7 +212,7 @@ class RejectedMutationListTest {
         replayer.sync()
 
         // Then — the oldest five went first
-        val ids = store.rejectedList.rejections().map { it.id }
+        val ids = store.mutationQueue.rejectedList.rejections().map { it.id }
         assertEquals(MAX_REJECTED_MUTATIONS, ids.size)
         assertEquals((6L..105L).toList(), ids)
     }
@@ -210,29 +220,32 @@ class RejectedMutationListTest {
     @Test
     fun a_dismissed_rejection_leaves_the_list() = runTest {
         // Given
-        val id = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
+        val id =
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
         server.answer = { postgrestError(HttpStatusCode.BadRequest) }
         replayer.sync()
 
         // When
-        val dismissed = store.dismissRejectedMutation(id)
+        val dismissed = store.mutationQueue.dismissRejectedMutation(id)
 
         // Then
         assertTrue(dismissed)
-        assertEquals(emptyList(), store.rejectedList.rejections())
-        assertEquals(emptyList(), store.rejectedList.rejectionsFlow().first())
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejectionsFlow().first())
     }
 
     @Test
     fun a_retried_rejection_rejoins_the_queue_at_the_tail_and_replays() = runTest {
         // Given — a rejected write, and a newer write queued after it
-        val rejectedId = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"first"}]"""))
+        val rejectedId =
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"first"}]"""))
         server.answer = { postgrestError(HttpStatusCode.Forbidden) }
         replayer.sync()
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"second"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"second"}]"""))
 
         // When — the app fixed the cause and retries it
-        val newId = assertNotNull(store.retryRejectedMutation(rejectedId, identity = null))
+        val newId =
+            assertNotNull(store.mutationQueue.retryRejectedMutation(rejectedId, identity = null))
         server.answer = { okJson("[]") }
         val report = replayer.sync()
 
@@ -243,18 +256,24 @@ class RejectedMutationListTest {
             listOf("""[{"title":"second"}]""", """[{"title":"first"}]"""),
             server.requests.takeLast(2).map { it.body },
         )
-        assertEquals(emptyList(), store.rejectedList.rejections())
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
     }
 
     @Test
     fun an_unreadable_rejected_list_is_kept_aside_and_a_fresh_one_started() = runTest {
         // Given — the reserved row holds something this build cannot decode
         val logger = RecordingLogSink()
-        store.engineLogger = logger.asEngineLogger()
+        val loggingStore =
+            newTestStore(
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                nowMillis = { clock },
+                engineLogger = logger.asEngineLogger(),
+            )
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "not a list")
 
         // When
-        val rejections = store.rejectedList.rejections()
+        val rejections = loggingStore.mutationQueue.rejectedList.rejections()
 
         // Then — read as a fresh list, the old payload kept under its own key, and said at ERROR
         assertEquals(emptyList(), rejections)
@@ -269,7 +288,7 @@ class RejectedMutationListTest {
     @Test
     fun a_rejection_that_cannot_be_recorded_keeps_the_write_queued() = runTest {
         // Given — a write the server refuses, and a rejected list that cannot be written
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"x"}]"""))
         queryCacheDao.failUpsertOf = { row ->
             row.table == RESERVED_TABLE_NAME && row.cacheKey == REJECTED_MUTATIONS_CACHE_KEY
         }
@@ -280,8 +299,8 @@ class RejectedMutationListTest {
 
         // Then — the pass stopped with the write still queued rather than losing it
         assertIs<SyncStop.TransientFailure>(report.stop)
-        assertEquals(1, store.allPendingMutations().size)
-        assertEquals(emptyList(), store.rejectedList.rejections())
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

@@ -168,7 +168,7 @@ class CacheKeyTest {
     }
 
     @Test
-    fun signatureBuilder_buildsCanonicalSignature() {
+    fun cacheKeyOf_buildsCanonicalCacheKey() {
         // Given
         val table = "assets"
         val builder =

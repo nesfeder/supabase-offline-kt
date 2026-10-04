@@ -11,7 +11,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -71,7 +70,7 @@ class QuerySnapshotTest {
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store = newTestOfflineStore(nowMillis = { clock }),
+                nowMillis = { clock },
                 coordinatorScope = scope,
                 networkAvailability = signal,
             )

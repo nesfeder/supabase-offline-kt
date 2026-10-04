@@ -6,12 +6,14 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.ktor.client.HttpClient
@@ -40,7 +42,7 @@ import kotlinx.coroutines.test.runTest
  * bounded unknown-error dead-letter), the single-sweep-per-table `distinct()` fix, the concurrency
  * mutex, and the refuse-to-replay-unfiltered guard for legacy null-descriptor UPDATE/DELETE rows.
  *
- * Each case drives a real [OfflineStore] over the shared in-memory DAO fakes and a scripted
+ * Each case drives the real [MutationQueue] over the shared in-memory DAO fakes and a scripted
  * [FakeRemoteTable]; only the remote verbs are faked.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -104,7 +106,7 @@ class MutationQueueReplayerTest {
             remoteTable.recordedInsertBodies.size,
             "only the first mutation was attempted",
         )
-        val pending = store.pendingMutationsForTable(table)
+        val pending = store.mutationQueue.pendingMutationsForTable(table)
         assertEquals(
             listOf("""[{"n":"a"}]""", """[{"n":"b"}]"""),
             pending.map { it.bodyJson },
@@ -143,7 +145,7 @@ class MutationQueueReplayerTest {
         assertEquals(0, store.pendingMutationCount())
         assertEquals(
             listOf(403),
-            store.rejectedList.rejections().map { it.serverError?.status },
+            store.mutationQueue.rejectedList.rejections().map { it.serverError?.status },
         )
     }
 
@@ -284,7 +286,7 @@ class MutationQueueReplayerTest {
                 onInsert = { postgrestResultOf("[]", client.postgrest) },
             )
         val replayer =
-            MutationQueueReplayer(
+            newTestMutationQueueReplayer(
                 store = store,
                 supabase = client,
                 remoteTableFor = { _, _ ->
@@ -309,7 +311,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.DELETE,
+                operation = MutationOperation.DELETE.storedName,
                 bodyJson = "{}",
                 filterJson = null,
                 createdAtMs = createdAtCounter++,
@@ -335,7 +337,7 @@ class MutationQueueReplayerTest {
         assertEquals(0, synced)
         assertEquals(0, remoteTable.recordedDeleteCount, "unfiltered DELETE must never execute")
         assertEquals(0, store.pendingMutationCount(), "the legacy null-filter row leaves the queue")
-        assertEquals(1, store.rejectedList.rejections().size)
+        assertEquals(1, store.mutationQueue.rejectedList.rejections().size)
     }
 
     @Test
@@ -345,7 +347,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"n":"x"}""",
                 filterJson = null,
                 createdAtMs = createdAtCounter++,
@@ -383,7 +385,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"n":"x"}""",
                 filterJson = LOSSY_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -420,7 +422,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.DELETE,
+                operation = MutationOperation.DELETE.storedName,
                 bodyJson = "{}",
                 filterJson = LOSSY_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -458,7 +460,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.DELETE,
+                operation = MutationOperation.DELETE.storedName,
                 bodyJson = "{}",
                 filterJson = EMPTY_CONDITIONS_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -497,7 +499,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"n":"x"}""",
                 filterJson = REPLAYABLE_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -535,7 +537,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.DELETE,
+                operation = MutationOperation.DELETE.storedName,
                 bodyJson = "{}",
                 filterJson = REPLAYABLE_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -566,7 +568,7 @@ class MutationQueueReplayerTest {
     private fun insertRow(body: String): MutationRow =
         MutationRow(
             table = table,
-            operation = MutationOperation.INSERT,
+            operation = MutationOperation.INSERT.storedName,
             bodyJson = body,
             filterJson = null,
             createdAtMs = createdAtCounter++,
@@ -640,12 +642,12 @@ class MutationQueueReplayerTest {
      * no wait).
      */
     private fun replayer(
-        store: OfflineStore,
+        store: TestStore,
         client: SupabaseClient,
         remoteTable: FakeRemoteTable,
         awaitSessionSettled: (suspend () -> Boolean)? = null,
     ): MutationQueueReplayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = client,
             remoteTableFor = { _, _ -> remoteTable },
@@ -654,8 +656,8 @@ class MutationQueueReplayerTest {
 
     private fun testClient(): SupabaseClient = newTestSupabaseClient()
 
-    private fun buildStore(mutationDao: FakeMutationDao): OfflineStore =
-        newTestOfflineStore(mutationDao = mutationDao)
+    private fun buildStore(mutationDao: FakeMutationDao): TestStore =
+        newTestStore(mutationDao = mutationDao)
 
     /**
      * Builds a real [ResponseException] carrying [status] by letting a `MockEngine`-backed client

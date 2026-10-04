@@ -9,7 +9,6 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.buildOfflineClient
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
 import kotlin.time.Clock
@@ -40,15 +39,9 @@ private fun Offline.Config.openInMemoryClient(
     val fileSystem = InMemoryFileSystem(clock)
     return buildOfflineClient(
         supabase = supabase,
-        openStore = { limits ->
-            OfflineStore(
-                queryCacheDao = InMemoryQueryCacheDao(),
-                cachedFileDao = InMemoryCachedFileDao(),
-                mutationDao = InMemoryMutationDao(),
-                queryCacheLimits = limits,
-                nowMillis = { clock.now().toEpochMilliseconds() },
-            )
-        },
+        queryCacheDao = InMemoryQueryCacheDao(),
+        cachedFileDao = InMemoryCachedFileDao(),
+        mutationDao = InMemoryMutationDao(),
         dataDirectory = IN_MEMORY_BASE_DIRECTORY.toPath(),
         prepareFileCacheDirectories = false,
         fileSystem = fileSystem,

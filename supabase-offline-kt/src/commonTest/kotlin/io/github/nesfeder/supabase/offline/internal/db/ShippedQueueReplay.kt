@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.RecordedRequest
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 
 /** A server for [replayShippedQueue]: answers every write with `[]`. */
 internal fun shippedQueueServer(): RecordingPostgrestServer =
@@ -14,18 +14,19 @@ internal fun shippedQueueServer(): RecordingPostgrestServer =
 
 /**
  * Replays every queued write in this database — opened from [ShippedDatabaseFixture] — against
- * [server], through a real `OfflineStore` over the database's own DAOs and the real syncer.
+ * [server], through a real `TestStore` over the database's own DAOs and the real syncer.
  *
  * @return the number of writes the syncer reports as synced.
  */
 internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgrestServer): Int {
     val store =
-        newTestOfflineStore(
+        newTestStore(
             queryCacheDao = queryCacheDao(),
             cachedFileDao = cachedFileDao(),
             mutationDao = mutationDao(),
         )
-    return MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+    return newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        .syncAllTables()
 }
 
 /**

@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -26,13 +27,12 @@ class ClearLocalDataAtomicityTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_clear_that_fails_part_way_does_not_hand_one_users_mutations_to_the_next() = runTest {
         // Given — user A's pending edit, and a clear that fails part-way
-        store.enqueueOwnedBy(USER_A.storedValue) {
+        store.mutationQueue.enqueueOwnedBy(USER_A.storedValue) {
             enqueueUpdate(
                 TABLE,
                 Json.parseToJsonElement("""{"title":"A's private edit"}"""),
@@ -40,15 +40,19 @@ class ClearLocalDataAtomicityTest {
             )
         }
         mutationDao.failNextDeleteAll = true
-        val cleared = runCatching { store.clearLocalData() }
+        val cleared = runCatching { store.localData.clearLocalData() }
 
         // When — the app starts again, user B signs in, and a pass runs
-        val next = newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
-        next.identityProvider = { USER_B.storedValue }
+        val next =
+            newTestStore(
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                identityProvider = { USER_B.storedValue },
+            )
         queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"1","title":"B's row"}]""")
-        val shownToB = next.overlaidPayloadFlow(TABLE, TABLE).first()
+        val shownToB = next.queryOverlay.overlaidPayloadFlow(TABLE, TABLE).first()
         val server = RecordingPostgrestServer()
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
                 store = next,
                 supabase = server.supabaseClient(),
                 currentIdentity = { USER_B },
@@ -65,12 +69,12 @@ class ClearLocalDataAtomicityTest {
     @Test
     fun a_write_that_began_before_local_data_was_cleared_is_not_queued_after_it() = runTest {
         // Given — a write that started, then a clear
-        val startedAtTick = store.monotonicTickNow()
-        store.clearLocalData()
+        val startedAtTick = store.freshness.tickNow()
+        store.localData.clearLocalData()
 
         // When — the write reaches the mutation queue
         val outcome =
-            store.enqueueOwnedBy(USER_A.storedValue, startedAtTick) {
+            store.mutationQueue.enqueueOwnedBy(USER_A.storedValue, startedAtTick) {
                 enqueueUpdate(TABLE, Json.parseToJsonElement("""{"title":"stale"}"""), byId("1"))
             }
 

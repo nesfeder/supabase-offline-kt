@@ -4,10 +4,10 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -46,7 +46,7 @@ import okio.SYSTEM
 class StorageCachedFileTest {
 
     private lateinit var dataDirectory: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var delegate: FakeBucketApi
 
     @BeforeTest
@@ -54,7 +54,7 @@ class StorageCachedFileTest {
         dataDirectory =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-cached-file-${Random.nextLong().toULong()}"
-        store = newTestOfflineStore(nowMillis = { FETCHED_AT_MILLIS })
+        store = newTestStore(nowMillis = { FETCHED_AT_MILLIS })
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
 

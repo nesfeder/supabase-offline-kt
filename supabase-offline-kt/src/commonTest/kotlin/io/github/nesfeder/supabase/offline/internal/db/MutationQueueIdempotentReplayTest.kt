@@ -6,7 +6,6 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -15,7 +14,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,7 +42,7 @@ import kotlinx.serialization.json.JsonObject
  */
 class MutationQueueIdempotentReplayTest {
 
-    private val store = newTestOfflineStore()
+    private val store = newTestStore()
 
     @Test
     fun an_insert_whose_response_was_lost_is_not_duplicated_by_its_replay() = runTest {
@@ -48,7 +50,7 @@ class MutationQueueIdempotentReplayTest {
         val server = FakeRelationalPostgrestServer()
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         val builder =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
             )
@@ -61,7 +63,8 @@ class MutationQueueIdempotentReplayTest {
 
         // When — the queue replays
         val synced =
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .syncAllTables()
 
         // Then — the replay lands as a no-op on the row the lost request already wrote
         assertEquals(1, synced)
@@ -72,11 +75,15 @@ class MutationQueueIdempotentReplayTest {
     @Test
     fun an_insert_that_was_never_sent_replays_as_a_plain_insert() = runTest {
         // Given — queued without ever reaching the server
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"t1","title":"Buy milk"}]"""),
+        )
         val server = RecordingPostgrestServer()
 
         // When
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+            .syncAllTables()
 
         // Then — nothing on the server can be its own, so a duplicate must be refused
         val request = server.requests.single()
@@ -90,10 +97,14 @@ class MutationQueueIdempotentReplayTest {
         // Given — another row already has the id this never-sent insert uses
         val server = FakeRelationalPostgrestServer()
         server.seed(TABLE, row("""{"id":"t1","title":"someone else's"}"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"t1","title":"Buy milk"}]"""),
+        )
 
         // When
-        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+        val report =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then — the server's own refusal reaches the rejected list; the other row is untouched
         assertEquals("23505", report.rejected.single().serverError?.code)
@@ -109,7 +120,8 @@ class MutationQueueIdempotentReplayTest {
             server.answer = { okJson("[]") }
 
             // When
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .syncAllTables()
 
             // Then
             val replay = server.requests.last()
@@ -130,7 +142,8 @@ class MutationQueueIdempotentReplayTest {
         server.answer = { okJson("[]") }
 
         // When
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+            .syncAllTables()
 
         // Then
         assertEquals("return=minimal", server.requests.last().prefer)
@@ -145,7 +158,8 @@ class MutationQueueIdempotentReplayTest {
         builderOn(server).insert(rows("""[{"id":"t1","title":"Buy milk"}]"""))
 
         // When — the replay's upsert has no constraint to match (42P10)
-        val report = MutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
+        val report =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient()).sync()
 
         // Then — sent again as the plain INSERT it is, rather than rejected
         assertEquals(1, report.syncedCount)
@@ -156,11 +170,12 @@ class MutationQueueIdempotentReplayTest {
     @Test
     fun an_insert_without_its_primary_key_replays_as_a_plain_insert() = runTest {
         // Given — the server generates the key, so nothing can make a replay idempotent
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"Buy milk"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"Buy milk"}]"""))
         val server = RecordingPostgrestServer()
 
         // When
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+            .syncAllTables()
 
         // Then
         val request = server.requests.single()
@@ -171,11 +186,15 @@ class MutationQueueIdempotentReplayTest {
     @Test
     fun a_multi_row_insert_where_one_row_lacks_the_key_replays_as_a_plain_insert() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1"},{"title":"no key"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"t1"},{"title":"no key"}]"""),
+        )
         val server = RecordingPostgrestServer()
 
         // When
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+            .syncAllTables()
 
         // Then
         assertEquals("return=minimal", server.requests.single().prefer)
@@ -186,20 +205,18 @@ class MutationQueueIdempotentReplayTest {
         // Given — the send started and the process died before any answer
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
-        val beforeTheCrash =
-            newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+        val beforeTheCrash = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
         val id =
-            beforeTheCrash.enqueueInsert(
+            beforeTheCrash.mutationQueue.enqueueInsert(
                 table = TABLE,
                 body = rows("""[{"id":"t1","title":"Buy milk"}]"""),
             )
-        beforeTheCrash.markSendUnconfirmed(id)
+        beforeTheCrash.mutationQueue.markSendUnconfirmed(id)
 
         // When — the next launch replays it
         val server = RecordingPostgrestServer()
-        val afterTheCrash =
-            newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
-        MutationQueueReplayer(store = afterTheCrash, supabase = server.supabaseClient())
+        val afterTheCrash = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+        newTestMutationQueueReplayer(store = afterTheCrash, supabase = server.supabaseClient())
             .syncAllTables()
 
         // Then — the server may already hold it, so the replay tolerates that
@@ -216,7 +233,7 @@ class MutationQueueIdempotentReplayTest {
         server.loseResponseAfterCommit = { request -> request.method == "POST" }
         builderOn(server).insert(rows("""[{"id":"t1","title":"Buy milk"}]"""))
         val replayer =
-            MutationQueueReplayer(
+            newTestMutationQueueReplayer(
                 store = store,
                 supabase = server.supabaseClient(),
                 engineLogger = logger.asEngineLogger(),
@@ -241,7 +258,8 @@ class MutationQueueIdempotentReplayTest {
         server.answer = { okJson("[]") }
 
         // When
-        MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+        newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+            .syncAllTables()
 
         // Then — missing columns still take their database default
         assertTrue("missing=default" in server.requests.last().prefer.orEmpty().split(','))
@@ -257,7 +275,8 @@ class MutationQueueIdempotentReplayTest {
         // When — the upsert commits, its response is lost, and the queue replays it
         val outcome = builderOn(server).upsert(rows("""[{"id":"t1","title":"new"}]"""))
         val synced =
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -278,7 +297,8 @@ class MutationQueueIdempotentReplayTest {
                 filter { eq("id", "t1") }
             }
         val synced =
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -300,7 +320,8 @@ class MutationQueueIdempotentReplayTest {
         // When
         val outcome = builderOn(server).delete { filter { eq("id", "t1") } }
         val synced =
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .syncAllTables()
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
@@ -317,20 +338,21 @@ class MutationQueueIdempotentReplayTest {
 
             // When
             builderOn(server).insert(rows("""[{"title":"Buy milk"}]"""))
-            MutationQueueReplayer(store = store, supabase = server.supabaseClient()).syncAllTables()
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                .syncAllTables()
 
             // Then — pinned as it is: two rows
             assertEquals(2, server.rows(TABLE).size)
         }
 
     private fun builderOn(server: FakeRelationalPostgrestServer): OfflineTable =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
         )
 
     private fun builderOn(server: RecordingPostgrestServer): OfflineTable =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
         )

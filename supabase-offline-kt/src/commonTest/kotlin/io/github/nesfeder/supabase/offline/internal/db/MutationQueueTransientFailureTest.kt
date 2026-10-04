@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -22,7 +23,7 @@ import kotlinx.serialization.json.JsonArray
  */
 class MutationQueueTransientFailureTest {
 
-    private val store = newTestOfflineStore()
+    private val store = newTestStore()
 
     @Test
     fun a_write_that_keeps_meeting_503_is_never_dropped() = runTest {
@@ -47,9 +48,10 @@ class MutationQueueTransientFailureTest {
     @Test
     fun a_write_that_keeps_meeting_connectivity_failures_is_never_dropped() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = ROWS)
+        store.mutationQueue.enqueueInsert(table = TABLE, body = ROWS)
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — far more sweeps than any retry budget
         repeat(SWEEPS) { replayer.syncAllTables() }
@@ -61,9 +63,10 @@ class MutationQueueTransientFailureTest {
 
     private suspend fun assertSurvives(status: HttpStatusCode) {
         // Given — a queued write and a server that keeps answering [status]
-        store.enqueueInsert(table = TABLE, body = ROWS)
+        store.mutationQueue.enqueueInsert(table = TABLE, body = ROWS)
         val server = RecordingPostgrestServer(answer = { postgrestError(status) })
-        val replayer = MutationQueueReplayer(store = store, supabase = server.supabaseClient())
+        val replayer =
+            newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
         // When — both entry points, far more often than the old five-strike budget
         repeat(SWEEPS) {

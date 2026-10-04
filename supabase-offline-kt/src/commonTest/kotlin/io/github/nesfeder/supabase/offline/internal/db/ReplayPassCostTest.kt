@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -21,13 +21,13 @@ import kotlinx.serialization.json.Json
 class ReplayPassCostTest {
 
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(mutationDao = mutationDao)
+    private val store = newTestStore(mutationDao = mutationDao)
 
     @Test
     fun a_pass_reads_the_whole_queue_a_constant_number_of_times() = runTest {
         // Given — 200 queued mutations of one identity
         repeat(QUEUED) { index ->
-            store.enqueueOwnedBy(USER.storedValue) {
+            store.mutationQueue.enqueueOwnedBy(USER.storedValue) {
                 enqueueUpdate(
                     TABLE,
                     Json.parseToJsonElement("""{"title":"$index"}"""),
@@ -39,7 +39,7 @@ class ReplayPassCostTest {
 
         // When
         val report =
-            MutationQueueReplayer(
+            newTestMutationQueueReplayer(
                     store = store,
                     supabase = RecordingPostgrestServer().supabaseClient(),
                     currentIdentity = { USER },

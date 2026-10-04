@@ -5,11 +5,12 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,17 +31,17 @@ class AcceptedWritePatchTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val logger = RecordingLogSink()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW }).apply {
-            engineLogger = logger.asEngineLogger(EngineLogLevel.WARNING)
-        }
 
     /** The queries the store asked to fetch again, by table. */
     private val markedStale = mutableListOf<Pair<String, Set<String>>>()
 
-    init {
-        store.onQueriesMarkedStale = { table, cacheKeys -> markedStale += table to cacheKeys }
-    }
+    private val store =
+        newTestStore(
+            queryCacheDao = queryCacheDao,
+            nowMillis = { NOW },
+            engineLogger = logger.asEngineLogger(EngineLogLevel.WARNING),
+            onQueriesMarkedStale = { table, cacheKeys -> markedStale += table to cacheKeys },
+        )
 
     @Test
     fun a_patch_let_in_as_a_first_answer_is_written_sees_that_answers_shape() = runTest {
@@ -60,14 +61,16 @@ class AcceptedWritePatchTest {
                     filter { eq("list", "A") }
                 },
             )
-        val writer = launch { store.addPayload(TASKS, LIST_A, LIST_A_ROWS, shape = listA) }
+        val writer = launch {
+            store.queryCache.cacheResponse(TASKS, LIST_A, LIST_A_ROWS, shape = listA)
+        }
         reached.await()
 
         // When — an accepted insert of a row of list B waits on the lock, and the lock's release
         // resumes it in place
         val patch =
             launch(Dispatchers.Unconfined) {
-                store.patchCachedQueries(
+                store.cachePatcher.patchCachedQueries(
                     table = TASKS,
                     operation = MutationOperation.INSERT,
                     bodyJson = """[{"id":2,"list":"B"}]""",
@@ -90,7 +93,7 @@ class AcceptedWritePatchTest {
         store.recordQueryShape(TABLE, CACHE_KEY) {}
 
         // When — the insert's patch arrives
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = TABLE,
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":7,"title":"new"}]""",
@@ -117,7 +120,7 @@ class AcceptedWritePatchTest {
             store.recordQueryShape(TABLE, CACHE_KEY) {}
 
             // When — an upsert of the same setting, with no conflict columns
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 table = TABLE,
                 operation = MutationOperation.UPSERT,
                 bodyJson = """[{"key":"theme","value":"light"}]""",
@@ -138,7 +141,7 @@ class AcceptedWritePatchTest {
 
         // When — two writes whose bodies the patch cannot read
         repeat(2) {
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 table = TABLE,
                 operation = MutationOperation.INSERT,
                 bodyJson = "not json",

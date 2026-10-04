@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.toByteArray
@@ -38,7 +38,7 @@ class StoragePathContainmentTest {
     private lateinit var root: Path
     private lateinit var dataDirectory: Path
     private lateinit var sentinel: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var delegate: FakeBucketApi
 
     @BeforeTest
@@ -50,7 +50,7 @@ class StoragePathContainmentTest {
         sentinel = root / SENTINEL_NAME
         FileSystem.SYSTEM.createDirectories(dataDirectory)
         FileSystem.SYSTEM.write(sentinel) { writeUtf8(SENTINEL_CONTENT) }
-        store = newTestOfflineStore()
+        store = newTestStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
 
@@ -293,7 +293,7 @@ class StoragePathContainmentTest {
         val cache = newTestFileCache(baseDirectory = dataDirectory, store = store)
 
         // When
-        cache.clear { store.clearLocalData() }
+        cache.clear { store.localData.clearLocalData() }
 
         // Then
         assertTrue(
@@ -364,7 +364,7 @@ class StoragePathContainmentTest {
                 .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
                 .toList(),
         )
-        assertTrue(store.allCachedFileRows().isEmpty())
+        assertTrue(store.cachedFileDao.all().isEmpty())
         assertNothingEscaped()
     }
 

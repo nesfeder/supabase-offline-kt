@@ -9,7 +9,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.ktor.http.HttpStatusCode
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.test.Test
@@ -46,12 +45,10 @@ class BackgroundPassCoalescingTest {
                 answer = { connectivityFailure() },
                 engineDispatcher = testDispatcher,
             )
-        val store = newTestOfflineStore()
         val clientScope = CoroutineScope(SupervisorJob() + testDispatcher)
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store = store,
                 coordinatorScope = clientScope,
             )
         client.from(TABLE).update(Json.parseToJsonElement("""{"title":"poison"}""")) {

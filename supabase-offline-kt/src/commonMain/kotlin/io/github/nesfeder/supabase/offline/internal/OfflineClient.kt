@@ -12,6 +12,7 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.storage
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.OfflineInternal
@@ -22,14 +23,25 @@ import io.github.nesfeder.supabase.offline.RejectedMutation
 import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
+import io.github.nesfeder.supabase.offline.internal.cache.CacheOwnership
+import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
+import io.github.nesfeder.supabase.offline.internal.cache.LocalData
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
-import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.cache.buildCacheComponents
+import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
+import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -101,13 +113,20 @@ import okio.SYSTEM
 
 /**
  * The client behind [Offline]: one database's cache, mutation queue and Storage file cache, serving
- * one [SupabaseClient]. It wires the store, the table engines, the replayer and the file cache, and
- * owns their lifecycle through its operation gate.
+ * one [SupabaseClient]. It builds the cache and queue components over the database's tables, the
+ * table engines, the replayer and the file cache, and owns their lifecycle through its gate.
  */
 @OptIn(SupabaseInternal::class, OfflineInternal::class, ExperimentalAtomicApi::class)
 internal class OfflineClient(
     override val supabaseClient: SupabaseClient,
-    private val store: OfflineStore,
+    /** The cached queries' table, which also holds the engine's reserved rows. */
+    queryCacheDao: QueryCacheDao,
+    /** The Storage file cache's table. */
+    cachedFileDao: CachedFileDao,
+    /** The mutation queue's table. */
+    mutationDao: MutationDao,
+    /** When the query cache evicts, and how much. */
+    queryCacheLimits: QueryCacheLimits,
     private val baseDirectoryProvider: () -> Path,
     private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     /**
@@ -132,7 +151,7 @@ internal class OfflineClient(
     prepareFileCacheDirectories: Boolean = false,
     /**
      * Rewrites the database without the rows [clearLocalData] deleted, so none can be read back
-     * from its files. The factories pass the database's own; the in-memory store has no files.
+     * from its files. The factories pass the database's own; the in-memory tables have no files.
      */
     private val scrubDatabase: suspend () -> Unit = {},
     /** Releases what the factory opened — the database and its registration — on [close]. */
@@ -153,8 +172,12 @@ internal class OfflineClient(
     fileSystem: FileSystem = FileSystem.SYSTEM,
     /** Records a use time on one of [fileSystem]'s files. */
     markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
-    /** The time the client's reads and file cache see; the store keeps its own. */
+    /** The time the client's reads and file cache see; rows are stamped by [rowClock]. */
     private val clock: Clock = Clock.System,
+    /** The clock the cached queries, the queue and the cached files' rows are stamped with. */
+    rowClock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    /** The one tick source of the watermarks and of request starts; see [CacheFreshness]. */
+    monotonicTick: () -> Long = monotonicTickSource(),
     /** Where file work runs. */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     /** Where [close] waits out its bound, which is real time unless a test injects otherwise. */
@@ -228,10 +251,93 @@ internal class OfflineClient(
     /** Where [storage]'s buckets see an image transform's requests go; resolved on first use. */
     private val renderImagePath: String by lazy { renderImagePathOf(supabaseClient) }
 
+    /**
+     * Client-scoped coordinator shared by every builder this client creates: single-flight refresh
+     * sharing per `(table, cacheKey)` plus the live-query registry that backs materialize-on-write
+     * in [CachePatcher.patchCachedQueries].
+     */
+    private val liveQueries = LiveQueries(clientScope, engineLogger)
+
+    /** The identity the overlay and counts are for, read once per session status. */
+    private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
+
+    /**
+     * A read or write found the cache another identity's: [keepCacheWithTheSession] looks again.
+     */
+    private val cacheOwnerChecks =
+        MutableSharedFlow<Unit>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
+    /** The cache and the mutation queue, built bottom up over the database's tables. */
+    private val components =
+        buildCacheComponents(
+            queryCacheDao = queryCacheDao,
+            cachedFileDao = cachedFileDao,
+            mutationDao = mutationDao,
+            queryCacheLimits = queryCacheLimits,
+            nowMillis = rowClock,
+            monotonicTick = monotonicTick,
+            primaryKeys = primaryKeys,
+            identityProvider = ::overlayIdentityValue,
+            identityChanges = sessionChanges(),
+            isCacheOwnedPerIdentity = authPluginOrNull() != null,
+            ownerlessMutationsAreAnonymous = authPluginOrNull() == null,
+            engineLogger = engineLogger,
+            liveCacheKeysOf = liveQueries::liveCacheKeysOf,
+            allLiveCacheKeys = liveQueries::allLiveCacheKeys,
+            onQueriesMarkedStale = { table, cacheKeys ->
+                liveQueries.requestRefresh(table, cacheKeys)
+            },
+            onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) },
+        )
+
+    /*
+     * The parts the client calls. The three internal ones are not private for one test each, which
+     * no public call can drive deterministically.
+     */
+
+    /**
+     * The watermarks and the clear lock. `ClearLocalDataDuringWritesTest` reads the tick a response
+     * started at, to race it against a clear.
+     */
+    internal val freshness: CacheFreshness = components.freshness
+
+    /** Whose the caches are: one identity's at a time with the Auth plugin, for good without. */
+    private val cacheOwnership: CacheOwnership = components.cacheOwnership
+
+    /**
+     * The mutation queue; the overlay and the counts show the current session's writes only.
+     * `ClearLocalDataDuringWritesTest` queues writes on it and reads its rejected list around a
+     * clear.
+     */
+    internal val mutationQueue: MutationQueue = components.mutationQueue
+
+    /**
+     * The cached queries. `ClearLocalDataDuringWritesTest` caches a response through it during a
+     * clear, and `QueryShapeRecordsTest` reads its query-shape records.
+     */
+    internal val queryCache: QueryCache = components.queryCache
+
+    /** The reads served with the queued mutations laid over them. */
+    private val queryOverlay: QueryOverlay = components.queryOverlay
+
+    /**
+     * Patches an online write into the cached queries; a query it marks stale fetches again if
+     * live.
+     */
+    private val cachePatcher: CachePatcher = components.cachePatcher
+
+    /** Clears local data, or drops the caches for a new owner, in the one lock order. */
+    private val localData: LocalData = components.localData
+
     /** The Storage file cache every bucket of this client shares. */
     private val fileCache =
         StorageFileCache(
-            store = store,
+            cachedFileDao = cachedFileDao,
+            ownership = cacheOwnership,
+            fetchedAtMillis = rowClock,
             dataDirectoryProvider = baseDirectoryProvider,
             maxSizeBytes = fileCacheMaxBytes,
             engineLogger = engineLogger,
@@ -243,7 +349,8 @@ internal class OfflineClient(
 
     private val mutationQueueReplayer =
         MutationQueueReplayer(
-            store,
+            mutationQueue,
+            freshness,
             supabaseClient,
             engineLogger = engineLogger,
             networkAccess = networkAccess,
@@ -264,49 +371,14 @@ internal class OfflineClient(
     private val json = EngineJson
 
     /**
-     * Client-scoped coordinator shared by every builder this client creates: single-flight refresh
-     * sharing per `(table, cacheKey)` plus the live-signature registry that backs
-     * materialize-on-write in [OfflineStore.patchCachedQueries].
-     */
-    private val liveQueries = LiveQueries(clientScope, engineLogger)
-
-    /**
      * SDK-internal recovery accelerator merging auth-session-restored and connectivity-regained
      * edges. Forwarded to every builder to short-circuit a stalled refresh's backoff.
      */
     private val wakeUps: Flow<Unit> =
         refreshWakeUps(supabaseClient, networkAccess.reconnections, responseTrust)
 
-    /** The identity the overlay and counts are for, read once per session status. */
-    private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
-
-    /**
-     * A read or write found the cache another identity's: [keepCacheWithTheSession] looks again.
-     */
-    private val cacheOwnerChecks =
-        MutableSharedFlow<Unit>(
-            extraBufferCapacity = 1,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-        )
-
     init {
         if (prepareFileCacheDirectories) fileCache.prepareDirectories()
-        // Let the store see which signatures are live so a server-successful mutation materializes
-        // into a real cache row for a cache-less-but-observed subscription.
-        store.liveCacheKeysOf = liveQueries::liveCacheKeysOf
-        store.allLiveCacheKeys = liveQueries::allLiveCacheKeys
-        store.onQueriesMarkedStale = { table, cacheKeys ->
-            liveQueries.requestRefresh(table, cacheKeys)
-        }
-        store.engineLogger = engineLogger
-        store.primaryKeys = primaryKeys
-        // Overlays and counts show the current session's queued writes only.
-        store.identityProvider = ::overlayIdentityValue
-        store.identityChanges = sessionChanges()
-        store.ownerlessMutationsAreAnonymous = authPluginOrNull() == null
-        // The cache is one identity's at a time; without Auth there is only one
-        store.isCacheOwnedPerIdentity = authPluginOrNull() != null
-        store.onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) }
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
         // and not added while requests may be walking it.
         supabaseClient.installDryRunCheck()
@@ -347,7 +419,8 @@ internal class OfflineClient(
         clientScope.launch {
             auth.sessionStatus.collect { status ->
                 val identity = replayIdentityFor(status) ?: return@collect
-                if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
+                if (mutationQueue.hasPendingMutationsOf(identity.storedValue))
+                    automaticReplay.requestPass()
             }
         }
     }
@@ -361,7 +434,8 @@ internal class OfflineClient(
         if (!autoSync) return
         val identity = supabaseClient.currentReplayIdentity() ?: return
         try {
-            if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
+            if (mutationQueue.hasPendingMutationsOf(identity.storedValue))
+                automaticReplay.requestPass()
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
@@ -407,14 +481,14 @@ internal class OfflineClient(
      */
     private suspend fun settleCacheOwner(identity: QueueIdentity) {
         if (
-            store.cacheOwnerClaimingFor(identity.storedValue, claimsForUser = true) ==
+            cacheOwnership.cacheOwnerClaimingFor(identity.storedValue, claimsForUser = true) ==
                 identity.storedValue
         )
             return
         // The send lock alone: no pass is stopped, as none of the queue goes
         mutationQueueReplayer.holdingSends {
             fileCache.clear {
-                store.dropCacheFor(identity.storedValue)
+                localData.dropCacheFor(identity.storedValue)
                 scrubDatabase()
             }
         }
@@ -446,7 +520,12 @@ internal class OfflineClient(
         val engine =
             OfflineTable(
                 delegate = delegate,
-                store = store,
+                queryCache = queryCache,
+                queryOverlay = queryOverlay,
+                mutationQueue = mutationQueue,
+                cachePatcher = cachePatcher,
+                freshness = freshness,
+                primaryKeys = primaryKeys,
                 engineLogger = engineLogger,
                 requestSession = ::requestSession,
                 trustPolicy = responseTrust,
@@ -511,18 +590,21 @@ internal class OfflineClient(
 
     override fun pendingMutations(table: String?): Flow<List<PendingMutation>> =
         operationGate.callCollecting(
-            store.shownPendingMutationsFlow(table).map { rows ->
-                rows.mapNotNull { row -> row.toPendingMutation(store.json, primaryKeys) }
+            mutationQueue.shownPendingMutationsFlow(table).map { rows ->
+                rows.mapNotNull { row -> row.toPendingMutation(EngineJson, primaryKeys) }
             }
         )
 
     override suspend fun pendingMutationCount(table: String?): Int = operationGate.call {
-        store.shownPendingMutationCount(table)
+        mutationQueue.shownPendingMutationCount(table)
     }
 
     override fun pendingMutationCountFlow(table: String?): Flow<Int> =
         operationGate.callCollecting(
-            store.shownPendingMutationsFlow(table).map { rows -> rows.size }.distinctUntilChanged()
+            mutationQueue
+                .shownPendingMutationsFlow(table)
+                .map { rows -> rows.size }
+                .distinctUntilChanged()
         )
 
     /**
@@ -532,29 +614,29 @@ internal class OfflineClient(
     override suspend fun discardPendingMutation(id: Long): Unit = operationGate.call {
         val identity = supabaseClient.currentQueueIdentity() ?: return@call
         if (!mutationQueueReplayer.discardPendingMutationOnceUnsent(id, identity)) return@call
-        if (store.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
+        if (mutationQueue.hasPendingMutationsOf(identity.storedValue)) automaticReplay.requestPass()
     }
 
     override fun rejectedMutations(): Flow<List<RejectedMutation>> =
         operationGate.callCollecting(
-            store.shownRejectionsFlow().map { entries ->
-                entries.map { entry -> entry.toRejectedMutation(store.json, primaryKeys).shown() }
+            mutationQueue.shownRejectionsFlow().map { entries ->
+                entries.map { entry -> entry.toRejectedMutation(EngineJson, primaryKeys).shown() }
             }
         )
 
     override suspend fun dismissRejectedMutation(id: Long): Unit = operationGate.call {
         val identity = supabaseClient.currentQueueIdentity() ?: return@call
-        store.dismissRejectedMutationOf(id, identity.storedValue)
+        mutationQueue.dismissRejectedMutationOf(id, identity.storedValue)
     }
 
     override suspend fun retryRejectedMutation(id: Long): Unit = operationGate.call {
         val identity = supabaseClient.currentQueueIdentity() ?: return@call
-        val entry = store.shownRejection(id, identity.storedValue) ?: return@call
+        val entry = mutationQueue.shownRejection(id, identity.storedValue) ?: return@call
         require(entry.bodyOmittedChars == null) {
             "This rejected mutation cannot be retried: its body was too large to keep " +
                 "(RejectedMutation.isRetryable is false)"
         }
-        store.retryRejectedMutation(id, identity.storedValue) ?: return@call
+        mutationQueue.retryRejectedMutation(id, identity.storedValue) ?: return@call
         automaticReplay.requestPass()
     }
 
@@ -567,7 +649,7 @@ internal class OfflineClient(
                 when (report.stop) {
                     SyncStop.SessionNotReady,
                     SyncStop.IdentityUnknown,
-                    SyncStop.NetworkDisabled -> store.shownPendingMutationCount(table)
+                    SyncStop.NetworkDisabled -> mutationQueue.shownPendingMutationCount(table)
                     else -> report.remainingCount
                 }
             report.copy(remainingCount = remaining).shown()
@@ -646,7 +728,7 @@ internal class OfflineClient(
             // The two flows only say when to count; both counts are read in one snapshot under the
             // queue's lock, so a write moving between the queue and the rejected list is counted
             // once, and an older snapshot never lands after a newer one
-            merge(store.queueChanges(), store.shownRejectionsFlow().map {})
+            merge(mutationQueue.queueChanges(), mutationQueue.shownRejectionsFlow().map {})
                 .conflate()
                 .catch { failure ->
                     engineLogger.warning {
@@ -671,7 +753,7 @@ internal class OfflineClient(
      */
     private suspend fun queueCountsOrNull(): ShownQueueCounts? =
         try {
-            store.shownQueueCounts()
+            mutationQueue.shownQueueCounts()
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
@@ -710,7 +792,7 @@ internal class OfflineClient(
     private suspend fun sessionQueueIsEmpty(): Boolean {
         val identity = supabaseClient.currentReplayIdentity() ?: return false
         return try {
-            !store.hasPendingMutationsOf(identity.storedValue)
+            !mutationQueue.hasPendingMutationsOf(identity.storedValue)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
@@ -778,7 +860,7 @@ internal class OfflineClient(
             }
             return@call
         }
-        store.patchCachedQueries(
+        cachePatcher.patchCachedQueries(
             table = cachedTable,
             operation = MutationOperation.UPSERT,
             bodyJson = JsonArray(listOf(record)).toString(),
@@ -803,7 +885,7 @@ internal class OfflineClient(
             }
             return@call
         }
-        store.patchCachedQueries(
+        cachePatcher.patchCachedQueries(
             table = cachedTable,
             operation = MutationOperation.DELETE,
             bodyJson = "{}",
@@ -849,10 +931,10 @@ internal class OfflineClient(
 
     /**
      * Clears once, locks outermost first: the replayer's send lock, after it cancels passes in
-     * flight; the file cache's lock; the store's, and innermost the cache-owner record's, around
-     * [OfflineStore.clearLocalData]'s one transaction. Signed out, that transaction records the
-     * emptied cache as nobody's; a user's first use claims it, so no user id is written back by the
-     * clear. The scrub runs after that transaction, and the cache files go last.
+     * flight; the file cache's lock; the queue's and the clear lock, and innermost the cache-owner
+     * record's, around [LocalData.clearLocalData]'s one transaction. Signed out, that transaction
+     * records the emptied cache as nobody's; a user's first use claims it, so no user id is written
+     * back by the clear. The scrub runs after that transaction, and the cache files go last.
      */
     override suspend fun clearLocalData(): Unit = operationGate.call {
         val owner =
@@ -862,7 +944,7 @@ internal class OfflineClient(
             }
         mutationQueueReplayer.clearLocalData {
             fileCache.clear {
-                store.clearLocalData(owner)
+                localData.clearLocalData(owner)
                 scrubDatabase()
             }
         }
@@ -932,8 +1014,8 @@ internal class OfflineClient(
      * [rejectedMutations]. Throws if the persisted list cannot be decoded.
      */
     internal suspend fun rejectedMutationList(): List<EngineRejectedMutation> = operationGate.call {
-        store.rejectedList.rejections().map { entry ->
-            entry.toRejectedMutation(store.json, primaryKeys)
+        mutationQueue.rejectedList.rejections().map { entry ->
+            entry.toRejectedMutation(EngineJson, primaryKeys)
         }
     }
 

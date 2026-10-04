@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -32,7 +32,7 @@ import okio.SYSTEM
 class StorageContainerMoveTest {
 
     private lateinit var root: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var delegate: FakeBucketApi
 
     @BeforeTest
@@ -41,7 +41,7 @@ class StorageContainerMoveTest {
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-container-${Random.nextLong().toULong()}"
         FileSystem.SYSTEM.createDirectories(root)
-        store = newTestOfflineStore()
+        store = newTestStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
 

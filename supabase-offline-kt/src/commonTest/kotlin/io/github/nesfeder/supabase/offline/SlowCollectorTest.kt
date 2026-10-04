@@ -10,7 +10,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -62,7 +61,6 @@ class SlowCollectorTest {
                     coroutineDispatcher = dispatcher
                     install(Postgrest)
                 },
-            store = newTestOfflineStore(),
             coordinatorScope = backgroundScope,
         )
     }

@@ -4,18 +4,19 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.cache.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,18 +39,18 @@ import kotlinx.serialization.json.JsonElement
 class HeadSendTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
-    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = QueueIdentity.Anonymous
     private var syncRequests = 0
     private val replayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
             currentIdentity = { session },
         )
     private val builder =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
@@ -67,8 +68,8 @@ class HeadSendTest {
 
         // When / Then — the caller gets the refusal; nothing is queued or put on the rejected list
         assertFailsWith<PostgrestRestException> { rename("A") }
-        assertEquals(0, store.allPendingMutations().size)
-        assertEquals(emptyList(), store.rejectedList.rejections())
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
     }
 
     @Test
@@ -78,7 +79,7 @@ class HeadSendTest {
 
         // When / Then
         assertFailsWith<PostgrestRestException> { rename("A") }
-        assertEquals(0, store.allPendingMutations().size)
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -91,7 +92,7 @@ class HeadSendTest {
 
         // Then — queued, and nothing asked for a pass while offline
         assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
         assertEquals(0, syncRequests)
     }
 
@@ -116,7 +117,7 @@ class HeadSendTest {
         assertEquals(SyncStop.HeadInFlight, report.stop)
         assertEquals(MutationOutcome.Applied::class, write.await()::class)
         assertEquals(1, server.requests.size)
-        assertEquals(0, store.allPendingMutations().size)
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -140,7 +141,7 @@ class HeadSendTest {
         // Then — one pass asked for by the queued write, one by the head once it landed
         assertIs<MutationOutcome.Queued>(second)
         assertEquals(2, syncRequests)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -148,7 +149,7 @@ class HeadSendTest {
         // Given — the write is made as user A, and the session is already user B when it would go
         // out
         val asUserA =
-            OfflineTable(
+            newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),
                 store = store,
                 queueIdentity = { USER_A },
@@ -181,7 +182,7 @@ class HeadSendTest {
         // Then — it went straight out, ahead of the queued write
         assertEquals(MutationOutcome.Applied::class, outcome::class)
         assertEquals("""{"title":"B"}""", server.requests.last().body)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -206,7 +207,7 @@ class HeadSendTest {
             // Then — it goes out at once, ahead of the queued write, and is never queued
             assertEquals(MutationOutcome.Applied::class, outcome::class)
             assertEquals("""{"title":"B"}""", server.requests.last().body)
-            assertEquals(1, store.allPendingMutations().size)
+            assertEquals(1, store.mutationQueue.allPendingMutations().size)
         }
 
     @Test
@@ -224,7 +225,7 @@ class HeadSendTest {
         write.cancelAndJoin()
 
         // Then — it may have reached the server, so it stays queued to replay
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
         assertEquals(1, syncRequests)
     }
 
@@ -240,7 +241,7 @@ class HeadSendTest {
         // Then — the server applied it, so the caller is told so, and nothing will send it again
         assertEquals(MutationOutcome.Applied::class, outcome.getOrThrow()::class)
         assertEquals(1, server.requests.size)
-        assertEquals(0, store.allPendingMutations().size)
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -281,7 +282,7 @@ class HeadSendTest {
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -294,7 +295,7 @@ class HeadSendTest {
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -302,7 +303,7 @@ class HeadSendTest {
         // Given — a queued write that a pass is sending, held open by the server
         session = USER_A
         val id =
-            (store.enqueueOwnedBy(USER_A.storedValue) {
+            (store.mutationQueue.enqueueOwnedBy(USER_A.storedValue) {
                     enqueueUpdate(TABLE, patch("A"), byId("1"))
                 } as EnqueueOutcome.Queued)
                 .id

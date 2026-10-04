@@ -3,16 +3,17 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,17 +35,17 @@ import kotlinx.serialization.json.JsonElement
 class DiscardPendingMutationTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
-    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = USER_A
     private val replayer =
-        MutationQueueReplayer(
+        newTestMutationQueueReplayer(
             store = store,
             supabase = server.supabaseClient(),
             currentIdentity = { session },
         )
     private val builder =
-        OfflineTable(
+        newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
             store = store,
             queueIdentity = { session },
@@ -67,7 +68,7 @@ class DiscardPendingMutationTest {
             else okJson("[]")
         }
         val stuck = replayer.sync()
-        val poison = store.allPendingMutations().first()
+        val poison = store.mutationQueue.allPendingMutations().first()
 
         // When
         val discarded = replayer.discardPendingMutation(poison.id, session)
@@ -78,7 +79,7 @@ class DiscardPendingMutationTest {
         assertTrue(discarded)
         assertEquals(1, report.syncedCount)
         assertEquals("""{"title":"fine"}""", server.requests.last().body)
-        assertEquals(0, store.allPendingMutations().size)
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -88,16 +89,19 @@ class DiscardPendingMutationTest {
         renameOffline(1, "renamed")
         assertEquals(
             """[{"id":1,"title":"renamed"}]""",
-            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
 
         // When
-        replayer.discardPendingMutation(store.allPendingMutations().single().id, session)
+        replayer.discardPendingMutation(
+            store.mutationQueue.allPendingMutations().single().id,
+            session,
+        )
 
         // Then
         assertEquals(
             """[{"id":1,"title":"original"}]""",
-            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
     }
 
@@ -108,11 +112,14 @@ class DiscardPendingMutationTest {
 
         // When — user B tries to discard it
         val discarded =
-            replayer.discardPendingMutation(store.allPendingMutations().single().id, USER_B)
+            replayer.discardPendingMutation(
+                store.mutationQueue.allPendingMutations().single().id,
+                USER_B,
+            )
 
         // Then
         assertFalse(discarded)
-        assertEquals(1, store.allPendingMutations().size)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
     }
 
     @Test
@@ -130,7 +137,10 @@ class DiscardPendingMutationTest {
 
         // When
         val discarded =
-            replayer.discardPendingMutation(store.allPendingMutations().single().id, session)
+            replayer.discardPendingMutation(
+                store.mutationQueue.allPendingMutations().single().id,
+                session,
+            )
         release.complete(Unit)
 
         // Then — too late: it is already going out

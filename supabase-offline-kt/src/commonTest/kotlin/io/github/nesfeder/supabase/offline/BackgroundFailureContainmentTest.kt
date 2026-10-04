@@ -3,7 +3,8 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -13,7 +14,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingUncaughtExceptions
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import kotlin.test.AfterTest
@@ -66,7 +66,7 @@ class BackgroundFailureContainmentTest {
         // Given — the first cache write of a reactive read's refresh fails
         val cacheDao = FakeQueryCacheDao().apply { failNextUpsertOf { true } }
         server.answer = { okJson(ROWS) }
-        val client = clientOver(newTestOfflineStore(queryCacheDao = cacheDao))
+        val client = clientOver(queryCacheDao = cacheDao)
 
         // When — the read refreshes, fails, and tries again on its schedule
         val rows =
@@ -90,7 +90,7 @@ class BackgroundFailureContainmentTest {
     fun a_replay_pass_that_fails_is_logged_and_the_queue_still_sends() = runTest {
         // Given — one write queued offline, and recording the next send will fail
         val mutationDao = FakeMutationDao()
-        val client = clientOver(newTestOfflineStore(mutationDao = mutationDao))
+        val client = clientOver(mutationDao = mutationDao)
         server.answer = { connectivityFailure() }
         client.from(TABLE).insert(rowsToWrite(id = 1, title = "first"))
         server.answer = { okJson("[]") }
@@ -119,7 +119,7 @@ class BackgroundFailureContainmentTest {
         val client =
             newTestOfflineClient(
                 supabase = supabase,
-                store = newTestOfflineStore(mutationDao = mutationDao),
+                mutationDao = mutationDao,
                 engineLogger = logs.asEngineLogger(),
                 coordinatorScope = appScope,
             )
@@ -159,11 +159,15 @@ class BackgroundFailureContainmentTest {
         client.close()
     }
 
-    /** A client over [store] whose work runs in the app's scope and logs to [logs]. */
-    private fun clientOver(store: OfflineStore): OfflineClient =
+    /** A client over the given tables whose work runs in the app's scope and logs to [logs]. */
+    private fun clientOver(
+        queryCacheDao: QueryCacheDao = FakeQueryCacheDao(),
+        mutationDao: MutationDao = FakeMutationDao(),
+    ): OfflineClient =
         newTestOfflineClient(
             supabase = newTestSupabaseClient(server.engine),
-            store = store,
+            queryCacheDao = queryCacheDao,
+            mutationDao = mutationDao,
             engineLogger = logs.asEngineLogger(),
             coordinatorScope = appScope,
         )

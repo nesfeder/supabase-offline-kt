@@ -15,9 +15,11 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
+import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.ServedPayload
 import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
@@ -25,6 +27,7 @@ import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.ktor.http.Headers
 import kotlin.time.Clock
@@ -112,7 +115,10 @@ private class NetworkAnswer(val result: PostgrestResult, val wasCached: Boolean)
  */
 internal class QueryReader(
     private val delegate: RemoteTable,
-    private val store: OfflineStore,
+    private val queryCache: QueryCache,
+    private val queryOverlay: QueryOverlay,
+    private val mutationQueue: MutationQueue,
+    private val freshness: CacheFreshness,
     private val engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
@@ -378,7 +384,7 @@ internal class QueryReader(
      */
     private fun cacheOnlyWithState(slot: CacheSlot): Flow<QuerySnapshot> =
         snapshotsOf(
-            store.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape),
+            queryOverlay.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape),
             flowOf(ReadProgress(RefreshState.Idle, confirmedFetchedAt = null)),
         )
 
@@ -395,7 +401,7 @@ internal class QueryReader(
         var confirmedByRefresh: Long? = null
         val payloads =
             cacheFirstWithParallelRefresh(
-                cache = store.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape),
+                cache = queryOverlay.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape),
                 refresh = {
                     refreshLoggingFailures(slot.table) {
                         refreshFromNetwork(slot, columns, request)
@@ -513,7 +519,8 @@ internal class QueryReader(
      * otherwise.
      */
     private suspend fun fetchedAtOfCached(slot: CacheSlot): Long? {
-        val (_, updatedAt) = store.getPayloadWithTimestamp(slot.table, slot.cacheKey) ?: return null
+        val (_, updatedAt) =
+            queryCache.getPayloadWithTimestamp(slot.table, slot.cacheKey) ?: return null
         return if (isStaleStamp(updatedAt)) null else fetchedAtOf(updatedAt)
     }
 
@@ -561,7 +568,7 @@ internal class QueryReader(
         request: SelectRequestBuilder.() -> Unit,
     ): Flow<QuerySnapshot> = flow {
         val unconfirmedBy = bootstrapFromNetwork(slot, columns, request)
-        val cache = store.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape)
+        val cache = queryOverlay.servedPayloadFlow(slot.table, slot.cacheKey, slot.shape)
         if (unconfirmedBy == null) {
             val confirmed = ReadProgress(RefreshState.Idle, fetchedAtOfCached(slot))
             emitAll(snapshotsOf(cache, flowOf(confirmed)))
@@ -661,15 +668,15 @@ internal class QueryReader(
         var sessionBefore = sessionBeforeFirstRequest
         var refetchBudget = STALE_RESPONSE_REFETCH_BUDGET
         while (true) {
-            val requestStartedAtTick = store.monotonicTickNow()
+            val requestStartedAtTick = freshness.tickNow()
             val response = send(slot, columns, request, retries)
             engineLogger.debug { "SELECT $table network response: ${response.data}" }
             val sessionAfter = requestSession()
             val isEmpty = isEmptyJsonArrayPayload(response.data)
-            // An empty response goes through the store's empty guard, a non-empty one through the
-            // trust check
+            // An empty response goes through the query cache's empty guard, a non-empty one through
+            // the trust check
             val outcome =
-                store.addPayload(
+                queryCache.cacheResponse(
                     table = table,
                     cacheKey = cacheKey,
                     payload = response.data,
@@ -698,7 +705,7 @@ internal class QueryReader(
                 // The tick goes along, so a replay that landed after this request left still blocks
                 // it
                 CacheWriteOutcome.WRITTEN ->
-                    store.retireCoveredSyncedMutations(table, requestStartedAtTick)
+                    mutationQueue.retireCoveredSyncedMutations(table, requestStartedAtTick)
                 else -> Unit
             }
             return FetchedResponse(response, sessionBefore, sessionAfter, outcome, nowMillis())
@@ -719,12 +726,12 @@ internal class QueryReader(
                 engineLogger.warning {
                     "SELECT $table response still predates a local write; serving cached state"
                 }
-                store.getPayloadWithTimestamp(table, cacheKey)
+                queryCache.getPayloadWithTimestamp(table, cacheKey)
             } else {
                 null
             }
         val overlaid =
-            store.overlayPendingOnResponseReporting(
+            queryOverlay.overlayPendingOnResponseReporting(
                 table = table,
                 cacheKey = cacheKey,
                 serverJson = cached?.first ?: fetched.response.data,
@@ -799,11 +806,12 @@ internal class QueryReader(
         servesStale: Boolean,
     ): PostgrestResult? {
         val (table, cacheKey) = slot
-        val (payload, updatedAt) = store.getPayloadWithTimestamp(table, cacheKey) ?: return null
+        val (payload, updatedAt) =
+            queryCache.getPayloadWithTimestamp(table, cacheKey) ?: return null
         if (!servesStale && isStaleStamp(updatedAt)) return null
         if (!isFresh(fetchedAtOf(updatedAt), cacheDuration)) return null
         val overlaid =
-            store.overlayCachedPayloadReporting(
+            queryOverlay.overlayCachedPayloadReporting(
                 table = table,
                 cacheKey = cacheKey,
                 cachedJson = payload,
@@ -826,7 +834,7 @@ internal class QueryReader(
      */
     private suspend fun hasFreshCache(slot: CacheSlot, cacheDuration: Duration?): Boolean {
         val (_, updatedAt) =
-            store.getPayloadWithTimestamp(slot.table, slot.cacheKey) ?: return false
+            queryCache.getPayloadWithTimestamp(slot.table, slot.cacheKey) ?: return false
         return isFresh(fetchedAtOf(updatedAt), cacheDuration)
     }
 

@@ -16,7 +16,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -139,12 +138,9 @@ class MutationQueueAcrossCloseTest {
         val first =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store =
-                    newTestOfflineStore(
-                        queryCacheDao = objects,
-                        cachedFileDao = storage,
-                        mutationDao = mutations,
-                    ),
+                queryCacheDao = objects,
+                cachedFileDao = storage,
+                mutationDao = mutations,
                 coordinatorScope = idleCoroutineScope(),
                 closeWait = IDLE_CLOSE_WAIT,
             )
@@ -165,12 +161,9 @@ class MutationQueueAcrossCloseTest {
         val reopened =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store =
-                    newTestOfflineStore(
-                        queryCacheDao = objects,
-                        cachedFileDao = storage,
-                        mutationDao = mutations,
-                    ),
+                queryCacheDao = objects,
+                cachedFileDao = storage,
+                mutationDao = mutations,
                 coordinatorScope = idleCoroutineScope(),
                 closeWait = IDLE_CLOSE_WAIT,
             )
@@ -214,12 +207,9 @@ class MutationQueueAcrossCloseTest {
             val first =
                 newTestOfflineClient(
                     supabase = server.supabaseClient(),
-                    store =
-                        newTestOfflineStore(
-                            queryCacheDao = objects,
-                            cachedFileDao = storage,
-                            mutationDao = mutations,
-                        ),
+                    queryCacheDao = objects,
+                    cachedFileDao = storage,
+                    mutationDao = mutations,
                     coordinatorScope = idleCoroutineScope(),
                     closeWait = 5.seconds,
                 )
@@ -238,12 +228,9 @@ class MutationQueueAcrossCloseTest {
             val reopened =
                 newTestOfflineClient(
                     supabase = server.supabaseClient(),
-                    store =
-                        newTestOfflineStore(
-                            queryCacheDao = objects,
-                            cachedFileDao = storage,
-                            mutationDao = mutations,
-                        ),
+                    queryCacheDao = objects,
+                    cachedFileDao = storage,
+                    mutationDao = mutations,
                     coordinatorScope = idleCoroutineScope(),
                     closeWait = IDLE_CLOSE_WAIT,
                 )

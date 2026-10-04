@@ -11,6 +11,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Transaction
+import io.github.nesfeder.supabase.offline.MutationOperation
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -26,7 +27,10 @@ internal data class MutationRow(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     @ColumnInfo(name = "table_name") val table: String,
 
-    /** "INSERT", "UPSERT", "UPDATE", or "DELETE". */
+    /**
+     * What the write does, as the column holds it: a [MutationOperation]'s [storedName]. Read it
+     * through [knownOperation], which is `null` for a name this build does not write.
+     */
     val operation: String,
 
     /**
@@ -281,10 +285,23 @@ internal suspend fun <T> MutationDao.inTransaction(block: suspend () -> T): T {
 /** What a transaction's block returned, so a `null` result is told from a block that never ran. */
 private class TransactionResult<T>(val value: T)
 
-/** Simple operation "enum" so we don't rely on Room @TypeConverter right away. */
-internal object MutationOperation {
-    const val INSERT = "INSERT"
-    const val UPSERT = "UPSERT"
-    const val UPDATE = "UPDATE"
-    const val DELETE = "DELETE"
-}
+/** The name the `operation` column holds for this operation; frozen, as every stored name is. */
+internal val MutationOperation.storedName: String
+    get() =
+        when (this) {
+            MutationOperation.INSERT -> "INSERT"
+            MutationOperation.UPSERT -> "UPSERT"
+            MutationOperation.UPDATE -> "UPDATE"
+            MutationOperation.DELETE -> "DELETE"
+        }
+
+/** The operation stored under [storedName], or `null` for a name this build does not write. */
+internal fun mutationOperationStoredAs(storedName: String): MutationOperation? =
+    MutationOperation.entries.firstOrNull { operation -> operation.storedName == storedName }
+
+/**
+ * What this write does, or `null` when its stored name is not one this build writes: the overlay
+ * skips such a row, and a replay pass refuses it to the rejected list.
+ */
+internal val MutationRow.knownOperation: MutationOperation?
+    get() = mutationOperationStoredAs(operation)

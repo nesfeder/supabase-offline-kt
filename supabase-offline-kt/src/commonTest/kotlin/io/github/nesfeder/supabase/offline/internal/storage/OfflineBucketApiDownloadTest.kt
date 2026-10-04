@@ -6,7 +6,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
@@ -48,7 +48,7 @@ class OfflineBucketApiDownloadTest {
             newTestBucketApi(
                 delegate = delegate,
                 baseDirectory = baseDir,
-                store = newTestOfflineStore(),
+                store = newTestStore(),
                 engineLogger = logger.asEngineLogger(),
             )
     }
