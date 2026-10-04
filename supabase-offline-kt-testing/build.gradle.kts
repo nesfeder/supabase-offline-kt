@@ -27,3 +27,16 @@ kotlin {
         }
     }
 }
+
+// The factories and the in-memory client call into the library outside its API records, so they
+// work with the library of their own version only. A strict constraint in the published metadata
+// makes an app that resolves another version of the library beside them fail resolution, rather
+// than fail a test with a missing method.
+dependencies {
+    constraints {
+        add("commonMainApi", "${project.group}:supabase-offline-kt") {
+            version { strictly(project.version.toString()) }
+            because("the testing artifact calls into the library outside its API records")
+        }
+    }
+}
