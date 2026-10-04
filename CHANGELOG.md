@@ -88,8 +88,10 @@ release.
   3.4.3 and kotlinx.coroutines 1.10.2, the versions it was released with. Not 3.8: supabase-kt
   3.7.0 and 3.8.0 carry a Realtime crash and a protocol-V2 leave defect, fixed upstream but not yet
   released, and this library's pin sets an app's Realtime too; it moves to the first release with
-  both fixes. On 3.6 there is no `dryRun()`, `maybeSingle()`, `isdistinct` filter or `purgeCache`,
-  and Storage object names with `%`, `?` or `#` fail (see the compatibility page). Each minor
+  both fixes. On 3.6 there is no `dryRun()`, `maybeSingle()`, `isdistinct` filter or `purgeCache`
+  (write a dry run by adding `Prefer: tx=rollback` to the request), and a Storage object name with
+  `%`, `?` or `#` is downloaded as supabase-kt downloads it but never cached, since supabase-kt 3.6
+  puts it in the URL unencoded and can fetch a different object (see the compatibility page). Each minor
   release of this library names exactly one supabase-kt minor: the artifact compiles supabase-kt's
   inline functions into itself and implements its `BucketApi`, which gains members in minor
   releases, so a range cannot be promised. When an app resolves another supabase-kt minor, the
@@ -213,9 +215,9 @@ release.
   refreshes is never cached.
 - With the Auth plugin, the cached rows and cached files belong to one identity at a time: when the
   session settles into another, they are dropped. Queued mutations are kept for their owners.
-- `single()`, `maybeSingle()` (from supabase-kt 3.8), `head`, counts (a list with a count
-  included), `csv()`, `geojson()`, `stripNulls()` and `explain()` are never cached: they go to the network, and under `CacheOnly`
-  throw `CacheMissException` without sending anything.
+- `single()`, `maybeSingle()` (from supabase-kt 3.8), `head`, counts (a list with a count included),
+  `csv()`, `geojson()`, `stripNulls()` and `explain()` are never cached: they go to the network, and
+  under `CacheOnly` throw `CacheMissException` without sending anything.
 - A table in another schema is cached apart. A write to it with the default strategy is sent at
   once and never queued; offline it throws `MutationNotQueueableException`.
 - Typed writes (`insert(value)`, `upsert(values)`, `update(value)`) encode through the app's own
@@ -288,6 +290,10 @@ release.
 
 ### Fixed
 
+- A write is a dry run when any of its `Prefer` values carries `tx=rollback`, not only the first:
+  supabase-kt writes its own `Prefer` first and appends one the request adds, so a write that added
+  `Prefer: tx=rollback` itself was queued offline and would have been replayed, and committed, as a
+  real write.
 - Rows a write returns (`select()`) are cached with the columns the caller wrote, matched by key;
   an update that asks for rows back changes only the rows returned.
 - A write the cache cannot follow marks the cached lists it may reach stale, and they are fetched

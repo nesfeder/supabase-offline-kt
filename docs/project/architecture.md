@@ -234,8 +234,8 @@ that a success updates the cache: patched in, or, where it cannot be (a write to
 filter the queue cannot record), the queries it may reach marked stale. A rolled-back dry run, and a
 write that answered after local data was cleared, leave the cache as it was. These writes are:
 
-- a dry run, a write carrying `Prefer: tx=rollback` (supabase-kt 3.8's `dryRun()`), or a write
-  whose request could not be inspected to tell whether it is one;
+- a dry run, a write carrying `Prefer: tx=rollback` (supabase-kt 3.8's `dryRun()`, or the header
+  added by hand), or a write whose request could not be inspected to tell whether it is one;
 - an UPDATE or DELETE whose filter the queue cannot record exactly or would not replay in full:
   such as a logical group, an embedded table's column, a negated or unknown operator, a `limit`,
   `order` or `offset`, or no filter at all;
@@ -400,7 +400,9 @@ resumable upload drops them once it finishes, unless it finishes after `close()`
 stale copy. An upload does not put its bytes in the cache, so the
 next read downloads them. Signed URLs, listings, `info`, `exists` and the public status always ask
 the server. An object path that cannot be mapped safely onto a file (a leading `/`, an empty, `.` or
-`..` segment, a `\`, a control character) still downloads and writes, uncached.
+`..` segment, a `\`, a control character) still downloads and writes, uncached. So does one holding
+`%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8 puts the name in the URL as
+written, so its request can fetch a different object.
 
 ### Local data and lifecycle
 
@@ -707,9 +709,10 @@ flowchart TD
 2. The engine works out how the write would be queued. An INSERT or UPSERT always can be; an UPDATE
    or DELETE needs a filter the strict capture records exactly and that replays in full.
 3. It tells a dry run, a write carrying `Prefer: tx=rollback`, from a write. supabase-kt 3.8 records
-   `dryRun()` only in that header (3.6 has no `dryRun()`), which the queue does not keep, so the
-   engine builds the write once more, on the token-free PostgREST instance, under a probe that a
-   pipeline phase ahead of every plugin reads and stops. No app plugin sees the stopped request.
+   `dryRun()` only in that header, and on 3.6, which has no `dryRun()`, a caller adds the header
+   itself. The queue does not keep it, so the engine builds the write once more, on the token-free
+   PostgREST instance, under a probe that a pipeline phase ahead of every plugin reads (every
+   `Prefer` value) and stops. No app plugin sees the stopped request.
 4. It saves the write: one row in `mutation_cache` with its owner, inserted under the queue lock,
    refused when local data was cleared since the write began. The table's readers are told, and the
    overlay shows the write from now on.
