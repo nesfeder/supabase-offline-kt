@@ -46,6 +46,9 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from kotlin_source import strip_comments_and_literals
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The published modules. supabase-offline-swift-bridge is left out on purpose: it is never
+# published, and the Swift package reaches it through its Objective-C header, which
+# scripts/check-bridge-header.py records instead.
 MODULES = ("supabase-offline-kt", "supabase-offline-kt-testing")
 EXCLUSIONS_FILE = "compat/abi-exclusions.txt"
 THROWS_ANNOTATION = "Throws(Throwable::class)"

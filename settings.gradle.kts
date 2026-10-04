@@ -41,6 +41,10 @@ include(":supabase-offline-kt")
 
 include(":supabase-offline-kt-testing")
 
+// The Kotlin side of the Swift package: an iOS framework, SupabaseOfflineCore, that the package
+// wraps. Never published, and outside the API records: its Objective-C header is its contract.
+include(":supabase-offline-swift-bridge")
+
 // The Android sample app, Offline Tasks. Built on every run that touches a build input, so a change
 // to the library that breaks it fails CI; it is never published.
 include(":samples:android")
