@@ -62,7 +62,10 @@ It fails when:
        release.yml releases, waiting until Central says PUBLISHED; the snapshot job's publish step
        runs only for a -SNAPSHOT version; no job of either release workflow, nor the snapshot job,
        restores a cache (`actions/cache`, setup-gradle, the setup-project action, a setup action's
-       `cache:` input).
+       `cache:` input) or uses any action but checkout, setup-java, the wrapper validation and the
+       artifact upload and download (no local composite action, no other cache action), and a
+       release calls no reusable workflow but docs-publish.yml. Both finish jobs hold exactly
+       `contents: write`, and no step of a release workflow pushes to main.
      - What they rest on: release.yml's verify job checks out all history and tags, and runs
        `release.py check-version`, `api-compat.py check-release` and the published-artifacts
        check, none of them skippable; no other job reads verify's outputs or checks out a ref of
@@ -175,6 +178,11 @@ SNAPSHOT_ONLY = "steps.version.outputs.snapshot == 'true'"
 VERIFY_STEPS = ("python3 scripts/release.py check-version", "python3 scripts/api-compat.py check-release",
                 "python3 scripts/check-published-artifacts.py")
 CACHE_ACTIONS = ("actions/cache", "gradle/actions/setup-gradle", "$/.github/actions/setup-project")
+# The only actions a job of a release workflow, or the snapshot job, may use: none restores a cache
+# (setup-java only when asked to, which is refused separately), and none is a local composite action.
+RELEASE_ACTIONS = ("actions/checkout@", "actions/setup-java@", "gradle/actions/wrapper-validation@",
+                   "actions/upload-artifact@", "actions/download-artifact@")
+PUSH_TO_MAIN = re.compile(r"\bpush\b[^\n]*[\s:](refs/heads/)?main\b")
 # A Gradle task that can publish to Maven Central: the aggregate `publish` or any Central task.
 CENTRAL_TASK = re.compile(r"\bpublish(?:\b|\w*MavenCentral\w*)")
 CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
@@ -484,6 +492,12 @@ def release_job_problems(name: str, job_id: str, job: dict) -> list[str]:
                             " write")
         if (name in RELEASE_WORKFLOWS or key in CACHE_FREE_JOBS) and restores_cache(step):
             problems.append(f"{where} restores a cache ({uses}), next to the release secrets")
+        if ((name in RELEASE_WORKFLOWS or key in CACHE_FREE_JOBS) and uses
+                and not uses.startswith(RELEASE_ACTIONS)):
+            problems.append(f"{where} uses {uses}, which is not one of the actions a release job may use"
+                            f" ({', '.join(action.rstrip('@') for action in RELEASE_ACTIONS)})")
+        if name in RELEASE_WORKFLOWS and PUSH_TO_MAIN.search(run):
+            problems.append(f"{where}: a step pushes to main; a release pushes tags and its own branch only")
         if (name == "release.yml" and job_id != "verify" and uses.startswith("actions/checkout@")
                 and "ref" in with_):
             problems.append(f"{where} checks out the ref {with_['ref']!r}, not the run's own commit")
@@ -502,6 +516,11 @@ def release_job_problems(name: str, job_id: str, job: dict) -> list[str]:
             problems.append(f"{where} runs if {job.get('if')!r}, not exactly {PUBLISH_IF!r}")
     if key == ("release.yml", "verify"):
         problems += verify_problems(where, job, steps)
+    if key in {("release.yml", "finish"), ("release-resume.yml", "finish")} and permissions != {"contents": "write"}:
+        problems.append(f"{where} holds {job.get('permissions')}, not exactly {{'contents': 'write'}}")
+    if name in RELEASE_WORKFLOWS and "uses" in job and job.get("uses") != DOCS_WORKFLOW:
+        problems.append(f"{where} calls {job.get('uses')}; a release calls the documentation site's workflow"
+                        " alone")
     if key == FRAMEWORK_JOB:
         problems += framework_problems(where, job, steps)
     if key == DRAFT_JOB:
@@ -1448,6 +1467,33 @@ CASES: list[tuple[str, str, str | None, str]] = [
      .replace("      - name: Publish the Swift package\n",
               "      - run: python3 scripts/release.py push-tag\n      - name: Publish the Swift package\n"),
      "or after this repository's tag"),
+    # The review of the release workflow's second round: what a list of cache actions missed.
+    ("a local composite action in a release job", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/release.py check-version\n",
+                               "      - uses: $/.github/actions/setup\n"
+                               "      - run: python3 scripts/release.py check-version\n"),
+     "job verify uses $/.github/actions/setup, which is not one of the actions"),
+    ("the setup action by its old spelling", "release-resume.yml",
+     COMPLIANT_RESUME.replace("      - run: python3 scripts/release.py check-resume",
+                              "      - uses: ./.github/actions/setup-project\n"
+                              "      - run: python3 scripts/release.py check-resume"),
+     "job finish uses ./.github/actions/setup-project, which is not one of the actions"),
+    ("a third-party Gradle cache action in the snapshot job", "ci.yml",
+     COMPLIANT_CI.replace("      - id: version\n",
+                          "      - uses: burrunan/gradle-cache-action@0123456789abcdef0123456789abcdef01234567\n"
+                          "      - id: version\n"),
+     "job snapshot uses burrunan/gradle-cache-action"),
+    ("finish gaining pull-requests: write", "release.yml",
+     COMPLIANT_RELEASE.replace("    permissions: {contents: write}\n    outputs:",
+                               "    permissions: {contents: write, pull-requests: write}\n    outputs:"),
+     "job finish holds"),
+    ("a push to main in finish", "release.yml",
+     COMPLIANT_RELEASE.replace("        run: python3 scripts/release.py push-tag\n",
+                               "        run: python3 scripts/release.py push-tag && git push origin HEAD:main\n"),
+     "a step pushes to main"),
+    ("a release calling another reusable workflow", "release-resume.yml",
+     COMPLIANT_RESUME + "  more:\n    needs: finish\n    uses: $/.github/workflows/docs-check.yml\n",
+     "job more calls $/.github/workflows/docs-check.yml"),
     ("the resume tagging this repository before the Swift package", "release-resume.yml",
      COMPLIANT_RESUME.replace("      - name: Publish the Swift package\n",
                               "      - run: python3 scripts/release.py publish-github-release\n"

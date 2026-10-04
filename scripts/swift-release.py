@@ -654,6 +654,8 @@ def push_package(tree: Path, version: str, remote: str) -> str:
                       if release.RELEASE_VERSION.match(other))
         updates = [f"{commit}:{tag_ref}"] + ([f"{commit}:{main_ref}"] if highest else [])
         git(scratch, "push", "-q", "--atomic", remote, *updates)
+        if commit == parent:
+            return f"Tagged {version} on {commit}, the commit main already held with this tree."
         moved = " and moved main to it" if highest else "; main stays on a higher version"
         return f"Pushed the Swift package's commit {commit}, tagged {version}{moved}."
 
@@ -950,7 +952,7 @@ def self_test() -> int:
         git(work, "--git-dir", str(remote), "tag", "-d", "0.2.0")
         resumed = push_package(changed, "0.2.0", str(remote))
         refs = remote_refs(work, str(remote))
-        expect(resumed.startswith("Pushed") and refs["refs/tags/0.2.0"] == refs["refs/heads/main"]
+        expect(resumed.startswith("Tagged 0.2.0") and refs["refs/tags/0.2.0"] == refs["refs/heads/main"]
                and git(work, "--git-dir", str(remote), "rev-list", "--count", "main").strip() == "2",
                "a resume with the tag missing tags the commit main already holds")
         dry = work / "dry"

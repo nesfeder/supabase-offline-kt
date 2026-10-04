@@ -286,7 +286,10 @@ The script copies the framework into `swift/LocalCore/`; `--framework <path>` te
 another build of it instead, such as the release's. To open the package in Xcode afterwards,
 start Xcode with the variable set: `SUPABASE_OFFLINE_LOCAL_CORE=1 open -a Xcode swift/Package.swift`.
 CI runs the same script in the iOS job on the self-hosted runner, and the release runs it on
-GitHub's macOS runner against the release framework.
+GitHub's macOS runner against the release framework. GitHub's own runners do not run it in CI (the
+merge queue and the weekly run skip it, to save macOS minutes), so a change to the bridge or to
+`swift/` should run it locally before review, and a framework change that breaks the package is
+caught at the latest by the release's `framework` job, before anything is published.
 
 `swift/` is not what a Swift developer sees. A release publishes part of it to the package's own
 repository, `nesfeder/supabase-offline-swift`: `Package.swift` up to its `// MARK: Development only`
