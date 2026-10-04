@@ -182,7 +182,7 @@
     <string name="sync_start_over">Start over</string>
     <string name="sync_start_over_body">Deletes this user’s tasks and photos, then continues as a new anonymous user.</string>
     <string name="sync_start_over_title">Start over as a new user?</string>
-    <string name="sync_start_over_confirm_body">You get an empty list. Online, this user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them. Offline, they stay there.</string>
+    <string name="sync_start_over_confirm_body">You get an empty list. This user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them, so it needs the network.</string>
     <string name="sync_about">About this build</string>
     <string name="sync_session">Supabase</string>
     <string name="sync_session_signing_in">Signing in…</string>
