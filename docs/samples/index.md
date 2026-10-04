@@ -33,7 +33,7 @@ The [guided tour](tour.md) walks through these in order.
 
 ## The Android sample today
 
-The Android sample runs against an in-memory stand-in for the library, with a simulated server, so
-every screen and offline state can be tried before the library's 0.1.0 API is final. The app
-already signs in anonymously to your Supabase project; its tasks move to the library, and to that
-project, in the change that adopts the 0.1.0 API.
+The Android sample runs on the library, against your own Supabase project: its lists are live
+queries on the device's cache, its changes go through the mutation queue, and its photos through
+the offline Storage bucket. [Run the Android sample](android.md#things-to-try) lists the things to
+try, from going offline to starting over.
