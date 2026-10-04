@@ -121,9 +121,9 @@ class EarlierDefaultMoveTest {
 
     @Test
     fun a_database_that_cannot_move_stays_in_use_where_it_is() {
-        // Given — a file where the current location's directory would go
+        // Given — a directory that is not empty where the database's log would move to
         leaveDataAtTheEarlierLocation()
-        write(root / "support", "not a directory")
+        write(root / "support" / "supabase_offline.db-wal" / "taken", "in the way")
 
         // When
         val opened = moveEarlierDefaultIfUnclaimed(current, earlier, engineLogger)
