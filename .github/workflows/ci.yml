@@ -176,13 +176,14 @@ jobs:
                 docs=true; workflows=true ;;
               .github/workflows/* | .github/dependabot.yml)
                 workflows=true ;;
-              docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | samples/supabase/*)
+              # Every Markdown file: the docs job's spelling check reads them all.
+              docs/* | mkdocs.yml | *.md | samples/supabase/* | scripts/check-spelling.py)
                 docs=true ;;
               # The site's Kotlin samples: the Kotlin jobs compile them, the docs build includes them.
               supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/* \
                 | supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/docs/*)
                 kotlin=true; docs=true ;;
-              .github/* | *.md | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
+              .github/* | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
                 | .kempt.toml | config/license-header* | *.properties.example)
                 ;;
               *)
