@@ -10,6 +10,7 @@ import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.Tables
+import io.github.nesfeder.offlinetasks.data.Task
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
 import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
@@ -31,8 +32,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonNull
@@ -117,6 +121,29 @@ class OfflineTaskRepositoryTest {
         assertEquals("first time", task.notes)
         assertTrue(photos.isEmpty())
         assertEquals(sentBefore, server.requests.size)
+    }
+
+    @Test
+    fun clearing_local_data_online_reads_the_lists_again_for_a_screen_showing_them() = runTest {
+        // Given — a task on the server, shown by a list that stays open
+        repository.addTask("On the server", notes = null)
+        val shown = MutableStateFlow<List<List<Task>?>>(emptyList())
+        val screen = scope.launch {
+            repository.tasks().collect { snapshot -> shown.update { it + listOf(snapshot.value) } }
+        }
+        withTimeout(WAIT) { shown.first { it.lastOrNull()?.size == 1 } }
+        val shownBefore = shown.value.size
+        val sentBefore = server.requests.size
+
+        // When
+        repository.clearLocalData()
+
+        // Then — both lists asked of the server again, and the open list shows the task again
+        val sentAfter = server.requests.drop(sentBefore)
+        assertTrue("GET /rest/v1/tasks" in sentAfter)
+        assertTrue("GET /rest/v1/task_photos" in sentAfter)
+        withTimeout(WAIT) { shown.first { history -> history.drop(shownBefore).any { it?.size == 1 } } }
+        screen.cancel()
     }
 
     @Test

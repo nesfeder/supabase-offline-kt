@@ -303,6 +303,21 @@ class OfflineTaskRepository(
 
     override suspend fun clearLocalData() {
         offline.clearLocalData()
+        // A live read of an emptied cache waits to be asked again: ask now, so what the server
+        // holds comes back without a pull to refresh. Offline, or if it fails, the next refresh does.
+        if (canReachNetwork()) {
+            for (table in listOf(Tables.TASKS, Tables.TASK_PHOTOS)) {
+                try {
+                    offline.from(table).select(readStrategy = ReadStrategy.NetworkOnly) {
+                        newestFirst()
+                    }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    // The list stays as cleared until the next refresh; the clear itself is done.
+                }
+            }
+        }
     }
 
     override suspend fun startOver() {

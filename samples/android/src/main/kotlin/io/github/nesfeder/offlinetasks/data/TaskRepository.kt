@@ -152,7 +152,10 @@ interface TaskRepository {
     /** Switches the app's own network access off ("Simulate offline") or back on. */
     suspend fun setNetworkEnabled(enabled: Boolean)
 
-    /** Deletes everything this device holds: cached rows and files, queued and refused writes. */
+    /**
+     * Deletes everything this device holds: cached rows and files, queued and refused writes. Online,
+     * the lists are then read again from the server.
+     */
     suspend fun clearLocalData()
 
     /**
