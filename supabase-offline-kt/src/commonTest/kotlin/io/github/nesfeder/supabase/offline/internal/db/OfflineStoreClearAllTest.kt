@@ -35,7 +35,7 @@ class OfflineStoreClearAllTest {
         assertTrue(mutationDao.inserted.isNotEmpty(), "precondition: mutation queued")
 
         // When the entire offline cache is cleared
-        store.clearLocalData()
+        store.localData.clearLocalData()
 
         // Then no cached payload and no queued mutation remain
         assertNull(queryCacheDao.getRow("reports", "sig-A"), "cached payload should be gone")

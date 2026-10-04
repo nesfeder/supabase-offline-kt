@@ -73,7 +73,7 @@ class OfflineStoreCacheOwnerTest {
             }
 
         // When
-        store.dropCacheFor(USER_B)
+        store.localData.dropCacheFor(USER_B)
 
         // Then — the cache is B's and empty; the queue and its records are as they were
         assertEquals(emptyList(), queryCacheDao.rowsOf(TABLE))
@@ -92,7 +92,7 @@ class OfflineStoreCacheOwnerTest {
         runTest {
             // Given — work that started for A before the cache passed to B
             val startedAtTick = store.freshness.tickNow()
-            store.dropCacheFor(USER_B)
+            store.localData.dropCacheFor(USER_B)
             identity = USER_B
 
             // When
@@ -118,7 +118,7 @@ class OfflineStoreCacheOwnerTest {
     @Test
     fun a_cache_another_identity_owns_is_neither_read_nor_written() = runTest {
         // Given — A's cache, and B's session
-        store.dropCacheFor(USER_A)
+        store.localData.dropCacheFor(USER_A)
         queryCacheDao.seedPayload(TABLE, CACHE_KEY, ROWS)
         identity = USER_B
 
@@ -232,20 +232,20 @@ class OfflineStoreCacheOwnerTest {
 
     @Test
     fun a_read_during_a_drop_is_told_the_new_owner_only_with_the_drop_counted() = runTest {
-        assertTheOwnerComesWithTheEmptying { store.dropCacheFor(ANONYMOUS) }
+        assertTheOwnerComesWithTheEmptying { store.localData.dropCacheFor(ANONYMOUS) }
     }
 
     @Test
     fun a_read_during_a_clear_is_told_the_new_owner_only_with_the_clear_counted() = runTest {
-        assertTheOwnerComesWithTheEmptying { store.clearLocalData(owner = ANONYMOUS) }
+        assertTheOwnerComesWithTheEmptying { store.localData.clearLocalData(owner = ANONYMOUS) }
     }
 
     @Test
     fun a_clear_records_the_owner_it_is_given_and_none_otherwise() = runTest {
         // When / Then
-        store.clearLocalData(owner = QueueIdentity.Anonymous.storedValue)
+        store.localData.clearLocalData(owner = QueueIdentity.Anonymous.storedValue)
         assertEquals(ownerRecordOf(QueueIdentity.Anonymous.storedValue), recordedOwner())
-        store.clearLocalData()
+        store.localData.clearLocalData()
         assertNull(recordedOwner())
     }
 

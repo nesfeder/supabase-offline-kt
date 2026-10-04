@@ -63,7 +63,7 @@ class MutationIdAndSyncReportTest {
     fun an_id_is_never_reused_after_the_queue_empties() = runTest {
         // Given — a queue that was emptied
         val first = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"a"}]"""))
-        store.clearLocalData()
+        store.localData.clearLocalData()
 
         // When
         val next = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"b"}]"""))

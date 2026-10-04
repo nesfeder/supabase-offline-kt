@@ -50,7 +50,7 @@ class OverlayTeardownRaceTest {
         parked.await()
 
         // When — local data is cleared (sign-out), then the overlay resumes
-        store.clearLocalData()
+        store.localData.clearLocalData()
         release.complete(Unit)
         write.await()
 

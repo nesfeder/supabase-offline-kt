@@ -304,7 +304,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
 
         // When — the user signs out (or switches accounts) and the cache is torn down
         tick = 20L
-        store.clearLocalData()
+        store.localData.clearLocalData()
 
         // And — the refresh that was still in flight delivers the outgoing user's rows
         tick = 30L
@@ -329,7 +329,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val queryCacheDao = FakeQueryCacheDao()
         var tick = 10L
         val store = buildStore(queryCacheDao, tick = { tick })
-        store.clearLocalData()
+        store.localData.clearLocalData()
 
         // When — a refresh issued after the teardown returns rows
         tick = 20L

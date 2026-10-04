@@ -110,7 +110,7 @@ class QueueChangesReachLiveReadersTest {
             assertEquals("""[{"id":1,"title":"server"},{"id":2,"title":"queued"}]""", shown.value)
 
             // When
-            store.clearLocalData()
+            store.localData.clearLocalData()
 
             // Then — nothing is known any more: no payload, and no queued write
             assertNull(shown.value)

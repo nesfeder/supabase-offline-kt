@@ -32,7 +32,7 @@ class ClearedQueueRecordsTest {
         store.markSendUnconfirmed(id)
 
         // When — cleared, then read the way the overlay and the counts read them
-        store.clearLocalData()
+        store.localData.clearLocalData()
         val unconfirmed = store.unconfirmedSends()
         val rejections = store.rejectedList.rejections()
 
@@ -62,7 +62,7 @@ class ClearedQueueRecordsTest {
 
         // When — the clear runs while that read is parked, and then the read finishes
         mutationDao.afterUnconfirmedSendIdsRead = null
-        store.clearLocalData()
+        store.localData.clearLocalData()
         release.complete(Unit)
         firstRead.await()
 

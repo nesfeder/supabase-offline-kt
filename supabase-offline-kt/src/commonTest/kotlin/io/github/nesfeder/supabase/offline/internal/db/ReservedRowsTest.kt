@@ -147,7 +147,7 @@ class ReservedRowsTest {
         store.rejectedList.addRejection(rejection(id = 1))
 
         // When
-        store.clearLocalData()
+        store.localData.clearLocalData()
 
         // Then
         assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))

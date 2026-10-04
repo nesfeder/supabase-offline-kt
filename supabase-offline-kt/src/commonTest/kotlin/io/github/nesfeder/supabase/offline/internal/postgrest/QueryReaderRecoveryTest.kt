@@ -847,7 +847,7 @@ class QueryReaderRecoveryTest {
 
             // When: the user signs out and the cache is wiped while the request is out, and the
             // parked response is then delivered
-            store.clearLocalData()
+            store.localData.clearLocalData()
             inFlight.complete(Unit)
             advanceUntilIdle()
 
@@ -1212,7 +1212,7 @@ class QueryReaderRecoveryTest {
             assertEquals(1, networkCalls, "the refresh must be in flight before teardown")
 
             // When: the user signs out (or switches accounts) and the cache is wiped mid-flight
-            store.clearLocalData()
+            store.localData.clearLocalData()
 
             // And: the parked response — the outgoing account's rows — is finally delivered
             inFlight.complete(Unit)

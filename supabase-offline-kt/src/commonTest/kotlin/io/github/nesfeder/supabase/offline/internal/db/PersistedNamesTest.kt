@@ -53,9 +53,9 @@ class PersistedNamesTest {
     @Test
     fun whose_the_cache_is_is_written_under_this_name_with_these_keys() = runTest {
         // When — the cache dropped for a user, then for nobody signed in
-        store.dropCacheFor(QueueIdentity.User("u-1").storedValue)
+        store.localData.dropCacheFor(QueueIdentity.User("u-1").storedValue)
         val forUser = queryCacheDao.getRow(RESERVED_TABLE_NAME, "cache_owner")?.payload
-        store.dropCacheFor(QueueIdentity.Anonymous.storedValue)
+        store.localData.dropCacheFor(QueueIdentity.Anonymous.storedValue)
         val forNobody = queryCacheDao.getRow(RESERVED_TABLE_NAME, "cache_owner")?.payload
 
         // Then
