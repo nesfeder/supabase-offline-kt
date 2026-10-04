@@ -142,8 +142,15 @@ kotlin {
             // The tests that need supabase-kt API from 3.8 on (dryRun(), maybeSingle(), the
             // isdistinct filter, percent-encoded object names) build only while the catalog pins
             // 3.8 or later; below it, the 3.6 directory answers the names the common tests share.
+            val supabaseKtPin = libs.versions.supabase.bom.get()
             val (supabaseKtMajor, supabaseKtMinor) =
-                libs.versions.supabase.bom.get().split('.').take(2).map(String::toInt)
+                supabaseKtPin.split('.').take(2).mapNotNull(String::toIntOrNull).takeIf {
+                    it.size == 2
+                }
+                    ?: error(
+                        "gradle/libs.versions.toml: supabase-bom \"$supabaseKtPin\" does not start " +
+                            "with a numeric major.minor"
+                    )
             val pinsSupabaseKt38OrLater =
                 supabaseKtMajor > 3 || (supabaseKtMajor == 3 && supabaseKtMinor >= 8)
             kotlin.srcDir(
