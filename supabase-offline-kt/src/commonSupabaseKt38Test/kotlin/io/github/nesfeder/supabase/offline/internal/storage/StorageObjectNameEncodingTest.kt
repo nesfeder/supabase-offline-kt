@@ -29,9 +29,9 @@ import okio.SYSTEM
  *
  * Since supabase-kt 3.8.0 the bucket URL-encodes each segment of an object path on the wire. 3.6
  * puts the name in the URL as written, where a `%` fails the request and a `?` or `#` cuts the path
- * short, so these cases build only from 3.8 on. The cache is keyed by the name as the caller wrote it, not
- * by its URL form, so the same name must address the same entry however it was encoded. This pins
- * both halves: what goes on the wire, and what lands on disk.
+ * short, so these cases build only from 3.8 on. The cache is keyed by the name as the caller wrote
+ * it, not by its URL form, so the same name must address the same entry however it was encoded.
+ * This pins both halves: what goes on the wire, and what lands on disk.
  */
 class StorageObjectNameEncodingTest {
 

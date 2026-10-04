@@ -140,8 +140,8 @@ kotlin {
 
         commonTest {
             // The tests that need supabase-kt API from 3.8 on (dryRun(), maybeSingle(), the
-            // isdistinct filter, percent-encoded object names) build only while the catalog pins 3.8
-            // or later; below it, the 3.6 directory answers the few names the common tests share.
+            // isdistinct filter, percent-encoded object names) build only while the catalog pins
+            // 3.8 or later; below it, the 3.6 directory answers the names the common tests share.
             val (supabaseKtMajor, supabaseKtMinor) =
                 libs.versions.supabase.bom.get().split('.').take(2).map(String::toInt)
             val pinsSupabaseKt38OrLater =

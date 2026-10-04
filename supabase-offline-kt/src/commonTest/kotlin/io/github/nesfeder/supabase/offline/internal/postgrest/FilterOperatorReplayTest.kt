@@ -8,8 +8,8 @@ import kotlin.test.assertEquals
 
 /**
  * Every filter operator of the supabase-kt the library is built against replays. The replay names
- * each operator, by a branch or by identifier, and skips any other, so a new upstream operator fails
- * here until the replay names it: the check the compiler made while the replay matched every
+ * each operator, by a branch or by identifier, and skips any other, so a new upstream operator
+ * fails here until the replay names it: the check the compiler made while the replay matched every
  * operator exhaustively.
  */
 class FilterOperatorReplayTest {

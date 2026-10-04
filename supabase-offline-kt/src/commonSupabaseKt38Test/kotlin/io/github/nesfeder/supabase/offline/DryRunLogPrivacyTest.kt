@@ -11,8 +11,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * `LogPrivacyTest`'s rule for a supabase-kt 3.8 `dryRun()`: refused offline, it leaves no row
- * value in a log at INFO or above.
+ * `LogPrivacyTest`'s rule for a supabase-kt 3.8 `dryRun()`: refused offline, it leaves no row value
+ * in a log at INFO or above.
  */
 class DryRunLogPrivacyTest {
 

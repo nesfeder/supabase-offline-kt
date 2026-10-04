@@ -203,9 +203,9 @@ private fun PostgrestFilterBuilder.replayCondition(condition: FilterDescriptor.C
         FilterOperator.PHFTS -> textSearch(condition.column, rawValue, TextSearchType.PHRASETO)
         FilterOperator.WFTS -> textSearch(condition.column, rawValue, TextSearchType.WEBSEARCH)
 
-        // Named by identifier, so this compiles on every supabase-kt minor; the generic call encodes
-        // them as the caller's `filter(column, operator, value)` did. An operator named nowhere here
-        // is skipped, which [replaysFully] reports, so no mutation replays broader than captured.
+        // Named by identifier, so this compiles on every supabase-kt minor; the generic call
+        // encodes them as the caller's `filter(column, operator, value)` did. An operator named
+        // nowhere here is skipped, and [replaysFully] reports it: nothing replays broader.
         else -> {
             if (operator.identifier !in GENERICALLY_REPLAYED_OPERATORS) return false
             filter(condition.column, operator, rawValue)
