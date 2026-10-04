@@ -13,7 +13,7 @@ public struct QuerySnapshot<Value: Sendable>: Sendable {
     public let result: Value?
 
     /// Whether the rows are the device's copy rather than this read's answer from the server:
-    /// `true` until its refresh succeeds, always under ``SnapshotStrategy/cacheOnly``, and again
+    /// `true` until its refresh succeeds, always under ``SequenceReadStrategy/cacheOnly``, and again
     /// once a write marks them stale.
     public let isFromCache: Bool
 

@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import SupabaseOffline
 
-/// Filter values are written once, as PostgREST reads them and as the Android library writes them.
+/// Filter values are written once, as PostgREST reads them, in one fixed form per type.
 struct FilterValueTests {
 
     /// A status stored as text, which declares the conformance and gets its text from the raw value.
@@ -32,7 +32,7 @@ struct FilterValueTests {
         (1.5e300, "1.5E300"), (0.0, "0.0"), (-0.0, "-0.0"), (Double.nan, "NaN"), (Double.infinity, "Infinity"),
         (-Double.infinity, "-Infinity"),
     ])
-    func doublesAreWrittenAsTheAndroidLibraryWritesThem(value: Double, expected: String) {
+    func doublesAreWrittenInOneFormWithoutAPlusSign(value: Double, expected: String) {
         #expect(value.filterText == expected)
         #expect(!value.filterText.contains("+"))
     }
