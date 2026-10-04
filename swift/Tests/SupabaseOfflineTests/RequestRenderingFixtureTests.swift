@@ -54,9 +54,12 @@ struct RequestRenderingFixtureTests {
         // Given
         let names = Set(try Self.fixtureCases().cases.keys)
 
-        // Then: a case the core adds fails here until its Swift form is written
+        // Then: a case the core adds fails here until its Swift form is written, and one it drops
+        // until its form is removed
         let missing = names.subtracting(Self.swiftForms.keys).sorted()
+        let stale = Set(Self.swiftForms.keys).subtracting(names).sorted()
         #expect(missing.isEmpty, "no Swift form for: \(missing)")
+        #expect(stale.isEmpty, "a Swift form for a case the fixture no longer has: \(stale)")
         #expect(names.count >= 30)
     }
 
@@ -186,7 +189,7 @@ struct RequestRenderingFixtureTests {
     /// Why a description that only a hand-written description reaches has no chain.
     private static let onlyByHand = "the Swift API writes only well-formed descriptions of version 1"
 
-    /// The Swift form of every case, by the fixture's name; a name the fixture no longer has is unused.
+    /// The Swift form of every case, by the fixture's name.
     static let swiftForms: [String: SwiftForm] = [
         "every column, by default": .chain { try await $0.from("todos").select(readStrategy: .networkOnly).execute() },
         "columns lose the spaces outside quotes": .chain {
@@ -261,9 +264,6 @@ struct RequestRenderingFixtureTests {
         },
         "a function call by GET with a count": .chain { try await $0.rpc("list_open", get: true, count: .planned).execute() },
         "a function call by HEAD without arguments": .chain { try await $0.rpc("count_open", head: true, count: .exact).execute() },
-        "a function call by GET keeps its arguments in the body, as supabase-kt 3.6 sends them": .notExpressible(
-            "a function's arguments go by POST only: the GET and HEAD forms of rpc take none"
-        ),
         "a function call by GET with arguments is refused": .notExpressible(
             "a function's arguments go by POST only: the GET and HEAD forms of rpc take none"
         ),
