@@ -397,6 +397,11 @@ jobs:
         if: needs.changes.outputs.kotlin == 'true'
         run: python3 scripts/check-bridge-header.py --self-test
 
+      # The check itself reads the built Swift package, so it runs in the iOS job.
+      - name: Test the Swift package's public API check
+        if: needs.changes.outputs.kotlin == 'true'
+        run: python3 scripts/check-swift-public-api.py --self-test
+
       - name: Test the release script
         if: needs.changes.outputs.kotlin == 'true' || needs.changes.outputs.workflows == 'true'
         run: python3 scripts/release.py self-test
@@ -414,7 +419,7 @@ jobs:
           python3 .github/scripts/check-coverage-report.py --self-test
           python3 .github/scripts/check-workflows.py --self-test
           python3 .github/scripts/check-workflows.py
-          shellcheck --shell=bash .github/scripts/*.sh .github/actions/*/*.sh
+          shellcheck --shell=bash .github/scripts/*.sh .github/actions/*/*.sh scripts/test-swift-package.sh
 
       # Template injection, unpinned actions, broad permissions, persisted credentials. Findings
       # fail the job and appear as annotations; nothing is uploaded to code scanning.
@@ -705,6 +710,23 @@ jobs:
       # Tests never compile the device target or link a framework; this does.
       - name: Link the iOS device framework
         run: bash .github/scripts/run-gradle.sh :supabase-offline-kt:linkReleaseFrameworkIosArm64
+
+      # The Swift package, on the self-hosted runner only, never on a hosted Mac: the core framework
+      # it wraps, built here, then its tests on this job's simulator with every warning an error,
+      # and the check that its public API shows nothing of the core (scripts/test-swift-package.sh).
+      # xcodebuild writes in the job's folder; SwiftPM's one link in ~ is the snapshot's exclusion.
+      - name: Build the core framework for the Swift package
+        if: env.IOS_RUNNER == 'local'
+        run: >-
+          bash .github/scripts/run-gradle.sh
+          :supabase-offline-swift-bridge:assembleSupabaseOfflineCoreDebugXCFramework
+          -Psupabase.offline.iosSqlite=system
+
+      - name: Test the Swift package
+        if: env.IOS_RUNNER == 'local'
+        run: >-
+          bash scripts/test-swift-package.sh --simulator "$CI_SIMULATOR_UDID"
+          --derived-data "$RUNNER_TEMP/offline-kt-ci/swift-derived-data"
 
       - name: Save Kotlin/Native
         if: >-
