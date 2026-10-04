@@ -1,13 +1,25 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalForeignApi::class)
+
 package io.github.nesfeder.supabase.offline.bridge
 
+import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.nesfeder.supabase.offline.bridge.internal.transportReason
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.url
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.io.IOException
 import platform.Foundation.NSData
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSTemporaryDirectory
+import platform.Foundation.NSUUID
 
 /** How each kind of failure arrives: as one error value with the fields its kind promises. */
 class BridgeErrorsTest {
@@ -85,8 +97,67 @@ class BridgeErrorsTest {
         assertEquals(true, error?.isConnectivityFailure)
         assertFalse(error?.message.orEmpty().contains("secret-value"))
         assertFalse(error?.message.orEmpty().contains("fixture.supabase.co"))
-        assertTrue(error?.message.orEmpty().contains("network down"))
+        assertEquals("The request could not reach the server", error?.message)
         client.closeAndWait()
+    }
+
+    @Test
+    fun a_refused_connection_names_neither_the_request_nor_its_values() = bridgeTest {
+        // Given — a real client of a local port nothing listens on
+        val directory = NSTemporaryDirectory() + "bridge-refused-" + NSUUID().UUIDString()
+        try {
+            val options =
+                BridgeClientOptions(
+                    supabaseUrl = "http://127.0.0.1:9",
+                    supabaseKey = "fixture-anon-key",
+                    dataDirectory = directory,
+                )
+            val opened = BridgeClient.open(options)
+            val client = checkNotNull(opened.client) { "the client did not open: ${opened.error}" }
+
+            // When — a read of a table, filtered on a value nobody should see in an error
+            val (_, error) =
+                client.selectAndWait(
+                    """{"v":1,"table":"patients","filters":[{"kind":"filter","column":"email",
+                       "operator":"eq","value":"secret-filter-value"}],"strategy":{"kind":"networkOnly"}}"""
+                )
+
+            // Then — the library's sentence, with at most a platform error's domain and code
+            assertEquals(BridgeErrorKind.CONNECTIVITY, error?.kind)
+            val message = error?.message.orEmpty()
+            assertTrue(FIXED_CONNECTIVITY_MESSAGE.matches(message), message)
+            for (leak in listOf("secret-filter-value", "patients", "127.0.0.1", "http")) {
+                assertFalse(message.contains(leak), "the message names $leak: $message")
+            }
+            client.closeAndWait()
+        } finally {
+            NSFileManager.defaultManager.removeItemAtPath(directory, error = null)
+        }
+    }
+
+    @Test
+    fun a_transport_reason_is_a_platform_errors_domain_and_code_or_a_timeout_and_nothing_else() {
+        // Given — the texts supabase-kt keeps of a Darwin failure, a timeout and anything else
+        val request =
+            HttpRequestBuilder().apply {
+                url("https://fixture.supabase.co/rest/v1/patients?email=eq.secret")
+            }
+        val offline =
+            HttpRequestException(
+                """Exception in http request: Error Domain=NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline." UserInfo={NSErrorFailingURLStringKey=https://fixture.supabase.co/rest/v1/patients?email=eq.secret}""",
+                request,
+            )
+        val timeout =
+            HttpRequestException(
+                "Request timeout has expired [url=https://fixture.supabase.co/rest/v1/patients?email=eq.secret]",
+                request,
+            )
+
+        // Then
+        assertEquals("NSURLErrorDomain -1009", transportReason(offline))
+        assertEquals("timed out", transportReason(timeout))
+        assertNull(transportReason(HttpRequestException("secret went wrong", request)))
+        assertNull(transportReason(IOException("Error Domain=NSURLErrorDomain Code=-1009 secret")))
     }
 
     @Test
@@ -153,3 +224,9 @@ class BridgeErrorsTest {
         client.closeAndWait()
     }
 }
+
+/** The connectivity message: the library's sentence, then at most a fixed-vocabulary reason. */
+private val FIXED_CONNECTIVITY_MESSAGE =
+    Regex(
+        """The request could not reach the server( \((timed out|[A-Za-z][A-Za-z0-9_.]* -?\d+)\))?"""
+    )

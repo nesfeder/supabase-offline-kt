@@ -250,6 +250,33 @@ The XCFrameworks the Swift package builds against locally come from
 `assembleSupabaseOfflineCoreDebugXCFramework` and `assembleSupabaseOfflineCoreReleaseXCFramework`,
 with the same property.
 
+## The Swift package
+
+The Swift package lives in `swift/`, laid out as the repository the release publishes it to: its
+`Package.swift`, the `SupabaseOffline` and `SupabaseOfflineTesting` sources, and the tests. It is
+iOS-only, so it builds and tests with `xcodebuild` on an iOS simulator, never with `swift build` on
+the Mac. With `SUPABASE_OFFLINE_LOCAL_CORE=1` in its environment, `Package.swift` takes the core
+framework from `swift/LocalCore/` (ignored by git) instead of a release.
+
+To build the framework and run the tests on a simulator of your own, with every warning an error,
+followed by the check that the public API names nothing of the framework underneath it:
+
+```bash
+./gradlew :supabase-offline-swift-bridge:assembleSupabaseOfflineCoreDebugXCFramework \
+    -Psupabase.offline.iosSqlite=system
+scripts/test-swift-package.sh --simulator <simulator UDID> --derived-data <a scratch folder>
+```
+
+The script copies the framework into `swift/LocalCore/`. To open the package in Xcode afterwards,
+start Xcode with the variable set: `SUPABASE_OFFLINE_LOCAL_CORE=1 open -a Xcode swift/Package.swift`.
+CI runs the same script in the iOS job on the self-hosted runner.
+
+The core framework is imported `internal` everywhere (`InternalImportsByDefault`), so the compiler
+refuses a public declaration that names one of its types; the one file that needs more is the
+client's, with a `package import` for the testing product. Every closure handed to the core runs on
+the core's own threads, so it must not inherit an actor: the adapters in
+`swift/Sources/SupabaseOffline/CoreCalls.swift` take `@Sendable` closures for that reason.
+
 ## Releasing
 
 Releases are published from GitHub Actions by the Release workflow, which a maintainer starts by
