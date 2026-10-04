@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.AfterTest
@@ -119,7 +119,8 @@ class ReactiveReadFailuresTest {
 
     /**
      * Collects a [strategy] read until it ends. After its first value, the collector queues a
-     * write, which runs the read again; from then on the read's overlay throws [failure].
+     * write, which runs the read again; from then on the overlay's read of the queue throws
+     * [failure].
      *
      * @return the values collected, and what the collection ended with.
      */
@@ -134,18 +135,15 @@ class ReactiveReadFailuresTest {
                     else connectivityFailure()
                 }
             )
-        val store = newTestOfflineStore()
+        val failing = AtomicBoolean(false)
+        val mutationDao =
+            FakeMutationDao().apply { beforeTableRead = { if (failing.load()) throw failure } }
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store = store,
+                mutationDao = mutationDao,
                 coordinatorScope = callerScope,
             )
-        val failing = AtomicBoolean(false)
-        store.identityProvider = {
-            if (failing.load()) throw failure
-            null
-        }
         val values = mutableListOf<QuerySnapshot>()
         val ended =
             withContext(Dispatchers.Default) {

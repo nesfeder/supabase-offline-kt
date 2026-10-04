@@ -10,8 +10,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -35,7 +35,7 @@ class SchemaCacheMissTest {
     private var now: Duration = Duration.ZERO
     private val mutationDao = FakeMutationDao()
     private val store =
-        newTestOfflineStore(mutationDao = mutationDao, monotonicTick = { now.inWholeNanoseconds })
+        newTestStore(mutationDao = mutationDao, monotonicTick = { now.inWholeNanoseconds })
 
     @Test
     fun a_replay_refused_for_a_table_the_schema_cache_does_not_know_stays_queued() = runTest {

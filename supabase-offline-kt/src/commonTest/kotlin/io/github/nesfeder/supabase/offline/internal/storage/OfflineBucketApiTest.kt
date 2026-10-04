@@ -5,11 +5,11 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
 import io.ktor.utils.io.ByteChannel
 import kotlin.random.Random
@@ -56,7 +56,7 @@ class OfflineBucketApiTest {
 
     private val createdDirs = mutableListOf<Path>()
     private lateinit var baseDir: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var fake: FakeBucketApi
     private lateinit var offlineApi: CachingBucketApi
 
@@ -70,7 +70,7 @@ class OfflineBucketApiTest {
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-bucket-test-${Random.nextLong()}"
         createdDirs += baseDir
-        store = newTestOfflineStore()
+        store = newTestStore()
         fake = FakeBucketApi(bucketId = BUCKET)
         offlineApi = newTestBucketApi(delegate = fake, baseDirectory = baseDir, store = store)
     }

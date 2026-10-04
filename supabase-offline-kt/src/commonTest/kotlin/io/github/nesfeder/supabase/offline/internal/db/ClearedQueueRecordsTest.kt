@@ -4,7 +4,8 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -26,9 +27,12 @@ class ClearedQueueRecordsTest {
         // Given — a store holding the rejected list and a keyed insert whose send started
         val queryCacheDao = FakeQueryCacheDao()
         queryCacheDao.seedPayload(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY, "{}")
-        val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+        val store = newTestStore(queryCacheDao = queryCacheDao)
         val id =
-            store.enqueueInsert("todos", Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray)
+            store.mutationQueue.enqueueInsert(
+                "todos",
+                Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray,
+            )
         store.mutationQueue.markSendUnconfirmed(id)
 
         // When — cleared, then read the way the overlay and the counts read them
@@ -46,11 +50,14 @@ class ClearedQueueRecordsTest {
         // Given — a keyed insert whose send started, and a first read of the started sends parked
         // after it read the rows
         val mutationDao = FakeMutationDao()
-        val writer = newTestOfflineStore(mutationDao = mutationDao)
+        val writer = newTestStore(mutationDao = mutationDao)
         val id =
-            writer.enqueueInsert("todos", Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray)
+            writer.mutationQueue.enqueueInsert(
+                "todos",
+                Json.parseToJsonElement("""[{"id":"x"}]""") as JsonArray,
+            )
         writer.mutationQueue.markSendUnconfirmed(id)
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+        val store = newTestStore(mutationDao = mutationDao)
         val parked = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         mutationDao.afterUnconfirmedSendIdsRead = {

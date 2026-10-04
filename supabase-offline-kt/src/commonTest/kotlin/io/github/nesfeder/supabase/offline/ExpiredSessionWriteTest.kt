@@ -12,8 +12,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.refreshRefused
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -38,7 +38,7 @@ import kotlinx.serialization.json.JsonElement
 class ExpiredSessionWriteTest {
 
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(mutationDao = mutationDao)
+    private val store = newTestStore(mutationDao = mutationDao)
 
     @Test
     fun a_write_with_an_expired_session_offline_is_queued_as_its_users() = runTest {

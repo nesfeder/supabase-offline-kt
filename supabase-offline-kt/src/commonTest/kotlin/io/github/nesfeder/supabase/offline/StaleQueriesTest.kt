@@ -13,7 +13,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -91,12 +90,9 @@ class StaleQueriesTest {
                         coroutineDispatcher = dispatcher
                         install(Postgrest) { maxRetries = 0 }
                     },
-                store =
-                    newTestOfflineStore(
-                        queryCacheDao = queryCacheDao,
-                        mutationDao = mutationDao,
-                        nowMillis = { NOW },
-                    ),
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                nowMillis = { NOW },
                 coordinatorScope = scope,
             )
             .from(TABLE)

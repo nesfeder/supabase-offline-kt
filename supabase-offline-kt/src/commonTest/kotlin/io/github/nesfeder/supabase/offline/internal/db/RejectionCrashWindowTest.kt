@@ -8,9 +8,10 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestPostgrest
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,17 +27,17 @@ import kotlinx.serialization.json.JsonArray
  */
 class RejectionCrashWindowTest {
 
-    private val store = newTestOfflineStore()
+    private val store = newTestStore()
 
     @Test
     fun a_rejection_recorded_before_a_crash_is_cleared_when_the_write_later_syncs() = runTest {
         // Given — the process died between writing the rejected entry and deleting the mutation row
-        store.enqueueInsert(
+        store.mutationQueue.enqueueInsert(
             table = NOTES,
             body = Json.parseToJsonElement("""[{"id":"n1","title":"x"}]""") as JsonArray,
         )
         val pending = store.mutationQueue.allPendingMutations().single()
-        store.mutationQueue.rejectedList.addRejection(
+        store.addRejection(
             StoredRejection(
                 id = pending.id,
                 table = NOTES,
@@ -71,7 +72,7 @@ class RejectionCrashWindowTest {
                     )
                 } as EnqueueOutcome.Queued)
                 .id
-        store.mutationQueue.rejectedList.addRejection(
+        store.addRejection(
             StoredRejection(
                 id = id,
                 table = NOTES,

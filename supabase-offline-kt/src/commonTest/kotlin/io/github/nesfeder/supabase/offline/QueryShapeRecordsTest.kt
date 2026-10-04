@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
@@ -11,9 +11,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.UNLIMITED_TEST_CACHE_SETTINGS
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -50,31 +50,24 @@ class QueryShapeRecordsTest {
     /** Every stamp the store writes is later than the one before. */
     private var clock = 0L
 
-    /** The store of the last [launch]. */
-    private lateinit var store: OfflineStore
+    /** The query cache of the last [launch]'s client. */
+    private lateinit var queryCache: QueryCache
 
     /** A client over the same database, as each launch of the app builds one. */
-    private fun launch(queryCacheLimits: QueryCacheLimits? = null): Offline {
-        store =
-            if (queryCacheLimits == null) {
-                newTestOfflineStore(
-                    queryCacheDao = queryCacheDao,
-                    mutationDao = mutationDao,
-                    nowMillis = { ++clock },
-                )
-            } else {
-                newTestOfflineStore(
-                    queryCacheDao = queryCacheDao,
-                    mutationDao = mutationDao,
-                    queryCacheLimits = queryCacheLimits,
-                    nowMillis = { ++clock },
-                )
-            }
-        return newTestOfflineClient(
-            supabase = server.supabaseClient(),
-            store = store,
-            coordinatorScope = idleCoroutineScope(),
-        )
+    private fun launch(
+        queryCacheLimits: QueryCacheLimits = UNLIMITED_TEST_CACHE_SETTINGS
+    ): Offline {
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                queryCacheLimits = queryCacheLimits,
+                nowMillis = { ++clock },
+                coordinatorScope = idleCoroutineScope(),
+            )
+        queryCache = client.queryCache
+        return client
     }
 
     private fun list(name: String): SelectRequestBuilder.() -> Unit = {
@@ -150,7 +143,7 @@ class QueryShapeRecordsTest {
         }
 
         // When
-        val shape = store.queryCache.queryShapes.shapeOf(TABLE, "$TABLE?list_id=eq.A&note=eq.x")
+        val shape = queryCache.queryShapes.shapeOf(TABLE, "$TABLE?list_id=eq.A&note=eq.x")
 
         // Then — unknown, so that key's rows are never judged by the wrong query's filters
         assertEquals(null, shape)
@@ -173,7 +166,7 @@ class QueryShapeRecordsTest {
         client
             .from(TABLE)
             .select(readStrategy = ReadStrategy.NetworkOnly, request = list("BBBBBBBBBBBBBB"))
-        store.queryCache.evictOverBudget()
+        queryCache.evictOverBudget()
 
         // Then — one payload, and one shape record, for it
         val payloads = queryCacheDao.rowsOf(TABLE).map { row -> row.cacheKey }

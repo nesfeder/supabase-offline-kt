@@ -10,7 +10,9 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -32,7 +34,7 @@ class PersistedNamesTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
     private val store =
-        newTestOfflineStore(
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             nowMillis = { NOW },
@@ -135,7 +137,7 @@ class PersistedNamesTest {
     @Test
     fun a_rejected_list_is_written_with_these_keys() = runTest {
         // Given / When — an entry with every field set
-        store.mutationQueue.rejectedList.addRejection(
+        store.addRejection(
             StoredRejection(
                 id = 7,
                 table = "todos",
@@ -177,7 +179,7 @@ class PersistedNamesTest {
     fun the_count_of_dropped_rejections_is_written_under_this_key() = runTest {
         // Given / When — one more rejection than the list keeps
         repeat(MAX_REJECTED_MUTATIONS + 1) { index ->
-            store.mutationQueue.rejectedList.addRejection(
+            store.addRejection(
                 StoredRejection(
                     id = index + 1L,
                     table = "t",
@@ -215,7 +217,7 @@ class PersistedNamesTest {
     fun a_replay_and_a_payload_that_holds_it_store_one_sequence() = runTest {
         // Given — two replayed mutations, then a network response for a cached query of their table
         repeat(2) {
-            store.enqueueUpdate(
+            store.mutationQueue.enqueueUpdate(
                 table = "todos",
                 body = Json.parseToJsonElement("""{"title":"x"}"""),
                 filter = null,
@@ -240,7 +242,7 @@ class PersistedNamesTest {
     @Test
     fun a_started_send_is_recorded_in_its_row_until_it_replays() = runTest {
         // Given — a keyed INSERT whose send is starting
-        store.enqueueInsert(
+        store.mutationQueue.enqueueInsert(
             table = "todos",
             body = Json.parseToJsonElement("""[{"id":"t1"}]""") as JsonArray,
         )

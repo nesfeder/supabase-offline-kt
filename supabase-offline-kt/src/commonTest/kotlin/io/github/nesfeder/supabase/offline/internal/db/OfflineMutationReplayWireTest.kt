@@ -8,8 +8,12 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.RecordedRequest
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueDelete
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,7 +37,7 @@ class OfflineMutationReplayWireTest {
     private val server = RecordingPostgrestServer()
     private val mutationDao = FakeMutationDao()
     private var clock = 0L
-    private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock++ })
+    private val store = newTestStore(mutationDao = mutationDao, nowMillis = { clock++ })
     private val replayer =
         newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
@@ -44,7 +48,10 @@ class OfflineMutationReplayWireTest {
     @Test
     fun a_replayed_insert_posts_the_stored_body() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1,"title":"Buy milk"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":1,"title":"Buy milk"}]"""),
+        )
 
         // When
         val synced = replayer.syncTable(table = TABLE)
@@ -67,7 +74,11 @@ class OfflineMutationReplayWireTest {
     @Test
     fun a_replayed_insert_keeps_default_to_null_false() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""), defaultToNull = false)
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":1}]"""),
+            defaultToNull = false,
+        )
 
         // When
         replayer.syncTable(table = TABLE)
@@ -79,7 +90,7 @@ class OfflineMutationReplayWireTest {
     @Test
     fun a_replayed_upsert_carries_on_conflict_and_merges_duplicates() = runTest {
         // Given
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueUpsert(
             table = TABLE,
             bodyJson = rows("""[{"list_id":"l-1","user_id":"u-2","role":"editor"}]"""),
             onConflict = "list_id,user_id",
@@ -111,7 +122,7 @@ class OfflineMutationReplayWireTest {
     @Test
     fun a_replayed_upsert_keeps_ignore_duplicates_and_default_to_null_false() = runTest {
         // Given
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueUpsert(
             table = TABLE,
             bodyJson = rows("""[{"id":1}]"""),
             onConflict = "id",
@@ -131,7 +142,7 @@ class OfflineMutationReplayWireTest {
     @Test
     fun a_replayed_update_carries_its_stored_filter() = runTest {
         // Given
-        store.enqueueUpdate(
+        store.mutationQueue.enqueueUpdate(
             table = TABLE,
             body = element("""{"title":"Renamed"}"""),
             filter = ID_AND_OWNER,
@@ -158,7 +169,7 @@ class OfflineMutationReplayWireTest {
     @Test
     fun a_replayed_delete_carries_its_stored_filter() = runTest {
         // Given
-        store.enqueueDelete(table = TABLE, filter = IDS_OR_ARCHIVED)
+        store.mutationQueue.enqueueDelete(table = TABLE, filter = IDS_OR_ARCHIVED)
 
         // When
         val synced = replayer.syncTable(table = TABLE)
@@ -184,20 +195,24 @@ class OfflineMutationReplayWireTest {
     @Test
     fun syncTable_invokesRequestLambdas_andPropagatesOptions() = runTest {
         // Given — one queued write per verb, in this order
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""), defaultToNull = false)
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":1}]"""),
+            defaultToNull = false,
+        )
+        store.mutationQueue.enqueueUpsert(
             table = TABLE,
             bodyJson = rows("""[{"id":2}]"""),
             onConflict = "id",
             ignoreDuplicates = true,
             defaultToNull = false,
         )
-        store.enqueueUpdate(
+        store.mutationQueue.enqueueUpdate(
             table = TABLE,
             body = element("""{"name":"X"}"""),
             filter = ID_AND_OWNER,
         )
-        store.enqueueDelete(table = TABLE, filter = ID_AND_OWNER)
+        store.mutationQueue.enqueueDelete(table = TABLE, filter = ID_AND_OWNER)
 
         // When
         val synced = replayer.syncTable(table = TABLE)
@@ -298,8 +313,8 @@ class OfflineMutationReplayWireTest {
     @Test
     fun syncAllTables_serverErrorOnOneTable_stopsThePassWithLaterTablesQueued() = runTest {
         // Given — one write per table; the server fails the first table with a 500
-        store.enqueueInsert(table = FAILING_TABLE, body = rows("""[{"id":1}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
+        store.mutationQueue.enqueueInsert(table = FAILING_TABLE, body = rows("""[{"id":1}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
         server.answer = { request ->
             if (request.table == FAILING_TABLE) postgrestError(HttpStatusCode.InternalServerError)
             else okJson("[]")

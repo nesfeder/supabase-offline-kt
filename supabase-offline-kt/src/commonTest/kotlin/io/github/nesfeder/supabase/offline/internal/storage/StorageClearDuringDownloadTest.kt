@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
 import kotlin.random.Random
@@ -30,7 +30,7 @@ import okio.SYSTEM
 class StorageClearDuringDownloadTest {
 
     private lateinit var dataDirectory: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var server: RecordingStorageServer
 
     @BeforeTest
@@ -38,7 +38,7 @@ class StorageClearDuringDownloadTest {
         dataDirectory =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-clear-download-${Random.nextLong().toULong()}"
-        store = newTestOfflineStore()
+        store = newTestStore()
         server = RecordingStorageServer()
         server.objects["$BUCKET/$PATH"] = CONTENT.encodeToByteArray()
     }
@@ -63,7 +63,7 @@ class StorageClearDuringDownloadTest {
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store = store,
+                cachedFileDao = store.cachedFileDao,
                 baseDirectoryProvider = { dataDirectory },
             )
         server.gate = CompletableDeferred()
@@ -87,7 +87,7 @@ class StorageClearDuringDownloadTest {
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store = store,
+                cachedFileDao = store.cachedFileDao,
                 baseDirectoryProvider = { dataDirectory },
             )
         server.gate = CompletableDeferred()

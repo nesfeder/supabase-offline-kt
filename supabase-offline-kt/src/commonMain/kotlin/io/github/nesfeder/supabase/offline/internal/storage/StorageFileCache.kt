@@ -6,7 +6,6 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.internal.cache.CacheOwnership
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
@@ -173,31 +172,6 @@ internal class StorageFileCache(
     private val excludeFromBackup: (Path) -> Boolean = ::excludeFromBackup,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
-
-    /** Over the store facade's file rows, identity and clock; retired with the facade in C3b. */
-    constructor(
-        store: OfflineStore,
-        dataDirectoryProvider: () -> Path,
-        maxSizeBytes: Long?,
-        engineLogger: EngineLogger,
-        fileSystem: FileSystem = FileSystem.SYSTEM,
-        nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
-        markUsed: (Path, Long) -> Unit = ::markFileUsed,
-        excludeFromBackup: (Path) -> Boolean = ::excludeFromBackup,
-        ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-    ) : this(
-        cachedFileDao = store.cachedFileDao,
-        ownership = store.cacheOwnership,
-        fetchedAtMillis = store.nowMillis,
-        dataDirectoryProvider = dataDirectoryProvider,
-        maxSizeBytes = maxSizeBytes,
-        engineLogger = engineLogger,
-        fileSystem = fileSystem,
-        nowMillis = nowMillis,
-        markUsed = markUsed,
-        excludeFromBackup = excludeFromBackup,
-        ioDispatcher = ioDispatcher,
-    )
 
     /** The row of [path] in [bucketId], or `null` when none is cached. */
     private suspend fun rowOf(bucketId: String, path: String): CachedFileRow? =

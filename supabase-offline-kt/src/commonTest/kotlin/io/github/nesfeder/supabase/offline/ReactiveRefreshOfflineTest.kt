@@ -9,7 +9,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -48,7 +47,7 @@ class ReactiveRefreshOfflineTest {
                                 coroutineDispatcher = dispatcher
                                 install(Postgrest)
                             },
-                        store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                        queryCacheDao = queryCacheDao,
                         coordinatorScope = backgroundScope,
                     )
                     .from(TABLE)

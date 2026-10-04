@@ -6,13 +6,13 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.ktor.client.HttpClient
@@ -41,7 +41,7 @@ import kotlinx.coroutines.test.runTest
  * bounded unknown-error dead-letter), the single-sweep-per-table `distinct()` fix, the concurrency
  * mutex, and the refuse-to-replay-unfiltered guard for legacy null-descriptor UPDATE/DELETE rows.
  *
- * Each case drives a real [OfflineStore] over the shared in-memory DAO fakes and a scripted
+ * Each case drives the real [MutationQueue] over the shared in-memory DAO fakes and a scripted
  * [FakeRemoteTable]; only the remote verbs are faked.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -641,7 +641,7 @@ class MutationQueueReplayerTest {
      * no wait).
      */
     private fun replayer(
-        store: OfflineStore,
+        store: TestStore,
         client: SupabaseClient,
         remoteTable: FakeRemoteTable,
         awaitSessionSettled: (suspend () -> Boolean)? = null,
@@ -655,8 +655,8 @@ class MutationQueueReplayerTest {
 
     private fun testClient(): SupabaseClient = newTestSupabaseClient()
 
-    private fun buildStore(mutationDao: FakeMutationDao): OfflineStore =
-        newTestOfflineStore(mutationDao = mutationDao)
+    private fun buildStore(mutationDao: FakeMutationDao): TestStore =
+        newTestStore(mutationDao = mutationDao)
 
     /**
      * Builds a real [ResponseException] carrying [status] by letting a `MockEngine`-backed client

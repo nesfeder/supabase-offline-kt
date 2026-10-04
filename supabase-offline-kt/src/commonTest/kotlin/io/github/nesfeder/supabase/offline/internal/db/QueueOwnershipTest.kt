@@ -12,9 +12,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -32,8 +33,7 @@ class QueueOwnershipTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity? = USER_A
     private val replayer =
@@ -132,7 +132,10 @@ class QueueOwnershipTest {
     fun a_queue_written_before_owners_were_recorded_is_adopted_by_the_first_identity_to_replay() =
         runTest {
             // Given — a pending write with no recorded owner, as an older build leaves it
-            store.enqueueInsert(table = TABLE, body = rows("""[{"title":"legacy"}]"""))
+            store.mutationQueue.enqueueInsert(
+                table = TABLE,
+                body = rows("""[{"title":"legacy"}]"""),
+            )
 
             // When — A's pass sees it but cannot reach the server; then B and A sync online
             server.answer = { connectivityFailure() }

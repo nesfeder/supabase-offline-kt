@@ -4,35 +4,41 @@ package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.internal.buildOfflineClient
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
-import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
+import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import kotlinx.coroutines.CoroutineScope
 import okio.Path
 import okio.Path.Companion.toPath
 
 /**
- * Makes `install(Offline)` open its client over an in-memory store instead of the platform's
+ * Makes `install(Offline)` open its client over in-memory tables instead of the platform's
  * database, through the same wiring the platform opener uses, so every setting of this
  * configuration reaches the engine as it does in an app. For tests of the plugin that need no
- * database file.
+ * database file. Rows are stamped `0L`, as [newTestStore]'s are.
  *
- * @param store the store the client keeps its data in; by default a new one, with the query-cache
- *   limits this configuration asks for.
+ * @param queryCacheDao the cached queries' table.
+ * @param cachedFileDao the Storage file cache's table.
+ * @param mutationDao the mutation queue's table; pass one to read what the client queued.
  * @param coordinatorScope the parent of the client's own scope; see [newTestOfflineClient].
  * @param dataDirectory where the Storage file cache keeps its files; by default a directory nothing
  *   is written to.
  */
 internal fun Offline.Config.openInMemory(
-    store: OfflineStore? = null,
+    queryCacheDao: QueryCacheDao = FakeQueryCacheDao(),
+    cachedFileDao: CachedFileDao = InMemoryCachedFileDao(),
+    mutationDao: MutationDao = FakeMutationDao(),
     coordinatorScope: CoroutineScope? = null,
     dataDirectory: Path = IN_MEMORY_TEST_DIRECTORY,
 ) {
     openLocalData = { supabase, config ->
         config.buildOfflineClient(
             supabase = supabase,
-            openStore = { limits: QueryCacheLimits ->
-                store ?: newTestOfflineStore(queryCacheLimits = limits)
-            },
+            queryCacheDao = queryCacheDao,
+            cachedFileDao = cachedFileDao,
+            mutationDao = mutationDao,
+            rowClock = { 0L },
             dataDirectory = dataDirectory,
             prepareFileCacheDirectories = false,
             coordinatorScope = coordinatorScope,
@@ -40,5 +46,5 @@ internal fun Offline.Config.openInMemory(
     }
 }
 
-/** A data directory nothing is written to: the in-memory store keeps no files. */
+/** A data directory nothing is written to: the in-memory tables keep no files. */
 private val IN_MEMORY_TEST_DIRECTORY: Path = "/in-memory-plugin-test".toPath()

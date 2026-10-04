@@ -7,7 +7,6 @@ import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.cache.MutationOverlay
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.PatchTarget
 import io.github.nesfeder.supabase.offline.internal.cache.Projection
 import io.github.nesfeder.supabase.offline.internal.cache.conflictColumnsOf
@@ -23,7 +22,15 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueDelete
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
+import io.github.nesfeder.supabase.offline.testdoubles.overlayCachedPayload
+import io.github.nesfeder.supabase.offline.testdoubles.overlayPendingOnResponse
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -205,7 +212,7 @@ class KnownRowsPruningTest {
         random: Random,
         keys: Keys,
         queryCacheDao: FakeQueryCacheDao,
-        store: OfflineStore,
+        store: TestStore,
         queries: List<Query>,
     ): Map<String, CachedQueryRow> {
         val base = (0 until ROWS).map { index -> random.row(keys, index) }
@@ -339,20 +346,27 @@ class KnownRowsPruningTest {
         }
 
     /** Queues [write], as an offline client does; its mutation's id. */
-    private suspend fun queue(store: OfflineStore, write: Write): Long =
+    private suspend fun queue(store: TestStore, write: Write): Long =
         when (write.operation) {
             MutationOperation.INSERT ->
-                store.enqueueInsert(TABLE, EngineJson.parseToJsonElement(write.body) as JsonArray)
+                store.mutationQueue.enqueueInsert(
+                    TABLE,
+                    EngineJson.parseToJsonElement(write.body) as JsonArray,
+                )
             MutationOperation.UPSERT ->
-                store.enqueueUpsert(
+                store.mutationQueue.enqueueUpsert(
                     TABLE,
                     EngineJson.parseToJsonElement(write.body) as JsonArray,
                     onConflict = write.onConflict,
                     ignoreDuplicates = write.ignoreDuplicates,
                 )
             MutationOperation.UPDATE ->
-                store.enqueueUpdate(TABLE, EngineJson.parseToJsonElement(write.body), write.filter)
-            else -> store.enqueueDelete(TABLE, write.filter)
+                store.mutationQueue.enqueueUpdate(
+                    TABLE,
+                    EngineJson.parseToJsonElement(write.body),
+                    write.filter,
+                )
+            else -> store.mutationQueue.enqueueDelete(TABLE, write.filter)
         }
 
     private fun projectionFor(query: Query): Projection? =
@@ -427,12 +441,12 @@ class KnownRowsPruningTest {
                 val queryCacheDao = FakeQueryCacheDao()
                 val mutationDao = FakeMutationDao()
                 val store =
-                    newTestOfflineStore(
+                    newTestStore(
                         queryCacheDao = queryCacheDao,
                         mutationDao = mutationDao,
                         nowMillis = { NOW },
+                        primaryKeys = PrimaryKeys { keys.columns },
                     )
-                store.primaryKeys = PrimaryKeys { keys.columns }
                 val payloads = seed(random, keys, queryCacheDao, store, queries)
                 val unconfirmed = mutableSetOf<Long>()
                 repeat(1 + random.nextInt(7)) {
@@ -462,7 +476,7 @@ class KnownRowsPruningTest {
                         )
                     val passShape = query.shaped && seed % 2 == 0
                     val reactive =
-                        store
+                        store.queryOverlay
                             .overlaidPayloadFlow(
                                 TABLE,
                                 query.cacheKey,
@@ -485,7 +499,8 @@ class KnownRowsPruningTest {
                     val payload = payloads.getValue(query.cacheKey).payload
                     val expected =
                         everyRowOverlay(payload, all, query, keys.columns, known, mayAlreadyHold)
-                    val oneShot = store.overlayCachedPayload(TABLE, query.cacheKey, payload)
+                    val oneShot =
+                        store.queryOverlay.overlayCachedPayload(TABLE, query.cacheKey, payload)
                     val answer =
                         JsonArray(
                                 payloadRowsOf(EngineJson, payload).orEmpty().filter {
@@ -497,7 +512,8 @@ class KnownRowsPruningTest {
                         everyRowOverlay(answer, pending, query, keys.columns, known) { mutation ->
                             mutation.id in unconfirmed
                         }
-                    val response = store.overlayPendingOnResponse(TABLE, query.cacheKey, answer)
+                    val response =
+                        store.queryOverlay.overlayPendingOnResponse(TABLE, query.cacheKey, answer)
                     compared += 3
                     if (oneShot != expected)
                         mismatches +=
@@ -525,12 +541,16 @@ class KnownRowsPruningTest {
                 val random = Random(seed * 17 + keys.ordinal)
                 val queries = queriesFor(keys)
                 val queryCacheDao = FakeQueryCacheDao()
-                val store = newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW })
                 val primaryKeys = PrimaryKeys { keys.columns }
-                store.primaryKeys = primaryKeys
-                store.liveCacheKeysOf = { setOf(LIVE) }
                 val marked = mutableSetOf<String>()
-                store.onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys }
+                val store =
+                    newTestStore(
+                        queryCacheDao = queryCacheDao,
+                        nowMillis = { NOW },
+                        primaryKeys = primaryKeys,
+                        liveCacheKeysOf = { setOf(LIVE) },
+                        onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys },
+                    )
                 val payloads = seed(random, keys, queryCacheDao, store, queries)
 
                 // When — the server accepted one write, or an update that returned several rows
@@ -643,7 +663,7 @@ class KnownRowsPruningTest {
     private suspend fun acceptWrite(
         random: Random,
         keys: Keys,
-        store: OfflineStore,
+        store: TestStore,
     ): List<MutationRow> {
         if (random.nextInt(3) == 0) {
             val body = random.partial(keys, keyed = false)
@@ -715,20 +735,24 @@ class KnownRowsPruningTest {
                 val queryCacheDao = FakeQueryCacheDao()
                 val mutationDao = FakeMutationDao()
                 val store =
-                    newTestOfflineStore(
+                    newTestStore(
                         queryCacheDao = queryCacheDao,
                         mutationDao = mutationDao,
                         nowMillis = { NOW },
+                        primaryKeys = PrimaryKeys { keys.columns },
+                        liveCacheKeysOf = { setOf(LIVE) },
                     )
-                store.primaryKeys = PrimaryKeys { keys.columns }
-                store.liveCacheKeysOf = { setOf(LIVE) }
                 val before = seed(random, keys, queryCacheDao, store, queries)
                 repeat(1 + random.nextInt(5)) { queue(store, random.write(keys)) }
                 queries.forEach { query ->
                     before[query.cacheKey]?.let { payload ->
-                        store.overlayCachedPayload(TABLE, query.cacheKey, payload.payload)
+                        store.queryOverlay.overlayCachedPayload(
+                            TABLE,
+                            query.cacheKey,
+                            payload.payload,
+                        )
                     }
-                    store.overlaidPayloadFlow(TABLE, query.cacheKey).first()
+                    store.queryOverlay.overlaidPayloadFlow(TABLE, query.cacheKey).first()
                 }
 
                 // When — accepted writes rewrite the payloads
@@ -773,13 +797,15 @@ class KnownRowsPruningTest {
                     val expected =
                         if (payload == null) overlaid.takeUnless { text -> text == "[]" }
                         else overlaid
-                    val reactive = store.overlaidPayloadFlow(TABLE, query.cacheKey).first()
+                    val reactive =
+                        store.queryOverlay.overlaidPayloadFlow(TABLE, query.cacheKey).first()
                     compared++
                     if (reactive != expected)
                         mismatches +=
                             "$keys seed $seed ${query.cacheKey} reactive: $reactive, not $expected"
                     if (payload != null) {
-                        val oneShot = store.overlayCachedPayload(TABLE, query.cacheKey, payload)
+                        val oneShot =
+                            store.queryOverlay.overlayCachedPayload(TABLE, query.cacheKey, payload)
                         compared++
                         if (oneShot != expected)
                             mismatches +=
@@ -797,9 +823,9 @@ class KnownRowsPruningTest {
      */
     private suspend fun storeOf(
         vararg lists: Triple<String, String, Long>
-    ): Pair<OfflineStore, FakeQueryCacheDao> {
+    ): Pair<TestStore, FakeQueryCacheDao> {
         val queryCacheDao = FakeQueryCacheDao()
-        val store = newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW })
+        val store = newTestStore(queryCacheDao = queryCacheDao, nowMillis = { NOW })
         lists.forEach { (cacheKey, payload, updatedAt) ->
             queryCacheDao.seedPayload(TABLE, cacheKey, payload, updatedAt)
             val query = queriesFor(Keys.INT).single { query -> query.cacheKey == cacheKey }
@@ -835,7 +861,7 @@ class KnownRowsPruningTest {
             )
 
         // When — a queued update moves row 5 into list B
-        store.enqueueUpdate(
+        store.mutationQueue.enqueueUpdate(
             TABLE,
             EngineJson.parseToJsonElement("""{"list":"B"}"""),
             byColumn("id", "5"),
@@ -844,7 +870,7 @@ class KnownRowsPruningTest {
         // Then — the newest copy joins
         assertEquals(
             """[{"id":1,"list":"B","title":"b"},{"id":5,"list":"B","status":"done","title":"newest"}]""",
-            store.overlayCachedPayload(TABLE, "list-b", LIST_B),
+            store.queryOverlay.overlayCachedPayload(TABLE, "list-b", LIST_B),
         )
     }
 
@@ -867,11 +893,11 @@ class KnownRowsPruningTest {
             shapeOf(queriesFor(Keys.INT).single { query -> query.cacheKey == "everything" }),
             persist = false,
         )
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueUpsert(
             TABLE,
             JsonArray(listOf(EngineJson.parseToJsonElement("""{"id":5,"list":"B"}"""))),
         )
-        val first = store.overlayCachedPayload(TABLE, "list-b", LIST_B)
+        val first = store.queryOverlay.overlayCachedPayload(TABLE, "list-b", LIST_B)
 
         // When — a newer fetch of every row lands, holding row 5 as it is now
         store.queryCache.cacheResponse(
@@ -879,7 +905,7 @@ class KnownRowsPruningTest {
             "everything",
             """[{"id":5,"list":"A","title":"newest","code":"c5"}]""",
         )
-        val second = store.overlayCachedPayload(TABLE, "list-b", LIST_B)
+        val second = store.queryOverlay.overlayCachedPayload(TABLE, "list-b", LIST_B)
 
         // Then — each read moved in the newest copy it could know
         assertEquals(
@@ -912,7 +938,7 @@ class KnownRowsPruningTest {
 
         // When — an upsert of some of its columns, naming a list B excludes, flags it, and an
         // update moves every urgent row into list B
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueUpsert(
             TABLE,
             JsonArray(
                 listOf(
@@ -922,7 +948,7 @@ class KnownRowsPruningTest {
                 )
             ),
         )
-        store.enqueueUpdate(
+        store.mutationQueue.enqueueUpdate(
             TABLE,
             EngineJson.parseToJsonElement("""{"list":"B"}"""),
             byColumn("flag", "urgent"),
@@ -932,7 +958,7 @@ class KnownRowsPruningTest {
         assertEquals(
             """[{"id":1,"list":"B","title":"b"},""" +
                 """{"id":"5","list":"B","status":"open","title":"renamed","code":"c5","flag":"urgent"}]""",
-            store.overlayCachedPayload(TABLE, "list-b", LIST_B),
+            store.queryOverlay.overlayCachedPayload(TABLE, "list-b", LIST_B),
         )
     }
 
@@ -948,23 +974,23 @@ class KnownRowsPruningTest {
             )
 
         // When — it is deleted, inserted again in list B, and upserted
-        store.enqueueDelete(TABLE, byColumn("id", "5"))
-        store.enqueueInsert(
+        store.mutationQueue.enqueueDelete(TABLE, byColumn("id", "5"))
+        store.mutationQueue.enqueueInsert(
             TABLE,
             JsonArray(
                 listOf(EngineJson.parseToJsonElement("""{"id":5,"list":"B","title":"new"}"""))
             ),
         )
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueUpsert(
             TABLE,
             JsonArray(listOf(EngineJson.parseToJsonElement("""{"id":5,"status":"open"}"""))),
         )
 
         // Then — gone from list A; in list B once, as inserted and upserted
-        assertEquals("[]", store.overlayCachedPayload(TABLE, "list-a", oldRow))
+        assertEquals("[]", store.queryOverlay.overlayCachedPayload(TABLE, "list-a", oldRow))
         assertEquals(
             """[{"id":1,"list":"B","title":"b"},{"id":5,"list":"B","title":"new","status":"open"}]""",
-            store.overlayCachedPayload(TABLE, "list-b", LIST_B),
+            store.queryOverlay.overlayCachedPayload(TABLE, "list-b", LIST_B),
         )
     }
 
@@ -1028,10 +1054,14 @@ class KnownRowsPruningTest {
                 }
             val queries = TRUTH_QUERIES
             val queryCacheDao = FakeQueryCacheDao()
-            val store = newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW })
-            store.liveCacheKeysOf = { emptySet() }
             val marked = mutableSetOf<String>()
-            store.onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys }
+            val store =
+                newTestStore(
+                    queryCacheDao = queryCacheDao,
+                    nowMillis = { NOW },
+                    liveCacheKeysOf = { emptySet() },
+                    onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys },
+                )
             queries.entries.forEachIndexed { position, (cacheKey, conditions) ->
                 val shape = QueryShape("*", conditions, hasOtherFilters = false)
                 store.queryCache.queryShapes.remember(TABLE, cacheKey, shape, persist = false)

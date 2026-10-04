@@ -4,10 +4,12 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.LocalData
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -17,8 +19,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 
 /**
- * Verifies [OfflineStore.clearLocalData] wipes both the cached SELECT payloads and the queued
- * mutation store, so an identity-clearing flow (logout, account switch, account deletion) leaves no
+ * Verifies [LocalData.clearLocalData] wipes both the cached SELECT payloads and the queued mutation
+ * store, so an identity-clearing flow (logout, account switch, account deletion) leaves no
  * prior-user data or un-synced writes behind on disk.
  */
 class OfflineStoreClearAllTest {
@@ -30,7 +32,7 @@ class OfflineStoreClearAllTest {
         val mutationDao = FakeMutationDao()
         val store = buildStore(queryCacheDao, mutationDao)
         store.queryCache.cacheResponse("reports", "sig-A", """[{"id":"i-1","user_id":"u-1"}]""")
-        store.enqueueInsert(table = "projects", body = JsonArray(emptyList()))
+        store.mutationQueue.enqueueInsert(table = "projects", body = JsonArray(emptyList()))
         assertTrue(queryCacheDao.getRow("reports", "sig-A") != null, "precondition: payload seeded")
         assertTrue(mutationDao.inserted.isNotEmpty(), "precondition: mutation queued")
 
@@ -42,8 +44,8 @@ class OfflineStoreClearAllTest {
         assertEquals(0, mutationDao.inserted.size, "queued mutations should be gone")
     }
 
-    private fun buildStore(queryCacheDao: QueryCacheDao, mutationDao: MutationDao): OfflineStore =
-        newTestOfflineStore(
+    private fun buildStore(queryCacheDao: QueryCacheDao, mutationDao: MutationDao): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
         )

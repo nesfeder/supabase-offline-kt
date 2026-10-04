@@ -19,7 +19,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingSupabaseLogs
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
@@ -62,7 +61,7 @@ class CachedReadsSendNothingTest {
             }
         return newTestOfflineClient(
                 supabase = supabase,
-                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                queryCacheDao = queryCacheDao,
                 coordinatorScope = idleCoroutineScope(),
             )
             .from(TABLE)

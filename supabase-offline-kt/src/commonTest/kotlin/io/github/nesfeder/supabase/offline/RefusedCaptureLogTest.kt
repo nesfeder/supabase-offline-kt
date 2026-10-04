@@ -8,8 +8,8 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -28,7 +28,7 @@ class RefusedCaptureLogTest {
     private val builder =
         newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
-            store = newTestOfflineStore(),
+            store = newTestStore(),
             engineLogger = logger.asEngineLogger(),
         )
 

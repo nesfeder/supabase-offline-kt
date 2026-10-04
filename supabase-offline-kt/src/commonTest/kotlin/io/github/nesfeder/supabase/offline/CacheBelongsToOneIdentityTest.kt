@@ -28,7 +28,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.refreshRefused
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
@@ -150,12 +149,9 @@ class CacheBelongsToOneIdentityTest {
         }
         return newTestOfflineClient(
                 supabase = supabase,
-                store =
-                    newTestOfflineStore(
-                        queryCacheDao = queryCacheDao,
-                        cachedFileDao = cachedFileDao,
-                        mutationDao = mutationDao,
-                    ),
+                queryCacheDao = queryCacheDao,
+                cachedFileDao = cachedFileDao,
+                mutationDao = mutationDao,
                 baseDirectoryProvider = { dataDirectory },
                 coordinatorScope = backgroundScope,
                 scrubDatabase = scrubDatabase,

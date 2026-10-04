@@ -9,8 +9,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -30,7 +31,7 @@ class OnlineWriteJoinsQueueTest {
 
     private val server = RecordingPostgrestServer()
     private val queryCacheDao = FakeQueryCacheDao()
-    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao)
     private val builder =
         newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
@@ -80,7 +81,7 @@ class OnlineWriteJoinsQueueTest {
         )
         assertEquals(
             """[{"id":1,"title":"B"}]""",
-            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
     }
 
@@ -145,7 +146,7 @@ class OnlineWriteJoinsQueueTest {
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store = store,
+                queryCacheDao = queryCacheDao,
                 coordinatorScope = backgroundScope,
             )
         server.answer = { connectivityFailure() }
@@ -154,7 +155,7 @@ class OnlineWriteJoinsQueueTest {
         // When — online again, a new edit joins the queue; nobody calls sync
         server.answer = { okJson("[]") }
         val outcome = client.from(TABLE).update(patch("B")) { filter { eq("id", 1) } }
-        store.pendingMutationCountFlow().first { pending -> pending == 0 }
+        client.pendingMutationCountFlow().first { pending -> pending == 0 }
 
         // Then — the engine replayed both, in order
         assertIs<MutationOutcome.Queued>(outcome)

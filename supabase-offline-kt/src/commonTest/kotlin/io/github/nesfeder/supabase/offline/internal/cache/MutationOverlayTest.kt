@@ -9,7 +9,11 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueDelete
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -62,10 +66,10 @@ class MutationOverlayTest {
         }
 
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+        val store = newTestStore(mutationDao = mutationDao)
 
         // We use enqueueInsert to construct MutationRow correctly
-        store.enqueueInsert(table = "assets", body = body, filter = null)
+        store.mutationQueue.enqueueInsert(table = "assets", body = body, filter = null)
         val pending = mutationDao.pendingForTable("assets")
         val serverJson = """[{"id":"1"}]"""
 
@@ -82,7 +86,7 @@ class MutationOverlayTest {
     fun applyUpsertMutation_mergesOrInserts() = runTest {
         // Given
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+        val store = newTestStore(mutationDao = mutationDao)
 
         val upsertBody = buildJsonArray {
             add(
@@ -106,7 +110,7 @@ class MutationOverlayTest {
                     ),
             )
 
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueUpsert(
             table = "assets",
             bodyJson = upsertBody,
             filter = descriptor,
@@ -132,7 +136,7 @@ class MutationOverlayTest {
     fun applyUpdateMutation_patchesMatchingRows() = runTest {
         // Given
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+        val store = newTestStore(mutationDao = mutationDao)
 
         val patchBody: JsonElement = buildJsonObject {
             put("status", "active")
@@ -151,7 +155,7 @@ class MutationOverlayTest {
                     ),
             )
 
-        store.enqueueUpdate(
+        store.mutationQueue.enqueueUpdate(
             table = "assets",
             body = patchBody,
             filter = descriptor,
@@ -173,7 +177,7 @@ class MutationOverlayTest {
     fun applyDeleteMutation_removesMatchingRows() = runTest {
         // Given
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+        val store = newTestStore(mutationDao = mutationDao)
 
         val descriptor =
             FilterDescriptor(
@@ -188,7 +192,7 @@ class MutationOverlayTest {
                     ),
             )
 
-        store.enqueueDelete(table = "assets", filter = descriptor)
+        store.mutationQueue.enqueueDelete(table = "assets", filter = descriptor)
         val pending = mutationDao.pendingForTable("assets")
         val serverJson = """[{"id":"1"},{"id":"2"}]"""
 
@@ -206,9 +210,9 @@ class MutationOverlayTest {
         // Given
         val serverJson = """{"not":"an array"}""" // not a JsonArray
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+        val store = newTestStore(mutationDao = mutationDao)
         val body: JsonArray = buildJsonArray { add(buildJsonObject { put("id", "1") }) }
-        store.enqueueInsert("assets", body)
+        store.mutationQueue.enqueueInsert("assets", body)
         val pending = mutationDao.pendingForTable("assets")
 
         // When

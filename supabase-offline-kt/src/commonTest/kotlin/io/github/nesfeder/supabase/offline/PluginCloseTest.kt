@@ -11,7 +11,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.openInMemory
 import io.ktor.http.HttpStatusCode
@@ -76,12 +76,17 @@ class PluginCloseTest {
     fun calls_made_while_supabase_close_runs_end_as_offline_or_closed_never_cancelled() = runTest {
         // Given — a warm cache, and a plugin installed before Offline whose close waits
         val server = RecordingPostgrestServer(answer = { okJson("""[{"id":1}]""") })
-        val store = newTestOfflineStore()
+        val store = newTestStore()
         val supabase =
             newTestSupabaseClient(engine = server.engine) {
                 install(Postgrest) { maxRetries = 0 }
                 install(SlowClosingPlugin)
-                install(Offline) { openInMemory(store, idleCoroutineScope()) }
+                install(Offline) {
+                    openInMemory(
+                        mutationDao = store.mutationDao,
+                        coordinatorScope = idleCoroutineScope(),
+                    )
+                }
             }
         val slow = supabase.pluginManager.getPlugin(SlowClosingPlugin).config
         val todos = supabase.offline.from("todos")

@@ -4,10 +4,10 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.storage.storage
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -35,7 +35,7 @@ import okio.SYSTEM
 class StorageObjectNameEncodingTest {
 
     private lateinit var dataDirectory: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var server: RecordingStorageServer
 
     @BeforeTest
@@ -43,7 +43,7 @@ class StorageObjectNameEncodingTest {
         dataDirectory =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-encoding-${Random.nextLong().toULong()}"
-        store = newTestOfflineStore()
+        store = newTestStore()
         server = RecordingStorageServer()
         server.objects["$BUCKET/$NAME"] = CONTENT.encodeToByteArray()
     }

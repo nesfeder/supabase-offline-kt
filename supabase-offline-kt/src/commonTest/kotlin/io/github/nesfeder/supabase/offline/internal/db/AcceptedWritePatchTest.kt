@@ -9,7 +9,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,17 +30,17 @@ class AcceptedWritePatchTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val logger = RecordingLogSink()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, nowMillis = { NOW }).apply {
-            engineLogger = logger.asEngineLogger(EngineLogLevel.WARNING)
-        }
 
     /** The queries the store asked to fetch again, by table. */
     private val markedStale = mutableListOf<Pair<String, Set<String>>>()
 
-    init {
-        store.onQueriesMarkedStale = { table, cacheKeys -> markedStale += table to cacheKeys }
-    }
+    private val store =
+        newTestStore(
+            queryCacheDao = queryCacheDao,
+            nowMillis = { NOW },
+            engineLogger = logger.asEngineLogger(EngineLogLevel.WARNING),
+            onQueriesMarkedStale = { table, cacheKeys -> markedStale += table to cacheKeys },
+        )
 
     @Test
     fun a_patch_let_in_as_a_first_answer_is_written_sees_that_answers_shape() = runTest {

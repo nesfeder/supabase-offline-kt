@@ -16,7 +16,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.getPayload
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.ktor.client.plugins.HttpRequestTimeoutException
@@ -41,8 +43,8 @@ import kotlinx.serialization.json.JsonArray
  * strategies fall back to cache on a connectivity failure, which honour a cache duration, which
  * never touch the network, and what each one logs.
  *
- * Only the network SELECT is scripted (a [FakeRemoteTable]); the cache is a real `OfflineStore`
- * over the in-memory DAO fakes.
+ * Only the network SELECT is scripted (a [FakeRemoteTable]); the cache is a real `TestStore` over
+ * the in-memory DAO fakes.
  */
 class QueryReaderStrategyTest {
 
@@ -51,7 +53,7 @@ class QueryReaderStrategyTest {
     private var currentTime: Long = 1_000_000L
     private val mutationDao = FakeMutationDao()
     private val store =
-        newTestOfflineStore(
+        newTestStore(
             queryCacheDao = FakeQueryCacheDao(),
             mutationDao = mutationDao,
             nowMillis = { currentTime },
@@ -125,7 +127,7 @@ class QueryReaderStrategyTest {
 
         // Then
         assertEquals(NETWORK_DATA, result.data)
-        assertEquals(NETWORK_DATA, store.getPayload(TABLE, cacheKey()))
+        assertEquals(NETWORK_DATA, store.queryCache.getPayload(TABLE, cacheKey()))
     }
 
     @Test
@@ -145,8 +147,14 @@ class QueryReaderStrategyTest {
     fun networkFirst_success_overlaysPendingWrites_andRetiresSyncedOnes() = runTest {
         // Given — one pending INSERT and one already synced
         answerWith(NETWORK_DATA)
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":2,"name":"pending"}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":3,"name":"synced"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":2,"name":"pending"}]"""),
+        )
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":3,"name":"synced"}]"""),
+        )
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.last().id, table = TABLE)
 
         // When
@@ -164,7 +172,10 @@ class QueryReaderStrategyTest {
     fun networkFirst_networkFailure_cacheFallback_overlaysSyncedWritesToo() = runTest {
         // Given — a cache older than a write that has since synced
         store.queryCache.cacheResponse(TABLE, cacheKey(), CACHED_DATA)
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":3,"name":"synced"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":3,"name":"synced"}]"""),
+        )
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
         failNetwork()
 

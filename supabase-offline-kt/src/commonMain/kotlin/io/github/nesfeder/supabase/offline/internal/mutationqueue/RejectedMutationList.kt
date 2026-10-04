@@ -147,7 +147,7 @@ internal class RejectedMutationList(
     private val queryCacheDao: QueryCacheDao,
     private val json: Json,
     private val nowMillis: () -> Long,
-    private val logger: () -> EngineLogger,
+    private val logger: EngineLogger,
 ) {
 
     private val rejectedCache = MutableStateFlow<StoredRejectionList?>(null)
@@ -250,7 +250,7 @@ internal class RejectedMutationList(
         var droppedCount = current.droppedCount
         while (entries.size - first > MAX_REJECTED_MUTATIONS || total > MAX_REJECTED_LIST_CHARS) {
             val dropped = entries[first]
-            logger().warning {
+            logger.warning {
                 "Rejected list full: dropped rejected ${dropped.operation} ${dropped.id} on ${dropped.table}"
             }
             total -= sizes[first]
@@ -308,7 +308,7 @@ internal class RejectedMutationList(
     private suspend fun keepAsideUnreadable(cacheKey: String, payload: String) {
         val asideCacheKey = "$cacheKey.unreadable.${nowMillis()}"
         queryCacheDao.upsert(reservedRow(asideCacheKey, payload))
-        logger().error {
+        logger.error {
             "The mutation queue's $cacheKey record could not be read; kept it aside as $asideCacheKey and started a new one"
         }
     }
@@ -348,7 +348,7 @@ internal class RejectedMutationList(
                     },
             )
         if (entry.bodyJson.length > MAX_REJECTED_BODY_CHARS) {
-            logger().warning {
+            logger.warning {
                 "Rejected ${entry.operation} ${entry.id} on ${entry.table}: its body of " +
                     "${entry.bodyJson.length} characters is too long to keep, so it cannot be retried"
             }

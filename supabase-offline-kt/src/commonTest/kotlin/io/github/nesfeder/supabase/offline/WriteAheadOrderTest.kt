@@ -8,9 +8,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestSe
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -30,7 +31,7 @@ import kotlinx.serialization.json.JsonElement
  */
 class WriteAheadOrderTest {
 
-    private val store = newTestOfflineStore()
+    private val store = newTestStore()
 
     @Test
     fun an_older_write_that_falls_back_to_the_queue_does_not_overwrite_a_newer_online_write() =
@@ -85,7 +86,10 @@ class WriteAheadOrderTest {
             FakeRelationalPostgrestServer(
                 foreignKeys = mapOf(PHOTOS to ForeignKey("task_id", TASKS))
             )
-        store.enqueueInsert(table = TASKS, body = rows("""[{"id":"T","title":"new task"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TASKS,
+            body = rows("""[{"id":"T","title":"new task"}]"""),
+        )
         val photos =
             newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(PHOTOS),

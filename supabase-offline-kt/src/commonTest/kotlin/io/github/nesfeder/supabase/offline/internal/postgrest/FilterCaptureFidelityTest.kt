@@ -11,8 +11,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -69,7 +69,7 @@ class FilterCaptureFidelityTest {
     fun a_queued_update_replays_the_filter_values_it_was_written_with() = runTest {
         // Given — the write is queued while offline
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val store = newTestOfflineStore()
+        val store = newTestStore()
         val builder =
             newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from(TABLE),

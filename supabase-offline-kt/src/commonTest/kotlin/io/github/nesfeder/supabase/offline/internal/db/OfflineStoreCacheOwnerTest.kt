@@ -8,7 +8,8 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.getPayload
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,23 +35,24 @@ class OfflineStoreCacheOwnerTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
     private val cachedFileDao = InMemoryCachedFileDao()
-    private val store =
-        newTestOfflineStore(
-            queryCacheDao = queryCacheDao,
-            cachedFileDao = cachedFileDao,
-            mutationDao = mutationDao,
-        )
-
     /** Whose session is current, as the client wires it. */
     private var identity: String? = USER_A
 
     /** How many times the store asked the client to look at whose the cache is. */
     private var notServed = 0
 
-    init {
-        store.isCacheOwnedPerIdentity = true
-        store.identityProvider = { identity }
-        store.onCacheNotServed = { notServed++ }
+    /** Whether the cache is one identity's at a time, as with the Auth plugin; read once. */
+    private var cacheOwnedPerIdentity = true
+
+    private val store by lazy {
+        newTestStore(
+            queryCacheDao = queryCacheDao,
+            cachedFileDao = cachedFileDao,
+            mutationDao = mutationDao,
+            isCacheOwnedPerIdentity = cacheOwnedPerIdentity,
+            identityProvider = { identity },
+            onCacheNotServed = { notServed++ },
+        )
     }
 
     private fun recordedOwner(): String? =
@@ -123,7 +125,7 @@ class OfflineStoreCacheOwnerTest {
         identity = USER_B
 
         // When
-        val read = store.getPayload(TABLE, CACHE_KEY)
+        val read = store.queryCache.getPayload(TABLE, CACHE_KEY)
         val written = store.queryCache.cacheResponse(TABLE, CACHE_KEY, OTHER_ROWS)
 
         // Then — neither, and the client was told
@@ -139,7 +141,7 @@ class OfflineStoreCacheOwnerTest {
         queryCacheDao.seedPayload(TABLE, CACHE_KEY, ROWS)
 
         // When — A reads it
-        val read = store.getPayload(TABLE, CACHE_KEY)
+        val read = store.queryCache.getPayload(TABLE, CACHE_KEY)
 
         // Then — served, but not claimed by a read
         assertEquals(ROWS, read)
@@ -150,7 +152,7 @@ class OfflineStoreCacheOwnerTest {
 
         // Then — claimed before the write
         assertEquals(ownerRecordOf(USER_A), recordedOwner())
-        assertEquals(OTHER_ROWS, store.getPayload(TABLE, CACHE_KEY))
+        assertEquals(OTHER_ROWS, store.queryCache.getPayload(TABLE, CACHE_KEY))
     }
 
     @Test
@@ -160,7 +162,7 @@ class OfflineStoreCacheOwnerTest {
         identity = QueueIdentity.Anonymous.storedValue
 
         // When
-        val read = store.getPayload(TABLE, CACHE_KEY)
+        val read = store.queryCache.getPayload(TABLE, CACHE_KEY)
         val written = store.queryCache.cacheResponse(TABLE, CACHE_KEY, OTHER_ROWS)
 
         // Then — it may be a user's; the settled session drops it first
@@ -190,9 +192,9 @@ class OfflineStoreCacheOwnerTest {
         queryCacheDao.seedPayload(TABLE, CACHE_KEY, ROWS)
 
         // When / Then — not A's, not nobody's
-        assertNull(store.getPayload(TABLE, CACHE_KEY))
+        assertNull(store.queryCache.getPayload(TABLE, CACHE_KEY))
         identity = QueueIdentity.Anonymous.storedValue
-        assertNull(store.getPayload(TABLE, CACHE_KEY))
+        assertNull(store.queryCache.getPayload(TABLE, CACHE_KEY))
     }
 
     /**
@@ -253,7 +255,7 @@ class OfflineStoreCacheOwnerTest {
     fun without_per_identity_ownership_every_read_is_served_and_a_write_records_the_one_identity() =
         runTest {
             // Given — a client without the Auth plugin, and a cache from an earlier build
-            store.isCacheOwnedPerIdentity = false
+            cacheOwnedPerIdentity = false
             identity = QueueIdentity.Anonymous.storedValue
             queryCacheDao.seedPayload(
                 RESERVED_TABLE_NAME,
@@ -263,7 +265,7 @@ class OfflineStoreCacheOwnerTest {
             queryCacheDao.seedPayload(TABLE, CACHE_KEY, ROWS)
 
             // When / Then — served whoever owns it, never dropped
-            assertEquals(ROWS, store.getPayload(TABLE, CACHE_KEY))
+            assertEquals(ROWS, store.queryCache.getPayload(TABLE, CACHE_KEY))
             assertEquals(
                 CacheWriteOutcome.WRITTEN,
                 store.queryCache.cacheResponse(TABLE, CACHE_KEY, OTHER_ROWS),

@@ -7,10 +7,12 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.Offline.Companion.CACHE_SIZE_UNLIMITED
 import io.github.nesfeder.supabase.offline.Offline.Companion.MIN_CACHE_SIZE_BYTES
 import io.github.nesfeder.supabase.offline.ResponseTrust
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
+import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
+import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
+import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.scrubDeletedRows
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.logging.engineLogger
@@ -55,14 +57,9 @@ internal fun openOfflineClient(
         val database = openDatabase(openedPath)
         return config.buildOfflineClient(
             supabase = supabase,
-            openStore = { limits ->
-                OfflineStore(
-                    queryCacheDao = database.queryCacheDao(),
-                    cachedFileDao = database.cachedFileDao(),
-                    mutationDao = database.mutationDao(),
-                    queryCacheLimits = limits,
-                )
-            },
+            queryCacheDao = database.queryCacheDao(),
+            cachedFileDao = database.cachedFileDao(),
+            mutationDao = database.mutationDao(),
             dataDirectory = dataDirectory,
             prepareFileCacheDirectories = true,
             engineLogger = engineLogger,
@@ -90,12 +87,13 @@ internal fun openOfflineClient(
 }
 
 /**
- * The client this configuration describes, over the store [openStore] makes: every setting of
- * [Offline.Config] reaches the engine here and nowhere else, whether the store is the platform's
- * database or a test's in-memory one.
+ * The client this configuration describes, over the three tables given: every setting of
+ * [Offline.Config] reaches the engine here and nowhere else, whether the tables are the platform's
+ * database or a test's in-memory ones.
  *
- * @param openStore makes the store, given the query-cache limits [Offline.Config.cacheSizeBytes]
- *   asks for.
+ * @param queryCacheDao the cached queries' table.
+ * @param cachedFileDao the Storage file cache's table.
+ * @param mutationDao the mutation queue's table.
  * @param dataDirectory where the Storage file cache keeps its files.
  * @param prepareFileCacheDirectories whether to create the file cache's directories now and keep
  *   them out of backups: the platform's database does; an in-memory store, whose data directory is
@@ -109,13 +107,16 @@ internal fun openOfflineClient(
  * @param fileSystem where the Storage file cache keeps its files: the device's disk unless a test
  *   keeps them in memory.
  * @param markFileUsed records a use time on one of [fileSystem]'s files.
- * @param clock the time the client sees, beside the store's own.
+ * @param clock the time the client sees, and by default the time its rows are stamped with.
+ * @param rowClock the clock the rows are stamped with.
  * @param platformNetworkAvailability the platform's connectivity monitor, used unless
  *   [Offline.Config.networkAvailability] is set; `null` for none.
  */
 internal fun Offline.Config.buildOfflineClient(
     supabase: SupabaseClient,
-    openStore: (QueryCacheLimits) -> OfflineStore,
+    queryCacheDao: QueryCacheDao,
+    cachedFileDao: CachedFileDao,
+    mutationDao: MutationDao,
     dataDirectory: Path,
     prepareFileCacheDirectories: Boolean,
     engineLogger: EngineLogger = supabase.engineLogger(logLevel),
@@ -126,11 +127,15 @@ internal fun Offline.Config.buildOfflineClient(
     fileSystem: FileSystem = FileSystem.SYSTEM,
     markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
     clock: Clock = Clock.System,
+    rowClock: () -> Long = { clock.now().toEpochMilliseconds() },
     platformNetworkAvailability: Flow<Boolean>? = null,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
-        store = openStore(toQueryCacheLimits()),
+        queryCacheDao = queryCacheDao,
+        cachedFileDao = cachedFileDao,
+        mutationDao = mutationDao,
+        queryCacheLimits = toQueryCacheLimits(),
         baseDirectoryProvider = { dataDirectory },
         engineLogger = engineLogger,
         networkAvailability = networkAvailability ?: platformNetworkAvailability,
@@ -146,6 +151,7 @@ internal fun Offline.Config.buildOfflineClient(
         fileSystem = fileSystem,
         markFileUsed = markFileUsed,
         clock = clock,
+        rowClock = rowClock,
     )
 
 /** The object-cache eviction settings [Offline.Config.cacheSizeBytes] asks for. */

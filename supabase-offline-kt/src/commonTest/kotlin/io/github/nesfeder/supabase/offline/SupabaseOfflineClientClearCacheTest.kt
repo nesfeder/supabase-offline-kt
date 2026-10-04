@@ -7,7 +7,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.engine.mock.MockEngine
 import kotlin.random.Random
@@ -71,13 +71,13 @@ class SupabaseOfflineClientClearCacheTest {
     fun clearing_deletes_every_row_once_and_scrubs_the_database_after() = runTest {
         // Given — a client with a cached storage row, whose database scrub records what it found
         val cachedFileDao = RecordingCachedFileDao()
-        val store = newTestOfflineStore(cachedFileDao = cachedFileDao)
+        val store = newTestStore(cachedFileDao = cachedFileDao)
         store.addStorage("avatars", "me.png", "/tmp/me.png".toPath(), 3, null)
         var rowsLeftAtScrub: Int? = null
         val client =
             newTestOfflineClient(
                 supabase = newTestSupabaseClient(plugins = {}),
-                store = store,
+                cachedFileDao = cachedFileDao,
                 scrubDatabase = { rowsLeftAtScrub = cachedFileDao.all().size },
             )
 

@@ -5,7 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import kotlin.test.Test
@@ -27,7 +27,7 @@ import kotlinx.serialization.json.JsonArray
 class ReplayPassStopTest {
 
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(mutationDao = mutationDao)
+    private val store = newTestStore(mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
 
     @Test

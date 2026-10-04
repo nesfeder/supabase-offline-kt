@@ -5,8 +5,8 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertNull
 import kotlinx.coroutines.CompletableDeferred
@@ -22,7 +22,7 @@ import kotlinx.serialization.json.JsonArray
 class OverlayTeardownRaceTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
-    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao)
 
     @Test
     fun an_overlay_in_progress_when_local_data_is_cleared_does_not_resurrect_the_cache() = runTest {

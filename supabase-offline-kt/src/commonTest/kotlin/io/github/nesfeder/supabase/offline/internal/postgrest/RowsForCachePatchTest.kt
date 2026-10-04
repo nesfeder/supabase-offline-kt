@@ -4,10 +4,10 @@
 
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -218,5 +218,5 @@ private data class NoteDtoForTest(
     @SerialName("notes") val notes: String? = null,
 )
 
-private fun RowsForCachePatchTest.buildStore(queryCacheDao: FakeQueryCacheDao): OfflineStore =
-    newTestOfflineStore(queryCacheDao = queryCacheDao)
+private fun RowsForCachePatchTest.buildStore(queryCacheDao: FakeQueryCacheDao): TestStore =
+    newTestStore(queryCacheDao = queryCacheDao)

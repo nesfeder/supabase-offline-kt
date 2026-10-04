@@ -4,10 +4,10 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 
 /**
- * Tests for [OfflineStore]'s size-based eviction — the loop that keeps the object cache within
+ * Tests for [QueryCache]'s size-based eviction — the loop that keeps the object cache within
  * [QueryCacheLimits.maxPayloadBytes].
  *
  * The core guarantee is termination: eviction is driven by the cache's **logical** size (summed
@@ -367,18 +367,15 @@ class OfflineStoreEvictionTest {
         assertTrue(queryCacheDao.totalPayloadBytes() <= 40_960L, "cache should remain bounded")
     }
 
-    /**
-     * Build an [OfflineStore] wired to the supplied [queryCacheDao] with the given eviction
-     * settings.
-     */
+    /** Builds the components over the supplied [queryCacheDao] with the given eviction settings. */
     private fun buildStore(
         queryCacheDao: QueryCacheDao,
         maxPayloadBytes: Long?,
         evictionBatchSize: Int = 10,
         evictionHeadroomBytes: Long = 0L,
         nowMillis: () -> Long = { 0L },
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             queryCacheLimits =
                 QueryCacheLimits(

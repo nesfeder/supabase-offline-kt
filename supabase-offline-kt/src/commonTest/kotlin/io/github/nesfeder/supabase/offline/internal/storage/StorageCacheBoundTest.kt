@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingCachedFileDao
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -36,7 +36,7 @@ import okio.SYSTEM
 class StorageCacheBoundTest {
 
     private lateinit var dataDirectory: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var delegate: FakeBucketApi
     private var now = 0L
 
@@ -45,7 +45,7 @@ class StorageCacheBoundTest {
         dataDirectory =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-bound-${Random.nextLong().toULong()}"
-        store = newTestOfflineStore()
+        store = newTestStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
     }
 
@@ -96,7 +96,7 @@ class StorageCacheBoundTest {
         // Then
         assertNull(bucket.api.cachedFile("a.bin"))
         assertNotNull(bucket.api.cachedFile("b.bin"))
-        assertEquals(6, store.totalStorageSizeBytes())
+        assertEquals(6, store.cachedFileDao.totalSizeBytes())
     }
 
     @Test
@@ -164,7 +164,7 @@ class StorageCacheBoundTest {
         repeat(5) { index -> download(bucket, "file-$index.bin", size = 100, at = index * MINUTE) }
 
         // Then
-        assertEquals(500, store.totalStorageSizeBytes())
+        assertEquals(500, store.cachedFileDao.totalSizeBytes())
         repeat(5) { index -> assertNotNull(bucket.api.cachedFile("file-$index.bin")) }
     }
 
@@ -206,7 +206,7 @@ class StorageCacheBoundTest {
     fun a_full_cache_does_not_rescan_every_row_on_every_download() = runTest {
         // Given — 100 files of 10 bytes, a bound of exactly 1,000
         val dao = RecordingCachedFileDao()
-        store = newTestOfflineStore(cachedFileDao = dao)
+        store = newTestStore(cachedFileDao = dao)
         val bucket = bucket(maxSizeBytes = 1_000)
         repeat(100) { index -> download(bucket, "fill-$index.bin", size = 10, at = index * MINUTE) }
         dao.resetCounts()
@@ -223,7 +223,7 @@ class StorageCacheBoundTest {
             "the cache rescanned its rows ${dao.scans} times over 50 downloads",
         )
         assertEquals(0, dao.totalSizeQueries)
-        assertTrue(store.totalStorageSizeBytes() <= 1_000)
+        assertTrue(store.cachedFileDao.totalSizeBytes() <= 1_000)
     }
 
     @Test
@@ -231,7 +231,7 @@ class StorageCacheBoundTest {
         runTest {
             // Given — a full cache whose every file was used within the last minute
             val dao = RecordingCachedFileDao()
-            store = newTestOfflineStore(cachedFileDao = dao)
+            store = newTestStore(cachedFileDao = dao)
             val bucket = bucket(maxSizeBytes = 100)
             repeat(10) { index ->
                 download(bucket, "fill-$index.bin", size = 10, at = 10 * MINUTE + index)
@@ -252,7 +252,7 @@ class StorageCacheBoundTest {
             // And once those uses are old enough, the next download brings the cache back under its
             // bound
             download(bucket, "later.bin", size = 10, at = 12 * MINUTE)
-            assertTrue(store.totalStorageSizeBytes() <= 100)
+            assertTrue(store.cachedFileDao.totalSizeBytes() <= 100)
         }
 
     @Test
@@ -263,14 +263,14 @@ class StorageCacheBoundTest {
         reservedCacheKeys.forEach { cacheKey ->
             queryCacheDao.seedPayload(RESERVED_TABLE_NAME, cacheKey, "{}")
         }
-        store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+        store = newTestStore(queryCacheDao = queryCacheDao)
         val bucket = bucket(maxSizeBytes = 10)
 
         // When — downloads push the cache over its bound, again and again
         repeat(5) { index -> download(bucket, "file-$index.bin", size = 6, at = index * MINUTE) }
 
         // Then — the size accounting and eviction worked on files only
-        assertTrue(store.totalStorageSizeBytes() <= 10)
+        assertTrue(store.cachedFileDao.totalSizeBytes() <= 10)
         reservedCacheKeys.forEach { cacheKey ->
             assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, cacheKey), cacheKey)
         }

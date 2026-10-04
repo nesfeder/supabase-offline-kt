@@ -4,10 +4,13 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.ExperimentalTime
@@ -23,7 +26,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Emission-dedup contract of [OfflineStore.overlaidPayloadFlow]: identical payloads and
+ * Emission-dedup contract of [QueryOverlay.servedPayloadFlow]'s payloads: identical payloads and
  * unrelated-table mutation writes must not re-emit (and so must never fan out as re-decode work in
  * downstream repositories), while a genuinely-changed payload always propagates.
  *
@@ -41,7 +44,10 @@ class OfflineStoreEmissionDedupTest {
             val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { now })
             val emissions = mutableListOf<String?>()
             val collector = launch {
-                store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
+                store.queryOverlay
+                    .overlaidPayloadFlow("ratings", "sig-A")
+                    .onEach { emissions.add(it) }
+                    .collect()
             }
             now = 1L
             store.queryCache.cacheResponse(
@@ -76,7 +82,10 @@ class OfflineStoreEmissionDedupTest {
             val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { 1L })
             val emissions = mutableListOf<String?>()
             val collector = launch {
-                store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
+                store.queryOverlay
+                    .overlaidPayloadFlow("ratings", "sig-A")
+                    .onEach { emissions.add(it) }
+                    .collect()
             }
             store.queryCache.cacheResponse(
                 table = "ratings",
@@ -87,7 +96,7 @@ class OfflineStoreEmissionDedupTest {
 
             // When — a mutation is queued for a different table (the mutation queue is one shared
             // Room table, so this write invalidates every table's mutation flow)
-            store.enqueueInsert(
+            store.mutationQueue.enqueueInsert(
                 table = "projects",
                 body =
                     buildJsonArray {
@@ -117,7 +126,10 @@ class OfflineStoreEmissionDedupTest {
             val store = buildStore(FakeQueryCacheDao(), FakeMutationDao(), nowMillis = { now })
             val emissions = mutableListOf<String?>()
             val collector = launch {
-                store.overlaidPayloadFlow("ratings", "sig-A").onEach { emissions.add(it) }.collect()
+                store.queryOverlay
+                    .overlaidPayloadFlow("ratings", "sig-A")
+                    .onEach { emissions.add(it) }
+                    .collect()
             }
             now = 1L
             store.queryCache.cacheResponse(
@@ -147,8 +159,8 @@ class OfflineStoreEmissionDedupTest {
         queryCacheDao: QueryCacheDao,
         mutationDao: MutationDao,
         nowMillis: () -> Long,
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             nowMillis = nowMillis,

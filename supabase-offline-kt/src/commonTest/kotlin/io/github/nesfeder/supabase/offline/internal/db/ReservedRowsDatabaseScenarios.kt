@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingRoomCallback
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -41,7 +41,7 @@ internal class ReservedRowsDatabaseScenarios(
         val (contents, rejections, owners) =
             try {
                 val store =
-                    newTestOfflineStore(
+                    newTestStore(
                         queryCacheDao = reopened.queryCacheDao(),
                         mutationDao = reopened.mutationDao(),
                     )
@@ -207,7 +207,7 @@ internal class ReservedRowsDatabaseScenarios(
         val database = open(path, RecordingRoomCallback())
         try {
             val store =
-                newTestOfflineStore(
+                newTestStore(
                     queryCacheDao = database.queryCacheDao(),
                     mutationDao = database.mutationDao(),
                 )
@@ -222,7 +222,7 @@ internal class ReservedRowsDatabaseScenarios(
         val reopened = open(path, RecordingRoomCallback())
         try {
             val store =
-                newTestOfflineStore(
+                newTestStore(
                     queryCacheDao = reopened.queryCacheDao(),
                     mutationDao = reopened.mutationDao(),
                 )
@@ -254,8 +254,7 @@ internal class ReservedRowsDatabaseScenarios(
         try {
             val queryCacheDao = database.queryCacheDao()
             val mutationDao = database.mutationDao()
-            val store =
-                newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+            val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
             val (rejectedRow, _) =
                 store.mutationQueue.rejectedList.rejectedRowWith(add = ON_DISK_REJECTION)
 
@@ -283,7 +282,7 @@ internal class ReservedRowsDatabaseScenarios(
      */
     suspend fun aClearWhoseMutationDeleteFailsChangesNothing(path: String) {
         aClearThatFailsPartWayChangesNothing(path) { database ->
-            newTestOfflineStore(
+            newTestStore(
                 queryCacheDao = database.queryCacheDao(),
                 cachedFileDao = database.cachedFileDao(),
                 mutationDao = FakeDeleteAllFailingMutationDao(database.mutationDao()),
@@ -297,7 +296,7 @@ internal class ReservedRowsDatabaseScenarios(
      */
     suspend fun aClearWhoseObjectCacheDeleteFailsChangesNothing(path: String) {
         aClearThatFailsPartWayChangesNothing(path) { database ->
-            newTestOfflineStore(
+            newTestStore(
                 queryCacheDao = FakeDeleteAllFailingQueryCacheDao(database.queryCacheDao()),
                 cachedFileDao = database.cachedFileDao(),
                 mutationDao = database.mutationDao(),
@@ -307,7 +306,7 @@ internal class ReservedRowsDatabaseScenarios(
 
     private suspend fun aClearThatFailsPartWayChangesNothing(
         path: String,
-        storeFailingIn: (OfflineDatabase) -> OfflineStore,
+        storeFailingIn: (OfflineDatabase) -> TestStore,
     ) {
         // Given — the fixture with the queue's state written, and a clear that fails part-way
         ShippedDatabaseFixture.writeTo(path)
@@ -315,7 +314,7 @@ internal class ReservedRowsDatabaseScenarios(
         val cleared =
             try {
                 database.writeReservedRows()
-                runCatching { storeFailingIn(database).clearLocalData() }
+                runCatching { storeFailingIn(database).localData.clearLocalData() }
             } finally {
                 database.close()
             }
@@ -324,7 +323,7 @@ internal class ReservedRowsDatabaseScenarios(
         val reopened = open(path, RecordingRoomCallback())
         try {
             val store =
-                newTestOfflineStore(
+                newTestStore(
                     queryCacheDao = reopened.queryCacheDao(),
                     mutationDao = reopened.mutationDao(),
                 )

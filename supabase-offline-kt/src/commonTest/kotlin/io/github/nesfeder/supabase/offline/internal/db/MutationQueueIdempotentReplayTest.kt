@@ -14,9 +14,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -41,7 +42,7 @@ import kotlinx.serialization.json.JsonObject
  */
 class MutationQueueIdempotentReplayTest {
 
-    private val store = newTestOfflineStore()
+    private val store = newTestStore()
 
     @Test
     fun an_insert_whose_response_was_lost_is_not_duplicated_by_its_replay() = runTest {
@@ -74,7 +75,10 @@ class MutationQueueIdempotentReplayTest {
     @Test
     fun an_insert_that_was_never_sent_replays_as_a_plain_insert() = runTest {
         // Given — queued without ever reaching the server
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"t1","title":"Buy milk"}]"""),
+        )
         val server = RecordingPostgrestServer()
 
         // When
@@ -93,7 +97,10 @@ class MutationQueueIdempotentReplayTest {
         // Given — another row already has the id this never-sent insert uses
         val server = FakeRelationalPostgrestServer()
         server.seed(TABLE, row("""{"id":"t1","title":"someone else's"}"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1","title":"Buy milk"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"t1","title":"Buy milk"}]"""),
+        )
 
         // When
         val report =
@@ -163,7 +170,7 @@ class MutationQueueIdempotentReplayTest {
     @Test
     fun an_insert_without_its_primary_key_replays_as_a_plain_insert() = runTest {
         // Given — the server generates the key, so nothing can make a replay idempotent
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"Buy milk"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"Buy milk"}]"""))
         val server = RecordingPostgrestServer()
 
         // When
@@ -179,7 +186,10 @@ class MutationQueueIdempotentReplayTest {
     @Test
     fun a_multi_row_insert_where_one_row_lacks_the_key_replays_as_a_plain_insert() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"t1"},{"title":"no key"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"t1"},{"title":"no key"}]"""),
+        )
         val server = RecordingPostgrestServer()
 
         // When
@@ -195,19 +205,17 @@ class MutationQueueIdempotentReplayTest {
         // Given — the send started and the process died before any answer
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
-        val beforeTheCrash =
-            newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+        val beforeTheCrash = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
         val id =
-            beforeTheCrash.enqueueInsert(
+            beforeTheCrash.mutationQueue.enqueueInsert(
                 table = TABLE,
                 body = rows("""[{"id":"t1","title":"Buy milk"}]"""),
             )
-        beforeTheCrash.markSendUnconfirmed(id)
+        beforeTheCrash.mutationQueue.markSendUnconfirmed(id)
 
         // When — the next launch replays it
         val server = RecordingPostgrestServer()
-        val afterTheCrash =
-            newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+        val afterTheCrash = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
         newTestMutationQueueReplayer(store = afterTheCrash, supabase = server.supabaseClient())
             .syncAllTables()
 

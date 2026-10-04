@@ -8,7 +8,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.closingAfter
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -61,7 +60,7 @@ internal suspend fun storedCacheKeyOf(case: CacheKeyFixtureCase): String {
     val server = RecordingPostgrestServer(answer = { okJson("""[{"id":1}]""") })
     newTestOfflineClient(
             supabase = server.supabaseClient(),
-            store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+            queryCacheDao = queryCacheDao,
         )
         .closingAfter { client ->
             val builder =

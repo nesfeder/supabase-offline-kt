@@ -22,7 +22,7 @@ internal class CacheOwnership(
     private val queryCacheDao: QueryCacheDao,
     private val cachedFileDao: CachedFileDao,
     json: Json,
-    private val isCacheOwnedPerIdentity: () -> Boolean,
+    private val isCacheOwnedPerIdentity: Boolean,
     private val identityProvider: suspend () -> String?,
     private val onCacheNotServed: () -> Unit,
 ) {
@@ -47,7 +47,7 @@ internal class CacheOwnership(
 
     /** [cacheServesCurrentIdentity], or with [forWrite] [cacheTakesWritesOfCurrentIdentity]. */
     private suspend fun cacheIsCurrentIdentitys(forWrite: Boolean): Boolean {
-        if (!isCacheOwnedPerIdentity()) {
+        if (!isCacheOwnedPerIdentity) {
             if (forWrite) identityProvider()?.let { identity -> record.owner(claimant = identity) }
             return true
         }

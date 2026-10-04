@@ -10,8 +10,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,7 +36,7 @@ class MutationQueueReplayOrderTest {
 
     private val mutationDao = FakeMutationDao()
     private var clock = 1_000L
-    private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock++ })
+    private val store = newTestStore(mutationDao = mutationDao, nowMillis = { clock++ })
 
     @Test
     fun a_child_queued_after_its_parent_in_another_table_reaches_the_server() = runTest {
@@ -46,9 +48,16 @@ class MutationQueueReplayOrderTest {
             )
         server.seed(TASKS, row("id" to "t0"))
         server.seed(PHOTOS, row("id" to "p0", "task_id" to "t0", "caption" to "old"))
-        store.enqueueUpdate(table = PHOTOS, body = row("caption" to "new"), filter = idFilter("p0"))
-        store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
-        store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
+        store.mutationQueue.enqueueUpdate(
+            table = PHOTOS,
+            body = row("caption" to "new"),
+            filter = idFilter("p0"),
+        )
+        store.mutationQueue.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
+        store.mutationQueue.enqueueInsert(
+            table = PHOTOS,
+            body = rows(row("id" to "p1", "task_id" to "t1")),
+        )
         val replayer =
             newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
@@ -70,9 +79,16 @@ class MutationQueueReplayOrderTest {
     fun replay_follows_insertion_order_even_when_the_clock_stepped_backwards() = runTest {
         // Given — an insert, then the device clock is set back, then an edit of the same row
         clock = 5_000L
-        store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1", "title" to "draft")))
+        store.mutationQueue.enqueueInsert(
+            table = TASKS,
+            body = rows(row("id" to "t1", "title" to "draft")),
+        )
         clock = 1_000L
-        store.enqueueUpdate(table = TASKS, body = row("title" to "final"), filter = idFilter("t1"))
+        store.mutationQueue.enqueueUpdate(
+            table = TASKS,
+            body = row("title" to "final"),
+            filter = idFilter("t1"),
+        )
         val server = RecordingPostgrestServer()
         val replayer =
             newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
@@ -87,8 +103,8 @@ class MutationQueueReplayOrderTest {
     @Test
     fun a_connectivity_failure_stops_the_whole_sweep() = runTest {
         // Given — a write to one table, then a write to another; the first cannot reach the server
-        store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
-        store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1")))
+        store.mutationQueue.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
+        store.mutationQueue.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1")))
         val server =
             RecordingPostgrestServer(
                 answer = { request ->
@@ -114,8 +130,8 @@ class MutationQueueReplayOrderTest {
     fun a_server_error_stops_the_whole_sweep_instead_of_skipping_ahead() = runTest {
         // Given — the server fails the first table's write with a 500; a later write waits behind
         // it
-        store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
-        store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1")))
+        store.mutationQueue.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
+        store.mutationQueue.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1")))
         val server =
             RecordingPostgrestServer(
                 answer = { request ->
@@ -142,8 +158,11 @@ class MutationQueueReplayOrderTest {
             FakeRelationalPostgrestServer(
                 foreignKeys = mapOf(PHOTOS to ForeignKey("task_id", TASKS))
             )
-        store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
-        store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
+        store.mutationQueue.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
+        store.mutationQueue.enqueueInsert(
+            table = PHOTOS,
+            body = rows(row("id" to "p1", "task_id" to "t1")),
+        )
         val replayer =
             newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
@@ -165,8 +184,11 @@ class MutationQueueReplayOrderTest {
     @Test
     fun a_forbidden_write_behind_an_earlier_pending_write_in_another_table_is_held() = runTest {
         // Given — a row-level-security policy that admits a child only once its parent exists
-        store.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
-        store.enqueueInsert(table = PHOTOS, body = rows(row("id" to "p1", "task_id" to "t1")))
+        store.mutationQueue.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
+        store.mutationQueue.enqueueInsert(
+            table = PHOTOS,
+            body = rows(row("id" to "p1", "task_id" to "t1")),
+        )
         val server = RecordingPostgrestServer(answer = { postgrestError(HttpStatusCode.Forbidden) })
         val replayer =
             newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())

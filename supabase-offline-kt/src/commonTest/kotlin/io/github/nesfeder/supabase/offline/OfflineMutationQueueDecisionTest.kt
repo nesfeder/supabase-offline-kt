@@ -13,8 +13,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,7 +46,7 @@ class OfflineMutationQueueDecisionTest {
     private val builder =
         newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
-            store = newTestOfflineStore(mutationDao = mutationDao),
+            store = newTestStore(mutationDao = mutationDao),
             engineLogger = logger.asEngineLogger(),
         )
 

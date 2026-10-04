@@ -20,8 +20,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingSupabaseLogs
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_URL
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.request.get
@@ -342,7 +342,7 @@ class ReadShapeProbeContractTest {
         val builder =
             newTestOfflineTable(
                 delegate = supabase.postgrest.from("todos"),
-                store = newTestOfflineStore(),
+                store = newTestStore(),
             )
         builder.select(readStrategy = ReadStrategy.NetworkOnly)
 

@@ -5,8 +5,10 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.first
@@ -27,7 +29,7 @@ class SyncedRetirementScopeTest {
     private val mutationDao = FakeMutationDao()
     private var tick = 0L
     private val store =
-        newTestOfflineStore(
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             monotonicTick = { tick },
@@ -39,7 +41,10 @@ class SyncedRetirementScopeTest {
         queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
         queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
         tick = 10L
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"x","list_id":"L"}]"""),
+        )
         tick = 20L
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
@@ -56,7 +61,7 @@ class SyncedRetirementScopeTest {
         store.mutationQueue.retireCoveredSyncedMutations(TABLE, requestStartedAtTick)
 
         // Then — list L's cached payload predates X, so its overlay still shows the user's write
-        val listL = store.overlaidPayloadFlow(TABLE, LIST_L).first()
+        val listL = store.queryOverlay.overlaidPayloadFlow(TABLE, LIST_L).first()
         assertEquals("""[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""", listL)
     }
 
@@ -66,7 +71,10 @@ class SyncedRetirementScopeTest {
         queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
         queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
         tick = 10L
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"x","list_id":"L"}]"""),
+        )
         tick = 20L
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
@@ -91,8 +99,8 @@ class SyncedRetirementScopeTest {
     @Test
     fun a_write_only_table_does_not_keep_its_synced_writes() = runTest {
         // Given — a table nothing reads (feedback, analytics events)
-        store.enqueueInsert(table = EVENTS, body = rows("""[{"kind":"opened"}]"""))
-        store.enqueueInsert(table = EVENTS, body = rows("""[{"kind":"closed"}]"""))
+        store.mutationQueue.enqueueInsert(table = EVENTS, body = rows("""[{"kind":"opened"}]"""))
+        store.mutationQueue.enqueueInsert(table = EVENTS, body = rows("""[{"kind":"closed"}]"""))
         val server = RecordingPostgrestServer()
 
         // When

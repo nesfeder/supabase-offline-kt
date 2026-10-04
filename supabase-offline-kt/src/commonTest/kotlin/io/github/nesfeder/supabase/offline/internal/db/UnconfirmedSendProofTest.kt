@@ -9,7 +9,6 @@ import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -17,9 +16,10 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestSe
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.network.sockets.ConnectTimeoutException
@@ -48,8 +48,7 @@ class UnconfirmedSendProofTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_retried_send_whose_first_attempt_committed_is_not_taken_for_never_sent() = runTest {
@@ -331,8 +330,8 @@ class UnconfirmedSendProofTest {
         assertEquals("23505", report.rejected.single().serverError?.code)
     }
 
-    private fun relaunch(): OfflineStore =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private fun relaunch(): TestStore =
+        newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     private fun builderOn(supabase: SupabaseClient): OfflineTable =
         newTestOfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)

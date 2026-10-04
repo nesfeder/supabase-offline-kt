@@ -11,13 +11,14 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.db.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.postgrestResultOf
 import io.ktor.client.engine.mock.MockEngine
@@ -50,10 +51,10 @@ import kotlinx.serialization.json.put
 
 /**
  * Integration tests across the real read stack: [QueryReader], [cacheFirstWithParallelRefresh], a
- * real [OfflineStore] over in-memory DAOs and a real [LiveQueries], with only the network SELECT
- * scripted. They pin what unit tests cannot: the wiring of the accelerator and the coordinator into
- * the refresh, the per-query [QuerySnapshot], single-flight sharing, and that nothing seeds an
- * empty cache with `[]`. They run under the non-default
+ * the real cache and queue components over in-memory DAOs and a real [LiveQueries], with only the
+ * network SELECT scripted. They pin what unit tests cannot: the wiring of the accelerator and the
+ * coordinator into the refresh, the per-query [QuerySnapshot], single-flight sharing, and that
+ * nothing seeds an empty cache with `[]`. They run under the non-default
  * [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY], whose rules their expectations assume.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -769,7 +770,7 @@ class QueryReaderRecoveryTest {
                     },
                 )
             val store = buildStore()
-            store.enqueueInsert(
+            store.mutationQueue.enqueueInsert(
                 table = "plans",
                 body =
                     buildJsonArray {
@@ -1000,7 +1001,7 @@ class QueryReaderRecoveryTest {
             primingCollector.cancelAndJoin()
             advanceUntilIdle()
 
-            store.enqueueInsert(
+            store.mutationQueue.enqueueInsert(
                 table = "plans",
                 body =
                     buildJsonArray {
@@ -1241,7 +1242,7 @@ class QueryReaderRecoveryTest {
         wakeUps: MutableSharedFlow<Unit> = MutableSharedFlow(),
         authState: () -> RequestSession = { SIGNED_IN },
         queryCacheDao: FakeQueryCacheDao = FakeQueryCacheDao(),
-        store: OfflineStore = buildStore(queryCacheDao),
+        store: TestStore = buildStore(queryCacheDao),
     ): QueryReader =
         QueryReader(
             delegate = remoteTable,
@@ -1265,8 +1266,8 @@ class QueryReaderRecoveryTest {
     private fun buildStore(
         queryCacheDao: FakeQueryCacheDao = FakeQueryCacheDao(),
         mutationDao: FakeMutationDao = FakeMutationDao(),
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
         )

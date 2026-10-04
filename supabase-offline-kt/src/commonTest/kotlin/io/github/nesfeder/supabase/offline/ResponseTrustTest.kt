@@ -17,7 +17,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
@@ -71,7 +70,7 @@ class ResponseTrustTest {
         val offline =
             newTestOfflineClient(
                 supabase = client,
-                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                queryCacheDao = queryCacheDao,
                 coordinatorScope = scope,
                 responseTrust = responseTrust,
             )
@@ -369,7 +368,7 @@ class ResponseTrustTest {
         val client =
             newTestOfflineClient(
                 supabase = server.supabaseClient(),
-                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                queryCacheDao = queryCacheDao,
             )
 
         // When

@@ -6,14 +6,14 @@ import io.github.jan.supabase.exceptions.UnauthorizedRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -53,7 +53,7 @@ import okio.SYSTEM
 class StorageWriteInvalidationTest {
 
     private lateinit var dataDirectory: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var server: RecordingStorageServer
 
     @BeforeTest
@@ -61,7 +61,7 @@ class StorageWriteInvalidationTest {
         dataDirectory =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-invalidation-${Random.nextLong().toULong()}"
-        store = newTestOfflineStore()
+        store = newTestStore()
         server = RecordingStorageServer()
         server.objects["$BUCKET/$PATH"] = OLD.encodeToByteArray()
     }

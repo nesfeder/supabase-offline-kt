@@ -4,11 +4,14 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -20,11 +23,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Tests for the stale-refresh watermark in [OfflineStore.addPayload] — the guard that refuses a
+ * Tests for the stale-refresh watermark in [QueryCache.cacheResponse] — the guard that refuses a
  * network SELECT response whose request went out *before* the table's most recent local write.
  *
  * The hazard is ordering, not emptiness. A refresh starts at t0 against server state S0; at t1 a
- * local mutation succeeds online and [OfflineStore.patchCachedQueries] patches every cached payload
+ * local mutation succeeds online and [CachePatcher.patchCachedQueries] patches every cached payload
  * to S0+M; at t2 the refresh's S0 response arrives and overwrites that patch. Nothing replays M —
  * the online-success path uses an ephemeral overlay carrier and never enqueues — so the row stays
  * gone until some later SELECT happens to run. The user sees "I saved it and it vanished".
@@ -269,7 +272,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val mutationDao = FakeMutationDao()
         var tick = 10L
         val store = buildStore(queryCacheDao, mutationDao = mutationDao, tick = { tick })
-        store.enqueueInsert(table = "projects", body = projectTwoBody())
+        store.mutationQueue.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
         val requestStartedAtTick = store.freshness.tickNow()
 
@@ -356,7 +359,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val mutationDao = FakeMutationDao()
         var tick = 10L
         val store = buildStore(queryCacheDao, mutationDao = mutationDao, tick = { tick })
-        store.enqueueInsert(table = "projects", body = projectTwoBody())
+        store.mutationQueue.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
         val requestStartedAtTick = store.freshness.tickNow()
 
@@ -391,7 +394,7 @@ class OfflineStoreStaleRefreshWatermarkTest {
         val mutationDao = FakeMutationDao()
         var tick = 10L
         val store = buildStore(queryCacheDao, mutationDao = mutationDao, tick = { tick })
-        store.enqueueInsert(table = "projects", body = projectTwoBody())
+        store.mutationQueue.enqueueInsert(table = "projects", body = projectTwoBody())
         val queued = mutationDao.inserted.single()
         store.mutationQueue.recordReplayed(id = queued.id, table = "projects")
 
@@ -416,8 +419,8 @@ class OfflineStoreStaleRefreshWatermarkTest {
     /**
      * Applies the online-success insert of `project-2` — the write the stale response would erase.
      */
-    private suspend fun OfflineStore.insertProjectTwo(liveCacheKeys: Set<String>? = null) {
-        patchCachedQueries(
+    private suspend fun TestStore.insertProjectTwo(liveCacheKeys: Set<String>? = null) {
+        cachePatcher.patchCachedQueries(
             table = "projects",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"project-2"}]""",
@@ -434,8 +437,8 @@ class OfflineStoreStaleRefreshWatermarkTest {
         queryCacheDao: QueryCacheDao,
         mutationDao: MutationDao = FakeMutationDao(),
         tick: () -> Long,
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             monotonicTick = tick,

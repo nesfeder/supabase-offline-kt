@@ -13,8 +13,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
@@ -37,7 +37,7 @@ import kotlinx.serialization.json.JsonArray
 class ReplayTokenBindingTest {
 
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(mutationDao = mutationDao)
+    private val store = newTestStore(mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
 
     /** Runs [change] once, when the send of a keyed INSERT is recorded as started. */

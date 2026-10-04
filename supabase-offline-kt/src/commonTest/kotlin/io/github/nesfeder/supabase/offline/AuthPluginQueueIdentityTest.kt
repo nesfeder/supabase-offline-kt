@@ -15,8 +15,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
@@ -46,7 +46,7 @@ class AuthPluginQueueIdentityTest {
                 enableLifecycleCallbacks = false
             }
         }
-    private val store = newTestOfflineStore()
+    private val store = newTestStore()
     private val builder =
         newTestOfflineTable(delegate = supabase.postgrest.from(TABLE), store = store)
     private val replayer = newTestMutationQueueReplayer(store = store, supabase = supabase)

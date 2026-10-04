@@ -8,8 +8,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -28,7 +28,7 @@ class OfflineMutationLoggingTest {
     private val builder =
         newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),
-            store = newTestOfflineStore(),
+            store = newTestStore(),
             engineLogger = logger.asEngineLogger(),
         )
 

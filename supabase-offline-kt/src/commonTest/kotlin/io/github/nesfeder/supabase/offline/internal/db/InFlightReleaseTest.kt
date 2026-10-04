@@ -11,8 +11,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -34,7 +34,7 @@ import kotlinx.serialization.json.JsonArray
 class InFlightReleaseTest {
 
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(mutationDao = mutationDao)
+    private val store = newTestStore(mutationDao = mutationDao)
     private val server = RecordingPostgrestServer()
     private val replayer =
         newTestMutationQueueReplayer(

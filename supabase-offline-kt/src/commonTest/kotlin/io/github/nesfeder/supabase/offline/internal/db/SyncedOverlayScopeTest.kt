@@ -6,8 +6,12 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
+import io.github.nesfeder.supabase.offline.testdoubles.overlayCachedPayload
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.flow.first
@@ -28,12 +32,16 @@ class SyncedOverlayScopeTest {
     private val mutationDao = FakeMutationDao()
     private var tick = 0L
     private var clock = 1_000_000L
+    /** The table's queries with a live reader; none until a test says. */
+    private var liveCacheKeys: Set<String> = emptySet()
+
     private val store =
-        newTestOfflineStore(
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
             monotonicTick = { tick },
             nowMillis = { clock },
+            liveCacheKeysOf = { liveCacheKeys },
         )
 
     @Test
@@ -42,7 +50,10 @@ class SyncedOverlayScopeTest {
         queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
         queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L"}]""")
         tick = 10L
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"x","list_id":"L"}]"""),
+        )
         tick = 20L
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
@@ -61,11 +72,11 @@ class SyncedOverlayScopeTest {
         // Then — ALL shows x once, and L (fetched before the replay) still shows it
         assertEquals(
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
-            store.overlaidPayloadFlow(TABLE, ALL).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, ALL).first(),
         )
         assertEquals(
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
-            store.overlaidPayloadFlow(TABLE, LIST_L).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, LIST_L).first(),
         )
     }
 
@@ -75,7 +86,11 @@ class SyncedOverlayScopeTest {
         queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L","title":"orig"}]""")
         queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"orig"}]""")
         tick = 10L
-        store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
+        store.mutationQueue.enqueueUpdate(
+            table = TABLE,
+            body = element("""{"title":"A"}"""),
+            filter = byId("a"),
+        )
         tick = 20L
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
@@ -94,7 +109,7 @@ class SyncedOverlayScopeTest {
         // Then — ALL shows the server's C
         assertEquals(
             """[{"id":"a","list_id":"L","title":"C"}]""",
-            store.overlaidPayloadFlow(TABLE, ALL).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, ALL).first(),
         )
     }
 
@@ -110,7 +125,7 @@ class SyncedOverlayScopeTest {
             )
             queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"orig"}]""")
             tick = 10L
-            store.enqueueUpdate(
+            store.mutationQueue.enqueueUpdate(
                 table = TABLE,
                 body = element("""{"title":"A"}"""),
                 filter = byId("a"),
@@ -129,9 +144,13 @@ class SyncedOverlayScopeTest {
 
             // When — a one-shot read falls back to the cache for each query
             val all =
-                store.overlayCachedPayload(TABLE, ALL, """[{"id":"a","list_id":"L","title":"C"}]""")
+                store.queryOverlay.overlayCachedPayload(
+                    TABLE,
+                    ALL,
+                    """[{"id":"a","list_id":"L","title":"C"}]""",
+                )
             val listL =
-                store.overlayCachedPayload(
+                store.queryOverlay.overlayCachedPayload(
                     TABLE,
                     LIST_L,
                     """[{"id":"a","list_id":"L","title":"orig"}]""",
@@ -147,7 +166,10 @@ class SyncedOverlayScopeTest {
         // Given — a detail query cached once and not refreshed since, and a replayed insert it
         // shows
         queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"x","list_id":"L"}]"""),
+        )
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
         val replayer =
             newTestMutationQueueReplayer(
@@ -169,7 +191,7 @@ class SyncedOverlayScopeTest {
         assertEquals(1, afterBack)
         assertEquals(
             """[{"id":"a","list_id":"L"},{"id":"x","list_id":"L"}]""",
-            store.overlaidPayloadFlow(TABLE, LIST_L).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, LIST_L).first(),
         )
 
         // When — the query refreshes after the replay
@@ -192,7 +214,11 @@ class SyncedOverlayScopeTest {
         // Given — a query never refreshed, and one more replayed insert than a table keeps
         queryCacheDao.seedPayload(TABLE, LIST_L, """[{"id":"a","list_id":"L"}]""")
         repeat(RETAINED_BOUND + 1) { index ->
-            val id = store.enqueueInsert(TABLE, rows("""[{"id":"x$index","list_id":"L"}]"""))
+            val id =
+                store.mutationQueue.enqueueInsert(
+                    TABLE,
+                    rows("""[{"id":"x$index","list_id":"L"}]"""),
+                )
             store.mutationQueue.recordReplayed(id = id, table = TABLE)
         }
 
@@ -213,8 +239,12 @@ class SyncedOverlayScopeTest {
         queryCacheDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
         queryCacheDao.seedPayload(TABLE, ALL, """[{"id":"a","title":"orig"}]""")
         tick = 10L
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"keyless"}]"""))
-        store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"keyless"}]"""))
+        store.mutationQueue.enqueueUpdate(
+            table = TABLE,
+            body = element("""{"title":"A"}"""),
+            filter = byId("a"),
+        )
         tick = 20L
         mutationDao.inserted.forEach { mutation ->
             store.mutationQueue.recordReplayed(id = mutation.id, table = TABLE)
@@ -229,16 +259,17 @@ class SyncedOverlayScopeTest {
             requestStartedAtTick = started,
         )
         store.mutationQueue.retireCoveredSyncedMutations(TABLE, started)
-        val beforeRestart = store.overlaidPayloadFlow(TABLE, ALL).first()
+        val beforeRestart = store.queryOverlay.overlaidPayloadFlow(TABLE, ALL).first()
 
         // When — the app starts again an hour later
         clock += 60 * 60 * 1000
         val afterRestart =
-            newTestOfflineStore(
+            newTestStore(
                     queryCacheDao = queryCacheDao,
                     mutationDao = mutationDao,
                     nowMillis = { clock },
                 )
+                .queryOverlay
                 .overlaidPayloadFlow(TABLE, ALL)
                 .first()
 
@@ -251,7 +282,11 @@ class SyncedOverlayScopeTest {
     fun a_pass_retires_the_synced_writes_of_a_table_nothing_caches() = runTest {
         // Given — a replayed update a cached query showed, and then that query's payload dropped
         queryCacheDao.seedPayload(TABLE, ORPHAN, """[{"id":"a","title":"orig"}]""")
-        store.enqueueUpdate(table = TABLE, body = element("""{"title":"A"}"""), filter = byId("a"))
+        store.mutationQueue.enqueueUpdate(
+            table = TABLE,
+            body = element("""{"title":"A"}"""),
+            filter = byId("a"),
+        )
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
         store.deleteTablePayload(TABLE, ORPHAN)
 
@@ -269,11 +304,14 @@ class SyncedOverlayScopeTest {
     @Test
     fun a_live_query_waiting_for_its_first_payload_keeps_showing_a_replayed_insert() = runTest {
         // Given — a live query of L, nothing cached for it yet, showing an offline insert of x
-        store.liveCacheKeysOf = { setOf(LIST_L) }
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":"x","list_id":"L"}]"""))
+        liveCacheKeys = setOf(LIST_L)
+        store.mutationQueue.enqueueInsert(
+            table = TABLE,
+            body = rows("""[{"id":"x","list_id":"L"}]"""),
+        )
         assertEquals(
             """[{"id":"x","list_id":"L"}]""",
-            store.overlaidPayloadFlow(TABLE, LIST_L).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, LIST_L).first(),
         )
 
         // When — x replays, and both sweeps run before L's first payload arrives
@@ -284,7 +322,7 @@ class SyncedOverlayScopeTest {
         // Then — L still shows x
         assertEquals(
             """[{"id":"x","list_id":"L"}]""",
-            store.overlaidPayloadFlow(TABLE, LIST_L).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, LIST_L).first(),
         )
     }
 

@@ -10,8 +10,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -36,8 +36,7 @@ class DryRunWriteTest {
         )
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
     private val builder =
         newTestOfflineTable(
             delegate = server.supabaseClient().postgrest.from(TABLE),

@@ -18,8 +18,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -114,7 +114,7 @@ class IsDistinctOperatorTest {
         // Given — the network is down
         val server = RecordingPostgrestServer(answer = { connectivityFailure() })
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
+        val store = newTestStore(mutationDao = mutationDao)
         val builder =
             newTestOfflineTable(
                 delegate = server.supabaseClient().postgrest.from("todos"),

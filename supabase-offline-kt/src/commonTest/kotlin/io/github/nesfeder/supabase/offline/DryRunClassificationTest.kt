@@ -13,8 +13,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.assertNotQueueable
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
@@ -40,8 +40,7 @@ class DryRunClassificationTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_write_whose_dry_run_status_cannot_be_told_is_never_queued_and_the_engine_says_so_once() =

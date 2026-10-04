@@ -9,7 +9,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -26,8 +27,7 @@ class ClearLocalDataAtomicityTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
-    private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
     fun a_clear_that_fails_part_way_does_not_hand_one_users_mutations_to_the_next() = runTest {
@@ -43,10 +43,14 @@ class ClearLocalDataAtomicityTest {
         val cleared = runCatching { store.localData.clearLocalData() }
 
         // When — the app starts again, user B signs in, and a pass runs
-        val next = newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
-        next.identityProvider = { USER_B.storedValue }
+        val next =
+            newTestStore(
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                identityProvider = { USER_B.storedValue },
+            )
         queryCacheDao.seedPayload(TABLE, TABLE, """[{"id":"1","title":"B's row"}]""")
-        val shownToB = next.overlaidPayloadFlow(TABLE, TABLE).first()
+        val shownToB = next.queryOverlay.overlaidPayloadFlow(TABLE, TABLE).first()
         val server = RecordingPostgrestServer()
         newTestMutationQueueReplayer(
                 store = next,

@@ -4,9 +4,11 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -31,13 +33,13 @@ class MutationReadersShareReadsTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given — twenty live readers of the table, each on its own query
             val mutationDao = FakeMutationDao()
-            val store = newTestOfflineStore(mutationDao = mutationDao)
-            store.enqueueInsert(TABLE, rowsWithId("note-0"))
+            val store = newTestStore(mutationDao = mutationDao)
+            store.mutationQueue.enqueueInsert(TABLE, rowsWithId("note-0"))
             val seen = startReaders(store)
             val readsWhenStarted = mutationDao.tableListReads[TABLE]
 
             // When — one write to the table
-            store.enqueueInsert(TABLE, rowsWithId("note-1"))
+            store.mutationQueue.enqueueInsert(TABLE, rowsWithId("note-1"))
 
             // Then — every reader shows it, and the table's rows were read once for all of them
             assertTrue(seen.all { payload -> payload?.contains("note-1") == true }, "$seen")
@@ -50,13 +52,15 @@ class MutationReadersShareReadsTest {
         runTest(UnconfinedTestDispatcher()) {
             // Given — twenty live readers of the table
             val mutationDao = FakeMutationDao()
-            val store = newTestOfflineStore(mutationDao = mutationDao)
-            store.enqueueInsert(TABLE, rowsWithId("note-0"))
+            val store = newTestStore(mutationDao = mutationDao)
+            store.mutationQueue.enqueueInsert(TABLE, rowsWithId("note-0"))
             val seen = startReaders(store)
             val shownBefore = seen.toList()
 
             // When — fifty writes to another table
-            repeat(50) { index -> store.enqueueInsert(OTHER_TABLE, rowsWithId("tag-$index")) }
+            repeat(50) { index ->
+                store.mutationQueue.enqueueInsert(OTHER_TABLE, rowsWithId("tag-$index"))
+            }
 
             // Then — this table's rows were never read again, and no reader changed
             assertEquals(1, mutationDao.tableListReads[TABLE])
@@ -64,11 +68,11 @@ class MutationReadersShareReadsTest {
         }
 
     /** Starts [READERS] readers of [TABLE], each keeping what it shows last. */
-    private fun TestScope.startReaders(store: OfflineStore): Array<String?> {
+    private fun TestScope.startReaders(store: TestStore): Array<String?> {
         val seen = arrayOfNulls<String>(READERS)
         repeat(READERS) { reader ->
             backgroundScope.launch {
-                store.overlaidPayloadFlow(TABLE, "sig-$reader").collect { payload ->
+                store.queryOverlay.overlaidPayloadFlow(TABLE, "sig-$reader").collect { payload ->
                     seen[reader] = payload
                 }
             }

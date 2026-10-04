@@ -6,7 +6,14 @@ import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueDelete
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpsert
+import io.github.nesfeder.supabase.offline.testdoubles.getPayload
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlayCachedPayload
+import io.github.nesfeder.supabase.offline.testdoubles.overlayPendingOnResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -29,7 +36,7 @@ class OfflineStoreQueueAndCacheTest {
 
     private val mutationDao = FakeMutationDao()
     private var clock = 1_000L
-    private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock })
+    private val store = newTestStore(mutationDao = mutationDao, nowMillis = { clock })
 
     // ─────────────────────────── Cached payloads ───────────────────────────
 
@@ -39,7 +46,7 @@ class OfflineStoreQueueAndCacheTest {
         store.queryCache.cacheResponse(TABLE, CACHE_KEY, PAYLOAD)
 
         // When
-        val payload = store.getPayload(TABLE, CACHE_KEY)
+        val payload = store.queryCache.getPayload(TABLE, CACHE_KEY)
 
         // Then
         assertEquals(PAYLOAD, payload)
@@ -80,9 +87,9 @@ class OfflineStoreQueueAndCacheTest {
         store.clearTable(TABLE)
 
         // Then — every signature of the table is gone; other tables are untouched
-        assertNull(store.getPayload(TABLE, CACHE_KEY))
-        assertNull(store.getPayload(TABLE, OTHER_CACHE_KEY))
-        assertEquals(PAYLOAD, store.getPayload(OTHER_TABLE, CACHE_KEY))
+        assertNull(store.queryCache.getPayload(TABLE, CACHE_KEY))
+        assertNull(store.queryCache.getPayload(TABLE, OTHER_CACHE_KEY))
+        assertEquals(PAYLOAD, store.queryCache.getPayload(OTHER_TABLE, CACHE_KEY))
     }
 
     @Test
@@ -95,8 +102,8 @@ class OfflineStoreQueueAndCacheTest {
         store.deleteTablePayload(TABLE, CACHE_KEY)
 
         // Then
-        assertNull(store.getPayload(TABLE, CACHE_KEY))
-        assertEquals(PAYLOAD, store.getPayload(TABLE, OTHER_CACHE_KEY))
+        assertNull(store.queryCache.getPayload(TABLE, CACHE_KEY))
+        assertEquals(PAYLOAD, store.queryCache.getPayload(TABLE, OTHER_CACHE_KEY))
     }
 
     @Test
@@ -121,10 +128,10 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun applyPendingMutations_delegatesToOverlay() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
 
         // When
-        val overlaid = store.overlayPendingOnResponse(TABLE, CACHE_KEY, "[]")
+        val overlaid = store.queryOverlay.overlayPendingOnResponse(TABLE, CACHE_KEY, "[]")
 
         // Then
         assertEquals("""[{"id":1}]""", overlaid)
@@ -133,12 +140,12 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun applyAllMutationsForOfflineFallback_includesSyncedMutations() = runTest {
         // Given — a write that has already synced
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
 
         // When
-        val fresh = store.overlayPendingOnResponse(TABLE, CACHE_KEY, "[]")
-        val offlineFallback = store.overlayCachedPayload(TABLE, "[]")
+        val fresh = store.queryOverlay.overlayPendingOnResponse(TABLE, CACHE_KEY, "[]")
+        val offlineFallback = store.queryOverlay.overlayCachedPayload(TABLE, "[]")
 
         // Then — a fresh payload already reflects it; a cached one may predate it, so it is
         // re-applied
@@ -187,7 +194,7 @@ class OfflineStoreQueueAndCacheTest {
         // Given — an empty queue
 
         // When
-        store.enqueueInsert(
+        store.mutationQueue.enqueueInsert(
             table = TABLE,
             body = rows("""[{"id":1}]"""),
             filter = ID_FILTER,
@@ -220,7 +227,7 @@ class OfflineStoreQueueAndCacheTest {
         // Given — an empty queue
 
         // When
-        store.enqueueUpsert(
+        store.mutationQueue.enqueueUpsert(
             table = TABLE,
             bodyJson = rows("""[{"id":1}]"""),
             onConflict = "id",
@@ -242,7 +249,7 @@ class OfflineStoreQueueAndCacheTest {
         // Given — an empty queue
 
         // When
-        store.enqueueUpsert(table = TABLE, bodyJson = rows("""[{"id":1}]"""))
+        store.mutationQueue.enqueueUpsert(table = TABLE, bodyJson = rows("""[{"id":1}]"""))
 
         // Then — the builder defaults are written explicitly, not left NULL
         val row = mutationDao.inserted.single()
@@ -256,12 +263,12 @@ class OfflineStoreQueueAndCacheTest {
         // Given — an empty queue
 
         // When
-        store.enqueueUpdate(
+        store.mutationQueue.enqueueUpdate(
             table = TABLE,
             body = Json.parseToJsonElement("""{"name":"X"}"""),
             filter = ID_FILTER,
         )
-        store.enqueueDelete(table = TABLE, filter = ID_FILTER)
+        store.mutationQueue.enqueueDelete(table = TABLE, filter = ID_FILTER)
 
         // Then — an UPDATE carries its body and filter; a DELETE an empty object body and its
         // filter
@@ -279,7 +286,10 @@ class OfflineStoreQueueAndCacheTest {
         // Given — an empty queue
 
         // When
-        store.enqueueUpdate(table = TABLE, body = Json.parseToJsonElement("""{"name":"X"}"""))
+        store.mutationQueue.enqueueUpdate(
+            table = TABLE,
+            body = Json.parseToJsonElement("""{"name":"X"}"""),
+        )
 
         // Then
         val row = mutationDao.inserted.single()
@@ -289,9 +299,9 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun pendingCountsAndDeleteMutation() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
-        store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
+        store.mutationQueue.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
 
         // When
         store.mutationQueue.abandonSentMutation(mutationDao.inserted.first().id)
@@ -305,7 +315,7 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun a_synced_mutation_is_no_longer_pending() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
 
         // When
         store.mutationQueue.recordReplayed(id = mutationDao.inserted.single().id, table = TABLE)
@@ -318,9 +328,9 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun clearSyncedMutationsForTable_removesOnlySyncedRows() = runTest {
         // Given — one synced and one pending row for the table, and a synced row elsewhere
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
-        store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
+        store.mutationQueue.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
         val (synced, _, otherTable) = mutationDao.inserted
         store.mutationQueue.recordReplayed(id = synced.id, table = TABLE)
         store.mutationQueue.recordReplayed(id = otherTable.id, table = OTHER_TABLE)
@@ -343,8 +353,8 @@ class OfflineStoreQueueAndCacheTest {
             val collector = launch { store.pendingMutationCountFlow().collect { counts += it } }
 
             // When
-            store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
-            store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
             store.mutationQueue.recordReplayed(id = mutationDao.inserted.first().id, table = TABLE)
             collector.cancel()
 
@@ -368,9 +378,9 @@ class OfflineStoreQueueAndCacheTest {
             }
 
             // When
-            store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
-            store.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
-            store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":2}]"""))
+            store.mutationQueue.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
             store.mutationQueue.recordReplayed(id = mutationDao.inserted.first().id, table = TABLE)
             collector.cancel()
 
@@ -381,9 +391,9 @@ class OfflineStoreQueueAndCacheTest {
     @Test
     fun pendingMutationCountForTableFlow_onlyCountsSpecifiedTable() = runTest {
         // Given
-        store.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
-        store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":2}]"""))
-        store.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":1}]"""))
+        store.mutationQueue.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":2}]"""))
+        store.mutationQueue.enqueueInsert(table = OTHER_TABLE, body = rows("""[{"id":3}]"""))
 
         // When
         val count = store.pendingMutationCountForTableFlow(TABLE).first()

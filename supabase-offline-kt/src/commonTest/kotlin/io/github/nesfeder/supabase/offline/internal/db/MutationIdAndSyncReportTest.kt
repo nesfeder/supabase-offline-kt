@@ -14,8 +14,11 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueDelete
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -41,7 +44,7 @@ class MutationIdAndSyncReportTest {
 
     private val mutationDao = FakeMutationDao()
     private var clock = 7_000L
-    private val store = newTestOfflineStore(mutationDao = mutationDao, nowMillis = { clock })
+    private val store = newTestStore(mutationDao = mutationDao, nowMillis = { clock })
     private val server = RecordingPostgrestServer()
     private val replayer =
         newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
@@ -49,11 +52,12 @@ class MutationIdAndSyncReportTest {
     @Test
     fun ids_are_assigned_in_order_and_survive_a_restart() = runTest {
         // Given
-        val first = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"a"}]"""))
-        val second = store.enqueueDelete(table = TABLE, filter = idFilter("a"))
+        val first =
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":"a"}]"""))
+        val second = store.mutationQueue.enqueueDelete(table = TABLE, filter = idFilter("a"))
 
         // When — a new process opens the same queue
-        val restarted = newTestOfflineStore(mutationDao = mutationDao)
+        val restarted = newTestStore(mutationDao = mutationDao)
 
         // Then
         assertTrue(second > first)
@@ -66,11 +70,12 @@ class MutationIdAndSyncReportTest {
     @Test
     fun an_id_is_never_reused_after_the_queue_empties() = runTest {
         // Given — a queue that was emptied
-        val first = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"a"}]"""))
+        val first =
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":"a"}]"""))
         store.localData.clearLocalData()
 
         // When
-        val next = store.enqueueInsert(table = TABLE, body = rows("""[{"id":"b"}]"""))
+        val next = store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"id":"b"}]"""))
 
         // Then — a rejection or a handle held for the old write can never name the new one
         assertTrue(next > first)
@@ -80,12 +85,12 @@ class MutationIdAndSyncReportTest {
     fun a_pending_mutation_carries_its_id_operation_body_and_row_keys() = runTest {
         // Given
         val insertId =
-            store.enqueueInsert(
+            store.mutationQueue.enqueueInsert(
                 table = TABLE,
                 body = rows("""[{"id":"a","title":"x"},{"title":"no key"}]"""),
             )
         val updateId =
-            store.enqueueUpdate(
+            store.mutationQueue.enqueueUpdate(
                 table = TABLE,
                 body = Json.parseToJsonElement("""{"done":true}"""),
                 filter = idFilter("b"),
@@ -124,10 +129,14 @@ class MutationIdAndSyncReportTest {
     @Test
     fun a_report_counts_what_synced_what_was_rejected_and_what_remains() = runTest {
         // Given — one write goes through, one is refused, one meets a server outage
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"ok"}]"""))
-        val refusedId = store.enqueueInsert(table = TABLE, body = rows("""[{"title":"refused"}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"outage"}]"""))
-        store.enqueueInsert(table = TABLE, body = rows("""[{"title":"waiting"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"ok"}]"""))
+        val refusedId =
+            store.mutationQueue.enqueueInsert(
+                table = TABLE,
+                body = rows("""[{"title":"refused"}]"""),
+            )
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"outage"}]"""))
+        store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"title":"waiting"}]"""))
         server.answer = { request ->
             when {
                 "refused" in request.body -> postgrestError(HttpStatusCode.BadRequest)
@@ -149,7 +158,9 @@ class MutationIdAndSyncReportTest {
     @Test
     fun an_offline_pass_returns_after_one_attempt() = runTest {
         // Given — the device is offline with three writes queued
-        repeat(3) { index -> store.enqueueInsert(table = TABLE, body = rows("""[{"n":$index}]""")) }
+        repeat(3) { index ->
+            store.mutationQueue.enqueueInsert(table = TABLE, body = rows("""[{"n":$index}]"""))
+        }
         server.answer = { connectivityFailure() }
 
         // When

@@ -11,7 +11,8 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlayCachedPayload
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -96,14 +97,13 @@ class OverlayMutationIsolationTest {
         // Given — a store whose overlay meets a pending write it cannot apply
         val logger = RecordingLogSink()
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
-        store.engineLogger = logger.asEngineLogger()
+        val store = newTestStore(mutationDao = mutationDao, engineLogger = logger.asEngineLogger())
         mutationDao.insert(
             mutation(id = 0, operation = MutationOperation.INSERT, body = "not json $PRIVATE_VALUE")
         )
 
         // When
-        store.overlayCachedPayload("todos", "[]")
+        store.queryOverlay.overlayCachedPayload("todos", "[]")
 
         // Then
         val warning = logger.entriesAt(EngineLogLevel.WARNING).single().message
@@ -116,14 +116,13 @@ class OverlayMutationIsolationTest {
         // Given
         val logger = RecordingLogSink()
         val mutationDao = FakeMutationDao()
-        val store = newTestOfflineStore(mutationDao = mutationDao)
-        store.engineLogger = logger.asEngineLogger()
+        val store = newTestStore(mutationDao = mutationDao, engineLogger = logger.asEngineLogger())
         mutationDao.insert(
             mutation(id = 0, operation = MutationOperation.INSERT, body = "not json")
         )
 
         // When — the overlay is recomputed three times
-        repeat(3) { store.overlayCachedPayload("todos", "[]") }
+        repeat(3) { store.queryOverlay.overlayCachedPayload("todos", "[]") }
 
         // Then
         assertEquals(1, logger.entriesAt(EngineLogLevel.WARNING).size)

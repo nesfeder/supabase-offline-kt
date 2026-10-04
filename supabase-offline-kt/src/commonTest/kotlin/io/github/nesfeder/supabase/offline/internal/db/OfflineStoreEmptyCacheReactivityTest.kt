@@ -4,10 +4,13 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -27,7 +30,7 @@ import kotlinx.serialization.json.put
 
 /**
  * An empty cache is never seeded with `[]`. The in-memory overlay,
- * [OfflineStore.overlaidPayloadFlow], shows a queued INSERT without a cache write; a write that
+ * [QueryOverlay.servedPayloadFlow], shows a queued INSERT without a cache write; a write that
  * succeeds online becomes a real cache row for a live reader with nothing cached; and nothing is
  * written when no reader is live.
  */
@@ -39,7 +42,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         val store = buildStore(FakeQueryCacheDao(), FakeMutationDao())
 
         // When — the overlay substrate is observed
-        val emitted = store.overlaidPayloadFlow("projects", "sig-A").first()
+        val emitted = store.queryOverlay.overlaidPayloadFlow("projects", "sig-A").first()
 
         // Then — it reports the typed no-data state (null), never a fabricated empty array
         assertNull(emitted, "cache-less, mutation-less signature is no-data, not empty []")
@@ -51,7 +54,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         val queryCacheDao = FakeQueryCacheDao()
         val mutationDao = FakeMutationDao()
         val store = buildStore(queryCacheDao, mutationDao)
-        store.enqueueInsert(
+        store.mutationQueue.enqueueInsert(
             table = "projects",
             body =
                 buildJsonArray {
@@ -66,7 +69,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         val writesBefore = queryCacheDao.writes
 
         // When — the overlay substrate is observed
-        val emitted = store.overlaidPayloadFlow("projects", "sig-A").first()
+        val emitted = store.queryOverlay.overlaidPayloadFlow("projects", "sig-A").first()
 
         // Then — the optimistic row surfaces from the in-memory `[]` substrate, and nothing was
         // persisted to Room for the signature
@@ -91,7 +94,7 @@ class OfflineStoreEmptyCacheReactivityTest {
             val store = buildStore(queryCacheDao, FakeMutationDao())
             val table = "note_projects"
             val cacheKey = "sig-A"
-            val cacheFlow = store.overlaidPayloadFlow(table, cacheKey)
+            val cacheFlow = store.queryOverlay.overlaidPayloadFlow(table, cacheKey)
             val firstRealRow = async {
                 withTimeoutOrNull(timeMillis = 500) {
                     cacheFlow.first { it != null && it.contains("project-1") }
@@ -144,8 +147,8 @@ class OfflineStoreEmptyCacheReactivityTest {
         assertEquals(0, queryCacheDao.writes, "no live subscriber means no materialized row")
     }
 
-    private fun buildStore(queryCacheDao: QueryCacheDao, mutationDao: MutationDao): OfflineStore =
-        newTestOfflineStore(
+    private fun buildStore(queryCacheDao: QueryCacheDao, mutationDao: MutationDao): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             mutationDao = mutationDao,
         )

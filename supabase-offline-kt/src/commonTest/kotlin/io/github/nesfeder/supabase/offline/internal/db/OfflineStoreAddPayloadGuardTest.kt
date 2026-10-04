@@ -5,9 +5,10 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -16,7 +17,7 @@ import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 
 /**
- * Tests for the empty-clobber guard in [OfflineStore.addPayload]: **an unattributed empty never
+ * Tests for the empty-clobber guard in [QueryCache.cacheResponse]: **an unattributed empty never
  * persists.**
  *
  * The dominant cause of an empty SELECT response in practice is a cold-start auth race — a refresh
@@ -282,8 +283,8 @@ class OfflineStoreAddPayloadGuardTest {
     private fun buildStore(
         queryCacheDao: QueryCacheDao,
         nowMillis: () -> Long = { 0L },
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
             queryCacheDao = queryCacheDao,
             nowMillis = nowMillis,
         )

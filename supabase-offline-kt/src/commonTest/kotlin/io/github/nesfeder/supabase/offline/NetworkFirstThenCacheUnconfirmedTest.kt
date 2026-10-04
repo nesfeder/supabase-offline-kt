@@ -14,7 +14,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
@@ -62,7 +61,7 @@ class NetworkFirstThenCacheUnconfirmedTest {
                         install(Postgrest)
                         accessToken = { testJwt("u-1") }
                     },
-                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                queryCacheDao = queryCacheDao,
                 coordinatorScope = backgroundScope,
             )
             .from(TABLE)
@@ -123,7 +122,7 @@ class NetworkFirstThenCacheUnconfirmedTest {
                                 enableLifecycleCallbacks = false
                             }
                         },
-                    store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                    queryCacheDao = queryCacheDao,
                     coordinatorScope = backgroundScope,
                 )
                 .from(TABLE)

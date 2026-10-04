@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.update
  * Recording and scripting extensions of the engine's in-memory DAOs, which live in
  * `internal/testing` and back the testing artifact's client too. These add only what a test needs
  * to observe or steer: counters, seeding, scripted failures and interleaving hooks; a test that
- * needs none uses the in-memory DAO directly. Build a store over them with newTestOfflineStore.
+ * needs none uses the in-memory DAO directly. Build components over them with newTestStore.
  */
 
 /**
@@ -55,7 +55,7 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
 
     /**
      * Runs inside [allForTable], with the table, after its snapshot is taken and before it is
-     * returned. A test parks one `OfflineStore.patchCachedQueries` writer here so a second writes
+     * returned. A test parks one `CachePatcher.patchCachedQueries` writer here so a second writes
      * against the same snapshot: a lost update, reproduced without timing. `null` returns at once.
      */
     var onAllForTableSnapshot: (suspend (table: String) -> Unit)? = null
@@ -149,7 +149,7 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
  * [InMemoryMutationDao] that exposes the queue for assertions. The in-memory DAO already mirrors
  * Room's mutation-queue semantics: an auto-incrementing id on insert (like `autoGenerate`), rows
  * with a null `syncedAtMs` treated as pending, ordering by id (insertion order), and a pending flow
- * that re-emits on every queue change. Syncer tests drive a real `OfflineStore` over it and observe
+ * that re-emits on every queue change. Replayer tests drive the real components over it and observe
  * replay, mark-synced, drop and rejection transitions.
  */
 internal class FakeMutationDao : InMemoryMutationDao() {
@@ -196,6 +196,12 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     /** When set, runs after [unconfirmedSendIds] read the rows and before it returns them. */
     var afterUnconfirmedSendIdsRead: (suspend () -> Unit)? = null
 
+    /**
+     * When set, runs before each read of one table's mutation rows ([allForTable],
+     * [pendingForTable]), the reads a query's overlay makes; a test throws from it to fail them.
+     */
+    var beforeTableRead: (suspend (table: String) -> Unit)? = null
+
     /** When set, runs after each transaction has committed, before its caller goes on. */
     var afterTransaction: (suspend () -> Unit)? = null
 
@@ -215,11 +221,13 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     }
 
     override suspend fun pendingForTable(table: String): List<MutationRow> {
+        beforeTableRead?.invoke(table)
         pendingListReads++
         return super.pendingForTable(table)
     }
 
     override suspend fun allForTable(table: String): List<MutationRow> {
+        beforeTableRead?.invoke(table)
         tableListReadCounts[table] = (tableListReadCounts[table] ?: 0) + 1
         return super.allForTable(table)
     }

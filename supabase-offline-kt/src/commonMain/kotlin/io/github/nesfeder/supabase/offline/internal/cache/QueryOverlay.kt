@@ -81,7 +81,7 @@ internal class QueryOverlay(
     private val primaryKeys: PrimaryKeys,
     private val identityProvider: suspend () -> String?,
     private val identityChanges: Flow<Any?>,
-    private val engineLogger: () -> EngineLogger,
+    private val engineLogger: EngineLogger,
 ) {
 
     /**
@@ -663,7 +663,7 @@ internal class QueryOverlay(
      */
     private fun logSkippedOverlay(mutation: MutationRow, failure: Exception) {
         if (!mutationQueue.claimOverlaySkipReport(mutation.id)) return
-        engineLogger().warning {
+        engineLogger.warning {
             if (mutation.id < 0) {
                 "Cache patch skipped an accepted ${mutation.operation} on ${mutation.table}: " +
                     "${failure::class.simpleName}"

@@ -7,7 +7,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -21,7 +21,7 @@ import kotlinx.serialization.json.Json
 class ReplayPassCostTest {
 
     private val mutationDao = FakeMutationDao()
-    private val store = newTestOfflineStore(mutationDao = mutationDao)
+    private val store = newTestStore(mutationDao = mutationDao)
 
     @Test
     fun a_pass_reads_the_whole_queue_a_constant_number_of_times() = runTest {

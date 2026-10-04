@@ -5,11 +5,12 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.auth.auth
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import kotlin.test.Test
@@ -40,7 +41,11 @@ import kotlinx.serialization.json.Json
 class SessionSettleReplayTest {
 
     private val server = RecordingPostgrestServer()
-    private val store = newTestOfflineStore()
+    /** The queue's table the client opens. */
+    private val mutationDao = FakeMutationDao()
+
+    /** Reads what the client left in [mutationDao], for every identity. */
+    private val store = newTestStore(mutationDao = mutationDao)
 
     @Test
     fun a_users_queued_mutations_go_out_when_that_user_signs_in_again() = runTest {
@@ -49,7 +54,11 @@ class SessionSettleReplayTest {
         val clientScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         val client =
-            newTestOfflineClient(supabase = supabase, store = store, coordinatorScope = clientScope)
+            newTestOfflineClient(
+                supabase = supabase,
+                mutationDao = mutationDao,
+                coordinatorScope = clientScope,
+            )
         supabase.signInForTest("user-a")
         server.answer = { connectivityFailure() }
         client.from(TABLE).update(Json.parseToJsonElement("""{"title":"A's edit"}""")) {
@@ -86,7 +95,7 @@ class SessionSettleReplayTest {
             val client =
                 newTestOfflineClient(
                     supabase = supabase,
-                    store = store,
+                    mutationDao = mutationDao,
                     coordinatorScope = clientScope,
                 )
             supabase.signInForTest("user-a")
@@ -120,7 +129,11 @@ class SessionSettleReplayTest {
         val clientScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(clientScheduler))
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         val client =
-            newTestOfflineClient(supabase = supabase, store = store, coordinatorScope = clientScope)
+            newTestOfflineClient(
+                supabase = supabase,
+                mutationDao = mutationDao,
+                coordinatorScope = clientScope,
+            )
         supabase.signInForTest("user-a")
         clientScheduler.runCurrent()
         server.answer = { connectivityFailure() }

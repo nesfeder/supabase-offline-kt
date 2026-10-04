@@ -11,7 +11,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestSe
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -36,7 +35,8 @@ class UpsertOverlayTest {
     private fun newClient(primaryKeys: PrimaryKeys = DefaultPrimaryKeys): Offline =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
-            store = newTestOfflineStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao),
+            queryCacheDao = queryCacheDao,
+            mutationDao = mutationDao,
             coordinatorScope = idleCoroutineScope(),
             primaryKeys = primaryKeys,
         )

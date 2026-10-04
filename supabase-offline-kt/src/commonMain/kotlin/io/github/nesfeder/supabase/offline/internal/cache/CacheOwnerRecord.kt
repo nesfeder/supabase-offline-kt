@@ -41,7 +41,7 @@ internal class CacheOwnerRecord(private val queryCacheDao: QueryCacheDao, privat
 
     /**
      * How many times the cache was emptied in this process. A payload a reader received under an
-     * earlier count may be gone from the database; see [OfflineStore.overlaidPayloadFlow].
+     * earlier count may be gone from the database; see [QueryOverlay.servedPayloadFlow].
      */
     fun emptiedCount(): Long = emptied.value
 

@@ -11,8 +11,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,7 +35,7 @@ import kotlinx.serialization.json.JsonElement
 class DiscardPendingMutationTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
-    private val store = newTestOfflineStore(queryCacheDao = queryCacheDao)
+    private val store = newTestStore(queryCacheDao = queryCacheDao)
     private val server = RecordingPostgrestServer()
     private var session: QueueIdentity = USER_A
     private val replayer =
@@ -88,7 +89,7 @@ class DiscardPendingMutationTest {
         renameOffline(1, "renamed")
         assertEquals(
             """[{"id":1,"title":"renamed"}]""",
-            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
 
         // When
@@ -100,7 +101,7 @@ class DiscardPendingMutationTest {
         // Then
         assertEquals(
             """[{"id":1,"title":"original"}]""",
-            store.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
+            store.queryOverlay.overlaidPayloadFlow(TABLE, CACHE_KEY).first(),
         )
     }
 

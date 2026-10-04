@@ -52,6 +52,7 @@ import kotlinx.serialization.json.JsonElement
  * @param ownerlessMutationsAreAnonymous whether mutations queued with no owner are the anonymous
  *   identity's: without the Auth plugin there is no other.
  * @param liveCacheKeysOf a table's queries with a live reader; retirement keeps what they wait for.
+ * @param engineLogger where the rejected list reports a row it could not read.
  */
 internal class MutationQueue(
     private val mutationDao: MutationDao,
@@ -63,9 +64,9 @@ internal class MutationQueue(
     private val primaryKeys: PrimaryKeys,
     private val identityProvider: suspend () -> String?,
     private val identityChanges: Flow<Any?>,
-    private val ownerlessMutationsAreAnonymous: () -> Boolean,
+    private val ownerlessMutationsAreAnonymous: Boolean,
     private val liveCacheKeysOf: (table: String) -> Set<String>,
-    engineLogger: () -> EngineLogger,
+    engineLogger: EngineLogger,
 ) {
 
     /** The mutation queue's record kept beside the rows: the rejected list. */
@@ -276,8 +277,8 @@ internal class MutationQueue(
      *
      * @param identity The stored value of the identity making the write, or `null` to record none
      *   (a store driven directly, with no session model).
-     * @param startedAtTick [monotonicTickNow] as read before the write started, or `null` to skip
-     *   the check.
+     * @param startedAtTick [CacheFreshness.tickNow] as read before the write started, or `null` to
+     *   skip the check.
      * @param enqueue Queues the write and returns its id. Must make DAO calls only.
      * @return What happened.
      */
@@ -443,7 +444,7 @@ internal class MutationQueue(
      * installed they are a signed-in user's, so the anonymous identity adopts them only without it.
      */
     private fun mayAdoptOwnerlessMutations(identity: String): Boolean =
-        identity != QueueIdentity.Anonymous.storedValue || ownerlessMutationsAreAnonymous()
+        identity != QueueIdentity.Anonymous.storedValue || ownerlessMutationsAreAnonymous
 
     /**
      * Whether [id] is the first of [identity]'s pending mutations, in any table. Reads the owner

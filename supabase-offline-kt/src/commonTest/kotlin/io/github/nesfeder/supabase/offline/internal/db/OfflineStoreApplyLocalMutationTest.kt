@@ -5,12 +5,13 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.query.Order
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
+import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.recordQueryShape
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,7 +25,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
 /**
- * Tests for [OfflineStore.patchCachedQueries] — the online-success overlay path that honors
+ * Tests for [CachePatcher.patchCachedQueries] — the online-success overlay path that honors
  * [io.github.nesfeder.supabase.offline.MutationStrategy.QueueIfOffline]'s "UI reflects immediately"
  * promise without requiring a round-trip SELECT.
  *
@@ -659,8 +660,8 @@ class OfflineStoreApplyLocalMutationTest {
     private suspend fun buildStore(
         queryCacheDao: QueryCacheDao,
         mutationDao: MutationDao,
-    ): OfflineStore =
-        newTestOfflineStore(
+    ): TestStore =
+        newTestStore(
                 queryCacheDao = queryCacheDao,
                 mutationDao = mutationDao,
             )

@@ -3,13 +3,13 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
-import io.github.nesfeder.supabase.offline.internal.cache.OfflineStore
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.utils.io.ByteChannel
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -39,7 +39,7 @@ import okio.SYSTEM
 class StorageCancelledDownloadTest {
 
     private lateinit var dataDirectory: Path
-    private lateinit var store: OfflineStore
+    private lateinit var store: TestStore
     private lateinit var delegate: FakeBucketApi
     private val fileSystem = FakeFailingFileSystem()
     private val engine = newEngineScope(engineLogger = null)
@@ -49,7 +49,7 @@ class StorageCancelledDownloadTest {
         dataDirectory =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-cancelled-${Random.nextLong().toULong()}"
-        store = newTestOfflineStore()
+        store = newTestStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
         delegate.onDownload = { CONTENT }
     }

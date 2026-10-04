@@ -13,7 +13,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
@@ -86,7 +85,7 @@ class ReadsWhileRestoringTest {
         val client =
             newTestOfflineClient(
                 supabase = supabase,
-                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                queryCacheDao = queryCacheDao,
                 coordinatorScope = backgroundScope,
             )
         // The plugin starts loading the stored session, the load the held store keeps waiting

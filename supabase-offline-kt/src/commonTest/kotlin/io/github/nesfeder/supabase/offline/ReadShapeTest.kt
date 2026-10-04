@@ -21,7 +21,6 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
@@ -92,7 +91,7 @@ class ReadShapeTest {
     private val client =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
-            store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+            queryCacheDao = queryCacheDao,
             coordinatorScope = idleCoroutineScope(),
         )
     private val items = client.from(TABLE)
@@ -332,7 +331,7 @@ class ReadShapeTest {
         val reader =
             newTestOfflineClient(
                 supabase = restoring,
-                store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                queryCacheDao = queryCacheDao,
                 coordinatorScope = idleCoroutineScope(),
             )
 
@@ -412,7 +411,7 @@ class ReadShapeTest {
             val cached =
                 newTestOfflineClient(
                         supabase = build(),
-                        store = newTestOfflineStore(queryCacheDao = queryCacheDao),
+                        queryCacheDao = queryCacheDao,
                         coordinatorScope = idleCoroutineScope(),
                     )
                     .from(TABLE)

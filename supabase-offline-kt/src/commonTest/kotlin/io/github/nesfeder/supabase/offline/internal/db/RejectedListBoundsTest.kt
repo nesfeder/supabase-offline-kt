@@ -14,7 +14,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerEr
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
-import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -32,18 +32,14 @@ class RejectedListBoundsTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val logger = RecordingLogSink()
     private val store =
-        newTestOfflineStore(queryCacheDao = queryCacheDao).also { store ->
-            store.engineLogger = logger.asEngineLogger()
-        }
+        newTestStore(queryCacheDao = queryCacheDao, engineLogger = logger.asEngineLogger())
 
     @Test
     fun large_bodies_do_not_grow_the_list_without_bound() = runTest {
         // Given / When — ten refused writes of a megabyte each
         val body = "[{\"id\":\"x\",\"blob\":\"" + "a".repeat(1024 * 1024) + "\"}]"
         repeat(10) { index ->
-            store.mutationQueue.rejectedList.addRejection(
-                rejection(id = index + 1L, bodyJson = body)
-            )
+            store.addRejection(rejection(id = index + 1L, bodyJson = body))
         }
 
         // Then — every rejection is still listed, and the row stays small
@@ -61,7 +57,7 @@ class RejectedListBoundsTest {
     fun an_entry_that_leaves_the_full_list_is_logged() = runTest {
         // Given / When — one more than the list keeps
         repeat(MAX_REJECTED_MUTATIONS + 1) { index ->
-            store.mutationQueue.rejectedList.addRejection(rejection(id = index + 1L))
+            store.addRejection(rejection(id = index + 1L))
         }
 
         // Then — the oldest went, and a WARNING names it
@@ -77,7 +73,7 @@ class RejectedListBoundsTest {
     fun a_body_too_long_to_keep_is_dropped_with_its_size_and_cannot_be_retried() = runTest {
         // Given / When
         val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS) + "\"}]"
-        store.mutationQueue.rejectedList.addRejection(rejection(id = 1L, bodyJson = body))
+        store.addRejection(rejection(id = 1L, bodyJson = body))
 
         // Then — the entry stays, without its body, saying how long it was; a retry declines it
         val entry = store.mutationQueue.rejectedList.rejections().single()
@@ -95,9 +91,7 @@ class RejectedListBoundsTest {
         // Given / When — fifty rejections whose bodies are just under the per-body limit
         val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS - 20) + "\"}]"
         repeat(50) { index ->
-            store.mutationQueue.rejectedList.addRejection(
-                rejection(id = index + 1L, bodyJson = body)
-            )
+            store.addRejection(rejection(id = index + 1L, bodyJson = body))
         }
 
         // Then — the newest are kept within the budget, and the count of dropped entries is
@@ -110,7 +104,7 @@ class RejectedListBoundsTest {
         )
         val kept = store.mutationQueue.rejectedList.rejections()
         assertEquals(50L, kept.last().id)
-        val reloaded = newTestOfflineStore(queryCacheDao = queryCacheDao)
+        val reloaded = newTestStore(queryCacheDao = queryCacheDao)
         assertEquals(50L - kept.size, reloaded.mutationQueue.rejectedList.droppedCount())
     }
 
@@ -119,7 +113,7 @@ class RejectedListBoundsTest {
         // Given — a list close to its size budget
         val body = "[{\"blob\":\"" + "a".repeat(MAX_REJECTED_BODY_CHARS - 20) + "\"}]"
         val entries = (1L..31L).map { id -> rejection(id = id, bodyJson = body) }
-        entries.forEach { entry -> store.mutationQueue.rejectedList.addRejection(entry) }
+        entries.forEach { entry -> store.addRejection(entry) }
         val droppedBefore = store.mutationQueue.rejectedList.droppedCount()
 
         // When — one entry with the longest body and server texts the list keeps
@@ -130,7 +124,7 @@ class RejectedListBoundsTest {
                     message = text,
                     serverError = StoredServerError(400, "x", text, details = text, hint = text),
                 )
-        store.mutationQueue.rejectedList.addRejection(large)
+        store.addRejection(large)
 
         // Then — exactly the oldest entries that take the list over its budget went, and no more
         val all = store.mutationQueue.rejectedList.rejections()
@@ -157,7 +151,7 @@ class RejectedListBoundsTest {
     fun the_count_of_dropped_entries_can_be_reset() = runTest {
         // Given
         repeat(MAX_REJECTED_MUTATIONS + 3) { index ->
-            store.mutationQueue.rejectedList.addRejection(rejection(id = index + 1L))
+            store.addRejection(rejection(id = index + 1L))
         }
         assertEquals(3L, store.mutationQueue.rejectedList.droppedCount())
 
@@ -167,7 +161,7 @@ class RejectedListBoundsTest {
         // Then
         assertEquals(
             0L,
-            newTestOfflineStore(queryCacheDao = queryCacheDao).rejectedList.droppedCount(),
+            newTestStore(queryCacheDao = queryCacheDao).mutationQueue.rejectedList.droppedCount(),
         )
     }
 
