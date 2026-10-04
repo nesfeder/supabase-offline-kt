@@ -69,7 +69,7 @@ class AcceptedWritePatchTest {
         // resumes it in place
         val patch =
             launch(Dispatchers.Unconfined) {
-                store.patchCachedQueries(
+                store.cachePatcher.patchCachedQueries(
                     table = TASKS,
                     operation = MutationOperation.INSERT,
                     bodyJson = """[{"id":2,"list":"B"}]""",
@@ -92,7 +92,7 @@ class AcceptedWritePatchTest {
         store.recordQueryShape(TABLE, CACHE_KEY) {}
 
         // When — the insert's patch arrives
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = TABLE,
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":7,"title":"new"}]""",
@@ -119,7 +119,7 @@ class AcceptedWritePatchTest {
             store.recordQueryShape(TABLE, CACHE_KEY) {}
 
             // When — an upsert of the same setting, with no conflict columns
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 table = TABLE,
                 operation = MutationOperation.UPSERT,
                 bodyJson = """[{"key":"theme","value":"light"}]""",
@@ -140,7 +140,7 @@ class AcceptedWritePatchTest {
 
         // When — two writes whose bodies the patch cannot read
         repeat(2) {
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 table = TABLE,
                 operation = MutationOperation.INSERT,
                 bodyJson = "not json",

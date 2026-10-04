@@ -104,7 +104,7 @@ class ReservedRowsTest {
 
         // When / Then — every write path refuses the reserved table
         assertFailsWith<IllegalArgumentException> {
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 RESERVED_TABLE_NAME,
                 MutationOperation.DELETE,
                 "{}",

@@ -100,7 +100,7 @@ class OfflineStoreEmptyCacheReactivityTest {
 
             // When — an online-success upsert fires while the subscriber is live but cache-less;
             // the client passes the live signature so materialize-on-write can create the row
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 table = table,
                 operation = MutationOperation.UPSERT,
                 bodyJson = """[{"note_id":"log-1","project_id":"project-1","user_id":"u-1"}]""",
@@ -131,7 +131,7 @@ class OfflineStoreEmptyCacheReactivityTest {
         val store = buildStore(queryCacheDao, FakeMutationDao())
 
         // When — an online-success upsert fires on an uncached table
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "note_projects",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"note_id":"log-1","project_id":"project-1","user_id":"u-1"}]""",

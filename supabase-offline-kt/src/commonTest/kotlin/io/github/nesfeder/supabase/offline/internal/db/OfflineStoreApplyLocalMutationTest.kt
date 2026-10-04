@@ -51,7 +51,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — the same row is upserted online with a new rating
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":1,"rating":92}]""",
@@ -81,7 +81,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — a different id is upserted
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":2,"rating":70}]""",
@@ -112,7 +112,7 @@ class OfflineStoreApplyLocalMutationTest {
         // When — an insert-if-missing (ON CONFLICT DO NOTHING) races the existing row. The
         // server preserved its row and returned nothing, so the overlay falls back to the
         // request body — which must NOT be merged over the canonical value.
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":1,"rating":92}]""",
@@ -141,7 +141,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — an insert-if-missing for an id the cache doesn't hold
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":2,"rating":70}]""",
@@ -167,7 +167,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":1,"rating":92}]""",
@@ -204,7 +204,7 @@ class OfflineStoreApplyLocalMutationTest {
 
         // When — re-rate for item 2 via a composite-key UPSERT (onConflict names the
         // table's natural key).
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson =
@@ -236,7 +236,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":1,"rating":92}]""",
@@ -258,7 +258,7 @@ class OfflineStoreApplyLocalMutationTest {
         queryCacheDao.seedPayload("notes", "sig-A", """[{"id":"a","notes":"one"}]""")
         val store = buildStore(queryCacheDao, mutationDao)
 
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"b","notes":"two"}]""",
@@ -287,7 +287,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — a DONE row is inserted online
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"w1","type":"DONE"}]""",
@@ -316,7 +316,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — a matching OPEN row is inserted
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"r2","type":"OPEN"}]""",
@@ -341,7 +341,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — a DONE row is inserted online
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"w2","type":"DONE"}]""",
@@ -373,7 +373,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — a DONE row is inserted
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.INSERT,
             bodyJson = """[{"id":"w1","type":"DONE"}]""",
@@ -401,7 +401,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — a DONE row is upserted (onConflict key doesn't match any cached row → append path)
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":"w1","type":"DONE"}]""",
@@ -434,7 +434,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — the same row (which belongs in this query) is re-upserted with new data
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":"r1","type":"OPEN","notes":"new"}]""",
@@ -479,7 +479,7 @@ class OfflineStoreApplyLocalMutationTest {
             )
 
         // When — update retire=true for id s2
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "projects",
             operation = MutationOperation.UPDATE,
             bodyJson = buildJsonObject { put("retired", JsonPrimitive(true)) }.toString(),
@@ -534,7 +534,7 @@ class OfflineStoreApplyLocalMutationTest {
             )
 
         // When — mark the unread period read, then re-mark the already-read period
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "summaries",
             operation = MutationOperation.UPDATE,
             bodyJson =
@@ -542,7 +542,7 @@ class OfflineStoreApplyLocalMutationTest {
                     .toString(),
             filterJson = encodeFilter(markReadFilter("2026-P26"), json),
         )
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "summaries",
             operation = MutationOperation.UPDATE,
             bodyJson =
@@ -595,7 +595,7 @@ class OfflineStoreApplyLocalMutationTest {
                     ),
             )
 
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "note_attachments",
             operation = MutationOperation.DELETE,
             bodyJson = "{}",
@@ -619,7 +619,7 @@ class OfflineStoreApplyLocalMutationTest {
         val store = buildStore(queryCacheDao, mutationDao)
 
         // When — same payload re-upserted
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":1,"rating":92}]""",
@@ -638,7 +638,7 @@ class OfflineStoreApplyLocalMutationTest {
         queryCacheDao.seedPayload("ratings", "sig-A", """[]""")
         val store = buildStore(queryCacheDao, mutationDao)
 
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "ratings",
             operation = MutationOperation.UPSERT,
             bodyJson = """[{"id":1,"rating":80}]""",

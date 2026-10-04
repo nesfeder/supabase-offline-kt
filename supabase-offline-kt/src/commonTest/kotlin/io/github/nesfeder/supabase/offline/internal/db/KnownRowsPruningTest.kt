@@ -654,7 +654,7 @@ class KnownRowsPruningTest {
                             random.partial(keys, keyed = false)
                     )
                 }
-            store.patchReturnedRows(
+            store.cachePatcher.patchReturnedRows(
                 TABLE,
                 body,
                 JsonArray(returned).toString(),
@@ -691,7 +691,7 @@ class KnownRowsPruningTest {
                     if (write.operation == MutationOperation.UPSERT) write.ignoreDuplicates
                     else null,
             )
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             TABLE,
             row.operation,
             row.bodyJson,
@@ -734,7 +734,7 @@ class KnownRowsPruningTest {
                 // When — accepted writes rewrite the payloads
                 repeat(1 + random.nextInt(3)) {
                     val write = random.write(keys)
-                    store.patchCachedQueries(
+                    store.cachePatcher.patchCachedQueries(
                         TABLE,
                         write.operation,
                         write.body,
@@ -980,14 +980,14 @@ class KnownRowsPruningTest {
             )
 
         // When — online, it is renamed, then moved into list B
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             TABLE,
             MutationOperation.UPDATE,
             """{"title":"new"}""",
             encodeFilter(byColumn("id", "5"), EngineJson),
             liveCacheKeys = emptySet(),
         )
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             TABLE,
             MutationOperation.UPDATE,
             """{"list":"B"}""",
@@ -1055,7 +1055,7 @@ class KnownRowsPruningTest {
                 )
             val filter = List(1 + random.nextInt(2)) { random.truthCondition() }
 
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 TABLE,
                 MutationOperation.UPDATE,
                 patch.toString(),

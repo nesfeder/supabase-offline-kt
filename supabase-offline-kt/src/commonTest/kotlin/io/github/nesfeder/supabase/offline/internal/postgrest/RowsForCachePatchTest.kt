@@ -191,7 +191,7 @@ class RowsForCachePatchTest {
             """[{"id":"server-log-id","user_id":"u-1","external_id":42,"notes":null}]"""
 
         // When
-        store.patchCachedQueries(
+        store.cachePatcher.patchCachedQueries(
             table = "notes",
             operation = MutationOperation.UPSERT,
             bodyJson = rowsForCachePatch(requestBody, serverResponse, json),

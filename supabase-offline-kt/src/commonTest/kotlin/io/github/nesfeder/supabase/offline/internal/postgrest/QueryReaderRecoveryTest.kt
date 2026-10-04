@@ -1145,7 +1145,7 @@ class QueryReaderRecoveryTest {
             }
             runCurrent()
             assertEquals(2, networkCalls, "the second subscription's refresh must be in flight")
-            store.patchCachedQueries(
+            store.cachePatcher.patchCachedQueries(
                 table = "projects",
                 operation = MutationOperation.INSERT,
                 bodyJson = """[{"id":"project-2"}]""",
