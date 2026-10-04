@@ -84,7 +84,22 @@ internal suspend fun SupabaseClient.currentQueueIdentity(): QueueIdentity? {
  * bound the write's owner could not be told, and it would go out on the anon key while the session
  * restores.
  */
-internal class QueueIdentityReader(private val supabase: SupabaseClient) {
+internal class QueueIdentityReader(
+    /** The session status now, or `null` without the Auth plugin. */
+    private val sessionStatus: () -> SessionStatus?,
+    /** Reads the stored session. */
+    private val loadStoredSession: suspend () -> UserSession?,
+) {
+
+    /** The reader of [supabase]'s Auth plugin, or of no session model without one. */
+    constructor(
+        supabase: SupabaseClient
+    ) : this(
+        sessionStatus = { supabase.pluginManager.getPluginOrNull(Auth)?.sessionStatus?.value },
+        loadStoredSession = {
+            supabase.pluginManager.getPluginOrNull(Auth)?.sessionManager?.loadSession()
+        },
+    )
 
     /** Taken by the one read of the stored session in progress. */
     private val readLock = Mutex()
@@ -94,9 +109,7 @@ internal class QueueIdentityReader(private val supabase: SupabaseClient) {
 
     /** The identity a write made now is queued for, or `null` when it cannot be told. */
     suspend fun current(): QueueIdentity? {
-        val authPlugin =
-            supabase.pluginManager.getPluginOrNull(Auth) ?: return QueueIdentity.Anonymous
-        val status = authPlugin.sessionStatus.value
+        val status = sessionStatus() ?: return QueueIdentity.Anonymous
         if (status is SessionStatus.Authenticated || status is SessionStatus.NotAuthenticated)
             return queueIdentityFor(status) { null }
         return readLock.withLock {
@@ -105,7 +118,7 @@ internal class QueueIdentityReader(private val supabase: SupabaseClient) {
             }
             val identity =
                 try {
-                    queueIdentityFor(status) { authPlugin.sessionManager.loadSession() }
+                    queueIdentityFor(status) { loadStoredSession() }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (_: Exception) {

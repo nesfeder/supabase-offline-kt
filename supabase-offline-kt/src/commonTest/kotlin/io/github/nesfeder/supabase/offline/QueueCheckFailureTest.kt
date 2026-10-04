@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalCoroutinesApi::class)
+
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
@@ -13,8 +15,17 @@ import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -84,6 +95,48 @@ class QueueCheckFailureTest {
         // Then
         assertTrue(discard.isSuccess, "the discard threw ${discard.exceptionOrNull()}")
         assertEquals(0, client.pendingMutationCount())
+        client.close()
+    }
+
+    @Test
+    fun a_failed_read_after_a_discard_still_asks_for_the_pass_that_sends_the_rest() = runTest {
+        // Given — two writes queued offline, every pass they asked for over, then the server is
+        // back. This client's work runs on the test's scheduler and starts no pass of its own
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = CoroutineScope(SupervisorJob() + dispatcher)
+        val onTheScheduler =
+            RecordingPostgrestServer(
+                answer = { connectivityFailure() },
+                engineDispatcher = dispatcher,
+            )
+        val queue = FakeMutationDao()
+        val scheduled =
+            newTestOfflineClient(
+                supabase = onTheScheduler.supabaseClient(),
+                mutationDao = queue,
+                coordinatorScope = scope,
+                config = Offline.Config().apply { autoSync = false },
+            )
+        val first = assertIs<MutationOutcome.Queued>(scheduled.from(TABLE).insert(row(1)))
+        assertIs<MutationOutcome.Queued>(scheduled.from(TABLE).insert(row(2)))
+        runCurrent()
+        advanceTimeBy(2.minutes)
+        runCurrent()
+        val before = onTheScheduler.requests.size
+        onTheScheduler.answer = { okJson("[]") }
+        queue.failNextWholeQueueCheck = true
+
+        // When — the first is discarded, and the read that follows fails
+        scheduled.discardPendingMutation(first.pendingMutation.id)
+        runCurrent()
+        advanceTimeBy(2.minutes)
+        runCurrent()
+
+        // Then — the pass was asked for anyway, and sent the second
+        assertFalse(queue.failNextWholeQueueCheck, "the read did not fail")
+        assertEquals(1, onTheScheduler.requests.size - before, "requests after the discard")
+        assertEquals(0, scheduled.pendingMutationCount())
+        scope.cancel()
         client.close()
     }
 
