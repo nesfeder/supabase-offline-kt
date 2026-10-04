@@ -78,14 +78,17 @@ struct LifecycleTests {
         #expect(client.syncStatus.value.network == .disabled, "after close: \(client.syncStatus.value)")
     }
 
-    @Test func clearingLocalDataWhenTheUserChangesLeavesNothingOfTheLastUser() async throws {
-        // Given user A's cached rows, queued write and rejected write
-        let session = OSAllocatedUnfairLock(initialState: "token-a")
+    @Test func clearingLocalDataAtSignOutSendsNothingOfThatUserUnderTheNextOnesToken() async throws {
+        // Given user A's cached rows, queued write and rejected write, on a client that syncs by itself
+        let session = OSAllocatedUnfairLock<String?>(initialState: "token-a")
+        let network = FakeNetworkAvailability()
         let server = RecordingFakeServer(rows: Self.serverRows)
         let client = SupabaseOfflineClient.inMemory(
-            config: .init(accessToken: { session.withLock { $0 } }, autoSync: false),
+            config: .init(accessToken: { session.withLock { $0 } }, networkAvailability: network.makeStream),
             server: server.server
         )
+        #expect(await eventually { network.streamCount == 1 })
+        network.report(true)
         _ = try await client.from("todos").select().execute([TodoRow].self)
         server.goOffline()
         _ = try await client.from("todos").insert(TodoRow(id: 3, title: "Tea", done: false)).execute()
@@ -96,11 +99,20 @@ struct LifecycleTests {
         #expect(try await client.pendingMutationCount() == 1)
         #expect(try await client.rejectedMutations().first().count == 1)
 
-        // When user B signs in and the app clears local data
-        session.withLock { $0 = "token-b" }
+        // When A signs out, the app clears local data, and only then does B sign in
+        session.withLock { $0 = nil }
         try await client.clearLocalData()
+        let sentBeforeB = server.requests.values.count
+        session.withLock { $0 = "token-b" }
+        server.answer { request in request.method == "GET" ? .json(#"[{"id":7,"title":"Bread","done":false}]"#) : .status(201) }
+        network.report(false)
+        network.report(true)
+        let report = try await client.syncPendingMutations()
+        try await Task.sleep(for: .milliseconds(300))
 
-        // Then nothing of user A's is left
+        // Then nothing of A's is left, and nothing of A's goes out under B's token
+        #expect(report.syncedCount == 0)
+        #expect(report.remainingCount == 0)
         #expect(try await client.pendingMutationCount() == 0)
         #expect(try await client.rejectedMutations().first().isEmpty)
         let cached = await #expect(throws: OfflineError.self) {
@@ -113,9 +125,9 @@ struct LifecycleTests {
                 return status.pendingMutationCount == 0 && status.rejectedMutationCount == 0 && status.lastSyncError == nil
             }
         )
+        #expect(server.requests.values.dropFirst(sentBeforeB).allSatisfy { $0.method == "GET" })
 
         // And the client is still usable, as user B
-        server.answer { _ in .json(#"[{"id":7,"title":"Bread","done":false}]"#) }
         let rows = try await client.from("todos").select().execute([TodoRow].self)
         #expect(rows.value == [TodoRow(id: 7, title: "Bread", done: false)])
         #expect(server.requests.values.last?.header("Authorization") == "Bearer token-b")

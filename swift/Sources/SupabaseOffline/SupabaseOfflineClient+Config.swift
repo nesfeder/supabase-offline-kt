@@ -16,11 +16,12 @@ extension SupabaseOfflineClient {
         /// `{ try? await supabase.auth.session.accessToken }`. A throw fails that request with
         /// ``OfflineError/Code/accessToken``.
         ///
-        /// Signing in and out needs no call: the next request carries whatever this returns. The
-        /// client keeps one identity, though, so its cache and its queued writes are not kept apart
-        /// by user: when a different user signs in, call ``SupabaseOfflineClient/clearLocalData()``
-        /// first, or the new user sees the last one's cached rows and their queued writes are sent
-        /// with the new token.
+        /// The client learns who the user is only from the token this returns, and cannot tell one
+        /// user's cached rows and queued writes from another's: a sync that starts once this returns
+        /// another user's token sends the last user's queued writes with that token. So call
+        /// ``SupabaseOfflineClient/clearLocalData()`` before this can return another user's token,
+        /// most simply at sign-out (after ``SupabaseOfflineClient/syncPendingMutations(table:)`` if
+        /// those writes should still be sent). Signing out and back in as the same user needs nothing.
         public var accessToken: (@Sendable () async throws -> String?)?
 
         /// The directory for the local database and cached files, created when missing; `nil` for
