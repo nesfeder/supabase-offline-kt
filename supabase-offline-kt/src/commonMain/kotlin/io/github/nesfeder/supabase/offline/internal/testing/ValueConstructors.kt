@@ -73,7 +73,7 @@ public object ValueConstructors {
         body: JsonElement?,
     ): PendingMutation = PendingMutation(id, table, operation, createdAt, rowKeys, body)
 
-    /** A [RefreshState.Stalled] whose last failure was [cause]. */
+    /** A [RefreshState.Stalled] that [cause] stalled. */
     public fun stalled(cause: Throwable): RefreshState.Stalled = RefreshState.Stalled(cause)
 
     /** A [QuerySnapshot] with the given fields. */

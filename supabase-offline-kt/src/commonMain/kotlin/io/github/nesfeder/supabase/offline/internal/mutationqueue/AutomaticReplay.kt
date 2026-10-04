@@ -16,9 +16,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Runs the replay passes the engine starts on its own — after a write is queued behind pending
- * ones, after a write sent at the head left more pending, and when the session settles into an
- * identity with mutations queued — coalesced and backed off.
+ * Runs the replay passes the engine starts on its own, coalesced and backed off: after a write is
+ * queued behind pending ones, after a write sent, refused or discarded leaves more pending, after a
+ * rejected write is retried, when the session settles into an identity with mutations queued, and
+ * when the network comes back.
  *
  * - **Coalesced:** requests are conflated. At most one pass runs and at most one more is waiting,
  *   however many requests arrive meanwhile, so a burst of writes queued behind the head starts one

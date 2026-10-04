@@ -12,8 +12,8 @@ This README is the entry point. Deep dives live in [docs/](./docs).
 
 ## Documentation index
 
-- [docs/architecture.md](./docs/project/internals.md) — SDK internals: caching, signatures, subset
-  resolution, mutation overlay, sync orchestration, error classification, eviction.
+- [docs/project/architecture.md](./docs/project/architecture.md) — The architecture: the public
+  API in full, how the engine works, and the decisions behind both.
 - [docs/api-reference.md](./docs/reference/supported-features.md) — Every public type with behavior tables and
   the full exception reference.
 - [docs/configuration.md](./docs/reference/configuration.md) — Configuration and logging, for both
@@ -112,11 +112,13 @@ Swift API to call; its quick start returns with it.
 
 - **`ReadStrategy`** — `NetworkOnly`, `NetworkFirst(maxAge?)`, `CacheFirst(maxAge?)`,
   `CacheOnly(maxAge?)`. TTL is evaluated at **read** time against the cached row's
-  timestamp. See [docs/architecture.md → Read path](./docs/project/internals.md#read-path-caching-deep-dive).
+  timestamp. See [the architecture's read path](./docs/project/architecture.md#the-read-path).
 - **`FlowReadStrategy`** — `CacheFirstThenNetwork`, `NetworkFirstThenCache`, `CacheOnly` for
   reactive `selectAsFlow`.
-- **`MutationStrategy`** — `QueueIfOffline` (default) queues writes locally on connectivity
-  failure; `OnlineOnly` rethrows. Server-side 4xx/5xx are **never** queued.
+- **`MutationStrategy`** — `QueueIfOffline` (default) saves the write to the mutation queue,
+  sends it at once when nothing of the user waits ahead of it, and keeps it queued when it may not
+  have run (no connection, a `503` or `520`); `OnlineOnly` sends it now or throws. A write sent at
+  once that the server refuses throws, as in supabase-kt.
 - **Sync is automatic.** Queued writes are sent when the network comes back and when the session
   settles; `syncPendingMutations()` sends them now, and `syncStatus` says where things stand.
   `install(Offline) { autoSync = false }` leaves those passes to the app.

@@ -71,9 +71,8 @@ internal fun captureFilter(builder: PostgrestRequestBuilder): FilterDescriptor? 
  * offline descriptor format cannot represent faithfully — a logical group (`or(...)` / `and(...)`),
  * a foreign-table dotted key, or a negated/unrecognized operator prefix such as `not.`.
  *
- * The offline-queue branches of [io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder]
- * catch this and fail the caller's original write instead of enqueuing a mutation that would later
- * replay against a broader row set than the caller targeted.
+ * [OfflineTable] catches it and sends the write directly, instead of queueing a mutation that would
+ * later replay against a broader row set than the caller targeted.
  */
 internal class UncapturableFilterException(message: String) : IllegalArgumentException(message)
 

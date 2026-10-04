@@ -163,6 +163,7 @@ nav:
       - FAQ and troubleshooting: help/faq.md
       - Security and privacy: help/security.md
   - Project:
+      - Architecture: project/architecture.md
       - Changelog: project/changelog.md
       - Contributing: project/contributing.md
       - Releasing: project/releasing.md
