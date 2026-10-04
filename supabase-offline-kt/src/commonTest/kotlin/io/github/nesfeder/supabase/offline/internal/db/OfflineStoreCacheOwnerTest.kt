@@ -207,12 +207,15 @@ class OfflineStoreCacheOwnerTest {
             committed.complete(Unit)
             resume.await()
         }
-        val countBefore = store.cacheOwner.emptiedCount()
+        val countBefore = store.cacheOwnership.record.emptiedCount()
         val emptying = launch { empty() }
         committed.await()
 
         // When — a read asks whose the cache is before the emptying has recorded it
-        val check = async { store.cacheServesCurrentIdentity() to store.cacheOwner.emptiedCount() }
+        val check = async {
+            store.cacheOwnership.cacheServesCurrentIdentity() to
+                store.cacheOwnership.record.emptiedCount()
+        }
         runCurrent()
         resume.complete(Unit)
         emptying.join()
