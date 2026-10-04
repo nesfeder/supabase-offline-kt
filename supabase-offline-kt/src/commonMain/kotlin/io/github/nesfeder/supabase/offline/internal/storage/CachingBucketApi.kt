@@ -626,7 +626,9 @@ internal class CachingBucketApi(
      * supabase-kt's request reaches the object the path names.
      */
     private fun cachesDownloadsOf(path: String): Boolean =
-        isCacheableBucketId(bucketId) && isCacheableObjectPath(path) && isRequestedByItsOwnName(path)
+        isCacheableBucketId(bucketId) &&
+            isCacheableObjectPath(path) &&
+            isRequestedByItsOwnName(path)
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
     private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T =

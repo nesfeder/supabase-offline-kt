@@ -42,8 +42,8 @@ internal sealed interface DryRunVerdict {
 }
 
 /**
- * Tells a dry run (`Prefer: tx=rollback`) from an ordinary write before it is queued. The queue does
- * not keep the `Prefer` header, so a queued dry run would replay as a real write.
+ * Tells a dry run (`Prefer: tx=rollback`) from an ordinary write before it is queued. The queue
+ * does not keep the `Prefer` header, so a queued dry run would replay as a real write.
  */
 internal fun interface DryRunProbe {
 

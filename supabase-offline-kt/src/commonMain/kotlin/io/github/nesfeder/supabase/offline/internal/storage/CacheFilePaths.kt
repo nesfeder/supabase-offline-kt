@@ -54,9 +54,9 @@ internal fun isCacheableObjectPath(objectPath: String): Boolean =
     objectPath.isNotEmpty() && objectPath.split('/').all(::isCacheableSegment)
 
 /**
- * The characters supabase-kt before 3.8 puts into a Storage URL as written: a `%` fails the request,
- * and a `?` or `#` cuts the path short, so the request can fetch a different object. Empty from
- * 3.8, which encodes each segment; this goes when the pin reaches 3.8.
+ * The characters supabase-kt before 3.8 puts into a Storage URL as written: a `%` fails the
+ * request, and a `?` or `#` cuts the path short, so the request can fetch a different object. Empty
+ * from 3.8, which encodes each segment; this goes when the pin reaches 3.8.
  */
 internal val CHARACTERS_SENT_UNENCODED: Set<Char> =
     TESTED_SUPABASE_KT_VERSION.split('.', '-').take(2).map(String::toInt).let { (major, minor) ->
@@ -68,8 +68,9 @@ internal val CHARACTERS_SENT_UNENCODED: Set<Char> =
  * may be cached. A path holding one of [CHARACTERS_SENT_UNENCODED] downloads as supabase-kt
  * downloads it, and is never cached or served from the cache.
  */
-internal fun isRequestedByItsOwnName(objectPath: String): Boolean =
-    objectPath.none { character -> character in CHARACTERS_SENT_UNENCODED }
+internal fun isRequestedByItsOwnName(objectPath: String): Boolean = objectPath.none { character ->
+    character in CHARACTERS_SENT_UNENCODED
+}
 
 private fun isCacheableSegment(segment: String): Boolean =
     segment.isNotEmpty() &&
