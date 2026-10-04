@@ -10,6 +10,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 
@@ -287,6 +288,29 @@ class BridgeClientTest {
         // Then
         assertEquals(BridgeErrorKind.CANCELLED, error.kind)
         assertEquals(1, probe.callCount)
+        client.closeAndWait()
+    }
+
+    @Test
+    fun a_cancelled_subscription_ends_once_with_cancelled_and_delivers_nothing_more() = bridgeTest {
+        // Given — a subscription to the queue count, which has delivered its first value
+        val client = openTestClient(server) { autoSync = false }
+        val counts = SubscriptionProbe<Int>()
+        val handle = client.observePendingMutationCount(null, counts.onValue, counts.onCompletion)
+        counts.awaitValue { it == 0 }
+
+        // When — it is cancelled, then the queue changes
+        handle.cancel()
+        val ending = counts.ending.await()
+        awaitErrorOnly { client.disableNetwork(it) }
+        client.mutateAndWait(INSERT_TODO, """{"id":6}""")
+        handle.cancel()
+        delay(100)
+
+        // Then
+        assertEquals(BridgeErrorKind.CANCELLED, ending.second?.kind)
+        assertEquals(1, counts.ending.callCount)
+        assertNull(withTimeoutOrNull(200) { counts.awaitValue { it == 1 } })
         client.closeAndWait()
     }
 

@@ -8,10 +8,9 @@ import io.github.jan.supabase.postgrest.query.filter.TextSearchType
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * One condition of a description, applied onto supabase-kt's own filter builder with the call a
- * Kotlin caller would make, so the request, and the cache key built from it, are the same.
- *
- * Every value arrives as the text the Swift side rendered it to; supabase-kt renders it on.
+ * One condition of a description, applied with the filter-builder call a Kotlin caller would make.
+ * The request, and the cache key built from it, are then the same. Every value arrives as the text
+ * the Swift side rendered it to; supabase-kt renders it on.
  */
 internal sealed interface FilterNode {
 
@@ -78,6 +77,7 @@ internal sealed interface FilterNode {
         }
     }
 
+    /** The `kind` each node is named by in a description. */
     companion object {
         /** The `kind` of a [Condition]. */
         const val CONDITION = "filter"
@@ -88,10 +88,16 @@ internal sealed interface FilterNode {
         /** The `kind` of an `and` [Group]. */
         const val AND = "and"
 
-        /** The `kind`s of a [PatternList]. */
+        /** The `kind` of a [PatternList] every pattern must match, case-sensitively. */
         const val LIKE_ALL = "likeAll"
+
+        /** The `kind` of a [PatternList] one pattern must match, case-sensitively. */
         const val LIKE_ANY = "likeAny"
+
+        /** The `kind` of a [PatternList] every pattern must match, ignoring case. */
         const val ILIKE_ALL = "ilikeAll"
+
+        /** The `kind` of a [PatternList] one pattern must match, ignoring case. */
         const val ILIKE_ANY = "ilikeAny"
 
         /** The `kind` of a [TextSearch]. */
