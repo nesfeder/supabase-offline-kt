@@ -14,8 +14,10 @@ import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
+import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import io.github.nesfeder.offlinetasks.ui.status.SyncHeadline
 import io.github.nesfeder.offlinetasks.ui.status.syncHeadlineOf
 import io.github.nesfeder.offlinetasks.ui.status.withSyncedMoment
@@ -26,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.shareIn
@@ -44,6 +47,16 @@ sealed interface TasksUiState {
     /** The one sentence about syncing: the subtitle and the banner. */
     val headline: SyncHeadline
     val filter: TaskFilter
+
+    /**
+     * No one is signed in yet, so there is nothing to show and nothing can be added: the first
+     * launch, before the app has reached the network. [isSigningIn] is true while it is trying.
+     */
+    data class NoSession(
+        override val headline: SyncHeadline,
+        override val filter: TaskFilter,
+        val isSigningIn: Boolean,
+    ) : TasksUiState
 
     /**
      * Nothing is saved on this device yet. [isLoading] is true while the server is being asked,
@@ -84,12 +97,14 @@ sealed interface TasksMessage {
  * can still be undone. A swiped-away task is only hidden until its snackbar goes; then it is
  * deleted, unless the user chose Undo.
  *
+ * @param sessionState whether anyone is signed in: nothing can be shown or added before.
  * @param commitScope where deletions run; it outlives this ViewModel, so a task swiped away just
  *   before the screen goes is still deleted.
- * @param failures where a failed write or refresh is reported, to be shown as a message.
+ * @param failures where a failed read, write or refresh is reported, to be shown as a message.
  */
 class TasksViewModel(
     private val repository: TaskRepository,
+    private val sessionState: StateFlow<SessionState>,
     private val commitScope: CoroutineScope,
     private val failures: FailureReports,
 ) : ViewModel() {
@@ -102,26 +117,42 @@ class TasksViewModel(
     private val undoableDeletions = mutableSetOf<String>()
     private val messageChannel = Channel<TasksMessage>(Channel.BUFFERED)
 
+    /** The refused writes still on the list, so an announcement waiting unseen can be dropped. */
+    private val currentRejectionIds = MutableStateFlow<Set<Long>>(emptySet())
+
     private val snapshots: Flow<TaskListSnapshot> =
-        repository.tasks().shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+        repository
+            .tasks()
+            .reportingFailures(failures)
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
     private val headlines: Flow<SyncHeadline> =
         combine(repository.syncStatus, snapshots.map { it.refresh }, ::syncHeadlineOf)
             .withSyncedMoment()
 
-    /** One-off messages, each delivered once. */
-    val messages: Flow<TasksMessage> = messageChannel.receiveAsFlow()
+    /**
+     * One-off messages, each delivered once. A refusal announced while the screen was away is
+     * dropped if it has left the list since (dismissed, retried or cleared on the Sync screen).
+     */
+    val messages: Flow<TasksMessage> =
+        messageChannel.receiveAsFlow().filter { message ->
+            message !is TasksMessage.Rejected || message.rejection.id in currentRejectionIds.value
+        }
 
     /** The screen's state. */
     val uiState: StateFlow<TasksUiState> =
         combine(
-                combine(snapshots, repository.syncStatus, ::Pair),
+                combine(snapshots, repository.syncStatus, sessionState, ::Triple),
                 headlines,
                 filter,
                 hiddenTaskIds,
                 isRefreshing,
-            ) { (snapshot, status), headline, filter, hidden, refreshing ->
-                stateOf(snapshot, status.network, headline, filter, hidden, refreshing)
+            ) { (snapshot, status, session), headline, filter, hidden, refreshing ->
+                if (session != SessionState.SignedIn) {
+                    TasksUiState.NoSession(headline, filter, isSigningIn = status.network.canAsk())
+                } else {
+                    stateOf(snapshot, status.network, headline, filter, hidden, refreshing)
+                }
             }
             .stateIn(
                 viewModelScope,
@@ -195,6 +226,7 @@ class TasksViewModel(
         viewModelScope.launchReporting(failures) {
             var seen: Set<Long>? = null
             repository.rejectedMutations().collect { rejections ->
+                currentRejectionIds.value = rejections.mapTo(HashSet()) { it.id }
                 val known = seen
                 if (known != null) {
                     rejections
@@ -217,12 +249,10 @@ class TasksViewModel(
     ): TasksUiState {
         val tasks = snapshot.value
         if (tasks == null) {
-            val canAskServer =
-                network == AppNetworkStatus.Online || network == AppNetworkStatus.Unknown
             return TasksUiState.NoDataYet(
                 headline = headline,
                 filter = filter,
-                isLoading = canAskServer && snapshot.refresh !is TaskRefreshState.Stalled,
+                isLoading = network.canAsk() && snapshot.refresh !is TaskRefreshState.Stalled,
             )
         }
         val visible = tasks.filter { it.id !in hidden }
@@ -244,6 +274,7 @@ class TasksViewModel(
                 val application = offlineTasksApplication
                 TasksViewModel(
                     repository = application.repository,
+                    sessionState = application.session.state,
                     commitScope = application.applicationScope,
                     failures = application.failures,
                 )
@@ -251,3 +282,7 @@ class TasksViewModel(
         }
     }
 }
+
+/** Whether the server may be reachable: known online, or not known yet. */
+private fun AppNetworkStatus.canAsk(): Boolean =
+    this == AppNetworkStatus.Online || this == AppNetworkStatus.Unknown

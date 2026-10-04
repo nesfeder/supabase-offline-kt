@@ -50,8 +50,10 @@ Package.swift          SwiftPM manifest pointing at ios/distribution/
 
 ## Sample apps
 
-The sample app, Offline Tasks, runs against a Supabase project of your own. Creating that project,
-loading the schema and running each sample are on the documentation site:
+The sample app, Offline Tasks, runs against a Supabase project of your own. The Android sample runs
+on this library: its tasks and photos are cached on the device, and what you change offline is
+queued and sent when the network comes back. Creating that project, loading the schema and running
+each sample are on the documentation site:
 [Set up Supabase](./docs/samples/supabase-setup.md),
 [Run the Android sample](./docs/samples/android.md) and
 [Run the iOS sample](./docs/samples/ios.md).

@@ -80,7 +80,7 @@ android {
 }
 
 dependencies {
-    // The library, from this build; the sample adopts it in a later change.
+    // The library, from this build.
     implementation(projects.supabaseOfflineKt)
     implementation(platform(libs.supabase.bom))
     implementation(libs.supabase.auth.kt)
@@ -116,5 +116,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.ktor.client.mock)
     testImplementation(libs.robolectric)
+    // The library's in-memory client, so the repository's tests run it over a mock server.
+    testImplementation(projects.supabaseOfflineKtTesting)
 }

@@ -9,7 +9,6 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
-import io.github.nesfeder.offlinetasks.data.ServerFaults
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
@@ -18,13 +17,13 @@ import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -46,17 +45,12 @@ sealed interface SyncUiState {
         /** Newest first. */
         val rejected: List<RejectedTaskMutation>,
         val session: SessionState,
-        /** The failures the server is having on purpose; null when this build cannot fail it. */
-        val serverFaults: ServerFaultState?,
         /** True while a "Sync now" the user pressed is running. */
         val isSyncNowRunning: Boolean,
         /** What the last "Sync now" did, until the next one. */
         val lastReport: TaskSyncReport?,
     ) : SyncUiState
 }
-
-/** Which failures the in-memory server is having on purpose. */
-data class ServerFaultState(val isServerOutage: Boolean, val isStorageFailing: Boolean)
 
 /**
  * The Sync screen: the network and the simulate-offline switch, the mutation queue per table, the
@@ -68,37 +62,33 @@ data class ServerFaultState(val isServerOutage: Boolean, val isStorageFailing: B
  */
 class SyncViewModel(
     private val repository: TaskRepository,
-    sessionState: StateFlow<SessionState>,
+    private val sessionState: StateFlow<SessionState>,
     private val writeScope: CoroutineScope,
     private val failures: FailureReports,
 ) : ViewModel() {
-
-    private val serverFaults = repository as? ServerFaults
     private val syncNow = MutableStateFlow(SyncNowRun(isRunning = false, report = null))
 
     private val queue: Flow<QueueCounts> =
         combine(
-            repository.pendingMutationCount(Tables.TASKS),
-            repository.pendingMutationCount(Tables.TASK_PHOTOS),
+            repository.pendingMutationCount(Tables.TASKS).reportingFailures(failures),
+            repository.pendingMutationCount(Tables.TASK_PHOTOS).reportingFailures(failures),
             ::QueueCounts,
         )
 
     /** The screen's state. */
     val uiState: StateFlow<SyncUiState> =
         combine(
-                combine(repository.syncStatus, queue, repository.tasks().map { it.refresh }) {
-                    status,
-                    counts,
-                    refresh ->
+                combine(
+                    repository.syncStatus,
+                    queue,
+                    repository.tasks().map { it.refresh }.reportingFailures(failures),
+                ) { status, counts, refresh ->
                     Triple(status, counts, refresh)
                 },
-                repository.rejectedMutations(),
+                repository.rejectedMutations().reportingFailures(failures),
                 sessionState,
-                serverFaults?.let { faults ->
-                    combine(faults.isServerOutage, faults.isStorageFailing, ::ServerFaultState)
-                } ?: flowOf(null),
                 syncNow,
-            ) { (status, counts, refresh), rejected, session, faults, run ->
+            ) { (status, counts, refresh), rejected, session, run ->
                 SyncUiState.Ready(
                     status = status,
                     pendingTasks = counts.tasks,
@@ -106,7 +96,6 @@ class SyncViewModel(
                     refresh = refresh,
                     rejected = rejected,
                     session = session,
-                    serverFaults = faults,
                     isSyncNowRunning = run.isRunning,
                     lastReport = run.report,
                 )
@@ -148,22 +137,14 @@ class SyncViewModel(
     /**
      * Adds a task whose title the server refuses, to show what a refused write looks like: online
      * it is refused at once and reported as a message; offline it is refused when it replays and
-     * listed under the refused changes.
+     * listed under the refused changes. Before there is a session there is no user to write it for,
+     * and the screen does not offer it.
      */
     fun queueInvalidTitle() {
+        if (sessionState.value != SessionState.SignedIn) return
         writeScope.launchReporting(failures) {
             repository.addTask(title = INVALID_TITLE, notes = null)
         }
-    }
-
-    /** Makes every request to the server fail, or stops doing so. */
-    fun setServerOutage(active: Boolean) {
-        serverFaults?.setServerOutage(active)
-    }
-
-    /** Makes Storage refuse every photo request, or stops doing so. */
-    fun setStorageFailing(active: Boolean) {
-        serverFaults?.setStorageFailing(active)
     }
 
     /** Deletes everything this device holds, unsynced changes included. */

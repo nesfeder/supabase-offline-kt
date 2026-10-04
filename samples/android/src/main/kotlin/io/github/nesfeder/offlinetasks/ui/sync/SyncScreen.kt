@@ -66,8 +66,6 @@ fun SyncRoute(viewModel: SyncViewModel = viewModel(factory = SyncViewModel.Facto
                 onDismiss = viewModel::dismiss,
                 onRetry = viewModel::retry,
                 onQueueInvalidTitle = viewModel::queueInvalidTitle,
-                onServerOutage = viewModel::setServerOutage,
-                onStorageFailing = viewModel::setStorageFailing,
                 onClearLocalData = viewModel::clearLocalData,
                 onStartOver = viewModel::startOver,
             ),
@@ -81,8 +79,6 @@ class SyncActions(
     val onDismiss: (RejectedTaskMutation) -> Unit,
     val onRetry: (RejectedTaskMutation) -> Unit,
     val onQueueInvalidTitle: () -> Unit,
-    val onServerOutage: (Boolean) -> Unit,
-    val onStorageFailing: (Boolean) -> Unit,
     val onClearLocalData: () -> Unit,
     val onStartOver: () -> Unit,
 )
@@ -240,13 +236,11 @@ private fun LazyListScope.refreshGroup(state: SyncUiState.Ready) {
     groupTitle("refresh", R.string.sync_refresh)
     item(key = "refresh-state") {
         val (icon, text) =
-            when (state.refresh) {
-                TaskRefreshState.Idle -> R.drawable.ic_cloud_done to R.string.sync_refresh_idle
-                TaskRefreshState.Refreshing ->
-                    R.drawable.ic_refresh to R.string.sync_refresh_running
-                TaskRefreshState.Paused -> R.drawable.ic_cloud_off to R.string.sync_refresh_paused
-                is TaskRefreshState.Stalled ->
-                    R.drawable.ic_sync_problem to R.string.sync_refresh_stalled
+            when {
+                // Before the first sign-in nothing is read, so there is nothing to be up to date.
+                state.session != SessionState.SignedIn ->
+                    R.drawable.ic_cloud_off to R.string.sync_refresh_no_session
+                else -> refreshRowOf(state.refresh)
             }
         InfoRow(
             index = 0,
@@ -289,6 +283,19 @@ private fun LazyListScope.rejectedGroup(state: SyncUiState.Ready, actions: SyncA
                             rejection.serverError?.let { refusalReason(LocalResources.current, it) }
                                 ?: rejection.message
                         )
+                        // The server's own answer, as the library keeps it for each refusal.
+                        rejection.serverError?.let { error ->
+                            Text(
+                                text =
+                                    stringResource(
+                                        R.string.sync_rejected_server_answer,
+                                        error.status,
+                                        error.code.orEmpty(),
+                                    ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { actions.onRetry(rejection) }) {
                                 Text(stringResource(R.string.action_retry))
@@ -314,41 +321,24 @@ private fun LazyListScope.rejectedGroup(state: SyncUiState.Ready, actions: SyncA
 
 private fun LazyListScope.developerGroup(state: SyncUiState.Ready, actions: SyncActions) {
     groupTitle("developer", R.string.sync_developer)
-    val faults = state.serverFaults
-    val count = if (faults == null) 1 else 3
     item(key = "queue-invalid") {
+        // A task needs its user, so before the first sign-in there is nothing to queue.
+        val signedIn = state.session == SessionState.SignedIn
         SegmentedListItem(
             onClick = actions.onQueueInvalidTitle,
-            shapes = ListItemDefaults.segmentedShapes(index = 0, count = count),
+            shapes = ListItemDefaults.segmentedShapes(index = 0, count = 1),
+            enabled = signedIn,
             leadingContent = { Icon(painterResource(R.drawable.ic_science), null) },
-            supportingContent = { Text(stringResource(R.string.sync_queue_invalid_body)) },
+            supportingContent = {
+                Text(
+                    stringResource(
+                        if (signedIn) R.string.sync_queue_invalid_body
+                        else R.string.sync_queue_invalid_no_session
+                    )
+                )
+            },
         ) {
             Text(stringResource(R.string.sync_queue_invalid))
-        }
-    }
-    if (faults == null) return
-    item(key = "server-outage") {
-        SegmentedListItem(
-            checked = faults.isServerOutage,
-            onCheckedChange = actions.onServerOutage,
-            shapes = ListItemDefaults.segmentedShapes(index = 1, count = count),
-            leadingContent = { Icon(painterResource(R.drawable.ic_dns), null) },
-            trailingContent = { Switch(checked = faults.isServerOutage, onCheckedChange = null) },
-            supportingContent = { Text(stringResource(R.string.sync_server_outage_body)) },
-        ) {
-            Text(stringResource(R.string.sync_server_outage))
-        }
-    }
-    item(key = "storage-failing") {
-        SegmentedListItem(
-            checked = faults.isStorageFailing,
-            onCheckedChange = actions.onStorageFailing,
-            shapes = ListItemDefaults.segmentedShapes(index = 2, count = count),
-            leadingContent = { Icon(painterResource(R.drawable.ic_hide_image), null) },
-            trailingContent = { Switch(checked = faults.isStorageFailing, onCheckedChange = null) },
-            supportingContent = { Text(stringResource(R.string.sync_storage_failing_body)) },
-        ) {
-            Text(stringResource(R.string.sync_storage_failing))
         }
     }
 }
@@ -382,27 +372,17 @@ private fun LazyListScope.aboutGroup(state: SyncUiState.Ready) {
     item(key = "session") {
         InfoRow(
             index = 0,
-            count = 2,
+            count = 1,
             icon = R.drawable.ic_account_circle,
             headline = stringResource(R.string.sync_session),
             supporting =
                 stringResource(
                     when (state.session) {
-                        SessionState.NotConfigured -> R.string.sync_session_not_configured
                         SessionState.SigningIn -> R.string.sync_session_signing_in
                         SessionState.SignedIn -> R.string.sync_session_signed_in
                         is SessionState.Failed -> R.string.sync_session_failed
                     }
                 ),
-        )
-    }
-    item(key = "storage") {
-        InfoRow(
-            index = 1,
-            count = 2,
-            icon = R.drawable.ic_database,
-            headline = stringResource(R.string.sync_data_source),
-            supporting = stringResource(R.string.sync_data_source_in_memory),
         )
     }
 }
@@ -501,3 +481,12 @@ private val AppNetworkStatus.description: Int
             AppNetworkStatus.Offline -> R.string.network_offline_body
             AppNetworkStatus.Disabled -> R.string.network_disabled_body
         }
+
+/** The icon and the text of the Task list row for [refresh]. */
+private fun refreshRowOf(refresh: TaskRefreshState): Pair<Int, Int> =
+    when (refresh) {
+        TaskRefreshState.Idle -> R.drawable.ic_cloud_done to R.string.sync_refresh_idle
+        TaskRefreshState.Refreshing -> R.drawable.ic_refresh to R.string.sync_refresh_running
+        TaskRefreshState.Paused -> R.drawable.ic_cloud_off to R.string.sync_refresh_paused
+        is TaskRefreshState.Stalled -> R.drawable.ic_sync_problem to R.string.sync_refresh_stalled
+    }

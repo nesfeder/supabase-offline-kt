@@ -6,6 +6,7 @@ import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.inmemory.InMemoryTaskRepository
+import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
 import io.github.nesfeder.offlinetasks.testing.awaitServerTasks
 import io.github.nesfeder.offlinetasks.testing.repositoryFixture
@@ -31,7 +32,7 @@ class PhotoViewModelsTest {
         val taskId = repository.awaitServerTasks().first().id
         val photo = repository.attachedPhoto(taskId)
         repository.setStorageFailing(true)
-        val viewModel = PhotosViewModel(repository)
+        val viewModel = PhotosViewModel(repository, failures)
 
         // When
         val file = viewModel.photoFile(photo)
@@ -55,6 +56,39 @@ class PhotoViewModelsTest {
 
         // Then — reported, not thrown, and the photo is still showing
         assertIs<PhotoStorageException>(failures.reported.first())
+        assertIs<PhotoViewerUiState.Showing>(viewModel.uiState.value)
+    }
+
+    @Test
+    fun a_failing_read_on_the_photos_screen_is_a_message_and_the_photos_stay() = runTest {
+        // Given — a photo, then the photo list's read failing after it loads
+        val fixture = repositoryFixture(seedSampleTasks = true).repository
+        fixture.attachedPhoto(fixture.awaitServerTasks().first().id)
+        val failure = IllegalStateException("A row the app cannot read")
+        val viewModel = PhotosViewModel(FailingReadsTaskRepository(fixture, failure), failures)
+
+        // When
+        viewModel.uiState.first { it is PhotosUiState.Loaded }
+
+        // Then — reported, not thrown, and the photo still shows
+        assertEquals(failure, failures.reported.first())
+        assertEquals(1, assertIs<PhotosUiState.Loaded>(viewModel.uiState.value).photos.size)
+    }
+
+    @Test
+    fun a_failing_read_in_the_viewer_is_a_message_and_the_photo_stays() = runTest {
+        // Given — the viewer on a photo, and the photo list's read failing after it loads
+        val fixture = repositoryFixture(seedSampleTasks = true).repository
+        val photo = fixture.attachedPhoto(fixture.awaitServerTasks().first().id)
+        val failure = IllegalStateException("A row the app cannot read")
+        val viewModel =
+            PhotoViewerViewModel(photo.id, FailingReadsTaskRepository(fixture, failure), failures)
+
+        // When
+        viewModel.uiState.first { it is PhotoViewerUiState.Showing }
+
+        // Then — reported, not thrown, and the photo is still showing
+        assertEquals(failure, failures.reported.first())
         assertIs<PhotoViewerUiState.Showing>(viewModel.uiState.value)
     }
 

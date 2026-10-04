@@ -7,6 +7,7 @@ import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.platform.SessionState
+import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
 import io.github.nesfeder.offlinetasks.testing.FailingTaskRepository
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
 import io.github.nesfeder.offlinetasks.testing.awaitPendingCount
@@ -17,11 +18,14 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
 
 class SyncViewModelTest {
@@ -113,23 +117,6 @@ class SyncViewModelTest {
     }
 
     @Test
-    fun the_in_memory_server_can_be_made_to_fail() = runTest {
-        // Given
-        val repository = repositoryFixture().repository
-        val viewModel = syncViewModel(repository)
-
-        // When
-        viewModel.setServerOutage(true)
-        viewModel.setStorageFailing(true)
-
-        // Then
-        assertEquals(
-            ServerFaultState(isServerOutage = true, isStorageFailing = true),
-            viewModel.ready { it.serverFaults?.isStorageFailing == true }.serverFaults,
-        )
-    }
-
-    @Test
     fun a_failed_sync_now_is_a_message_and_the_button_comes_back() = runTest {
         // Given — a replay that fails
         val failure = ServerUnreachableException()
@@ -143,6 +130,42 @@ class SyncViewModelTest {
         // Then — reported, not thrown, and "Sync now" can be pressed again
         assertEquals(failure, failures.reported.first())
         assertFalse(viewModel.ready { !it.isSyncNowRunning }.isSyncNowRunning)
+    }
+
+    @Test
+    fun a_failing_read_is_a_message_and_the_screen_stays() = runTest {
+        // Given — the screen's reads failing after they load
+        val failure = IllegalStateException("A row the app cannot read")
+        val repository =
+            FailingReadsTaskRepository(
+                repositoryFixture(seedSampleTasks = true).repository,
+                failure,
+            )
+        val viewModel = syncViewModel(repository)
+
+        // When
+        viewModel.ready()
+
+        // Then — reported, not thrown, and the screen still shows
+        assertEquals(failure, failures.reported.first())
+        assertIs<SyncUiState.Ready>(viewModel.uiState.value)
+    }
+
+    @Test
+    fun before_a_session_an_invalid_title_is_not_queued() = runTest {
+        // Given — the first launch, offline, before any sign-in
+        session.value = SessionState.SigningIn
+        val repository = repositoryFixture(online = false).repository
+        val viewModel = syncViewModel(repository)
+        viewModel.ready { it.session == SessionState.SigningIn }
+
+        // When — the row is disabled, and the call is a no-op if it is reached anyway
+        viewModel.queueInvalidTitle()
+
+        // Then — nothing written, nothing reported
+        testScheduler.runCurrent()
+        assertEquals(0, repository.syncStatus.value.pendingMutationCount)
+        assertNull(withTimeoutOrNull(10.seconds) { failures.reported.first() })
     }
 
     @Test

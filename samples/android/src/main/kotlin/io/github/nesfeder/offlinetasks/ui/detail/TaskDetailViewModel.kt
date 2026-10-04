@@ -20,6 +20,7 @@ import io.github.nesfeder.offlinetasks.data.takeCharacters
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import io.github.nesfeder.offlinetasks.ui.navigation.ShownTask
 import io.github.nesfeder.offlinetasks.ui.photos.PhotoFileState
 import io.github.nesfeder.offlinetasks.ui.photos.loadPhotoFile
@@ -102,7 +103,7 @@ sealed interface TaskDetailMessage {
  *
  * @param writeScope where writes run; it outlives this screen, so an edit typed just before leaving
  *   is still saved.
- * @param failures where a failed write or upload is reported, to be shown as a message.
+ * @param failures where a failed read, write or upload is reported, to be shown as a message.
  * @param shown the task as the list showed it, drawn until the device's copy is read.
  */
 @OptIn(FlowPreview::class)
@@ -136,7 +137,7 @@ class TaskDetailViewModel(
         combine(
                 task,
                 draft,
-                repository.photos(taskId).map { it.value.orEmpty() },
+                repository.photos(taskId).map { it.value.orEmpty() }.reportingFailures(failures),
                 uploads,
                 repository.syncStatus,
             ) { lookup, draft, photos, uploads, status ->

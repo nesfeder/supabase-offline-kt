@@ -7,14 +7,12 @@ import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.PhotoFile
-import io.github.nesfeder.offlinetasks.data.PhotoFileStore
 import io.github.nesfeder.offlinetasks.data.PhotoListSnapshot
 import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
-import io.github.nesfeder.offlinetasks.data.ServerFaults
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.Task
@@ -218,10 +216,11 @@ class InMemoryTaskRepository(
         emit(PhotoUpload.Attached(row))
     }
 
-    override suspend fun deletePhoto(photoId: String): TaskMutationOutcome = detached {
-        val photo =
-            state.value.visibleRows()?.photos?.get(photoId)
-                ?: return@detached TaskMutationOutcome.Applied
+    override suspend fun deletePhoto(photo: TaskPhoto): TaskMutationOutcome = detached {
+        val photoId = photo.id
+        if (state.value.visibleRows()?.photos?.get(photoId) == null) {
+            return@detached TaskMutationOutcome.Applied
+        }
         unreachableServerError()?.let { throw it }
         delay(latency)
         storageRefusal()?.let { throw it }
@@ -311,17 +310,22 @@ class InMemoryTaskRepository(
     }
 
     override suspend fun startOver() {
+        // As the real repository: a new user needs the server, so nothing goes without it.
+        val network = state.value.network
+        if (network == AppNetworkStatus.Offline || network == AppNetworkStatus.Disabled) {
+            throw NetworkUnavailableException()
+        }
         detached {
-            if (state.value.canReachServer) {
-                // What the real repository does before it signs out: delete what this user owns.
-                delay(latency)
-                storageRefusal()?.let { throw it }
-                server.deleteEverythingOf(state.value.userId)
-            }
+            val userId = state.value.userId
+            // Clear first, as the real repository does, then delete what this user owns.
             writeLock.withLock {
-                updateState { it.cleared(userId = newId()) }
+                updateState { it.cleared(userId = userId) }
                 photoFiles.deleteAll()
             }
+            delay(latency)
+            storageRefusal()?.let { throw it }
+            server.deleteEverythingOf(userId)
+            writeLock.withLock { updateState { it.copy(userId = newId()) } }
             refreshFromServer(force = true)
         }
     }

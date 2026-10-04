@@ -100,4 +100,5 @@ class TaskWriteRefusedException(
     val operation: TaskMutationOperation,
     val taskTitle: String?,
     val serverError: TaskServerError,
-) : Exception(serverError.message)
+    cause: Throwable? = null,
+) : Exception(serverError.message, cause)
