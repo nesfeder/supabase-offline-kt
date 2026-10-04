@@ -13,8 +13,8 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -28,10 +28,13 @@ class ReadsWhileKnownOfflineTest {
 
     /** A server no request reaches, under supabase-kt's own default retries. */
     private val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+
+    /** A monitor that keeps saying the network is down: one that stopped would say nothing. */
+    private val monitor = MutableStateFlow(false)
     private val client =
         newTestOfflineClient(
             supabase = newTestSupabaseClient(engine = server.engine),
-            networkAvailability = flowOf(false),
+            networkAvailability = monitor,
         )
 
     @Test
