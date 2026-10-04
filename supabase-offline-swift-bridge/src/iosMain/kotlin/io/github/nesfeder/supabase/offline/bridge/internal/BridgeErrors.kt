@@ -17,6 +17,8 @@ import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.ResponseException
+import io.ktor.http.IllegalHeaderNameException
+import io.ktor.http.IllegalHeaderValueException
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
@@ -94,6 +96,9 @@ internal fun bridgeErrorOf(failure: Throwable, clientClosing: Boolean): BridgeEr
         failure.isNetworkOrConnectivityFailure() -> connectivityError(failure, type)
         failure is SerializationException ->
             bridgeError(BridgeErrorKind.DECODING, "A response could not be decoded", type)
+        // Ktor quotes the whole header, so a key or token with a control character would leak.
+        failure is IllegalHeaderNameException || failure is IllegalHeaderValueException ->
+            bridgeError(BridgeErrorKind.INVALID_ARGUMENT, ILLEGAL_HEADER_MESSAGE, type)
         failure is IllegalArgumentException ->
             bridgeError(BridgeErrorKind.INVALID_ARGUMENT, failure.messageOr(type), type)
         else -> bridgeError(BridgeErrorKind.UNEXPECTED, failure.messageOr(type), type)
@@ -166,6 +171,14 @@ private fun connectivityError(failure: Throwable, type: String): BridgeError {
     val message = if (reason == null) CONNECTIVITY_MESSAGE else "$CONNECTIVITY_MESSAGE ($reason)"
     return bridgeError(BridgeErrorKind.CONNECTIVITY, message, type, isConnectivityFailure = true)
 }
+
+/**
+ * What a request header holding a character HTTP forbids says: nothing of the header, which may
+ * be the project key or the access token.
+ */
+private const val ILLEGAL_HEADER_MESSAGE =
+    "A request header holds a character a header cannot carry, such as a line break; check the " +
+        "project key and the access token"
 
 /** What every transport failure says. */
 private const val CONNECTIVITY_MESSAGE = "The request could not reach the server"
