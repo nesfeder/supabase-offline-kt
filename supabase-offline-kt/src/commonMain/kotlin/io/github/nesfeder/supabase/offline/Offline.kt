@@ -401,7 +401,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * library empties the log as soon as the read ends, and once more at [close]. It never fails
      * the clear, and never waits longer.
      *
-     * The client stays usable afterwards.
+     * The client stays usable afterwards. A live read open through the clear fetches again, as it
+     * does when the cache passes to another identity: at once online, and once the network is back
+     * offline, [RefreshState.Paused] meanwhile.
      *
      * @throws IllegalStateException when the client is closed.
      */
