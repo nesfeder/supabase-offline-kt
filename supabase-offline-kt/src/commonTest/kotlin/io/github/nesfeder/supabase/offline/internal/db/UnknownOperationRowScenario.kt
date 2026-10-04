@@ -36,14 +36,14 @@ internal class UnknownOperationRowScenario(private val open: (path: String) -> O
         // Given — the shipped database, an unknown operation queued behind its writes, an INSERT
         // queued behind that, and a client over the database that sends nothing until asked
         ShippedDatabaseFixture.writeTo(path)
-        RawDatabaseQueries.insertPendingWrite(
+        insertPendingTodosWrite(
             path,
             id = UNKNOWN_ID,
             operation = "RPC",
             bodyJson = """{"fn":"archive_done"}""",
             createdAtMs = 1_727_000_006_000,
         )
-        RawDatabaseQueries.insertPendingWrite(
+        insertPendingTodosWrite(
             path,
             id = BEHIND_ID,
             operation = MutationOperation.INSERT.storedName,
@@ -143,5 +143,37 @@ internal class UnknownOperationRowScenario(private val open: (path: String) -> O
                 acceptProfile = null,
                 body = """[{"id":9,"title":"Queued behind it"}]""",
             )
+    }
+}
+
+/**
+ * Adds an unfiltered pending `todos` write to the file at [path] with the raw driver, its operation
+ * stored exactly as [operation] spells it, whether or not this build writes that name.
+ */
+private fun insertPendingTodosWrite(
+    path: String,
+    id: Long,
+    operation: String,
+    bodyJson: String,
+    createdAtMs: Long,
+) {
+    val connection = defaultSQLiteDriver().open(path)
+    try {
+        val statement =
+            connection.prepare(
+                "INSERT INTO mutation_cache (id, table_name, operation, body_json, filter_json, " +
+                    "created_at_ms) VALUES (?, 'todos', ?, ?, NULL, ?)"
+            )
+        try {
+            statement.bindLong(1, id)
+            statement.bindText(2, operation)
+            statement.bindText(3, bodyJson)
+            statement.bindLong(4, createdAtMs)
+            statement.step()
+        } finally {
+            statement.close()
+        }
+    } finally {
+        connection.close()
     }
 }

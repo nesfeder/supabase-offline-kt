@@ -42,35 +42,6 @@ internal object RawDatabaseQueries {
         }
     }
 
-    /**
-     * Adds an unfiltered pending `todos` write with the raw driver, its operation stored exactly as
-     * [operation] spells it, whether or not this build writes that name.
-     */
-    fun insertPendingWrite(
-        path: String,
-        id: Long,
-        operation: String,
-        bodyJson: String,
-        createdAtMs: Long,
-    ) {
-        withConnection(path) { connection ->
-            val statement =
-                connection.prepare(
-                    "INSERT INTO mutation_cache (id, table_name, operation, body_json, filter_json, " +
-                        "created_at_ms) VALUES (?, 'todos', ?, ?, NULL, ?)"
-                )
-            try {
-                statement.bindLong(1, id)
-                statement.bindText(2, operation)
-                statement.bindText(3, bodyJson)
-                statement.bindLong(4, createdAtMs)
-                statement.step()
-            } finally {
-                statement.close()
-            }
-        }
-    }
-
     private fun <T> withConnection(path: String, block: (SQLiteConnection) -> T): T {
         val connection = defaultSQLiteDriver().open(path)
         try {
