@@ -3,7 +3,7 @@
 
 /// Where a live read takes its first rows from; every later local write, sync and server record
 /// then updates it from the cache.
-public enum SnapshotStrategy: Sendable, Hashable, CaseIterable {
+public enum SequenceReadStrategy: Sendable, Hashable, CaseIterable {
 
     /// Shows the cached rows at once and refreshes them from the server in parallel.
     ///

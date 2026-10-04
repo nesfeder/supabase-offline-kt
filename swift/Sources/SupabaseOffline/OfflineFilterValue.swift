@@ -244,9 +244,9 @@ enum PostgresArrayLiteral {
 
 // MARK: - Numbers
 
-/// Floating-point numbers as the Android library writes them, so a filter value reads the same on
-/// both platforms: plain decimal from 0.001 up to 10 million, scientific notation (`1.0E-7`,
-/// `1.0E16`) outside it, never a `+` that a URL would turn into a space.
+/// Floating-point numbers in one fixed form, so equal values make the same request: plain decimal
+/// from 0.001 up to 10 million, scientific notation (`1.0E-7`, `1.0E16`) outside it, never a `+`
+/// that a URL would turn into a space.
 enum FilterNumberText {
 
     /// The text for a number whose shortest Swift `description` is `description`.

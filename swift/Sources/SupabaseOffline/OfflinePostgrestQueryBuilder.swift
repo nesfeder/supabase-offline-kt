@@ -63,8 +63,7 @@ public struct OfflinePostgrestQueryBuilder: Sendable {
     }
 
     /// A live read of `columns`, decoded as `type`: a sequence of ``QuerySnapshot`` values that
-    /// changes with every local write, sync, refresh and server record that touches its rows. The
-    /// Android library's `selectAsFlow`.
+    /// changes with every local write, sync, refresh and server record that touches its rows.
     ///
     /// Chain filters and transforms onto it, then iterate it: each iteration subscribes, and
     /// leaving the loop or cancelling its task ends the subscription. Iterating keeps the client
@@ -72,7 +71,7 @@ public struct OfflinePostgrestQueryBuilder: Sendable {
     public func selectAsSequence<Value: Decodable & Sendable>(
         _ columns: String = "*",
         as type: Value.Type = Value.self,
-        readStrategy: SnapshotStrategy = .cacheFirstThenNetwork
+        readStrategy: SequenceReadStrategy = .cacheFirstThenNetwork
     ) -> QuerySnapshotSequence<Value> {
         QuerySnapshotSequence(target: self, columns: columns, readStrategy: readStrategy, shape: RequestShape())
     }

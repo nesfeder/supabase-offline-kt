@@ -3,7 +3,7 @@
 
 /// A live read: filters and transforms, then iterate it for its ``QuerySnapshot`` values.
 ///
-/// The first snapshot comes as the ``SnapshotStrategy`` says; after it, a new one comes whenever a
+/// The first snapshot comes as the ``SequenceReadStrategy`` says; after it, a new one comes whenever a
 /// local write, a sync, a refresh or a server record changes the rows or their state. Only the
 /// newest snapshot waits for a slow reader. Each iteration is a subscription of its own: leaving
 /// the loop, throwing out of it or cancelling its task ends it. Iterating keeps the client open;
@@ -21,7 +21,7 @@ public struct QuerySnapshotSequence<Value: Decodable & Sendable>: AsyncSequence,
     let columns: String
 
     /// Where the first rows come from.
-    let readStrategy: SnapshotStrategy
+    let readStrategy: SequenceReadStrategy
 
     /// The filters, modifiers and response shape so far.
     var shape: RequestShape
@@ -32,7 +32,7 @@ public struct QuerySnapshotSequence<Value: Decodable & Sendable>: AsyncSequence,
     init(
         target: OfflinePostgrestQueryBuilder,
         columns: String,
-        readStrategy: SnapshotStrategy,
+        readStrategy: SequenceReadStrategy,
         shape: RequestShape,
         onSubscriptionEnd: (@Sendable (String?) -> Void)? = nil
     ) {
@@ -82,7 +82,7 @@ public struct QuerySnapshotSequence<Value: Decodable & Sendable>: AsyncSequence,
         /// The next snapshot, or `nil` once the read has ended (the client closed, or a snapshot
         /// the server answered once for a query the cache never holds).
         ///
-        /// - Throws: ``OfflineError``: `cacheMiss` under ``SnapshotStrategy/cacheOnly`` for a
+        /// - Throws: ``OfflineError``: `cacheMiss` under ``SequenceReadStrategy/cacheOnly`` for a
         ///   query the cache never holds, a failure the read cannot recover from, `decoding` or
         ///   `invalidRequest`. Cancelling the task ends the iteration.
         public mutating func next() async throws -> Element? {

@@ -142,6 +142,57 @@ struct FilterDescriptionTests {
         ])
     }
 
+    @Test func twoConditionsOnAnEmbeddedColumnGoInThatTablesOwnAndGroup() throws {
+        // When
+        let filters = try filters {
+            $0.gte("authors.born", value: 1900).lt("authors.born", value: 2000)
+                .or("name.eq.A", referencedTable: "authors").or("name.eq.B", referencedTable: "authors")
+        }
+
+        // Then
+        #expect(filters == [
+            ["kind": "and", "referencedTable": "authors", "filters": [
+                ["kind": "filter", "column": "born", "operator": "gte", "value": "1900"],
+                ["kind": "filter", "column": "born", "operator": "lt", "value": "2000"],
+                ["kind": "or", "filters": [["kind": "filter", "column": "name", "operator": "eq", "value": "A"]]],
+                ["kind": "or", "filters": [["kind": "filter", "column": "name", "operator": "eq", "value": "B"]]],
+            ]],
+        ])
+    }
+
+    @Test func anEmbeddedColumnIsSplitAtItsLastDotBeforeAnyJSONPath() {
+        let split: (String) -> [String]? = { column in
+            TopLevelFilters.embeddedColumn(column).map { [$0.table, $0.column] }
+        }
+        #expect(split("authors.born") == ["authors", "born"])
+        #expect(split("authors.books.title") == ["authors.books", "title"])
+        #expect(split("authors.data->>age") == ["authors", "data->>age"])
+        #expect(split("data->>a.b") == nil)
+        #expect(split(#""due.date""#) == nil)
+        #expect(split("born") == nil)
+    }
+
+    @Test(arguments: [
+        "two range filters on one column",
+        "a range inside an or text",
+        "a text search whose query has a comma, folded",
+        "a quoted value inside a negated and text",
+    ])
+    func whatAGroupCannotCarryFailsAsAnInvalidRequest(chain: String) {
+        let chains: [String: (OfflineSelectRequestBuilder) -> OfflineSelectRequestBuilder] = [
+            "two range filters on one column": { $0.rangeGt("slot", range: "(1,5)").rangeLt("slot", range: "(9,12)") },
+            "a range inside an or text": { $0.or("slot.sl.(1,5),done.eq.true") },
+            "a text search whose query has a comma, folded": {
+                $0.textSearch("tsv", query: "cat, dog", config: "english").neq("tsv", value: "x")
+            },
+            "a quoted value inside a negated and text": { $0.or(#"not.and(title.eq."a\\b",done.eq.true)"#) },
+        ]
+        let error = #expect(throws: OfflineError.self) {
+            try (chains[chain] ?? { $0 })(client.from("todos").select()).descriptionText()
+        }
+        #expect(error?.code == .invalidRequest, "\(chain)")
+    }
+
     @Test func whatNoArrangementCanSendFailsAsAnInvalidRequest() {
         // Two text searches on one column: the second would replace the first
         let twoSearches = client.from("notes").select()

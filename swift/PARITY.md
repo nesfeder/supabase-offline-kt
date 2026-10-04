@@ -84,6 +84,11 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 
 ## PostgREST reads and writes
 
+On the drop-in surfaces (the filter and transform methods, and `rpc`'s `params:`) each platform
+keeps its upstream client's names and labels: supabase-swift's here, supabase-kt's on Android, so a
+chain written for either upstream compiles against its own platform unchanged. The offline names
+(strategies, outcomes, snapshots, the queue) are the library's own and match across the two.
+
 | Swift | Kotlin | Same / reason |
 | --- | --- | --- |
 | `SupabaseOfflineClient.from(_:)` | `Offline.from(table)` | Same |
@@ -108,8 +113,9 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `OfflinePostgrestFilterBuilder` | supabase-kt's `PostgrestFilterBuilder` (the `filter { }` lambda) | A protocol the three request builders and the live read share, since Swift chains where Kotlin nests a lambda |
 | `OfflinePostgrestRequestBuilder` | supabase-kt's `PostgrestRequestBuilder` | As above, for `order`, `limit`, `range`, `single`, `csv`, `geojson`, `stripNulls` |
 | `OfflinePostgrestFilterBuilder.applying(_:)`, `OfflineQueryChange` | — | What each filter and transform method makes; Kotlin needs none, as its lambdas call the builder directly |
-| `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `notIn`, `contains`, `overlaps`, `rangeLt`, `rangeGt`, `rangeGte`, `rangeLte`, `textSearch`, `filter`, `or` | the same names | Filter methods keep supabase-swift's names and labels (`value:`, `pattern:`, `range:`), so a supabase-swift chain compiles unchanged |
-| `is(_:value:)`, `in(_:values:)` | `exact`, `isIn` | `is` and `in` are Kotlin keywords, not Swift's |
+| `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `contains`, `overlaps`, `rangeLt`, `rangeGt`, `rangeGte`, `rangeLte`, `textSearch`, `filter`, `or` | the same names | Same names; the labels (`value:`, `pattern:`, `range:`) are supabase-swift's |
+| `is(_:value:)`, `in(_:values:)` | `exact`, `isIn` | supabase-swift's names (written with backticks, since both are Swift keywords); supabase-kt chose other names |
+| `notIn(_:values:)` | none: `filterNot(column, FilterOperator.IN, values)` | supabase-swift's name; supabase-kt has no `notIn` |
 | `match(_:pattern:)`, `imatch(_:pattern:)` | `regexMatch`, `regexIMatch` | supabase-swift's names |
 | `match(_:)` (a dictionary) | `match(map)` | Same |
 | `likeAllOf`, `likeAnyOf`, `iLikeAllOf`, `iLikeAnyOf` | `likeAll`, `likeAny`, `ilikeAll`, `ilikeAny` | supabase-swift's names |
@@ -120,11 +126,13 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `order(_:ascending:nullsFirst:referencedTable:)` | `order(column, Order, nullsFirst, referencedTable)` | `ascending: Bool` as supabase-swift has it, in place of the `Order` enum |
 | `limit(_:referencedTable:)`, `range(from:to:referencedTable:)`, `single()`, `csv()`, `geojson()`, `stripNulls()` | the same names | Same |
 | `OfflineFilterValue`, `filterText` | — (a Kotlin filter value is `Any`, written with `toString()`) | Swift needs a protocol to accept several value types; values are written as the Kotlin API writes them (lower-case UUIDs, UTC dates, `1.0E-7`) |
+| A value holding `"` or `\` in an `in` list or inside an `or` / `and` group (explicit, or one the chain builds) fails as `invalidRequest`; so does a range filter inside a group, or a configured text search there whose query has `,`, `)` or a leading `"` | `isIn`, `or { }` and `and { }` send it | supabase-kt escapes `"` and `\` there but quotes only a value that also holds one of `,.:()`, and PostgREST reads an unquoted value literally, so the Android library sends a different filter than written (its carry-forward row). Swift refuses rather than send it; a single top-level condition sends such a value as written on both platforms |
+| Two conditions on one top-level column, or two `or` groups on one table, are sent in one `and` group (the embedded table's own, `authors.and`, for `authors.born`) | sent as written; the core refuses the second | supabase-swift sends `a=gte.1&a=lt.5`, which supabase-kt cannot; PostgREST reads the group the same way |
 | `FilterOperator` | supabase-kt's `FilterOperator` | Lower-camel cases, as Swift names them |
-| `OfflineTextSearchType` | supabase-kt's `TextSearchType` | supabase-swift has a public `TextSearchType`, which an app importing both would find ambiguous; `nil` stands for `NONE` |
+| `OfflineTextSearchType` (`plain`, `phrase`, `websearch`) | supabase-kt's `TextSearchType` (`PLAINTO`, `PHRASETO`, `WEBSEARCH`, `NONE`) | The prefix because supabase-swift has a public `TextSearchType`, which an app importing both would find ambiguous; the cases are supabase-swift's names, and `nil` stands for `NONE` |
 | `Count` | supabase-kt's `Count` | Lower-camel cases |
 | `ReadStrategy` (`networkOnly`, `networkFirst(maxAge:)`, `cacheFirst(maxAge:)`, `cacheOnly(maxAge:)`, and `networkFirst`, `cacheFirst`, `cacheOnly` without an age) | `ReadStrategy` (`NetworkOnly`, `NetworkFirst(maxAge)`, `CacheFirst(maxAge)`, `CacheOnly(maxAge)`) | `Duration` for `maxAge`; Swift needs the age-less static members where Kotlin has default arguments in a constructor |
-| `SnapshotStrategy` (`cacheFirstThenNetwork`, `networkFirstThenCache`, `cacheOnly`) | `FlowReadStrategy` | Swift has no `Flow`: the strategy is named for the snapshots it yields |
+| `SequenceReadStrategy` (`cacheFirstThenNetwork`, `networkFirstThenCache`, `cacheOnly`) | `FlowReadStrategy` (the same cases) | Swift has no `Flow`: as `selectAsFlow` is `selectAsSequence`, `FlowReadStrategy` is `SequenceReadStrategy`, keeping the `ReadStrategy` stem |
 | `MutationStrategy` (`queueIfOffline`, `onlineOnly`) | `MutationStrategy` (`QueueIfOffline`, `OnlineOnly`) | Same |
 | `OfflineResponse` (`value`, `data`, `count`, `isFromCache`, `fetchedAt`, `hasPendingMutations`) | supabase-kt's `PostgrestResult` (`data`, `countOrNull()`) with the extension properties `isFromCache`, `fetchedAt`, `hasPendingMutations` | Swift cannot return an upstream type, so the provenance is stored on the response; `value` is the decoded body, as supabase-swift's `execute().value` |
 | `QuerySnapshot` (`result`, `isFromCache`, `fetchedAt`, `hasPendingMutations`, `refresh`) | `QuerySnapshot` (the same fields) | `result` is the rows decoded as the type asked for, where Kotlin holds the undecoded `PostgrestResult` |

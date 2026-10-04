@@ -71,6 +71,20 @@ indirect enum FilterNode: Sendable, Hashable {
         return (isNegated ? "not." : "") + (referencedTable.map { "\($0)." } ?? "") + kind.rawValue
     }
 
+    /// This node on `column` in place of its own; a group is returned as it is.
+    func onColumn(_ column: String) -> FilterNode {
+        switch self {
+        case .condition(_, let filterOperator, let value, let isNegated):
+            return .condition(column: column, operator: filterOperator, value: value, isNegated: isNegated)
+        case .patternList(let kind, _, let patterns):
+            return .patternList(kind: kind, column: column, patterns: patterns)
+        case .textSearch(_, let query, let type, let config):
+            return .textSearch(column: column, query: query, type: type, config: config)
+        case .group:
+            return self
+        }
+    }
+
     /// Whether this is a text search, which replaces the filters before it on its column.
     var isTextSearch: Bool {
         if case .textSearch = self { return true }
@@ -120,7 +134,8 @@ indirect enum FilterNode: Sendable, Hashable {
 /// The core sends one filter per column and one group per parameter at the top level, as the
 /// library underneath does, and refuses a list that breaks either rule. PostgREST reads several
 /// conditions joined by `&` and the same conditions inside one `and` group alike, so conditions that
-/// share a top-level column, and `or` groups that share a table, move into one `and` group.
+/// share a top-level column, and `or` groups that share a table, move into one `and` group: the
+/// embedded table's own group (`authors.and`) for a column of one (`authors.born`).
 enum TopLevelFilters {
 
     /// `nodes` with the conflicting ones moved into `and` groups, each where its first member stood;
@@ -166,7 +181,8 @@ enum TopLevelFilters {
         groupCounts: [String: Int]
     ) -> (key: String, table: String?, member: FilterNode)? {
         if let column = node.column, columnCounts[column, default: 0] > 1 {
-            return ("", nil, node)
+            guard let (table, ownColumn) = embeddedColumn(column) else { return ("", nil, node) }
+            return ("\(table).", table, node.onColumn(ownColumn))
         }
         guard case .group(.or, let children, false, let referencedTable) = node,
             let parameter = node.groupParameter, groupCounts[parameter, default: 0] > 1
@@ -175,18 +191,44 @@ enum TopLevelFilters {
         return (referencedTable.map { "\($0)." } ?? "", referencedTable, inner)
     }
 
+    /// The embedded table and its own column for a column written `table.column` (or
+    /// `table.column->path`); `nil` for one of the request's own table. A dot inside double quotes
+    /// or after the first `->` belongs to the name.
+    static func embeddedColumn(_ column: String) -> (table: String, column: String)? {
+        var isInQuotes = false
+        var lastDot: String.Index?
+        var index = column.startIndex
+        while index < column.endIndex {
+            let character = column[index]
+            if character == "\"" {
+                isInQuotes.toggle()
+            } else if !isInQuotes, character == "-", column[index...].hasPrefix("->") {
+                break
+            } else if !isInQuotes, character == "." {
+                lastDot = index
+            }
+            index = column.index(after: index)
+        }
+        guard let lastDot, lastDot != column.startIndex else { return nil }
+        let ownColumn = column[column.index(after: lastDot)...]
+        guard !ownColumn.isEmpty else { return nil }
+        return (String(column[..<lastDot]), String(ownColumn))
+    }
+
     /// How many times each value occurs.
     private static func counts(of values: [String]) -> [String: Int] {
         values.reduce(into: [:]) { counts, value in counts[value, default: 0] += 1 }
     }
 
-    /// Why the core would refuse `nodes` as a list at this level, or `nil` when it sends them all:
-    /// an empty group anywhere, a text search after a filter on its column, and at the top level a
-    /// second filter on one column or a second group on one parameter.
+    /// Why `nodes` cannot be sent as written at this level, or `nil` when they can: what the core
+    /// refuses (an empty group anywhere, a text search after a filter on its column, and at the top
+    /// level a second filter on one column or a second group on one parameter), and a value the
+    /// request would carry in a form PostgREST reads differently (``valueRefusal(of:isInGroup:)``).
     static func refusal(of nodes: [FilterNode], isTopLevel: Bool = true) -> String? {
         var filteredColumns: Set<String> = []
         var groupParameters: Set<String> = []
         for node in nodes {
+            if let refusal = valueRefusal(of: node, isInGroup: !isTopLevel) { return refusal }
             if case .group(_, let children, _, _) = node {
                 if children.isEmpty { return "A filter group is empty; leave it out" }
                 if let refusal = refusal(of: children, isTopLevel: false) { return refusal }
@@ -203,5 +245,33 @@ enum TopLevelFilters {
             }
         }
         return nil
+    }
+
+    /// Why `node`'s value would reach PostgREST as something else, or `nil`; never quotes the value.
+    ///
+    /// A list or group escapes `"` and `\` but quotes only a value with one of `,.:()`, and PostgREST
+    /// reads the escapes of an unquoted one literally; a group splits an unquoted range at its comma
+    /// and cuts a text search's query at a comma or `)`. A top-level single value is read as written.
+    static func valueRefusal(of node: FilterNode, isInGroup: Bool) -> String? {
+        let advice = "filter on it with a single condition outside any list or group"
+        switch node {
+        case .condition(let column, _, .list(let elements), _) where elements.contains(where: isReadDifferentlyUnquoted):
+            return "A value in the list for \"\(column)\" holds a double quote or a backslash, which a list sends in a form the server reads differently; \(advice)"
+        case .condition(let column, _, .single(let text), _) where isInGroup && isReadDifferentlyUnquoted(text):
+            return "A value for \"\(column)\" inside a filter group holds a double quote or a backslash, which a group sends in a form the server reads differently; \(advice)"
+        case .condition(let column, _, .range, _) where isInGroup:
+            return "A range filter on \"\(column)\" cannot be sent inside a filter group; filter on it with a single condition outside any group"
+        case .textSearch(let column, let query, _, _)
+        where isInGroup && (query.contains(where: { $0 == "," || $0 == ")" }) || query.hasPrefix("\"")):
+            return "A text search on \"\(column)\" inside a filter group has a comma, a \")\" or a leading double quote in its query, which a group cannot carry; search on it with a single condition outside any group"
+        default:
+            return nil
+        }
+    }
+
+    /// Whether `text` would be escaped but left unquoted in a list or group (a `"` or `\`, and none
+    /// of `,.:()`), so PostgREST would read the escapes literally.
+    static func isReadDifferentlyUnquoted(_ text: String) -> Bool {
+        text.contains(where: { $0 == "\"" || $0 == "\\" }) && !text.contains(where: { ",.:()".contains($0) })
     }
 }
