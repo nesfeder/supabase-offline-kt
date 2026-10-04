@@ -99,6 +99,7 @@ internal class CachingBucketApi(
     }
 
     override suspend fun cachedFile(path: String): CachedFile? = operationGate.call {
+        if (!cachesDownloadsOf(path)) return@call null
         cache.entryFor(bucketId, path)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
@@ -107,6 +108,10 @@ internal class CachingBucketApi(
 
     /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
     private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
+        require(isRequestedByItsOwnName(path)) {
+            "This object path cannot be cached on the device: it holds '%', '?' or '#', which this " +
+                "supabase-kt puts in the URL unencoded, so its request can reach another object"
+        }
         val entry =
             cache.entryFor(bucketId, path)
                 ?: throw IllegalArgumentException(
@@ -212,6 +217,10 @@ internal class CachingBucketApi(
             ) -> ByteArray,
     ): ByteArray {
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
+        if (!cachesDownloadsOf(path)) {
+            networkAccess.ensureEnabled()
+            return fetch { options -> options }
+        }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
         val generation = cache.currentGeneration()
         val bytes =
@@ -240,7 +249,7 @@ internal class CachingBucketApi(
             suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit,
     ) {
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
-        if (!isCacheableObjectPath(path) || !isCacheableBucketId(bucketId)) {
+        if (!cachesDownloadsOf(path)) {
             networkAccess.ensureEnabled()
             fetch(channel, options)
             return
@@ -611,6 +620,13 @@ internal class CachingBucketApi(
             networkAccess.ensureEnabled()
             delegate.changePublicStatusTo(public)
         }
+
+    /**
+     * Whether a download of [path] in this bucket is cached: both map onto a file, and the pinned
+     * supabase-kt's request reaches the object the path names.
+     */
+    private fun cachesDownloadsOf(path: String): Boolean =
+        isCacheableBucketId(bucketId) && isCacheableObjectPath(path) && isRequestedByItsOwnName(path)
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
     private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T =
