@@ -113,7 +113,7 @@ Swift API to call; its quick start returns with it.
   timestamp. See [the architecture's read path](./docs/project/architecture.md#the-read-path).
 - **`FlowReadStrategy`** — `CacheFirstThenNetwork`, `NetworkFirstThenCache`, `CacheOnly` for
   reactive `selectAsFlow`.
-- **`MutationStrategy`** — `QueueIfOffline` (default) saves each write to the mutation queue,
+- **`MutationStrategy`** — `QueueIfOffline` (default) saves the write to the mutation queue,
   sends it at once when nothing of the user waits ahead of it, and keeps it queued when it may not
   have run (no connection, a `503` or `520`); `OnlineOnly` sends it now or throws. A write sent at
   once that the server refuses throws, as in supabase-kt.
