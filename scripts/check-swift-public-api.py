@@ -44,8 +44,8 @@ import SupabaseOffline
 import SupabaseOfflineTesting
 
 func probe() async throws {
-    let options = SupabaseOfflineClient.Options(accessToken: { nil }, cacheLimit: .unlimited)
-    let client = SupabaseOfflineClient.inMemory(options: options, server: FakeServer { _ in .json("[]") })
+    let config = SupabaseOfflineClient.Config(accessToken: { nil }, cacheSize: .unlimited, autoSync: false)
+    let client = SupabaseOfflineClient.inMemory(config: config, server: FakeServer { _ in .json("[]") })
     let change: OfflineJSON = ["notes": nil]
     _ = change
     do {

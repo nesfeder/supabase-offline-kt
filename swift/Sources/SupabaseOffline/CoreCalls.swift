@@ -212,7 +212,7 @@ func coreResult<CoreValue, Value>(
 /// `value`, which a completion with no error always carries; a missing one is a defect.
 func requiredValue<Value>(_ value: Value?) throws -> Value {
     guard let value else {
-        throw OfflineError(code: .internal, message: "The call answered with neither a value nor an error")
+        throw OfflineError(code: .unexpected, message: "The call answered with neither a value nor an error")
     }
     return value
 }

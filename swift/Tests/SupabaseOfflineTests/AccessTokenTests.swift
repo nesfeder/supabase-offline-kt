@@ -48,7 +48,7 @@ struct AccessTokenTests {
         let authorizations = RecordingList<String>()
         let client = SupabaseOfflineClient.inMemory(
             supabaseKey: "publishable-key",
-            options: .init(accessToken: {
+            config: .init(accessToken: {
                 try await Task.sleep(for: .milliseconds(5))
                 return "user-token"
             }),
@@ -71,7 +71,7 @@ struct AccessTokenTests {
         struct SignedOut: Error {}
         let requests = RecordingList<String>()
         let client = SupabaseOfflineClient.inMemory(
-            options: .init(accessToken: { throw SignedOut() }),
+            config: .init(accessToken: { throw SignedOut() }),
             server: FakeServer { request in
                 requests.append(request.url.path)
                 return .json("[]")

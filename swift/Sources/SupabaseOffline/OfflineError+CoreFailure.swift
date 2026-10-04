@@ -19,7 +19,7 @@ extension OfflineError {
 
     /// The error a caller catches for a core failure of `kind`, with the fields it carries.
     ///
-    /// Total: a kind this release does not know is ``Code/internal``.
+    /// Total: a kind this release does not know is ``Code/unexpected``.
     static func thrown(
         kind: BridgeErrorKind,
         message rawMessage: String,
@@ -36,7 +36,7 @@ extension OfflineError {
         switch kind {
         case .cancelled: return CancellationError()
         case .server, .http: code = .server
-        case .connectivity: code = .network
+        case .connectivity: code = .connectivity
         case .cacheMiss: code = .cacheMiss
         case .networkDisabled: code = .networkDisabled
         case .mutationNotQueueable: code = .mutationNotQueueable
@@ -45,8 +45,8 @@ extension OfflineError {
         case .accessToken: code = .accessToken
         case .invalidRequest, .unsupported, .invalidArgument: code = .invalidRequest
         case .decoding: code = .decoding
-        case .unexpected: code = .internal
-        default: code = .internal
+        case .unexpected: code = .unexpected
+        default: code = .unexpected
         }
         return OfflineError(code: code, message: message, serverError: serverError)
     }

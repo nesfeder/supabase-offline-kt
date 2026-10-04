@@ -50,7 +50,7 @@ struct LogRelayTests {
             tag: "Supabase-Offline-Bridge",
             message: "A bridge call failed unexpectedly (kotlin.IllegalStateException) \(marker)"
         )
-        let client = SupabaseOfflineClient.inMemory(options: .init(logLevel: .debug))
+        let client = SupabaseOfflineClient.inMemory(config: .init(logLevel: .debug))
         _ = try? await client.rawSelect(readDescription(strategy: "networkOnly"))
         try await client.close()
 

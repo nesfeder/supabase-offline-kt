@@ -13,7 +13,7 @@ struct ErrorMappingTests {
     private static let expectedCodes: [String: OfflineError.Code?] = [
         "CANCELLED": nil,
         "CLIENT_CLOSED": .clientClosed,
-        "CONNECTIVITY": .network,
+        "CONNECTIVITY": .connectivity,
         "SERVER": .server,
         "HTTP": .server,
         "CACHE_MISS": .cacheMiss,
@@ -25,7 +25,7 @@ struct ErrorMappingTests {
         "UNSUPPORTED": .invalidRequest,
         "INVALID_ARGUMENT": .invalidRequest,
         "DECODING": .decoding,
-        "UNEXPECTED": .internal,
+        "UNEXPECTED": .unexpected,
     ]
 
     @Test func everyKindTheCoreHasLandsOnItsCode() {
@@ -100,8 +100,8 @@ struct ErrorMappingTests {
         var caught: OfflineError.Code?
         do {
             try readFromCache()
-        } catch OfflineError.network {
-            caught = .network
+        } catch OfflineError.connectivity {
+            caught = .connectivity
         } catch OfflineError.cacheMiss {
             caught = .cacheMiss
         } catch {
@@ -131,7 +131,7 @@ struct ErrorMappingTests {
         #expect(error?.message == "permission denied for table todos")
     }
 
-    @Test func anUnreachableServerThrowsNetwork() async {
+    @Test func anUnreachableServerThrowsConnectivity() async {
         // Given
         let client = SupabaseOfflineClient.inMemory()
         defer { Task { try? await client.close() } }
@@ -142,7 +142,7 @@ struct ErrorMappingTests {
         }
 
         // Then
-        #expect(error?.code == .network)
+        #expect(error?.code == .connectivity)
     }
 
     @Test func aCacheOnlyReadOfNothingThrowsCacheMiss() async {
