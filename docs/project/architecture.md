@@ -723,8 +723,7 @@ flowchart TD
    or DELETE needs a filter the strict capture records exactly and that replays in full.
 3. It tells a dry run from a write. supabase-kt records `dryRun()` only in the `Prefer` header, which
    the queue does not keep, so the engine builds the write once more, on the token-free PostgREST
-   instance, under a probe that a pipeline phase ahead of every plugin reads and stops. It reads
-   every `Prefer` value: a request's own headers follow supabase-kt's, so a rollback may be second. No app plugin
+   instance, under a probe that a pipeline phase ahead of every plugin reads and stops. No app plugin
    sees the stopped request.
 4. It saves the write: one row in `mutation_cache` with its owner, inserted under the queue lock,
    refused when local data was cleared since the write began. The table's readers are told, and the

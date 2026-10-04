@@ -329,6 +329,3 @@ release.
   happened, is reported as it happened rather than as the failed read.
 - A sync that `clearLocalData()` cut short reports the writes it had sent before.
 - While a stored session restores, writes read it once between them, not once each.
-- A write that asks for a rollback through its request's own `headers` (`Prefer: tx=rollback`
-  after supabase-kt's own `Prefer`) is told as a dry run and never queued; it was queued when
-  offline and would have been replayed as a real write.
