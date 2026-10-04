@@ -306,7 +306,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * sends nothing, and a Storage download is answered from the file cache. A request that must
      * reach the server (a [ReadStrategy.NetworkOnly] read, a [MutationStrategy.OnlineOnly] write,
      * an [rpc], a Storage call other than a download) throws [NetworkDisabledException]. A request
-     * already on the wire still answers.
+     * already on the wire still answers, and so does a resumable upload created or paused while
+     * access was on: it sends its chunks until it ends.
      *
      * [SyncStatus.network] is [NetworkStatus.DISABLED] as soon as this returns. The switch is not
      * kept: a new client starts with network access on. Calling it again changes nothing.
@@ -392,9 +393,13 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * A replay pass in progress is cancelled first, and nothing queued is sent once clearing has
      * begun. A write already on the wire is neither applied to the cache nor queued when it
      * answers. A Storage download in flight may hand its bytes to its caller, or fail, but is not
-     * written back. The database is rewritten without the deleted rows, and its write-ahead log is
-     * emptied unless open reads hold the log's checkpoint off for about a second, which is logged;
-     * the old pages then stay in the log until its next checkpoint.
+     * written back.
+     *
+     * Keeping the deleted rows out of the database's files is best effort. The database is
+     * rewritten without them, and its write-ahead log, which still holds them, is emptied once no
+     * open read holds it: this waits up to a second for such reads, and when one outlasts that the
+     * library empties the log as soon as the read ends, and once more at [close]. It never fails
+     * the clear, and never waits longer.
      *
      * The client stays usable afterwards.
      *
@@ -435,8 +440,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * Every call returns once the database is released, or after 10 seconds of real time at most,
      * even under a test's virtual clock. Past that, the database is released as soon as the last of
      * those calls finishes; until then, a new client on it fails with an error saying it is still
-     * closing. Safe to call more than once, and from inside a collector of one of the plugin's
-     * flows.
+     * closing. It never throws: a failure closing the database is logged, and the database is
+     * released all the same. Safe to call more than once, and from inside a collector of one of the
+     * plugin's flows.
      */
     override suspend fun close()
 

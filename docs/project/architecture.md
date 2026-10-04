@@ -294,8 +294,12 @@ When the list is full the oldest entries go, and their writes are lost.
 
 `SyncReport`: `syncedCount` (the writes this call sent and the server accepted), `rejected` (the
 `RejectedMutation`s refused during this call, by the server or by the library itself), `remainingCount` (the writes still queued
-when it returned) and `alreadyOnServerCount` (of `syncedCount`, the inserts whose rows the server
-already held because an earlier send whose answer was lost had reached it).
+when it returned), `alreadyOnServerCount` (of `syncedCount`, the inserts whose rows the server
+already held because an earlier send whose answer was lost had reached it) and
+`heldBehindOtherTablesCount` (of `remainingCount`, the writes a call for one table held back behind
+an earlier write of the user to another table; `0` for a call over every table). Its counts are the
+call's own: a pass the library ran by itself just before is counted nowhere in it, and a refusal
+it made is found on the rejected list.
 
 `SyncFailedException`, with `httpStatus: Int?` and `code: String?`: why a pass stopped with writes
 still queued, as `SyncStatus.lastSyncError` reports it. It keeps the status and the PostgREST or
@@ -308,9 +312,11 @@ in order, across tables. A failure that may pass (no connection, a `401`, `408`,
 `5xx`, a schema-cache refusal before the tenth, or a local failure) stops the pass with every
 remaining write queued, so no write overtakes an earlier one;
 `SyncStatus.lastSyncError` says why. A write the server refuses for good (another `4xx`) moves to
-the rejected list and the pass goes on. For one table, a `403` or `409` on a write with an earlier
-write of the user pending in another table is held rather than rejected: the earlier write may be
-the parent row it needs.
+the rejected list and the pass goes on. A pass for one table stops, without sending it, at the
+first write that has an earlier write of the user still queued in another table, which may be the
+parent row it needs, and counts what it held back in `heldBehindOtherTablesCount`: no write
+overtakes an earlier one, whichever table it is in. A cleared queue (`clearLocalData()` during the
+call) ends the pass with what it sent before still counted.
 
 **When a background pass holds the head.** If the library is already sending the same writes, by
 itself or for another call, `syncPendingMutations` waits for it to let go and runs again, so it
@@ -324,19 +330,25 @@ waits however many requests arrive:
 | --- | --- |
 | The session settles into a user with writes queued | Yes |
 | The network comes back: the monitor or the app's `networkAvailability` turns `true`, or `enableNetwork()` is called, and then the network is reachable and the session settled into a user with writes queued | Yes |
+| A client without Auth opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them): one pass | Yes |
 | A write is queued behind an earlier one; a write sent, refused or discarded leaves writes queued behind it; a rejected write is retried | No |
 
 The last row always runs. With write-ahead, an online write returns `Queued` whenever anything of
 its user waits ahead of it, and only these passes send it; without them it would wait for the app
 with nothing to show for it. After an automatic pass that stopped on a failure that may pass, the
 next automatic pass waits 1 s, doubling up to 60 s, and at least as long as a `Retry-After` the
-server sent, up to an hour. A pass the app asks for goes at once and moves no wait.
+server sent, up to an hour. The session settling and the network coming back end that wait at once
+and start it again from 1 s, but never before a `Retry-After` has passed. No automatic pass runs
+while the network is known to be down (the monitor says offline, or access is off): the
+reconnection asks again. A pass the app asks for goes at once and moves no wait. A trigger's own
+read of the queue that fails asks for a pass anyway, which reads the queue itself, so one failed
+read never turns a trigger off.
 
 ### Status and the network switch
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `syncStatus: StateFlow<SyncStatus>` | One value to draw a sync banner from. | The same flow whether or not the client is open, and it never throws. At `close()` it takes a last value with `isSyncing` `false`, and changes no more. A client nobody reads it from runs no collectors for it. | — |
+| `syncStatus: StateFlow<SyncStatus>` | One value to draw a sync banner from. | It follows the queue from the moment the client opens, so its counts include what an earlier run left queued before the app first reads it. The same flow whether or not the client is open, and it never throws. At `close()` it takes a last value with `isSyncing` `false`, and changes no more. | — |
 | `disableNetwork()` | Turns the library's network access off, as an airplane-mode switch does. | Not kept: a new client starts with access on. Calling it again changes nothing. | — |
 | `enableNetwork()` | Turns it back on: a waiting refresh runs, and with `autoSync`, queued writes are sent once the network is reachable and the session settled. | Calling it while access is on changes nothing. | — |
 
@@ -345,10 +357,10 @@ server sent, up to an hour. A pass the app asks for goes at once and moves no wa
 | Field | Meaning |
 | --- | --- |
 | `network: NetworkStatus` | Whether the library believes it can reach the network. Current as soon as `disableNetwork()` or `enableNetwork()` returns. |
-| `pendingMutationCount`, `rejectedMutationCount` | The current user's queued writes and rejected entries. They follow each change to the queue shortly after it, read together, so a write moving between the queue and the rejected list is counted in exactly one. |
+| `pendingMutationCount`, `rejectedMutationCount` | The current user's queued writes and rejected entries. They follow each change to the queue shortly after it, read together, so a write moving between the queue and the rejected list is counted in exactly one. A failed read of either is logged, and they follow the queue again after a wait that doubles up to about a minute. |
 | `isSyncing` | Whether a pass is sending, started by the app or by the library; `false` while a pass waits for the session to settle. |
 | `lastSyncedAt: Instant?` | When a pass, or a write sent at once, last left the current user's queue empty, a pass over an already empty queue included. In memory only. |
-| `lastSyncError: Throwable?` | A `SyncFailedException` saying why the last pass stopped with writes queued. Cleared when a later pass runs to the end, when sending empties the queue, and when local data is cleared. |
+| `lastSyncError: SyncFailedException?` | Why the last pass stopped with writes queued: the server's `httpStatus` and `code`, or a failure the network caused. Cleared when a later pass runs to the end, when sending empties the queue, and when local data is cleared. |
 
 `NetworkStatus` is the closed enum `UNKNOWN` (nothing has said yet; treated as online), `ONLINE`,
 `OFFLINE` and `DISABLED` (after `disableNetwork()`).
@@ -360,16 +372,18 @@ nothing is cached. A request that must reach the server throws
 `NetworkDisabledException`: a `NetworkOnly` read, an `OnlineOnly` write, an `rpc`, and every
 Storage call other than a download. A write the queue cannot hold fails with
 `MutationNotQueueableException`, whose cause is that exception. A request already on the wire still
-answers. `NetworkDisabledException` counts as a connectivity failure, so code that handles being
-offline handles it too.
+answers, and so does a resumable upload created or paused while access was on: supabase-kt's upload
+handle cannot be wrapped, so it sends its chunks until it ends. `NetworkDisabledException` counts as
+a connectivity failure, so code that handles being offline handles it too.
 
 **The monitor.** By default the library watches the platform: on Android `ConnectivityManager`,
 counting a network with internet that Android has validated (the library's manifest declares
 `ACCESS_NETWORK_STATE`, which appears in every app's merged manifest); on iOS, Network's path
 monitor. `networkAvailability` replaces it with the app's own signal. Either is a hint, never a
 gate: a request the app makes is always tried, because a monitor can be wrong either way. It decides
-only when the library tries by itself, what a waiting refresh reports, whether a sync returns at
-once rather than wait for an unsettled session, and what `syncStatus.network` says.
+only when the library tries by itself (no automatic pass runs while it says offline), what a
+waiting refresh reports, whether a sync returns at once rather than wait for an unsettled session,
+and what `syncStatus.network` says.
 
 ### Storage
 
@@ -405,7 +419,7 @@ the server. An object path that cannot be mapped safely onto a file (a leading `
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. The database is rewritten without the deleted rows and its write-ahead log emptied, unless open reads hold the log's checkpoint off for about a second: then the old pages stay in the log until its next checkpoint, and a warning is logged. The client stays usable. | — |
+| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background as soon as the read ends, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. | — |
 | `applyServerRecord(table, record: JsonObject, primaryKeys = null, schema = null)`; reified `applyServerRecord(table, record: T, …)` | Applies a row the server reports, such as a Realtime INSERT or UPDATE record, to every cached query of the table. | The cached row with the same key is replaced, and a query that admits the row gains it. A record without its whole key is logged and dropped. `primaryKeys = null` is the table's configured key, and `id` for a table of another schema. | The reified form: `IllegalArgumentException` when `record` does not encode to a JSON object |
 | `applyServerDelete(table, oldRecord, primaryKeys = null, schema = null)` | Removes a row the server reports deleted from every cached query of the table. | As `applyServerRecord`. | — |
 | `rpc(function, request)`, `rpc(function, parameters: JsonObject, request)`; reified `rpc(function, parameters: T, request)` | Calls a database function, as `supabase.postgrest.rpc` does. | Network only: never cached, never queued, since a function may change data. | `NetworkDisabledException` while access is off; `IllegalStateException` without PostgREST; the reified form, `IllegalArgumentException` when `parameters` does not encode to a JSON object |
@@ -424,7 +438,7 @@ not yet sent go out.
 | At once | `from` and every new suspending call fail with the closed error, on the plugin and on any builder or bucket obtained from it, and a flow obtained from it fails when collected; what does no work (`syncStatus`, the getters, a bucket's URL builders) still answers. Every flow being collected completes, a channel held through `produceIn` included, failing no scope; a flow collected afterwards fails with the closed error. The library's own work stops (refreshes, passes), and so do the syncs and every Storage call in progress but `cachedFile` and a resumable upload, their callers getting the closed error, never a cancellation. |
 | Left to finish | A PostgREST write, a clear, a one-shot `select` that goes to the network, an `rpc`, a read of the cache, and the start or continuation of a resumable upload. A clear that has begun completes, and a write whose answer arrives is applied and never sent again. A pass with a queued write on the wire finishes that request and records its answer first. A stopped Storage write may have been applied, so the cached copies it touched are dropped. |
 | May still be sent | Through `supabase.close()`, a call made while supabase-kt closes its HTTP client, or one whose request had not gone out, is either still sent (Ktor can send while its client finishes closing) or ends as it would offline: a read the cache can answer is answered from it, a write the queue holds returns `Queued`, and anything else fails with the closed error. Never with a cancellation. |
-| The bound | Every `close()` returns once the database is released, or after 10 seconds of real time at most, even under a test's virtual clock. Past that, the database is released when the last call finishes; until then a new client on it fails with an error saying it is still closing. Safe to call more than once, and from inside a collector of one of the plugin's flows. |
+| The bound | Every `close()` returns once the database is released, or after 10 seconds of real time at most, even under a test's virtual clock, and never throws: a failure closing the database is logged and the claim released. Past that, the database is released when the last call finishes; until then a new client on it fails with an error saying it is still closing. Safe to call more than once, and from inside a collector of one of the plugin's flows. |
 
 ### Errors
 
@@ -728,9 +742,10 @@ refusals. The order is the row's autoincrement id.
 **The head send.** Before a keyed INSERT (one whose rows all carry the table's primary key) goes
 out, its send is recorded as possibly delivered. The request runs carrying its owner, which the
 replay-token check below reads. Accepted, the response is patched into the cache, then the row, its
-send record and any stale rejected entry are deleted, and the caller gets `Applied`; if the patch or
-the delete fails, the caller still gets `Applied`, since the server has the write, and the failure
-is logged. A failure that may not have run keeps the row. The send record is cleared only on proof
+send record and any stale rejected entry are deleted, and the caller gets `Applied`; if the patch,
+the delete or the read of the queue that follows (whether anything waits behind it) fails, the
+caller still gets `Applied`, since the server has the write, and the failure is logged. A refusal
+is likewise thrown as the server's error whatever that read does. A failure that may not have run keeps the row. The send record is cleared only on proof
 that the write did not run: every attempt the HTTP engine made failed before connecting (each retry
 an app plugin made, and each attempt an engine carried as a suppressed exception, must prove it
 too), PostgREST answered `503` with `PGRST000` or `PGRST002`, the token could not be refreshed, the
@@ -738,7 +753,9 @@ schema cache did not know the table or a column, or network access was off. Anyt
 the row and throws: the immediate refusal.
 
 **Dry runs.** A dry run is never queued. Whether the server rolled it back is read from its
-`Preference-Applied` answer, and only a rolled-back write is left out of the cache.
+`Preference-Applied` answer, and only a rolled-back write is left out of the cache. A check beside
+the HTTP engine notices a successful write that asked for the rollback (`Prefer: tx=rollback`) and
+was committed instead, and the client logs one warning for its life, naming nothing else.
 
 **The cache patch of an online write.** The rows the server accepted, or returned when the write
 asked for rows back, are laid into every cached query of the table that admits them, matched by
@@ -750,7 +767,8 @@ is not patched.
 
 **Replay in order.** A pass reads the identity's queue once, then claims each write in turn under
 the send lock: still pending, no earlier write in flight whoever owns it, network access still on,
-and no clear since the pass began. It reads the identity again before every request and stops if it changed. A cancelled pass
+no clear since the pass began, and, in a pass for one table, no earlier write of the identity still
+queued in another table. It reads the identity again before every request and stops if it changed. A cancelled pass
 stops between writes: a request already on the wire runs to its answer, which is recorded, because a
 write the server applied but the queue kept would be sent again.
 
@@ -759,8 +777,7 @@ write the server applied but the queue kept would be sent again.
   count tells an inserted row from one the earlier send had written (`alreadyOnServerCount`). When
   the table has no unique key to match (`42P10`) it is sent again as the plain INSERT.
 - **Every other INSERT** replays as it was sent, so a genuine duplicate id is refused with `23505`
-  and reaches the rejected list with the server's own error, unless a one-table sync holds it
-  behind an earlier write of the user pending in another table (a `23505` is a `409`).
+  and reaches the rejected list with the server's own error.
 - **An UPSERT, an UPDATE and a DELETE** replay as sent; they are idempotent, and a replay after a lost
   response overwrites a change another writer made in between. A stored filter that can no longer be
   read, or would not replay in full, is never sent: the write is rejected by the library itself.
@@ -805,11 +822,13 @@ device clock set back or forward neither keeps nor retires one.
 
 `NetworkAccess` combines the connectivity signal, the platform monitor or the app's flow, with the
 app's switch. It counts reconnections, and each wakes waiting refreshes and, with `autoSync`, starts
-a pass when the settled identity has writes queued.
+a pass when the settled identity has writes queued, ending the wait a failed pass left. While the
+network is known to be down, a pass any trigger asks for is skipped and grows no wait.
 
 **The automatic replay switch** has two conditions, written into the engine where the triggers live:
 
-1. `autoSync = false` turns off the session-settle trigger and the reconnection trigger.
+1. `autoSync = false` turns off the session-settle trigger, the reconnection trigger, and the one
+   pass a client without Auth starts when it opens with writes queued.
 2. It never turns off the passes the write path asks for: a write queued behind an earlier one, what
    a sent, refused or discarded write leaves queued, a retried rejection. With write-ahead, those
    passes are what sends an online write that returned `Queued`.
@@ -817,8 +836,8 @@ a pass when the settled identity has writes queued.
 **The `disableNetwork()` interception.** The switch is checked where requests start, never by
 cancelling them. Each PostgREST verb of a table handle throws `NetworkDisabledException` before
 supabase-kt is called; the head send leaves its write queued; a pass sends nothing; a refresh waits,
-`Paused`; the bucket answers a download from the file cache and throws for any other call; `rpc`
-throws. The exception proves the request was never sent: a write it stops stays queued as never
+`Paused`; the bucket answers a download from the file cache and throws for any other call, but a
+resumable upload's handle, supabase-kt's own, still sends its chunks; `rpc` throws. The exception proves the request was never sent: a write it stops stays queued as never
 sent, and a read falls back to the cache as it would offline.
 
 ### Lifecycle
@@ -835,8 +854,10 @@ has none and nothing holds the default one. Room then opens the database on the 
 the client is built over it: every setting of `Offline.Config` reaches the engine in that one
 function, read once (the opener also reads `dataDirectory`, and the version check `logLevel`). The client installs its
 request-pipeline phases once (the dry-run check, the read-shape check, the transport-failure capture
-and the replay-token check) and starts its watchers: connectivity, the session-settle trigger when
-`autoSync` is on, and the cache owner.
+and the replay-token check) and the committed dry-run check beside the engine, and starts its
+watchers: connectivity, the session-settle trigger when `autoSync` is on, the cache owner, and the
+sync status's, so `syncStatus` counts the queue from the start. A client without Auth, with
+`autoSync` on, also asks for one pass when writes an earlier run left are queued.
 
 **The operation gate.** Every public call and every flow passes the client's gate, which counts the
 calls in flight whoever's coroutine runs them. A flow is checked when it is collected and counted for
@@ -857,9 +878,10 @@ runs, in order:
    `syncStatus` takes its last value.
 3. It waits, at most 10 seconds of real time on `Dispatchers.Default`, for that scope to end and for
    no call to be left in the gate.
-4. The database is closed and the claim released, once, by whichever waiting call gets there first.
-   A close that gave up marks the database as still closing, and the release runs when the last call
-   ends.
+4. A clear's write-ahead log that an open read held is tried once more; then the database is closed
+   and the claim released, once, by whichever waiting call gets there first. A failure to close the
+   database is logged, not thrown. A close that gave up marks the database as still closing, and the
+   release runs when the last call ends.
 
 ### Identity
 
@@ -951,7 +973,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-09-28 | A built-in connectivity monitor, with the app's own flow as an override; a hint, never a gate (2026-10-02). | Without one, the Kotlin library and the Swift package would behave differently out of the box; as a gate, a wrong monitor strands writes, while as a hint it costs one failed attempt. |
 | 2026-09-28 | A second client on an open database throws. | Two clients on one database can send the same write twice. |
 | 2026-09-28 | The Kotlin artifact runs on the bundled SQLite for 0.1.0. | Every install then runs one SQLite version; the Swift package, whose users have no database to migrate, is to use the system one. |
-| 2026-09-28 | Clearing local data rewrites the database and empties its write-ahead log, so the deleted rows cannot be read from the files. | After a clear, the previous user's rows could still be read from the write-ahead log. |
+| 2026-09-28 | Clearing local data rewrites the database and empties its write-ahead log, so the deleted rows cannot be read from the files; best effort, finished in the background and at close when an open read holds the log (2026-10-04). | After a clear, the previous user's rows could still be read from the write-ahead log. Waiting out the read held every send for up to a minute, and failing the clear would leave a sign-out nothing it could do. |
 | 2026-09-28 | Nothing internal is visible to a consumer. | Only what is documented is API: internal code lives in internal packages, and a check in CI enforces it. |
 | 2026-09-28 | One tested supabase-kt minor per release, with a weekly canary (2026-09-30) and a warning at install (2026-10-02). | The artifact compiles supabase-kt's inline functions into itself, implements its `BucketApi` by delegation and matches its filter operators exhaustively, so a range of minors cannot be promised. Open before 0.1.0: supabase-kt 3.7.0 and 3.8.0 carry a Realtime crash and a protocol V2 leave bug, and the pin moves to the first release that fixes both, so the tested minor may move past 3.8. |
 | 2026-09-28 | Before 1.0, a patch changes nothing in the contract; a supabase-kt minor or a schema version is a minor release. | No change should alter what a version promises without anyone noticing. |
@@ -969,6 +991,12 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-02 | `autoSync` is read once, when the client opens. | The two triggers it governs must follow one value; one read live and one read at open disagreed. |
 | 2026-10-02 | The network switch is not kept across restarts. | It follows the rule of the offline libraries an app's developer is likely to know: a new client starts with access on. |
 | 2026-10-02 | The exceptions, like every value type, have no public constructor; tests build them with the testing artifact's factories. | The library can then change them without breaking a caller. |
+| 2026-10-04 | `syncPendingMutations(table)` keeps the order across tables: it stops at a write with an earlier write of the user queued in another table, and reports what it held back. | The order is the library's first promise, and an app syncing one table expects the rows its writes depend on to go first. |
+| 2026-10-04 | `SyncStatus.lastSyncError` is a `SyncFailedException?`. | It only ever held one; an app reads the server's status and code without a cast, and narrowing it after a release would break binaries. |
+| 2026-10-04 | `syncStatus` follows the queue from the moment the client opens. | Read first at start, it said nothing was waiting while writes were queued; a collector costs nothing measurable. |
+| 2026-10-04 | A reconnection or a settled session cuts the replay backoff short; no automatic pass runs while the network is known to be down; a server's `Retry-After` stays a floor. | A reconnection's pass waited out up to a minute of backoff that passes made while offline had built. |
+| 2026-10-04 | A client without Auth, with `autoSync` on, sends what an earlier run left queued when it opens. | No other trigger fires for it: its session is settled from the start. |
+| 2026-10-04 | A write that asked for a rollback and was committed is reported with one warning per client. | Hosted projects ignore `tx=rollback`, so an app's dry run changed data, and nothing said so. |
 
 ### What it deliberately does not do
 
@@ -991,17 +1019,17 @@ What the library promises, each with the tests that pin it:
 
 | Promise | Pinned by |
 | --- | --- |
-| A user's queued writes are sent in the order they were made, across tables, and none overtakes an earlier one of the same user. The one exception is `syncPendingMutations(table)`, which sends that table's writes ahead of earlier ones in other tables, holding back only a `403` or `409` there. `OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so they go around the queue. | `WriteAheadOrderTest`, `MutationQueueReplayOrderTest`, `OnlineWriteJoinsQueueTest`, `HeadSendTest` |
+| A user's queued writes are sent in the order they were made, across tables, and none overtakes an earlier one of the same user, in any pass: a pass for one table stops at a write with an earlier one queued in another table. `OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so they go around the queue. | `WriteAheadOrderTest`, `MutationQueueReplayOrderTest`, `OnlineWriteJoinsQueueTest`, `HeadSendTest`, `SyncReportTest` |
 | With Auth installed, a queued write is sent with its owner's token or not at all. A PostgREST configured with its own `jwtToken` is not checked. | `ReplayTokenBindingTest`, `ReplayOwnerCheckTest`, `PerIdentityQueueTest` |
 | No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
 | With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
-| After `clearLocalData()`, the deleted rows cannot be read back from the database's files once its write-ahead log is checkpointed: at once when no open read holds the checkpoint off, and otherwise at the next checkpoint, with a warning logged. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest` |
+| After `clearLocalData()`, the deleted rows cannot be read back from the database's files once no open read holds its write-ahead log: when the clear returns if none does within a second, otherwise as soon as the read ends while the client is open, or at `close()`. The clear never waits longer, and never fails for it. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest`, `DatabaseScrubTest` |
 | Within one process, one database is open in one client at a time. | `OfflinePluginAndroidTest`, `OfflinePluginIosTest`, `IosClientLifecycleTest` |
-| `close()` returns within 10 seconds of real time, a clear that has begun completes, and a write whose answer arrives during it is applied and never sent again. | `SupabaseOfflineClientCloseTest`, `PluginCloseRaceAndroidTest`, `PluginCloseRaceIosTest`, `ClientCloseRaceAndroidTest`, `ClientCloseRaceIosTest`, `MutationQueueAcrossCloseTest` |
-| A failure in the library's background work never crashes the process. | `BackgroundFailureContainmentTest` |
+| `close()` returns within 10 seconds of real time and never throws, a clear that has begun completes, and a write whose answer arrives during it is applied and never sent again. A caller cancelled while it runs gets its own cancellation. | `SupabaseOfflineClientCloseTest`, `PluginCloseTest`, `PluginCloseRaceAndroidTest`, `PluginCloseRaceIosTest`, `ClientCloseRaceAndroidTest`, `ClientCloseRaceIosTest`, `MutationQueueAcrossCloseTest` |
+| A failure in the library's background work never crashes the process, and one failed read of the database never turns an automatic trigger or the status off, nor fails a write the server answered. | `BackgroundFailureContainmentTest`, `QueueCheckFailureTest`, `SyncStatusTest` |
 | The library writes nothing to the console itself; its messages go only where supabase-kt's logging sends them. | `scripts/check-no-console.py`, in CI |
 | Logs at `INFO` and above carry no rows, filter values, server messages or object paths. | `LogPrivacyTest`, `OfflineMutationQueueDecisionTest`, `OfflineBucketApiDownloadTest` |
 
@@ -1009,7 +1037,6 @@ What it does not do yet, or does only so far:
 
 | Limit | Planned |
 | --- | --- |
-| After one failed read of the queue, the session-settle trigger stops starting passes for the rest of that client's life; the other triggers and `syncPendingMutations()` still work. | Fixed before 0.1.0 |
 | Rejected entries dropped from a full list are not reported anywhere public. | An additive count; its release is not fixed |
 | Nothing fires when the app comes to the foreground: a resume starts a pass only when Auth refreshes the session on it, and a reconnect starts one through the network trigger. | Open: whether to add a trigger is to be decided before 0.1.0 |
 | An upload does not seed the file cache, so a file uploaded just before going offline is not available offline: the bytes are the caller's, and caching them needs a size and ownership policy. | 0.2.0 |
