@@ -25,11 +25,14 @@ set -euo pipefail
 # inside these folders, and what changes in them is the user's own doing.
 UNLISTED=(Desktop Documents Downloads Movies Music Pictures .Trash)
 
-# Recorded by name only, never timed, with everything inside listed as usual: each runner's own
-# folder. A child added or removed there is listed on its own line, so the folder's own times add
-# no detection, and the runner's service rewrites a child by rename once a day (its settings, at
-# about 23:04 UTC), which moves them. The name still shows a runner folder added or removed.
-UNTIMED=('actions-runner-*')
+# Recorded by name only, never timed, with everything inside listed as usual. A child added or
+# removed there is listed on its own line, so the folder's own times add no detection.
+# - Each runner's own folder: the runner's service rewrites a child by rename once a day (its
+#   settings, at about 23:04 UTC), which moves them. The name still shows a runner folder added or
+#   removed.
+# - SwiftPM's folder of links: SwiftPM deletes and re-creates its `security` link on every package
+#   build, xcodebuild's included, so the job's Swift package step moves the folder's times.
+UNTIMED=('actions-runner-*' '.swiftpm')
 
 # Neither recorded nor listed. Something other than the job writes each of these while it runs;
 # each line says what, and why the job does not write there. Everything else is watched, including
@@ -53,6 +56,10 @@ EXCLUDED=(
     'Library/Caches'
     'Library/Group Containers'
     'Library/Application Scripts'
+    # Applications the machine's user runs, on their own schedule: the browser's state, and the
+    # documents an editor saves by itself. The job starts no application that writes in either.
+    'Library/Safari'
+    'Library/Autosave Information'
     # macOS services that write on their own schedule: Shortcuts, Siri suggestions, Wallet,
     # HomeKit, the energy daemon, on-device intelligence and translation, and Google's updater.
     'Library/Shortcuts'
@@ -64,6 +71,10 @@ EXCLUDED=(
     'Library/DataDeliveryServices'
     'Library/Translation'
     'Library/Google'
+    # The link SwiftPM re-creates, to the same target, on every package build in any session: the
+    # job's Swift package step (xcodebuild) does too, and nothing else of the job writes there.
+    # Its target, ~/Library/org.swift.swiftpm, and the folder's other links stay watched.
+    '.swiftpm/security'
     # Gradle's temporary folder and the Kotlin Gradle plugin's build statistics, written by every
     # other Gradle build as the user. The job's Gradle User Home is its own, so it writes neither.
     '.gradle/.tmp'
