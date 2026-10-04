@@ -421,7 +421,7 @@ not yet sent go out.
 
 | | What happens |
 | --- | --- |
-| At once | Every new call fails with the closed error, on the plugin and on any builder, bucket or flow obtained from it; `syncStatus` can still be read. Every flow being collected completes, a channel held through `produceIn` included, failing no scope; a flow collected afterwards fails with the closed error. The library's own work stops (refreshes, passes), and so do the syncs and every Storage call in progress but `cachedFile` and a resumable upload, their callers getting the closed error, never a cancellation. |
+| At once | `from` and every new suspending call fail with the closed error, on the plugin and on any builder or bucket obtained from it, and a flow obtained from it fails when collected; what does no work (`syncStatus`, the getters, a bucket's URL builders) still answers. Every flow being collected completes, a channel held through `produceIn` included, failing no scope; a flow collected afterwards fails with the closed error. The library's own work stops (refreshes, passes), and so do the syncs and every Storage call in progress but `cachedFile` and a resumable upload, their callers getting the closed error, never a cancellation. |
 | Left to finish | A PostgREST write, a clear, a one-shot `select` that goes to the network, an `rpc`, a read of the cache, and the start or continuation of a resumable upload. A clear that has begun completes, and a write whose answer arrives is applied and never sent again. A pass with a queued write on the wire finishes that request and records its answer first. A stopped Storage write may have been applied, so the cached copies it touched are dropped. |
 | May still be sent | Through `supabase.close()`, a call made while supabase-kt closes its HTTP client, or one whose request had not gone out, is either still sent (Ktor can send while its client finishes closing) or ends as it would offline: a read the cache can answer is answered from it, a write the queue holds returns `Queued`, and anything else fails with the closed error. Never with a cancellation. |
 | The bound | Every `close()` returns once the database is released, or after 10 seconds of real time at most, even under a test's virtual clock. Past that, the database is released when the last call finishes; until then a new client on it fails with an error saying it is still closing. Safe to call more than once, and from inside a collector of one of the plugin's flows. |
@@ -1045,9 +1045,9 @@ passes in (though `Offline.Config.responseTrust` can be read back), and a new ca
 sealed or enum type is breaking. A new supabase-kt minor or major, a new minor or major of Ktor,
 okio, kotlinx.coroutines or kotlinx.serialization (held with supabase-kt, and reaching an app at
 the versions this build names), a new Kotlin tooling release, and a raised minimum Android version
-or compile SDK are flagged as dependencies. A record change
-it cannot read rates breaking; a catalog entry it watches that is renamed or removed rates nothing,
-so a reviewer checks those. A pull request needs a changelog line under the
+or compile SDK are flagged as dependencies. On the records
+it errs toward breaking when it cannot tell; a catalog entry it watches that is renamed or removed,
+though, rates nothing, so a reviewer checks those. A pull request needs a changelog line under the
 heading its rating needs (before the first tag, any new line under `Unreleased` does), and the release workflow refuses a version number too small for everything
 since the last tag. See [Compatibility](compatibility.md).
 
