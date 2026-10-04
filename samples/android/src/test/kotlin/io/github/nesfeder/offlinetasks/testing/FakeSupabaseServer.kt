@@ -80,6 +80,11 @@ class FakeSupabaseServer {
             install(Offline) { inMemory(Clock.System) }
         }
 
+    /** Adds [row] to [table] as the server stores it, as if another device had sent it. */
+    fun insertRow(table: String, row: JsonObject) {
+        synchronized(lock) { tables.getValue(table) += row }
+    }
+
     /** The rows of [table], as the test reads the server's copy. */
     fun rows(table: String): List<JsonObject> =
         synchronized(lock) { tables.getValue(table).toList() }

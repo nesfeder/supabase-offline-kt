@@ -35,12 +35,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * The real repository over the library's in-memory client and a fake server. The library works on
@@ -97,11 +99,11 @@ class OfflineTaskRepositoryTest {
         repository.setNetworkEnabled(true)
         repository.syncPendingMutations()
 
-        // Then
+        // Then — both on the server, and the list settles on both with nothing pending
         assertEquals(2, server.rows(Tables.TASKS).size)
-        val synced =
-            repository.tasks().awaitValue { tasks -> tasks.none { it.hasPendingMutations } }
-        assertEquals(2, synced.size)
+        repository.tasks().awaitValue { tasks ->
+            tasks.size == 2 && tasks.none { it.hasPendingMutations }
+        }
     }
 
     @Test
@@ -125,26 +127,23 @@ class OfflineTaskRepositoryTest {
 
     @Test
     fun clearing_local_data_online_reads_the_lists_again_for_a_screen_showing_them() = runTest {
-        // Given — a task on the server, shown by a list that stays open
-        repository.addTask("On the server", notes = null)
-        val shown = MutableStateFlow<List<List<Task>?>>(emptyList())
-        val screen = scope.launch {
-            repository.tasks().collect { snapshot -> shown.update { it + listOf(snapshot.value) } }
-        }
-        withTimeout(WAIT) { shown.first { it.lastOrNull()?.size == 1 } }
-        val shownBefore = shown.value.size
+        // Given — a task shown by a list that stays open, and a second one only the server has
+        repository.addTask("Made here", notes = null)
+        val shown = MutableStateFlow<List<Task>?>(null)
+        val screen = scope.launch { repository.tasks().collect { shown.value = it.value } }
+        withTimeout(WAIT) { shown.first { it?.size == 1 } }
+        server.insertRow(Tables.TASKS, serverOnlyTask(title = "Made elsewhere"))
         val sentBefore = server.requests.size
 
         // When
         repository.clearLocalData()
 
-        // Then — both lists asked of the server again, and the open list shows the task again
+        // Then — both lists asked of the server again, and the open list shows the server's copy
         val sentAfter = server.requests.drop(sentBefore)
         assertTrue("GET /rest/v1/tasks" in sentAfter)
         assertTrue("GET /rest/v1/task_photos" in sentAfter)
-        withTimeout(WAIT) {
-            shown.first { history -> history.drop(shownBefore).any { it?.size == 1 } }
-        }
+        val titles = withTimeout(WAIT) { shown.first { it?.size == 2 } }.orEmpty().map { it.title }
+        assertEquals(setOf("Made here", "Made elsewhere"), titles.toSet())
         screen.cancel()
     }
 
@@ -321,6 +320,17 @@ class OfflineTaskRepositoryTest {
     }
 
     /** The first non-null rows of this read that [matches], within a bounded wait. */
+    /** A task row as the server stores it, for one the app did not make. */
+    private fun serverOnlyTask(title: String): JsonObject = buildJsonObject {
+        put("id", "00000000-0000-4000-8000-0000000000aa")
+        put("user_id", FakeUserSession.FIRST_USER_ID)
+        put("title", title)
+        put("notes", JsonNull)
+        put("done", false)
+        put("created_at", "2026-10-01T08:00:00Z")
+        put("updated_at", "2026-10-01T08:00:00Z")
+    }
+
     private suspend fun <T> Flow<RowsSnapshot<List<T>>>.awaitValue(
         matches: (List<T>) -> Boolean
     ): List<T> = withTimeout(WAIT) { first { it.value?.let(matches) == true } }.value.orEmpty()
