@@ -21,9 +21,9 @@ what is left is your call, because it deletes writes that were never sent.
 
 Everything the library keeps on the device: the cached query results, the downloaded Storage
 files, every write still in the mutation queue (never sent), and the rejected list. It does not
-touch the server, and the client stays usable afterwards.
+touch the server, and the client stays usable afterward.
 
-- A replay pass running at that moment is cancelled first, and nothing queued is sent once the
+- A replay pass running at that moment is canceled first, and nothing queued is sent once the
   clear has begun.
 - A write already on the wire is neither applied to the cache nor queued when it answers. A
   Storage download in flight may still hand its bytes to its caller, but they are not written to
@@ -39,7 +39,7 @@ touch the server, and the client stays usable afterwards.
 ## Order of operations
 
 1. **Decide about the unsent writes.** `syncPendingMutations()` sends what can be sent now, as the
-   user who made it; offline it returns at once. Whatever is still queued afterwards is deleted
+   user who made it; offline it returns at once. Whatever is still queued afterward is deleted
    by the clear. An app that must not lose writes can show `syncStatus.value.pendingMutationCount`
    and ask before it signs out.
 2. **Sign out, and clear in a `finally`.** Offline, supabase-kt's `signOut()` throws

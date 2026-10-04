@@ -125,7 +125,7 @@ read inside it.
 `GET` "stopped by the offline engine's read-shape check". That request was never sent: it is how
 the library learns the read's shape without asking for a token.
 
-## Behaviour matrix
+## Behavior matrix
 
 Facts about the engine, one row per condition. Each cell names the test that pins it.
 

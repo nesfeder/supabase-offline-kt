@@ -61,7 +61,7 @@ bucket, not on the offline one.
 | Plugin | What the library does |
 | --- | --- |
 | Auth | Optional. **Passed through**: sign-in, sign-out and the session are supabase-kt's. The library reads the session to know whose cache and queue it serves, and sends each queued write with its own user's token |
-| Realtime | Not used. Apply a channel's records with `applyServerRecord` and `applyServerDelete`; see [Applying Realtime events](../behaviours/realtime.md) |
+| Realtime | Not used. Apply a channel's records with `applyServerRecord` and `applyServerDelete`; see [Applying Realtime events](../behaviors/realtime.md) |
 | Functions | Not used: call Edge Functions through supabase-kt |
 
 GraphQL is not covered.

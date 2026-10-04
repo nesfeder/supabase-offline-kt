@@ -92,7 +92,7 @@ overlaid.
 
 | Event | What goes | What stays |
 | --- | --- | --- |
-| `clearLocalData()` | Every cached list, every downloaded file, every queued write (never sent) and the rejected list. The database is rewritten without them, as far as open reads allow ([details](../behaviours/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
+| `clearLocalData()` | Every cached list, every downloaded file, every queued write (never sent) and the rejected list. The database is rewritten without them, as far as open reads allow ([details](../behaviors/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
 | A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists and the downloaded files | The mutation queue and the rejected list: each user's writes wait for that user |
 | Sign-out without Auth, or with your own token provider | Nothing: there is one identity for the life of the install | Everything |
 | `close()` | Nothing | Everything, for the next client |

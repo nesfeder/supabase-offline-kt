@@ -433,7 +433,7 @@ SELECT. The wrapper is [OfflineBucketApi.kt](https://github.com/nesfeder/supabas
 - `delete(paths)` removes both the remote object and the local cache row + file.
 - `move(from, to)` keeps the local cache pointing at the new path.
 
-See [storage.md](../behaviours/storage.md) for the user-facing API around `ensureLocalPath`,
+See [storage.md](../behaviors/storage.md) for the user-facing API around `ensureLocalPath`,
 `storageCacheMetadata`, and client-driven staleness.
 
 ## Cache eviction

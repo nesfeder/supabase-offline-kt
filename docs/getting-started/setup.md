@@ -100,7 +100,7 @@ Import `io.github.nesfeder.supabase.offline.offline` to reach it as `supabase.of
 - **Auth** is optional. With it, the cache belongs to one user at a time and each user's queued
   writes are kept apart and sent with that user's token. Without it, or with your own token
   provider, there is one identity for the life of the install; see
-  [Signing out and switching users](../behaviours/sign-out.md).
+  [Signing out and switching users](../behaviors/sign-out.md).
 - **Install the plugin last.** It opens its database when the client is created. When a plugin
   installed after it fails to set up, `createSupabaseClient` throws and the database stays claimed
   until the process ends.
@@ -126,7 +126,7 @@ The settings go in the `install(Offline) { … }` block. Every one has a default
 The call is supabase-kt's own, with its filters, order and range. Its read strategy defaults to
 `NetworkFirst`: the server answers, and the answer is kept on the device; when the server cannot
 be reached, the kept rows are served, with your queued writes laid over them. The first read must
-reach the server: before it, nothing is kept. [One-shot reads](../behaviours/read-strategies.md)
+reach the server: before it, nothing is kept. [One-shot reads](../behaviors/read-strategies.md)
 covers the four strategies.
 
 ## First live read
@@ -140,7 +140,7 @@ from the server lands, and when a Realtime record is applied. It needs no Realti
 
 Each emission is a `QuerySnapshot`: the rows (`null` while nothing is known yet), whether they are
 the device's copy, when they were fetched, whether a queued write changed them, and how the
-refresh behind them stands. See [Reactive reads](../behaviours/reactive-reads.md).
+refresh behind them stands. See [Reactive reads](../behaviors/reactive-reads.md).
 
 ## First write
 
@@ -156,7 +156,7 @@ either.
 A write returns `MutationOutcome.Applied`, with the server's answer, when it was sent at once, and
 `MutationOutcome.Queued` when it waits in the mutation queue. Either way, every cached read shows
 it at once. A write sent at once that the server refuses throws supabase-kt's exception, as
-`supabase.from(…)` does. See [Writes and the offline queue](../behaviours/mutations.md).
+`supabase.from(…)` does. See [Writes and the offline queue](../behaviors/mutations.md).
 
 ## Connectivity and sync
 
@@ -164,14 +164,14 @@ There is nothing to wire up. The plugin watches the platform's connectivity (`Co
 on Android, Network's path monitor on iOS) and sends queued writes by itself when the network
 comes back and when a user's session settles. `supabase.offline.syncStatus` says where things
 stand, for a banner, and `syncPendingMutations()` sends the queue now, for a "Sync now" button. See
-[Replaying the queue](../behaviours/sync.md).
+[Replaying the queue](../behaviors/sync.md).
 
 ## Sign-out
 
 Call `supabase.offline.clearLocalData()` when a user signs out for good: it deletes the cached rows,
 the downloaded files and every write still queued. With Auth, the cache already passes from one
 user to the next, but queued writes stay with the user who made them until you clear them. See
-[Signing out and switching users](../behaviours/sign-out.md).
+[Signing out and switching users](../behaviors/sign-out.md).
 
 ## Logging
 
@@ -245,5 +245,5 @@ while the other process has the database open.
 
 - [Coming from supabase-kt](migrating.md): moving existing calls.
 - [Testing your app](testing.md): the in-memory client for unit tests.
-- [Behaviours](../behaviours/index.md): what each call does offline.
+- [Behaviors](../behaviors/index.md): what each call does offline.
 - [Configuration](../reference/configuration.md): every setting.

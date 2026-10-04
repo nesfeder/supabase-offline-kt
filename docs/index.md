@@ -32,7 +32,7 @@ no answer yet. That is the one difference in what a call returns.
   and write.
 - [Coming from supabase-kt](getting-started/migrating.md): what stays the same, and the few call
   shapes that need an edit.
-- [Behaviours](behaviours/index.md): what each read and write does online, offline and in
+- [Behaviors](behaviors/index.md): what each read and write does online, offline and in
   between.
 - [Sample apps](samples/index.md): a to-do app with photos that shows all of it.
 

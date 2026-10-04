@@ -65,7 +65,7 @@ Semantic versioning in the usual sense:
     version is not supported, and loses the mutations queued since; a release that moves the
     schema version says so at the top of its changelog entry. See
     [On-device data](../reference/on-device-data.md).
-4. **Documented behaviour**: the defaults and guarantees on the [Behaviours](../behaviours/index.md)
+4. **Documented behaviour**: the defaults and guarantees on the [Behaviours](../behaviors/index.md)
    pages, such as the order in which queued mutations replay.
 5. **The supabase-kt version** the release is built and tested against (below).
 

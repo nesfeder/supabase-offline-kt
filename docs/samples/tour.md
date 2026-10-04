@@ -82,7 +82,7 @@ Two devices are two anonymous users, so play the second writer from the Table Ed
    app's arrived last.
 
 The library does not merge or resolve conflicts; see
-[Conflicts and failures](../behaviours/failures.md#conflicts).
+[Conflicts and failures](../behaviors/failures.md#conflicts).
 
 ## Start again
 

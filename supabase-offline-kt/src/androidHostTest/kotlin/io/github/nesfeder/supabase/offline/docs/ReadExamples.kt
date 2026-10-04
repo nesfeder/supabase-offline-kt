@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.jsonPrimitive
 
-// The documentation site's Behaviours pages on reading include the sections of this file between
+// The documentation site's Behaviors pages on reading include the sections of this file between
 // the `--8<--` markers, so every Kotlin sample there compiles. Nothing here runs.
 
 /** One row of a list, with whether a write that changed it still waits to be sent. */

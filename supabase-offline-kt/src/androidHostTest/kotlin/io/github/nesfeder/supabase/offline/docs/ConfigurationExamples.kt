@@ -17,7 +17,7 @@ import io.github.nesfeder.supabase.offline.offline
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonObject
 
-// The documentation site's Reference pages, and the Behaviours pages on eviction and Realtime,
+// The documentation site's Reference pages, and the Behaviors pages on eviction and Realtime,
 // include the sections of this file between the `--8<--` markers, so every Kotlin sample there
 // compiles. Nothing here runs.
 

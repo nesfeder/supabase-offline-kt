@@ -28,7 +28,7 @@ when the client is created.
 The most the cached query results may hold, counted as the summed length of the cached responses,
 not the size of the database file. Past it, the results fetched longest ago are evicted, never one
 of up to 500 lists a live reader shows. Any other value below 4 KiB counts as 4 KiB. See
-[Cache size and eviction](../behaviours/eviction.md).
+[Cache size and eviction](../behaviors/eviction.md).
 
 ```kotlin
 --8<-- "ConfigurationExamples.kt:sizes"
@@ -75,7 +75,7 @@ reach your project). What it decides:
 
 A signal that fails or ends is no longer watched (a failure is logged), and the network is then
 `UNKNOWN`, which counts as online. To stop every request, use `disableNetwork()`: that switch is a
-gate. See [Replaying the queue](../behaviours/sync.md).
+gate. See [Replaying the queue](../behaviors/sync.md).
 
 ```kotlin
 --8<-- "ConfigurationExamples.kt:own-signal"
@@ -95,7 +95,7 @@ would wait for the app with nothing to show for it.
 ### `primaryKeys`
 
 Each table's primary-key columns, by table name in the client's default schema. A table not named
-has the key `id`. The key is how the cache recognises a row: where a queued or applied upsert
+has the key `id`. The key is how the cache recognizes a row: where a queued or applied upsert
 lands, which row a server record replaces, and which rows a queued write reports in
 `PendingMutation.rowKeys`. Set it for every table whose key is not `id`, such as one with a
 composite key, with `primaryKey("task_tags", "task_id", "tag")`. A key with no column throws
@@ -137,7 +137,7 @@ and exception types; never rows, filter values, tokens or object paths. See
 ## Read once
 
 The plugin reads its settings when the client is created: changing `supabase.offline.config`
-afterwards has no effect. The same holds for the PostgREST plugin's settings the library copies
+afterward has no effect. The same holds for the PostgREST plugin's settings the library copies
 when it first needs them: the read-shape check builds its own PostgREST from yours at the first
 `from()`, so a PostgREST setting changed after that (`propertyConversionMethod`, say) is not
 followed by it.
@@ -154,7 +154,7 @@ out.
 
 | | What happens |
 | --- | --- |
-| At once | Every new call fails with `IllegalStateException`, on the plugin and on any builder or bucket obtained from it. Every flow being collected completes; one collected afterwards fails. `syncStatus` keeps its last value. The library's own work stops: refreshes, passes, syncs and Storage calls, whose callers get the closed error, never a cancellation |
+| At once | Every new call fails with `IllegalStateException`, on the plugin and on any builder or bucket obtained from it. Every flow being collected completes; one collected afterward fails. `syncStatus` keeps its last value. The library's own work stops: refreshes, passes, syncs and Storage calls, whose callers get the closed error, never a cancellation |
 | Left to finish | A PostgREST write, a clear, a one-shot `select` that goes to the network, an `rpc`, a read of the cache, and a resumable upload. A write whose answer arrives is applied and never sent again |
 | May still be sent | Through `supabase.close()`, a call made while supabase-kt closes its HTTP client is either still sent or ends as it would offline: answered from the cache, `Queued`, or the closed error |
 | The bound | `close()` returns once the database is released, or after 10 seconds at most, and never throws. Past that, the database is released when the last call finishes, and a new client on it fails until then |

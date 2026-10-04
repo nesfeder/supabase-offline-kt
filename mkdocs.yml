@@ -9,7 +9,7 @@
 # Some pages pull files from the repository root in at build time with pymdownx.snippets
 # (`--8<-- "CHANGELOG.md"`), so nothing is copied into docs/. Snippet paths are relative to the
 # directory mkdocs runs in, which must be the repository root. Every Kotlin sample on the
-# Getting started, Behaviours and Reference pages is a section of a test source file the Gradle
+# Getting started, Behaviors and Reference pages is a section of a test source file the Gradle
 # build compiles (`// --8<-- [start:name]` … `// --8<-- [end:name]`), so a sample cannot drift
 # from the API.
 #
@@ -25,7 +25,7 @@ site_url: https://nesfeder.github.io/supabase-offline-kt/
 repo_name: nesfeder/supabase-offline-kt
 repo_url: https://github.com/nesfeder/supabase-offline-kt
 edit_uri: edit/main/docs/
-copyright: Copyright &copy; 2026 nesfeder. MIT licence. Not affiliated with Supabase.
+copyright: Copyright &copy; 2026 nesfeder. MIT license. Not affiliated with Supabase.
 
 theme:
   name: material
@@ -36,7 +36,7 @@ theme:
     logo: material/cloud-sync-outline
     repo: fontawesome/brands/github
   favicon: assets/favicon.svg
-  # The colours behind "custom" are set in docs/assets/extra.css.
+  # The colors behind "custom" are set in docs/assets/extra.css.
   palette:
     - media: "(prefers-color-scheme)"
       primary: custom
@@ -145,19 +145,19 @@ nav:
       - iOS apps in Swift: getting-started/swift.md
       - Migrating from supabase-kt: getting-started/migrating.md
       - Testing your app: getting-started/testing.md
-  - Behaviours:
-      - behaviours/index.md
-      - One-shot reads: behaviours/read-strategies.md
-      - Reactive reads: behaviours/reactive-reads.md
-      - Refresh lifecycle: behaviours/refresh-lifecycle.md
-      - Writes and the offline queue: behaviours/mutations.md
-      - Optimistic overlay: behaviours/overlay.md
-      - Replaying the queue: behaviours/sync.md
-      - Conflicts and failures: behaviours/failures.md
-      - Cache size and eviction: behaviours/eviction.md
-      - Signing out and switching users: behaviours/sign-out.md
-      - Storage caching: behaviours/storage.md
-      - Applying Realtime events: behaviours/realtime.md
+  - Behaviors:
+      - behaviors/index.md
+      - One-shot reads: behaviors/read-strategies.md
+      - Reactive reads: behaviors/reactive-reads.md
+      - Refresh lifecycle: behaviors/refresh-lifecycle.md
+      - Writes and the offline queue: behaviors/mutations.md
+      - Optimistic overlay: behaviors/overlay.md
+      - Replaying the queue: behaviors/sync.md
+      - Conflicts and failures: behaviors/failures.md
+      - Cache size and eviction: behaviors/eviction.md
+      - Signing out and switching users: behaviors/sign-out.md
+      - Storage caching: behaviors/storage.md
+      - Applying Realtime events: behaviors/realtime.md
   - Reference:
       - Supported features: reference/supported-features.md
       - Configuration: reference/configuration.md

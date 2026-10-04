@@ -142,7 +142,7 @@ else goes to the server as supabase-kt sends it:
 - **RPC.** `supabase.offline.rpc` is network only: a function may change data, so it is neither
   cached nor queued.
 - **Realtime, Auth and Functions** are supabase-kt's alone. Feed Realtime's records into the cache
-  with `applyServerRecord`; see [Applying Realtime events](../behaviours/realtime.md).
+  with `applyServerRecord`; see [Applying Realtime events](../behaviors/realtime.md).
 - **Storage writes.** Uploads, updates, deletes, moves and copies are online only, and offline
   they fail as in supabase-kt.
 - **Reads of another shape.** `single()`, a `count`, `head`, `csv()`, `geojson()`, `stripNulls()`
@@ -151,14 +151,14 @@ else goes to the server as supabase-kt sends it:
 
 The full table is [Supported features](../reference/supported-features.md).
 
-## Behaviour to expect
+## Behavior to expect
 
 - **`select` falls back by default.** Its strategy is `NetworkFirst`: online it reads as
   supabase-kt does; offline it serves the cached rows instead of throwing.
 - **Writes keep their order.** A write made while an earlier one of the same user waits is queued
   behind it, online too, and returns `Queued`. It is sent by the library a moment later.
 - **A write refused on replay is not thrown.** A queued write the server refuses later goes to
-  the rejected list for your app to show; see [Conflicts and failures](../behaviours/failures.md).
+  the rejected list for your app to show; see [Conflicts and failures](../behaviors/failures.md).
 - **The client holds a database.** One client per process, and `clearLocalData()` on sign-out.
 
 ## Checklist

@@ -80,10 +80,10 @@ A read of a shape the cache does not hold (`single()`, a `count`, `csv()`, …) 
 answer once, with `Idle`, and completes; offline it fails, and under `CacheOnly` it fails at once
 with `CacheMissException`.
 
-## Behaviour matrix
+## Behavior matrix
 
 Facts about the engine, one row per condition; the conditions are those of the
-[one-shot matrix](read-strategies.md#behaviour-matrix). Each cell names the test that pins it.
+[one-shot matrix](read-strategies.md#behavior-matrix). Each cell names the test that pins it.
 
 | Condition | `CacheFirstThenNetwork` | `NetworkFirstThenCache` | `CacheOnly` |
 |---|---|---|---|
@@ -98,7 +98,7 @@ A server's own error (4xx or 5xx) is a refresh failure for `CacheFirstThenNetwor
 <small>`CacheFirstWithParallelRefreshTest.refresh_failure_does_not_terminate_flow`,
 `NetworkFirstThenCacheFallbackTest.with_a_warm_cache_a_servers_own_error_still_fails_it`</small>
 
-A read of a shape the cache cannot hold (see the [one-shot matrix](read-strategies.md#behaviour-matrix))
+A read of a shape the cache cannot hold (see the [one-shot matrix](read-strategies.md#behavior-matrix))
 emits the network's answer once, `Idle`, and completes; offline it fails. Under `CacheOnly` it
 fails at once with `CacheMissException` and sends nothing.
 <small>`ReadShapeTest.a_reactive_read_of_each_shape_emits_the_network_answer_once`,

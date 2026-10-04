@@ -2,7 +2,7 @@
 
 This page describes supabase-offline-kt as 0.1.0 ships it: the public API in full, how the engine
 behind it works, the decisions that shaped both, and what the library promises. The
-[Behaviours](../behaviours/index.md) pages hold the case-by-case tables; this page is the map.
+[Behaviours](../behaviors/index.md) pages hold the case-by-case tables; this page is the map.
 
 ## What it is
 

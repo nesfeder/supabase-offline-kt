@@ -101,10 +101,10 @@ The bound, 256 MiB by default, is `fileCacheSizeBytes`; see
 [Cache size and eviction](eviction.md#the-file-cache). Where the files live is on
 [On-device data](../reference/on-device-data.md).
 
-## Behaviour matrix
+## Behavior matrix
 
 Facts about the engine; one row per condition, the conditions those of the
-[one-shot read matrix](read-strategies.md#behaviour-matrix), with warm and cold saying whether the
+[one-shot read matrix](read-strategies.md#behavior-matrix), with warm and cold saying whether the
 object is cached. Each cell names the test that pins it. Writes are `upload`, `update`, `delete`,
 `move`, `copy` and the resumable and signed-URL uploads.
 

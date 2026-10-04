@@ -8,7 +8,7 @@ What happens to an insert, upsert, update or delete when the device is online, w
 ## Mutation strategies
 
 Facts about the engine as it is, one row per condition; the conditions are those of the
-[one-shot read matrix](read-strategies.md#behaviour-matrix), where warm and cold say whether the
+[one-shot read matrix](read-strategies.md#behavior-matrix), where warm and cold say whether the
 queries a write touches are cached. Each cell names the test that pins it.
 
 | Condition | `OnlineOnly` | `QueueIfOffline` (default) |

@@ -46,7 +46,7 @@ An `OnlineOnly` write is not patched in: the list changes when it is fetched aga
 The library evaluates `eq`, `neq`, `in` and `is`, with Postgres's rules for nulls. Any other
 condition, and any comparison whose answer depends on the column's type, is unknown: unknown
 admits a new row into a list, so your own row is never hidden, and never lets a queued UPDATE or
-DELETE touch a row. A row is recognised by the table's primary key, `id` unless you set another
+DELETE touch a row. A row is recognized by the table's primary key, `id` unless you set another
 with `primaryKey` (see [Configuration](../reference/configuration.md#primarykeys)).
 
 ## Limits

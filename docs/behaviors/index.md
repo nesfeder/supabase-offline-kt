@@ -5,7 +5,7 @@ not sent yet, and the files you downloaded. A read is answered by the server or 
 answers, as its strategy says, with the unsent writes laid over it; a write is saved first and
 sent when nothing waits ahead of it.
 
-The other Behaviours pages build on this one. Each opens with its rule, then shows it, then lists
+The other Behaviors pages build on this one. Each opens with its rule, then shows it, then lists
 the edge cases; the tables at their ends name the test that pins each fact.
 
 ## The three local stores
