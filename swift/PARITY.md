@@ -21,7 +21,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `init(supabaseURL:supabaseKey:config:)` | `createSupabaseClient(supabaseUrl, supabaseKey) { install(Offline) { … } }` | An initializer for the plugin install; `URL` for the URL string |
 | `close()` | `close()` | Same |
 | `SupabaseOfflineClient.Config` | `Offline.Config` | Same |
-| `Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:autoSync:primaryKeys:logLevel:)` | the `install(Offline) { … }` block | A memberwise initializer with defaults for a configuration block |
+| `Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:logLevel:)` | the `install(Offline) { … }` block | A memberwise initializer with defaults for a configuration block |
 | `Config.defaultSchema` | supabase-kt `Postgrest.Config.defaultSchema` | Same. Swift has no PostgREST plugin, so the setting lives here |
 | `Config.accessToken` | supabase-kt `SupabaseClientBuilder.accessToken` | Same; an `async` closure for a `suspend` lambda |
 | `Config.dataDirectory` | `Offline.Config.dataDirectory` | Same; `URL?` for a path string. The default differs by platform convention: Application Support/SupabaseOffline here |
@@ -30,6 +30,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `SupabaseOfflineClient.CacheSize` | `Long` with `Offline.CACHE_SIZE_UNLIMITED` | An enum is Swift's form of a number with a sentinel |
 | `CacheSize.bytes(_:)` | the `Long` value | As above |
 | `CacheSize.unlimited` | `Offline.CACHE_SIZE_UNLIMITED` | A case for the `-1` sentinel |
+| `Config.networkAvailability` | `Offline.Config.networkAvailability` | Same; an `AsyncStream<Bool>?` for a `Flow<Boolean>?`. `nil` is the system's path monitor in both. A stream is read by one client, where a cold `Flow` can be collected by several |
 | `Config.autoSync` | `Offline.Config.autoSync` | Same |
 | `Config.primaryKeys` | `Offline.Config.primaryKeys`, `primaryKey(table, vararg columns)` | Same; a dictionary literal for the DSL helper |
 | `Config.logLevel` | supabase-kt `logLevel` (each plugin's `MainConfig.logLevel`) | Same. Kotlin's `null` means the client's own level; Swift has no such client, so it defaults to `.warning` |
