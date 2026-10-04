@@ -49,7 +49,12 @@ extension OfflineError {
         case .decoding: (code, describesTheCore) = (.decoding, true)
         default: (code, describesTheCore) = (.unexpected, true)
         }
-        let message = describesTheCore ? redactingRuntimeNames(rawMessage) : rawMessage
+        let message: String
+        if code == .syncFailed && httpStatus == nil && !isConnectivityFailure {
+            message = localSyncFailureMessage
+        } else {
+            message = describesTheCore ? redactingRuntimeNames(rawMessage) : rawMessage
+        }
         let serverError = httpStatus.map {
             ServerError(status: $0, code: serverCode, message: message, details: details, hint: hint)
         }
@@ -60,4 +65,8 @@ extension OfflineError {
             isNetworkOrConnectivityFailure: isConnectivityFailure || code == .connectivity
         )
     }
+
+    /// The message of a sync pass that a failure on the device stopped, neither the server's nor
+    /// the network's: the core's own text for it names the failure's class.
+    static let localSyncFailureMessage = "A failure on this device stopped the sync pass; the queued writes stay queued for a later pass"
 }

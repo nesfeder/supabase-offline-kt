@@ -104,6 +104,28 @@ struct ErrorMappingTests {
         #expect((refusedSync as? OfflineError)?.serverError?.code == "42501")
     }
 
+    @Test func aSyncStoppedOnTheDeviceSaysSoInThePackagesOwnWords() throws {
+        // Given a pass stopped by a failure that is neither the server's nor the network's, whose
+        // core text names the failure's class
+        let raw = "A failure (AccessTokenException) stopped the pass; the queued writes stay queued for a later pass"
+
+        // When
+        let thrown = OfflineError.thrown(
+            kind: .syncFailed, message: raw, httpStatus: nil, serverCode: nil, details: nil, hint: nil,
+            isConnectivityFailure: false
+        )
+
+        // Then
+        let error = try #require(thrown as? OfflineError)
+        #expect(error.code == .syncFailed)
+        #expect(error.message == OfflineError.localSyncFailureMessage)
+        #expect(error.serverError == nil)
+        #expect(!error.isNetworkOrConnectivityFailure)
+        #expect(error.message.firstMatch(of: /[A-Z][A-Za-z]*(Exception|Error)\b/) == nil, "\(error.message)")
+        #expect(error.message.firstMatch(of: /\b[a-z]+\.[a-z]+\./) == nil, "\(error.message)")
+        #expect(error.description.firstMatch(of: /[A-Z][A-Za-z]*(Exception|Error)\b/) == nil, "\(error.description)")
+    }
+
     @Test func aMessageNamesNoRuntimeUnderThePackage() throws {
         // When
         let thrown = OfflineError.thrown(
