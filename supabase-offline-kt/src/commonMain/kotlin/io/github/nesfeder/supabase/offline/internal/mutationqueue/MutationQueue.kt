@@ -492,6 +492,8 @@ internal class MutationQueue(
                 } else {
                     null
                 }
+            // Removed already, as an accepted head write is under its table's readers' lock
+            if (touched.isEmpty() && rejected == null) return@withLock
             mutationDao.runInTransaction {
                 idSet.forEach { id -> mutationDao.deleteById(id) }
                 rejected?.let { (row, _) -> queryCacheDao.upsert(row) }

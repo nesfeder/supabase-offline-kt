@@ -273,7 +273,9 @@ internal class QueryOverlay(
             // change in between is read too
             emit(reader.read(alongside))
             merge(
-                    queryCacheDao.observe(table, cacheKey).map {},
+                    // Room tells every payload's readers of any payload's write: only a change of
+                    // this one is a reason to read again
+                    queryCacheDao.observe(table, cacheKey).distinctUntilChanged().map {},
                     mutationQueue.mutationChangesOf(table),
                     identityChanges.map {},
                     alongside.map {},
