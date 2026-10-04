@@ -123,7 +123,7 @@ class RejectedMutationListTest {
             mutationDao.insert(
                 MutationRow(
                     table = TABLE,
-                    operation = MutationOperation.INSERT,
+                    operation = MutationOperation.INSERT.storedName,
                     bodyJson = "{broken",
                     filterJson = null,
                     createdAtMs = 0L,
@@ -148,7 +148,7 @@ class RejectedMutationListTest {
         mutationDao.insert(
             MutationRow(
                 table = TABLE,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"done":true}""",
                 filterJson = null,
                 createdAtMs = 0L,
@@ -170,7 +170,7 @@ class RejectedMutationListTest {
         mutationDao.insert(
             MutationRow(
                 table = TABLE,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"done":true}""",
                 filterJson = "{not a filter",
                 createdAtMs = 0L,
@@ -179,7 +179,7 @@ class RejectedMutationListTest {
         mutationDao.insert(
             MutationRow(
                 table = TABLE,
-                operation = MutationOperation.INSERT,
+                operation = MutationOperation.INSERT.storedName,
                 bodyJson = """[{"id":"t1"}]""",
                 filterJson = "{not a filter",
                 createdAtMs = 0L,

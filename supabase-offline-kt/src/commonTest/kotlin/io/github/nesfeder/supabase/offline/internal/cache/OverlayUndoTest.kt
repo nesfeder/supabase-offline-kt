@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.cache
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
@@ -101,7 +102,7 @@ class OverlayUndoTest {
             MutationRow(
                 id = 1,
                 table = TABLE,
-                operation = MutationOperation.INSERT,
+                operation = MutationOperation.INSERT.storedName,
                 bodyJson = """[{"list":"A"},{"list":"A"},{"id":5,"list":"A"}]""",
                 filterJson = null,
                 createdAtMs = 1,
@@ -110,7 +111,7 @@ class OverlayUndoTest {
             MutationRow(
                 id = 2,
                 table = TABLE,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"list":"B"}""",
                 filterJson = byColumn("id", "eq", "2"),
                 createdAtMs = 2,
@@ -175,7 +176,7 @@ class OverlayUndoTest {
                 MutationRow(
                     id = id,
                     table = TABLE,
-                    operation = MutationOperation.INSERT,
+                    operation = MutationOperation.INSERT.storedName,
                     bodyJson =
                         JsonArray(List(nextInt(1, 4)) { row(nextInt(1, 7), list()) }).toString(),
                     filterJson = null,
@@ -185,7 +186,7 @@ class OverlayUndoTest {
                 MutationRow(
                     id = id,
                     table = TABLE,
-                    operation = MutationOperation.UPSERT,
+                    operation = MutationOperation.UPSERT.storedName,
                     bodyJson =
                         JsonArray(List(nextInt(1, 4)) { row(nextInt(1, 7), list()) }).toString(),
                     filterJson = null,
@@ -195,7 +196,7 @@ class OverlayUndoTest {
                 MutationRow(
                     id = id,
                     table = TABLE,
-                    operation = MutationOperation.UPDATE,
+                    operation = MutationOperation.UPDATE.storedName,
                     bodyJson = """{"list":"${list()}"}""",
                     filterJson =
                         if (nextBoolean()) byColumn("id", "eq", nextInt(1, 7).toString())
@@ -206,7 +207,7 @@ class OverlayUndoTest {
                 MutationRow(
                     id = id,
                     table = TABLE,
-                    operation = MutationOperation.DELETE,
+                    operation = MutationOperation.DELETE.storedName,
                     bodyJson = "{}",
                     filterJson = byColumn("id", "eq", nextInt(1, 7).toString()),
                     createdAtMs = id,

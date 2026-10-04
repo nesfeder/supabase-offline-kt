@@ -920,15 +920,15 @@ The database is Room schema version 1, the one 0.1.0 ships, identity hash
 **What is `TEXT`, and why.** `payload` is the JSON array PostgREST answered, kept as text because a
 cached read is served back as a `PostgrestResult` of the same shape, and the overlay parses it once
 per change. `body_json` and `filter_json` are the JSON a replay sends and the filter it rebuilds,
-kept as written so a replay sends exactly what the caller made. `operation` is the stored name of
-the `MutationOperation` (`INSERT`, `UPSERT`, `UPDATE`, `DELETE`), converted by Room, a format pinned
-by tests. The engine's own records (the rejected list, the cache owner, each query's shape) are JSON
-text in reserved rows of `object_cache`, under a table name 94 bytes long: Postgres truncates
-identifiers at 63 bytes, so no table can be named that, and `from()` refuses it. A reserved row is
-never evicted, counted, read as a query or overlaid. `localPath` records where a file was written,
-but a file's place is always derived from its bucket and path; the recorded one is read only to
-clean up a file an older mapping left. A schema change after 0.1.0 is a new version with a migration
-that keeps `mutation_cache`'s rows.
+kept as written so a replay sends exactly what the caller made. `operation` is the stored word
+(`INSERT`, `UPSERT`, `UPDATE`, `DELETE`), a format pinned by tests. The engine's own records (the
+rejected list, the cache owner, each query's shape) are JSON text in reserved rows of
+`object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63 bytes, so no
+table can be named that, and `from()` refuses it. A reserved row is never evicted, counted, read as
+a query or overlaid. `localPath` records where a file was written, but a file's place is always
+derived from its bucket and path; the recorded one is read only to clean up a file an older mapping
+left. A schema change after 0.1.0 is a new version with a migration that keeps `mutation_cache`'s
+rows.
 
 ## Decisions
 
@@ -992,7 +992,7 @@ What the library promises, each with the tests that pin it:
 | --- | --- |
 | A user's queued writes are sent in the order they were made, across tables, and none overtakes an earlier one of the same user. The one exception is `syncPendingMutations(table)`, which sends that table's writes ahead of earlier ones in other tables, holding back only a `403` or `409` there. `OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so they go around the queue. | `WriteAheadOrderTest`, `MutationQueueReplayOrderTest`, `OnlineWriteJoinsQueueTest`, `HeadSendTest` |
 | With Auth installed, a queued write is sent with its owner's token or not at all. A PostgREST configured with its own `jwtToken` is not checked. | `ReplayTokenBindingTest`, `ReplayOwnerCheckTest`, `PerIdentityQueueTest` |
-| No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest` |
+| No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |

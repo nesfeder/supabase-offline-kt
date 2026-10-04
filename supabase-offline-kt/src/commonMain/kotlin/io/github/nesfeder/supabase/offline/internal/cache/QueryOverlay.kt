@@ -11,6 +11,7 @@ import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -373,7 +374,7 @@ internal class QueryOverlay(
     ): Set<List<String>>? {
         val keys = LinkedHashSet<List<String>>()
         for (mutation in mutations) {
-            if (mutation.operation != MutationOperation.UPSERT) return null
+            if (mutation.knownOperation != MutationOperation.UPSERT) return null
             if (conflictColumnsOf(mutation) != keyColumns) return null
             upsertRowsOf(mutation, json).forEach { row -> keyOf(row, keyColumns)?.let(keys::add) }
         }
@@ -485,7 +486,7 @@ internal class QueryOverlay(
         keyColumns: List<String>,
         ownKeys: () -> Set<List<String>>,
     ): Boolean =
-        when (mutation.operation) {
+        when (mutation.knownOperation) {
             // A row the query holds merges there; one it excludes on what the upsert sets stays
             // out, whatever row it merges with
             MutationOperation.UPSERT -> {
@@ -594,7 +595,7 @@ internal class QueryOverlay(
         if (keyColumns.isEmpty()) return null
         val keys = HashMap<Long, List<String>>()
         val named = writes.map { write ->
-            if (write.operation != MutationOperation.UPDATE) return null
+            if (write.knownOperation != MutationOperation.UPDATE) return null
             val filter = batch.filterOf(write) ?: return null
             keys[write.id] = keyNamedBy(filter, keyColumns) ?: return null
             filter.conditions.associate { condition -> condition.column to condition.value }

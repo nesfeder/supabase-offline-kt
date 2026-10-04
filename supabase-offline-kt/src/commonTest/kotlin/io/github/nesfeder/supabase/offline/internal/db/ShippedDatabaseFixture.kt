@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline.internal.db
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.execSQL
-import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 
 /**
@@ -18,10 +17,10 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
  * written with the raw SQLite driver, never through Room, so nothing the library does today can
  * shape it. `OfflineDatabaseSchemaContinuityTest` checks the copy against the exported schema file.
  *
- * The rows use the stored formats the engine reads back: `operation` names (written as literals and
- * read through Room's converter, so a name changed in code fails here), `filter_json` as the JSON
- * encoding of `FilterDescriptor` (an AND descriptor omits its default `mode`), and booleans as
- * SQLite integers. The unsent writes carry no owner, as a write queued with no session model does.
+ * The rows use the stored formats the engine reads back: `operation` strings (written as literals,
+ * so the file does not follow the library's constants), `filter_json` as the JSON encoding of
+ * `FilterDescriptor` (an AND descriptor omits its default `mode`), and booleans as SQLite integers.
+ * The unsent writes carry no owner, as a write queued with no session model does.
  */
 internal object ShippedDatabaseFixture {
 
@@ -138,7 +137,7 @@ internal object ShippedDatabaseFixture {
             MutationRow(
                 id = 1,
                 table = "todos",
-                operation = storedOperation("INSERT"),
+                operation = "INSERT",
                 bodyJson = """[{"id":3,"title":"Water the plants"}]""",
                 filterJson = null,
                 createdAtMs = 1_727_000_001_000,
@@ -151,7 +150,7 @@ internal object ShippedDatabaseFixture {
             MutationRow(
                 id = 2,
                 table = "list_members",
-                operation = storedOperation("UPSERT"),
+                operation = "UPSERT",
                 bodyJson = """[{"list_id":"l-1","user_id":"u-2","role":"editor"}]""",
                 filterJson = null,
                 createdAtMs = 1_727_000_002_000,
@@ -163,7 +162,7 @@ internal object ShippedDatabaseFixture {
             MutationRow(
                 id = 3,
                 table = "todos",
-                operation = storedOperation("UPDATE"),
+                operation = "UPDATE",
                 bodyJson = """{"title":"Walk the dog twice","done":true}""",
                 filterJson = UPDATE_FILTER_JSON,
                 createdAtMs = 1_727_000_003_000,
@@ -175,7 +174,7 @@ internal object ShippedDatabaseFixture {
             MutationRow(
                 id = 4,
                 table = "todos",
-                operation = storedOperation("DELETE"),
+                operation = "DELETE",
                 bodyJson = "{}",
                 filterJson = DELETE_FILTER_JSON,
                 createdAtMs = 1_727_000_004_000,
@@ -187,7 +186,7 @@ internal object ShippedDatabaseFixture {
             MutationRow(
                 id = 5,
                 table = "todos",
-                operation = storedOperation("INSERT"),
+                operation = "INSERT",
                 bodyJson = """[{"id":4,"title":"Already sent"}]""",
                 filterJson = null,
                 createdAtMs = 1_727_000_000_900,
@@ -236,7 +235,7 @@ internal object ShippedDatabaseFixture {
                         "created_at_ms, synced_at_ms, default_to_null, on_conflict, ignore_duplicates, " +
                         "owner, sync_sequence, send_unconfirmed) VALUES (${row.id}, " +
                         "${sql(row.table)}, " +
-                        "${sql(storedNameOf(row.operation))}, ${sql(row.bodyJson)}, ${sql(row.filterJson)}, " +
+                        "${sql(row.operation)}, ${sql(row.bodyJson)}, ${sql(row.filterJson)}, " +
                         "${row.createdAtMs}, ${row.syncedAtMs ?: "NULL"}, ${sql(row.defaultToNull)}, " +
                         "${sql(row.onConflict)}, ${sql(row.ignoreDuplicates)}, ${sql(row.owner)}, " +
                         "${row.syncSequence ?: "NULL"}, ${if (row.sendUnconfirmed) 1 else 0})"
@@ -247,17 +246,6 @@ internal object ShippedDatabaseFixture {
             connection.close()
         }
     }
-
-    /**
-     * The operation the `operation` column's [storedName] reads back as, through Room's converter:
-     * a literal no longer stored under that name fails here.
-     */
-    private fun storedOperation(storedName: String): MutationOperation =
-        MutationOperationConverter().operationStoredAs(storedName)
-
-    /** The name Room's converter stores [operation] under. */
-    private fun storedNameOf(operation: MutationOperation): String =
-        MutationOperationConverter().storedNameOf(operation)
 
     /** Reads `PRAGMA user_version` from the file at [path] with the raw [driver]. */
     fun readUserVersion(path: String, driver: SQLiteDriver = defaultSQLiteDriver()): Long =

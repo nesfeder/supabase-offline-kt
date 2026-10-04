@@ -246,10 +246,9 @@ release.
   `io.github.nesfeder.supabase.offline.internal`. No public declaration, stored name or stored
   format changed. The exported Room schema records one field's new Kotlin name, `cacheKey`; its
   column is still `signature`, and the schema's identity hash is unchanged.
-- The engine's internal store is the set of components the client builds itself, and a queued
-  write's operation is stored through a Room type converter. No public declaration, stored name or
-  stored format changed: the `operation` column holds the same four names, and the exported Room
-  schema and its identity hash are unchanged.
+- The engine's internal store is the set of components the client builds itself. No public
+  declaration, stored name or stored format changed: the exported Room schema and its identity hash
+  are unchanged.
 
 ### Deprecated
 

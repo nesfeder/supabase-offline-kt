@@ -824,7 +824,9 @@ internal class OfflineTable(
 
     /** The queued write [row] as the caller sees it in [MutationOutcome.Queued]. */
     private fun pendingMutationOf(row: MutationRow): PendingMutation =
-        row.toPendingMutation(json, primaryKeys)
+        checkNotNull(row.toPendingMutation(json, primaryKeys)) {
+            "the queue stored an operation it cannot name"
+        }
 
     private fun preferResponseForCache(
         requestBody: JsonArray,

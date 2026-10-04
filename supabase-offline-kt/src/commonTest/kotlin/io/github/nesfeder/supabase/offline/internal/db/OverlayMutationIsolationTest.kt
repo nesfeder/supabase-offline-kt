@@ -149,7 +149,7 @@ class OverlayMutationIsolationTest {
         MutationRow(
             id = id,
             table = "todos",
-            operation = operation,
+            operation = operation.storedName,
             bodyJson = body,
             filterJson = filter?.let { encodeFilter(it, EngineJson) },
             createdAtMs = id,

@@ -6,6 +6,7 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
@@ -160,7 +161,7 @@ internal fun rowsThatMayMatter(
     val uuidColumns = keyColumns.toSet()
     val filters =
         mutations
-            .filter { mutation -> mutation.operation == MutationOperation.UPDATE }
+            .filter { mutation -> mutation.knownOperation == MutationOperation.UPDATE }
             .mapNotNull { mutation -> decodeFilterOrNull(mutation.filterJson, json) }
             .map { filter -> RowFilter(filter, uuidColumns) }
             .filter { filter -> unknownMatters || filter.canMatch }
@@ -169,7 +170,7 @@ internal fun rowsThatMayMatter(
     // The keys each set of conflict columns upserts
     val upserted = HashMap<List<String>, HashSet<List<String>>>()
     mutations
-        .filter { mutation -> mutation.operation == MutationOperation.UPSERT }
+        .filter { mutation -> mutation.knownOperation == MutationOperation.UPSERT }
         .forEach { mutation ->
             val columns = conflictColumnsOf(mutation, primaryKeys)
             val keys = upserted.getOrPut(columns) { HashSet() }
@@ -201,7 +202,7 @@ internal fun mutationsThatReach(
     val read = HashSet<String>()
     var readsEveryColumn = false
     fun noteWhatItReads(mutation: MutationRow) {
-        when (mutation.operation) {
+        when (mutation.knownOperation) {
             MutationOperation.UPSERT ->
                 conflictColumnsOf(mutation, primaryKeys).forEach { column ->
                     read += jsonNameOf(column)
@@ -212,14 +213,15 @@ internal fun mutationsThatReach(
                     else readsEveryColumn = true
                 }
             MutationOperation.INSERT,
-            MutationOperation.DELETE -> Unit
+            MutationOperation.DELETE,
+            null -> Unit
         }
     }
     reaching.forEach(::noteWhatItReads)
     // Both change rows held aside: an UPSERT merges into the one with its key
     var rest = mutations.filter { mutation ->
-        (mutation.operation == MutationOperation.UPDATE ||
-            mutation.operation == MutationOperation.UPSERT) && mutation !in reaching
+        (mutation.knownOperation == MutationOperation.UPDATE ||
+            mutation.knownOperation == MutationOperation.UPSERT) && mutation !in reaching
     }
     while (rest.isNotEmpty()) {
         // Read without parsing: a column the body sets appears as its quoted name

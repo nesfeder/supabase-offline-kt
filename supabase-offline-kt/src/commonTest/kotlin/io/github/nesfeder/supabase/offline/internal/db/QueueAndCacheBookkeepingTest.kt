@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
-import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
@@ -207,7 +206,7 @@ class QueueAndCacheBookkeepingTest {
             MutationRow(
                 id = 1,
                 table = TABLE,
-                operation = MutationOperation.INSERT,
+                operation = "INSERT",
                 bodyJson = """[{"id":1}]""",
                 filterJson = ID_FILTER_JSON,
                 createdAtMs = 1_000L,
@@ -238,7 +237,7 @@ class QueueAndCacheBookkeepingTest {
 
         // Then
         val row = mutationDao.inserted.single()
-        assertEquals("UPSERT", row.operation.storedName)
+        assertEquals("UPSERT", row.operation)
         assertEquals("id", row.onConflict)
         assertEquals(true, row.ignoreDuplicates)
         assertEquals(false, row.defaultToNull)
@@ -274,10 +273,10 @@ class QueueAndCacheBookkeepingTest {
         // Then — an UPDATE carries its body and filter; a DELETE an empty object body and its
         // filter
         val (update, delete) = mutationDao.inserted
-        assertEquals("UPDATE", update.operation.storedName)
+        assertEquals("UPDATE", update.operation)
         assertEquals("""{"name":"X"}""", update.bodyJson)
         assertEquals(ID_FILTER_JSON, update.filterJson)
-        assertEquals("DELETE", delete.operation.storedName)
+        assertEquals("DELETE", delete.operation)
         assertEquals("{}", delete.bodyJson)
         assertEquals(ID_FILTER_JSON, delete.filterJson)
     }

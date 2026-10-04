@@ -16,6 +16,7 @@ import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.inTransaction
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
 import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
@@ -212,7 +213,7 @@ internal class MutationQueue(
             val row =
                 MutationRow(
                     table = table,
-                    operation = operation,
+                    operation = operation.storedName,
                     bodyJson = bodyJson,
                     filterJson = filter?.let { encodeFilter(it, json) },
                     createdAtMs = nowMillis(),
@@ -515,7 +516,7 @@ internal class MutationQueue(
             StoredRejection(
                 id = mutation.id,
                 table = mutation.table,
-                operation = mutation.operation.storedName,
+                operation = mutation.operation,
                 bodyJson = mutation.bodyJson,
                 filterJson = mutation.filterJson,
                 createdAtMs = mutation.createdAtMs,
@@ -735,7 +736,7 @@ internal class MutationQueue(
      * whose replay can take rows already on the server as its own.
      */
     private fun isKeyedInsert(mutation: MutationRow): Boolean {
-        if (mutation.operation != MutationOperation.INSERT) return false
+        if (mutation.knownOperation != MutationOperation.INSERT) return false
         val body =
             try {
                 json.parseToJsonElement(mutation.bodyJson) as? JsonArray

@@ -10,7 +10,6 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
-import io.github.nesfeder.supabase.offline.internal.db.mutationOperationStoredAs
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -103,14 +102,13 @@ internal data class StoredRejection(
      *
      * @param createdAtMs When it is re-queued.
      * @param owner The identity it is re-queued for, or `null` to record none.
-     * @return A pending row, or `null` when the body was not kept or the operation is one no build
-     *   writes.
+     * @return A pending row, or `null` when the body was not kept.
      */
     fun toRequeuedRow(createdAtMs: Long, owner: String?): MutationRow? {
         if (bodyOmittedChars != null) return null
         return MutationRow(
             table = table,
-            operation = mutationOperationStoredAs(operation) ?: return null,
+            operation = operation,
             bodyJson = bodyJson,
             filterJson = filterJson,
             createdAtMs = createdAtMs,

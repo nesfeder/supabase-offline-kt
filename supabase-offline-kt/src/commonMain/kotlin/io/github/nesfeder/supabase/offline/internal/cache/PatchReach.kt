@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
@@ -82,7 +83,7 @@ private fun mayLeaveWrong(
     keyed: KeyedUpdates?,
     otherByKey: Lazy<Map<List<String>?, List<JsonObject>>?>,
 ): Boolean =
-    when (write.operation) {
+    when (write.knownOperation) {
         MutationOperation.UPDATE -> {
             val key = keyed?.keys?.get(write.id)
             if (key != null)

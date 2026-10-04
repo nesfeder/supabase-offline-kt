@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.cache
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -258,11 +259,13 @@ internal class MutationOverlay(
         }
 
         fun overlay(mutation: MutationRow) {
-            when (mutation.operation) {
+            when (mutation.knownOperation) {
                 MutationOperation.INSERT -> insert(mutation)
                 MutationOperation.UPSERT -> upsert(mutation)
                 MutationOperation.UPDATE -> update(mutation)
                 MutationOperation.DELETE -> delete(mutation)
+                // An operation this build does not write changes no row; a pass refuses it
+                null -> Unit
             }
         }
 

@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
@@ -30,7 +31,7 @@ class UuidKeyCaseTest {
     private fun mutation(operation: MutationOperation, body: String, filter: String? = null) =
         MutationRow(
             table = TABLE,
-            operation = operation,
+            operation = operation.storedName,
             bodyJson = body,
             filterJson = filter,
             createdAtMs = 0L,

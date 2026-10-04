@@ -112,7 +112,7 @@ class MutationQueueReplayerLoggingTest {
             mutationDao.insert(
                 MutationRow(
                     table = TABLE,
-                    operation = MutationOperation.INSERT,
+                    operation = MutationOperation.INSERT.storedName,
                     bodyJson = "not-json $PRIVATE_VALUE",
                     filterJson = null,
                     createdAtMs = 0L,

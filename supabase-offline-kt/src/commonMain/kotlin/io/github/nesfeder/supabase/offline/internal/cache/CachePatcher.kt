@@ -7,8 +7,10 @@ import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
 import io.github.nesfeder.supabase.offline.internal.db.staleStampOf
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -88,7 +90,7 @@ internal class CachePatcher(
             MutationRow(
                 id = nextPatchId(),
                 table = table,
-                operation = operation,
+                operation = operation.storedName,
                 bodyJson = bodyJson,
                 filterJson = filterJson,
                 createdAtMs = nowMillis(),
@@ -136,7 +138,7 @@ internal class CachePatcher(
                 MutationRow(
                     id = nextPatchId(),
                     table = table,
-                    operation = MutationOperation.UPDATE,
+                    operation = MutationOperation.UPDATE.storedName,
                     bodyJson = JsonObject(bodyColumns + row).toString(),
                     filterJson = encodeFilter(byKey, json),
                     createdAtMs = nowMillis(),
@@ -235,7 +237,7 @@ internal class CachePatcher(
         shape: QueryShape?,
         batch: PatchWrites,
     ): Boolean =
-        when (write.operation) {
+        when (write.knownOperation) {
             MutationOperation.UPSERT -> true
             MutationOperation.UPDATE ->
                 batch.patchOf(write)?.let { patch -> mayGainRowsBy(patch, shape) } ?: true

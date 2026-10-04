@@ -692,7 +692,7 @@ class KnownRowsPruningTest {
                     }
                 MutationRow(
                     table = TABLE,
-                    operation = MutationOperation.UPDATE,
+                    operation = MutationOperation.UPDATE.storedName,
                     bodyJson = JsonObject(body + row).toString(),
                     filterJson = encodeFilter(FilterDescriptor(conditions = key), EngineJson),
                     createdAtMs = NOW,
@@ -703,7 +703,7 @@ class KnownRowsPruningTest {
         val row =
             MutationRow(
                 table = TABLE,
-                operation = write.operation,
+                operation = write.operation.storedName,
                 bodyJson = write.body,
                 filterJson = write.filter?.let { filter -> encodeFilter(filter, EngineJson) },
                 createdAtMs = NOW,
@@ -714,7 +714,7 @@ class KnownRowsPruningTest {
             )
         store.cachePatcher.patchCachedQueries(
             TABLE,
-            row.operation,
+            write.operation,
             row.bodyJson,
             row.filterJson,
             onConflict = row.onConflict,

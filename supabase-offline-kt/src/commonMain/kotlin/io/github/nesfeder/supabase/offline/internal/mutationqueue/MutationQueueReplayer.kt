@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.isPermanentMutationFailure
@@ -814,7 +815,7 @@ internal class MutationQueueReplayer(
                 "has a filter that can no longer be read",
                 "The queued filter can no longer be read",
             )
-        return when (mutation.operation) {
+        return when (mutation.knownOperation) {
             MutationOperation.INSERT -> {
                 val body =
                     parseJsonArrayOrNull(json, mutation.bodyJson)
@@ -882,6 +883,13 @@ internal class MutationQueueReplayer(
                     false
                 }
             }
+
+            null ->
+                refuse(
+                    mutation,
+                    "has an unknown operation",
+                    "The queued operation is not recognised",
+                )
         }
     }
 

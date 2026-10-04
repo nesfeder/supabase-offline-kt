@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
@@ -93,7 +94,7 @@ class OfflineMutationQueueDecisionTest {
 
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
-        assertEquals(MutationOperation.INSERT, mutationDao.inserted.single().operation)
+        assertEquals(MutationOperation.INSERT.storedName, mutationDao.inserted.single().operation)
     }
 
     @Test
@@ -151,7 +152,7 @@ class OfflineMutationQueueDecisionTest {
         // Then — queued with its onConflict
         assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
-        assertEquals(MutationOperation.UPSERT, queued.operation)
+        assertEquals(MutationOperation.UPSERT.storedName, queued.operation)
         assertEquals("id", queued.onConflict)
     }
 
@@ -210,7 +211,7 @@ class OfflineMutationQueueDecisionTest {
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
-        assertEquals(MutationOperation.UPDATE, queued.operation)
+        assertEquals(MutationOperation.UPDATE.storedName, queued.operation)
         assertEquals(ID_FILTER_JSON, queued.filterJson)
     }
 
@@ -269,7 +270,7 @@ class OfflineMutationQueueDecisionTest {
         // Then
         assertIs<MutationOutcome.Queued>(outcome)
         val queued = mutationDao.inserted.single()
-        assertEquals(MutationOperation.DELETE, queued.operation)
+        assertEquals(MutationOperation.DELETE.storedName, queued.operation)
         assertEquals(ID_FILTER_JSON, queued.filterJson)
     }
 

@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.db.mutationOperationStoredAs
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
@@ -20,8 +21,10 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * @param json The engine's [Json].
  * @param primaryKeys Where the table's key columns come from, for [PendingMutation.rowKeys].
+ * @return The pending mutation, or `null` for a row whose operation no build of the engine writes.
  */
-internal fun MutationRow.toPendingMutation(json: Json, primaryKeys: PrimaryKeys): PendingMutation {
+internal fun MutationRow.toPendingMutation(json: Json, primaryKeys: PrimaryKeys): PendingMutation? {
+    val operation = knownOperation ?: return null
     val body = bodyOf(operation, bodyJson, json)
     return PendingMutation(
         id = id,

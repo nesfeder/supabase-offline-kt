@@ -633,7 +633,7 @@ internal class OfflineClient(
     override fun pendingMutations(table: String?): Flow<List<PendingMutation>> =
         operationGate.callCollecting(
             mutationQueue.shownPendingMutationsFlow(table).map { rows ->
-                rows.map { row -> row.toPendingMutation(EngineJson, primaryKeys) }
+                rows.mapNotNull { row -> row.toPendingMutation(EngineJson, primaryKeys) }
             }
         )
 

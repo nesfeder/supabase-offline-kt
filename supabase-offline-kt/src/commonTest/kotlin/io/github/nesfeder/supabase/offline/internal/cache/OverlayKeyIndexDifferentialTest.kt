@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.cache
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
@@ -57,7 +58,8 @@ class OverlayKeyIndexDifferentialTest {
                     .overlay(rows, known, mutations)
             assertEquals(scanned.text(), indexed.text(), "seed=$seed")
             indexedLookups += mutations.count { mutation ->
-                mutation.operation == MutationOperation.UPSERT || mutation.id in mayAlreadyHold
+                mutation.operation == MutationOperation.UPSERT.storedName ||
+                    mutation.id in mayAlreadyHold
             }
         }
         assertTrue(indexedLookups > SCENARIOS, "too few lookups by key: $indexedLookups")
@@ -89,10 +91,10 @@ class OverlayKeyIndexDifferentialTest {
             held += known
             mutations.forEach { mutation ->
                 when (mutation.operation) {
-                    MutationOperation.INSERT -> insert(mutation)
-                    MutationOperation.UPSERT -> upsert(mutation)
-                    MutationOperation.UPDATE -> update(mutation)
-                    MutationOperation.DELETE -> delete(mutation)
+                    MutationOperation.INSERT.storedName -> insert(mutation)
+                    MutationOperation.UPSERT.storedName -> upsert(mutation)
+                    MutationOperation.UPDATE.storedName -> update(mutation)
+                    MutationOperation.DELETE.storedName -> delete(mutation)
                 }
             }
             return OverlaidRows(visible, held, written)
@@ -225,7 +227,7 @@ class OverlayKeyIndexDifferentialTest {
                 MutationRow(
                     id = id,
                     table = TABLE,
-                    operation = MutationOperation.INSERT,
+                    operation = MutationOperation.INSERT.storedName,
                     bodyJson = JsonArray(List(nextInt(1, 4)) { row() }).toString(),
                     filterJson = null,
                     createdAtMs = id,
@@ -234,7 +236,7 @@ class OverlayKeyIndexDifferentialTest {
                 MutationRow(
                     id = id,
                     table = TABLE,
-                    operation = MutationOperation.UPSERT,
+                    operation = MutationOperation.UPSERT.storedName,
                     bodyJson = JsonArray(List(nextInt(1, 4)) { row() }).toString(),
                     filterJson = null,
                     createdAtMs = id,
@@ -245,7 +247,7 @@ class OverlayKeyIndexDifferentialTest {
                 MutationRow(
                     id = id,
                     table = TABLE,
-                    operation = MutationOperation.UPDATE,
+                    operation = MutationOperation.UPDATE.storedName,
                     bodyJson = """{"list":"${list()}"}""",
                     filterJson =
                         if (nextBoolean()) byColumn("id", "eq", UUID.uppercase())
@@ -256,7 +258,7 @@ class OverlayKeyIndexDifferentialTest {
                 MutationRow(
                     id = id,
                     table = TABLE,
-                    operation = MutationOperation.DELETE,
+                    operation = MutationOperation.DELETE.storedName,
                     bodyJson = "{}",
                     filterJson = byColumn("id", "eq", nextInt(1, 4).toString()),
                     createdAtMs = id,

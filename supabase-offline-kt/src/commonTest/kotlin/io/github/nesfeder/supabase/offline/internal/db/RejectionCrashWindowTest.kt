@@ -42,7 +42,7 @@ class RejectionCrashWindowTest {
             StoredRejection(
                 id = pending.id,
                 table = NOTES,
-                operation = pending.operation.storedName,
+                operation = pending.operation,
                 bodyJson = pending.bodyJson,
                 createdAtMs = 0,
                 rejectedAtMs = 0,

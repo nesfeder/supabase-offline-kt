@@ -357,7 +357,7 @@ class OfflineMutationReplayWireTest {
     ): MutationRow =
         MutationRow(
             table = TABLE,
-            operation = operation,
+            operation = operation.storedName,
             bodyJson = bodyJson,
             filterJson = filterJson,
             createdAtMs = clock++,

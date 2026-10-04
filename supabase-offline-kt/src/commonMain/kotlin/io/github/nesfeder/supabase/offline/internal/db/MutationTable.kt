@@ -11,7 +11,6 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Transaction
-import androidx.room.TypeConverter
 import io.github.nesfeder.supabase.offline.MutationOperation
 import kotlinx.coroutines.flow.Flow
 
@@ -28,8 +27,11 @@ internal data class MutationRow(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     @ColumnInfo(name = "table_name") val table: String,
 
-    /** What the write does; the column holds its [storedName]. */
-    val operation: MutationOperation,
+    /**
+     * What the write does, as the column holds it: a [MutationOperation]'s [storedName]. Read it
+     * through [knownOperation], which is `null` for a name this build does not write.
+     */
+    val operation: String,
 
     /**
      * Raw JSON body string. For INSERT/UPSERT usually a JSON array; for UPDATE a JSON object; for
@@ -293,20 +295,13 @@ internal val MutationOperation.storedName: String
             MutationOperation.DELETE -> "DELETE"
         }
 
-/** The operation stored under [storedName], or `null` for a name no build writes. */
+/** The operation stored under [storedName], or `null` for a name this build does not write. */
 internal fun mutationOperationStoredAs(storedName: String): MutationOperation? =
     MutationOperation.entries.firstOrNull { operation -> operation.storedName == storedName }
 
-/** Room's conversion of the `operation` column, by [storedName]. */
-internal class MutationOperationConverter {
-
-    /** [operation]'s stored name. */
-    @TypeConverter fun storedNameOf(operation: MutationOperation): String = operation.storedName
-
-    /** The operation [storedName] names; a name no build writes is a row that cannot be read. */
-    @TypeConverter
-    fun operationStoredAs(storedName: String): MutationOperation =
-        checkNotNull(mutationOperationStoredAs(storedName)) {
-            "The mutation queue holds an operation this build does not write"
-        }
-}
+/**
+ * What this write does, or `null` when its stored name is not one this build writes: the overlay
+ * skips such a row, and a replay pass refuses it to the rejected list.
+ */
+internal val MutationRow.knownOperation: MutationOperation?
+    get() = mutationOperationStoredAs(operation)

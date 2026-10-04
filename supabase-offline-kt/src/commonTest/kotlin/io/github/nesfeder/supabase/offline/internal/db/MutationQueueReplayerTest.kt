@@ -311,7 +311,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.DELETE,
+                operation = MutationOperation.DELETE.storedName,
                 bodyJson = "{}",
                 filterJson = null,
                 createdAtMs = createdAtCounter++,
@@ -347,7 +347,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"n":"x"}""",
                 filterJson = null,
                 createdAtMs = createdAtCounter++,
@@ -385,7 +385,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"n":"x"}""",
                 filterJson = LOSSY_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -422,7 +422,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.DELETE,
+                operation = MutationOperation.DELETE.storedName,
                 bodyJson = "{}",
                 filterJson = LOSSY_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -460,7 +460,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.DELETE,
+                operation = MutationOperation.DELETE.storedName,
                 bodyJson = "{}",
                 filterJson = EMPTY_CONDITIONS_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -499,7 +499,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.UPDATE,
+                operation = MutationOperation.UPDATE.storedName,
                 bodyJson = """{"n":"x"}""",
                 filterJson = REPLAYABLE_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -537,7 +537,7 @@ class MutationQueueReplayerTest {
         dao.insert(
             MutationRow(
                 table = table,
-                operation = MutationOperation.DELETE,
+                operation = MutationOperation.DELETE.storedName,
                 bodyJson = "{}",
                 filterJson = REPLAYABLE_FILTER_JSON,
                 createdAtMs = createdAtCounter++,
@@ -568,7 +568,7 @@ class MutationQueueReplayerTest {
     private fun insertRow(body: String): MutationRow =
         MutationRow(
             table = table,
-            operation = MutationOperation.INSERT,
+            operation = MutationOperation.INSERT.storedName,
             bodyJson = body,
             filterJson = null,
             createdAtMs = createdAtCounter++,
