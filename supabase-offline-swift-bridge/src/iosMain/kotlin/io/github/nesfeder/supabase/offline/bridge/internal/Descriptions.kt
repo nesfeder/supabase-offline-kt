@@ -176,6 +176,19 @@ internal class RpcDescription(
         request.method = method
         shape.applyTo(request)
     }
+
+    /**
+     * Refuses [arguments] on a call by GET or HEAD: supabase-kt 3.6 reads the method before the
+     * request lambda sets it, so it would send them in a body PostgREST ignores.
+     */
+    fun refuseArgumentsUnlessPost(arguments: String?) {
+        if (arguments != null && method != RpcMethod.POST) {
+            throw InvalidDescriptionException(
+                "A function called by ${method.name} takes no arguments: supabase-kt would send " +
+                    "them in a body the server ignores; call it by POST"
+            )
+        }
+    }
 }
 
 /** [text] as an [RpcDescription]; `method` is `post` (the default), `get` or `head`. */

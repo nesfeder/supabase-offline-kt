@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.TestResult
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import platform.Foundation.NSData
 
 /** The URL every test client is opened against; nothing is ever sent there. */
 const val TEST_URL = "https://fixture.supabase.co"
@@ -213,6 +214,14 @@ class RecordingLogSink(private val failure: (() -> Throwable)? = null) : BridgeL
         recorded.update { it + "$level $tag: $message" }
         failure?.let { throw it() }
     }
+}
+
+/**
+ * An [NSData] that claims [claimedLength] bytes and holds none: a size refusal can be tested
+ * without the memory. Reading its bytes is a test failure.
+ */
+class FakeOversizedData(private val claimedLength: ULong) : NSData() {
+    override fun length(): ULong = claimedLength
 }
 
 /** A clock a test moves. */
