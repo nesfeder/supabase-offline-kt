@@ -157,12 +157,8 @@ interface TaskRepository {
     suspend fun setNetworkEnabled(enabled: Boolean)
 
     /**
-     * Deletes everything this device holds: cached rows and files, queued and refused writes.
-     * Online, the lists are then read again from the server.
-     *
-     * @throws NetworkUnavailableException when that read loses the network, and
-     *   [ServerUnreachableException] when the server does not answer it; the device is cleared
-     *   either way.
+     * Deletes everything this device holds: cached rows and files, queued and refused writes. An
+     * open list then reads its rows again from the server, once the network allows.
      */
     suspend fun clearLocalData()
 

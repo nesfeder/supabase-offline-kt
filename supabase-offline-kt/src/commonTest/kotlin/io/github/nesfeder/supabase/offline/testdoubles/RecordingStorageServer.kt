@@ -59,6 +59,21 @@ internal class RecordingStorageServer {
      */
     var gate: CompletableDeferred<Unit>? = null
 
+    /**
+     * When set, every download is refused with this status and Storage's error body for it, as a
+     * policy (`403`) or a fault (`500`) refuses one; the object stays stored.
+     */
+    var downloadRefusal: HttpStatusCode? = null
+
+    /**
+     * Downloads Storage answers with a redirect: the `bucket/path` key to the `bucket/path` the
+     * `302`'s `Location` names, as a proxy or CDN in front of Storage may.
+     */
+    val redirects: MutableMap<String, String> = mutableMapOf()
+
+    /** When set, each of [redirects] points to plain http, with a page as its body. */
+    var redirectsToPlainHttp: Boolean = false
+
     /** Completed each time a request reaches the server (and before it waits on [gate]). */
     var requestArrived: CompletableDeferred<Unit> = CompletableDeferred()
 
@@ -79,8 +94,26 @@ internal class RecordingStorageServer {
         if (!online) throw IOException("network unreachable")
         val segments =
             request.url.encodedPath.removePrefix("/").split('/').map { it.decodeURLPart() }
+        val redirect =
+            redirects.entries.firstOrNull { (from, _) ->
+                request.url.encodedPath.endsWith("/$from")
+            }
         // storage/v1/<kind...>/<bucket>/<path...>
         when {
+            redirect != null -> {
+                val target = request.url.toString().replace(redirect.key, redirect.value)
+                respond(
+                    content = if (redirectsToPlainHttp) "<html>Moved</html>" else "",
+                    status = HttpStatusCode.Found,
+                    headers =
+                        headersOf(
+                            HttpHeaders.Location,
+                            if (redirectsToPlainHttp) target.replaceFirst("https://", "http://")
+                            else target,
+                        ),
+                )
+            }
+
             segments.take(4) == listOf("storage", "v1", "upload", "resumable") ->
                 resumable(request.method.value, segments.drop(4).firstOrNull(), request)
 
@@ -179,6 +212,15 @@ internal class RecordingStorageServer {
         bucketAndPath: List<String>,
         transform: String?,
     ): HttpResponseData {
+        downloadRefusal?.let { status ->
+            return respond(
+                content =
+                    """{"statusCode":"${status.value}","error":"refused","message":"${status.description}"}""",
+                status = status,
+                headers =
+                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+        }
         val original =
             objects[bucketAndPath.joinToString("/")]
                 ?: return respond(

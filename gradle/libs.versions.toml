@@ -168,6 +168,8 @@ kover-gradlePlugin = { module = "org.jetbrains.kotlinx:kover-gradle-plugin", ver
 # Never used by the build: it is here so Dependabot proposes ktfmt updates.
 ktfmt = { module = "com.facebook:ktfmt", version.ref = "ktfmt" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+# The Swift bridge's HTTP engine (supabase-offline-swift-bridge); nothing published depends on it.
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 mavenPublish-gradlePlugin = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "mavenPublish" }

@@ -2,7 +2,8 @@
 # Copyright (c) 2026 nesfeder
 # SPDX-License-Identifier: MIT
 """Keeps the library from writing to a console. Whole-tree: every run scans every main source set
-of both published modules, so no base commit is needed.
+of both published modules and of the Swift bridge, which ships inside the Swift package, so no base
+commit is needed.
 
 The library reports through its log sink only: supabase-kt's logging, at the level and to the
 processor the app configured. Nothing in shipped code may print, on any path, failures in
@@ -35,7 +36,9 @@ from typing import Iterator, List, Tuple
 from kotlin_source import strip_comments_and_literals
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODULES = ("supabase-offline-kt", "supabase-offline-kt-testing")
+# The published modules, and the Swift bridge: it is not published, but ships inside the Swift
+# package and reports through the app's log sink only.
+MODULES = ("supabase-offline-kt", "supabase-offline-kt-testing", "supabase-offline-swift-bridge")
 
 # (name, pattern) matched against code with comments and literals stripped.
 FORBIDDEN: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
@@ -51,7 +54,7 @@ FORBIDDEN: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
 
 
 def main_source_files(root: str) -> Iterator[str]:
-    """Every Kotlin file of a main source set of both modules, relative to [root]."""
+    """Every Kotlin file of a main source set of every module checked, relative to [root]."""
     for module in MODULES:
         source_root = os.path.join(root, module, "src")
         if not os.path.isdir(source_root):

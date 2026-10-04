@@ -150,6 +150,8 @@ public fun querySnapshot(
  * @param rejected the writes the server refused for good.
  * @param remainingCount the writes still queued.
  * @param alreadyOnServerCount of [syncedCount], the inserts whose rows the server already held.
+ * @param heldBehindOtherTablesCount of [remainingCount], the writes a call for one table held back
+ *   behind an earlier write to another table.
  */
 @OptIn(OfflineInternal::class)
 public fun syncReport(
@@ -157,8 +159,15 @@ public fun syncReport(
     rejected: List<RejectedMutation> = emptyList(),
     remainingCount: Int = 0,
     alreadyOnServerCount: Int = 0,
+    heldBehindOtherTablesCount: Int = 0,
 ): SyncReport =
-    ValueConstructors.syncReport(syncedCount, rejected, remainingCount, alreadyOnServerCount)
+    ValueConstructors.syncReport(
+        syncedCount,
+        rejected,
+        remainingCount,
+        alreadyOnServerCount,
+        heldBehindOtherTablesCount,
+    )
 
 /**
  * Where the library stands with the queue and the network, as [Offline.syncStatus] holds it; every
@@ -178,7 +187,7 @@ public fun syncStatus(
     rejectedMutationCount: Int = 0,
     isSyncing: Boolean = false,
     lastSyncedAt: Instant? = null,
-    lastSyncError: Throwable? = null,
+    lastSyncError: SyncFailedException? = null,
 ): SyncStatus =
     ValueConstructors.syncStatus(
         network,

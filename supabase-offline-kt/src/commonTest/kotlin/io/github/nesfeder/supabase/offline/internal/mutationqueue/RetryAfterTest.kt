@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalCoroutinesApi::class)
+
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.jan.supabase.postgrest.postgrest
@@ -17,6 +19,7 @@ import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -52,6 +55,31 @@ class RetryAfterTest {
         } catch (failure: Exception) {
             failure
         }
+    }
+
+    @Test
+    fun an_edge_does_not_cut_short_the_wait_the_server_asked_for() = runTest {
+        // Given — a pass stopped on a 503 asking for 30 seconds
+        val failure = unavailable("30")
+        val passTimes = mutableListOf<Long>()
+        val automaticReplay =
+            AutomaticReplay(scope = backgroundScope, engineLogger = logger) {
+                passTimes += testScheduler.currentTime
+                SyncReport(0, emptyList(), 1, SyncStop.TransientFailure(failure))
+            }
+        automaticReplay.requestPass()
+        runCurrent()
+
+        // When — the network comes back a second later
+        advanceTimeBy(1.seconds)
+        automaticReplay.requestPassOnEdge()
+        advanceTimeBy(29.seconds - 1.milliseconds)
+        val beforeTheWait = passTimes.size
+        advanceTimeBy(2.milliseconds)
+
+        // Then — the reconnection's pass still waited for what the server asked
+        assertEquals(1, beforeTheWait)
+        assertEquals(listOf(0L, 30_000L), passTimes)
     }
 
     @Test

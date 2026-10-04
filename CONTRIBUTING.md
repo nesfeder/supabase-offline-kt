@@ -232,6 +232,24 @@ published, rewrite the record with `python3 scripts/check-published-artifacts.py
 commit it, and the reviewer reads its diff. A Dependabot update of a dependency the library
 publishes (supabase-kt, Kotlin, Room, androidx.sqlite) needs the same, pushed to its branch.
 
+`supabase-offline-swift-bridge` is not published to Maven Central and has no API record. It builds
+`SupabaseOfflineCore`, the framework the Swift package wraps, on Apple's SQLite, and its contract
+is that framework's Objective-C header, recorded at
+`supabase-offline-swift-bridge/header/SupabaseOfflineCore.h`. CI fails when the linked header
+differs from the record or names a type outside `header/allowed-names.txt`, such as one of the
+library's or supabase-kt's. After an intended change to the bridge, link the framework and record
+the header again:
+
+```bash
+./gradlew :supabase-offline-swift-bridge:linkReleaseFrameworkIosArm64 \
+    -Psupabase.offline.iosSqlite=system
+python3 scripts/check-bridge-header.py --update
+```
+
+The XCFrameworks the Swift package builds against locally come from
+`assembleSupabaseOfflineCoreDebugXCFramework` and `assembleSupabaseOfflineCoreReleaseXCFramework`,
+with the same property.
+
 ## Releasing
 
 Releases are published from GitHub Actions by the Release workflow, which a maintainer starts by

@@ -131,7 +131,7 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
-    fun clearing_local_data_online_reads_the_lists_again_for_a_screen_showing_them() = runTest {
+    fun clearing_local_data_online_the_open_list_reads_the_servers_rows_again() = runTest {
         // Given — a task shown by a list that stays open, and a second one only the server has
         repository.addTask("Made here", notes = null)
         val shown = MutableStateFlow<List<Task>?>(null)
@@ -143,12 +143,10 @@ class OfflineTaskRepositoryTest {
         // When
         repository.clearLocalData()
 
-        // Then — both lists asked of the server again, and the open list shows the server's copy
-        val sentAfter = server.requests.drop(sentBefore)
-        assertTrue("GET /rest/v1/tasks" in sentAfter)
-        assertTrue("GET /rest/v1/task_photos" in sentAfter)
+        // Then — the library asks the server again for the open list, which shows its copy
         val titles = withTimeout(WAIT) { shown.first { it?.size == 2 } }.orEmpty().map { it.title }
         assertEquals(setOf("Made here", "Made elsewhere"), titles.toSet())
+        assertTrue("GET /rest/v1/tasks" in server.requests.drop(sentBefore))
         screen.cancel()
     }
 
@@ -371,14 +369,16 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
-    fun clearing_local_data_says_when_the_lists_cannot_come_back() = runTest {
+    fun clearing_local_data_while_the_server_fails_still_clears_the_device() = runTest {
         // Given — a task saved on the device, and a server that fails
         repository.addTask("Kept on the server", notes = null)
         repository.tasks().awaitValue { it.size == 1 }
         server.isFailing = true
 
-        // When / Then — the clear is done, and the failed read is thrown
-        assertFailsWith<ServerUnreachableException> { repository.clearLocalData() }
+        // When
+        repository.clearLocalData()
+
+        // Then — nothing of it is left on the device
         assertNull(repository.cachedTasks())
     }
 

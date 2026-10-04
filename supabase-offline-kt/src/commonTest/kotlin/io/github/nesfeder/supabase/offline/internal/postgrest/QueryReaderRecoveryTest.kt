@@ -1084,8 +1084,10 @@ class QueryReaderRecoveryTest {
                 "an unattributed empty must never settle the refresh to Idle",
             )
             assertTrue(
-                reads.any { it.refresh is RefreshState.Stalled },
-                "the fast ladder exhausting is surfaced as Stalled, and retrying continues",
+                reads.none { it.refresh is RefreshState.Stalled } &&
+                    reads.last().refresh is RefreshState.Refreshing,
+                "an answer it may not cache is a wait, not a failure: Refreshing, retrying, " +
+                    "never Stalled with the engine's own exception",
             )
 
             // When: the session comes back and the auth-restored edge fires

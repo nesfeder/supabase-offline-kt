@@ -22,9 +22,10 @@ import kotlin.time.Instant
  * @property lastSyncedAt when the current user's queue was last emptied by sending, by a sync pass
  *   or by a write sent at once, by the device's clock; `null` until it happens. Kept in memory
  *   only: a new client starts without it.
- * @property lastSyncError why the last sync pass stopped with writes still queued, as a
- *   [SyncFailedException]; `null` once a later pass runs to the end, sending empties the queue, or
- *   local data is cleared. It carries no row, filter value or token.
+ * @property lastSyncError why the last sync pass stopped with writes still queued: the server's
+ *   [SyncFailedException.httpStatus] and [SyncFailedException.code], or a failure the network
+ *   caused. `null` once a later pass runs to the end, sending empties the queue, or local data is
+ *   cleared. It carries no row, filter value or token.
  */
 @ConsistentCopyVisibility
 public data class SyncStatus
@@ -34,5 +35,5 @@ internal constructor(
     public val rejectedMutationCount: Int,
     public val isSyncing: Boolean,
     public val lastSyncedAt: Instant?,
-    public val lastSyncError: Throwable?,
+    public val lastSyncError: SyncFailedException?,
 )

@@ -38,15 +38,14 @@ class WritesWhileRestoringTest {
 
     private var online = true
     private lateinit var server: RecordingPostgrestServer
-    private val sessions =
-        FakeHeldSessionManager(
-            UserSession(
-                accessToken = testJwt("u-1"),
-                refreshToken = "refresh-token",
-                expiresIn = 3600,
-                tokenType = "bearer",
-            )
+    private val storedSession =
+        UserSession(
+            accessToken = testJwt("u-1"),
+            refreshToken = "refresh-token",
+            expiresIn = 3600,
+            tokenType = "bearer",
         )
+    private val sessions = FakeHeldSessionManager(storedSession)
 
     private fun TestScope.restoringItems(): OfflinePostgrestQueryBuilder {
         val dispatcher = StandardTestDispatcher(testScheduler)
@@ -127,6 +126,20 @@ class WritesWhileRestoringTest {
             "Bearer $TEST_SUPABASE_KEY",
             server.requests.single { request -> request.method == "POST" }.authorization,
         )
+    }
+
+    @Test
+    fun writes_made_while_restoring_read_the_stored_session_once_between_them() = runTest {
+        // Given
+        val items = restoringItems()
+
+        // When — three writes while the session restores
+        repeat(3) { items.insert(ROW) }
+        runCurrent()
+
+        // Then — besides the plugin's own load, one read of the stored session served the client's
+        // reads and all three writes
+        assertEquals(2, sessions.loads)
     }
 
     private fun RecordingPostgrestServer.writes(): Int = requests.count { request ->

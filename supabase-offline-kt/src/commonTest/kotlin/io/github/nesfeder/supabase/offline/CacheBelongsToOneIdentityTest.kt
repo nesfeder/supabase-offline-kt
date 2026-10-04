@@ -123,7 +123,7 @@ class CacheBelongsToOneIdentityTest {
         sessions: SessionManager = MemorySessionManager(),
         restoresStoredSession: Boolean = false,
         responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
-        scrubDatabase: suspend () -> Unit = {},
+        scrubDatabase: suspend () -> Boolean = { true },
         plugins: SupabaseClientBuilder.() -> Unit = {
             install(Auth) {
                 sessionManager = sessions
@@ -442,7 +442,14 @@ class CacheBelongsToOneIdentityTest {
         var scrubs = 0
 
         // When — the client starts and a list is read
-        val client = launchClient(newServer(), scrubDatabase = { scrubs++ })
+        val client =
+            launchClient(
+                newServer(),
+                scrubDatabase = {
+                    scrubs++
+                    true
+                },
+            )
         assertEquals("[]", client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly).data)
         awaitCacheOwner("anonymous")
 

@@ -14,7 +14,12 @@ public sealed interface RefreshState {
     /** No refresh is running or waiting: the last one succeeded, or the read does not refresh. */
     public data object Idle : RefreshState
 
-    /** A refresh is running, or is about to be tried again soon after a failure. */
+    /**
+     * A refresh is running, or is about to be tried again soon after a failure, or waits for a
+     * session that is still settling, which is not a failure. Under
+     * [ResponseTrust.AuthenticatedSessionOnly], a live read of an empty table made signed out or
+     * without Auth stays here, retried at most a minute apart, until a user signs in.
+     */
     public data object Refreshing : RefreshState
 
     /**

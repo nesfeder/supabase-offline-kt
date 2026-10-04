@@ -404,8 +404,10 @@ public final class io/github/nesfeder/supabase/offline/SyncReport {
 	public final fun component2 ()Ljava/util/List;
 	public final fun component3 ()I
 	public final fun component4 ()I
+	public final fun component5 ()I
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAlreadyOnServerCount ()I
+	public final fun getHeldBehindOtherTablesCount ()I
 	public final fun getRejected ()Ljava/util/List;
 	public final fun getRemainingCount ()I
 	public final fun getSyncedCount ()I
@@ -419,9 +421,9 @@ public final class io/github/nesfeder/supabase/offline/SyncStatus {
 	public final fun component3 ()I
 	public final fun component4 ()Z
 	public final fun component5 ()Lkotlin/time/Instant;
-	public final fun component6 ()Ljava/lang/Throwable;
+	public final fun component6 ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
 	public fun equals (Ljava/lang/Object;)Z
-	public final fun getLastSyncError ()Ljava/lang/Throwable;
+	public final fun getLastSyncError ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
 	public final fun getLastSyncedAt ()Lkotlin/time/Instant;
 	public final fun getNetwork ()Lio/github/nesfeder/supabase/offline/NetworkStatus;
 	public final fun getPendingMutationCount ()I

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
@@ -152,24 +153,28 @@ class MutationQueueReplayOrderTest {
     }
 
     @Test
-    fun a_conflict_behind_an_earlier_pending_write_in_another_table_is_held() = runTest {
+    fun a_table_sync_does_not_send_a_write_ahead_of_an_earlier_one_in_another_table() = runTest {
         // Given — the parent task is still queued; only the photo table is synced
         val server =
             FakeRelationalPostgrestServer(
                 foreignKeys = mapOf(PHOTOS to ForeignKey("task_id", TASKS))
             )
         store.mutationQueue.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
-        store.mutationQueue.enqueueInsert(
-            table = PHOTOS,
-            body = rows(row("id" to "p1", "task_id" to "t1")),
-        )
+        val photo =
+            store.mutationQueue.enqueueInsert(
+                table = PHOTOS,
+                body = rows(row("id" to "p1", "task_id" to "t1")),
+            )
         val replayer =
             newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
-        // When — the photo replays first and its foreign key fails with 409
-        replayer.syncTable(table = PHOTOS)
+        // When
+        val report = replayer.sync(table = PHOTOS)
 
-        // Then — the photo is held for a later sweep, not dropped
+        // Then — the photo is held behind its parent without being sent
+        assertEquals(SyncStop.HeldBehindOtherTables(photo), report.stop)
+        assertEquals(1, report.remainingCount)
+        assertEquals(emptyList(), server.recorder.requests.map { it.table })
         assertEquals(
             listOf(TASKS, PHOTOS),
             store.mutationQueue.allPendingMutations().map { it.table },
@@ -178,29 +183,30 @@ class MutationQueueReplayOrderTest {
         // And — the next full sweep delivers both, parent first
         val synced = replayer.syncAllTables()
         assertEquals(2, synced)
+        assertEquals(listOf(TASKS, PHOTOS), server.recorder.requests.map { it.table })
         assertEquals(listOf("p1"), server.rows(PHOTOS).map { it.string("id") })
     }
 
     @Test
-    fun a_forbidden_write_behind_an_earlier_pending_write_in_another_table_is_held() = runTest {
-        // Given — a row-level-security policy that admits a child only once its parent exists
+    fun a_table_sync_sends_its_writes_once_nothing_earlier_waits_elsewhere() = runTest {
+        // Given — a task, then a photo of it, queued
+        val server = RecordingPostgrestServer(answer = { okJson("[]") })
         store.mutationQueue.enqueueInsert(table = TASKS, body = rows(row("id" to "t1")))
         store.mutationQueue.enqueueInsert(
             table = PHOTOS,
             body = rows(row("id" to "p1", "task_id" to "t1")),
         )
-        val server = RecordingPostgrestServer(answer = { postgrestError(HttpStatusCode.Forbidden) })
         val replayer =
             newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
 
-        // When
-        replayer.syncTable(table = PHOTOS)
+        // When — the task's table is synced, then the photo's
+        val tasks = replayer.sync(table = TASKS)
+        val photos = replayer.sync(table = PHOTOS)
 
-        // Then
-        assertEquals(
-            listOf(TASKS, PHOTOS),
-            store.mutationQueue.allPendingMutations().map { it.table },
-        )
+        // Then — each sent its own write, in the order they were made
+        assertEquals(1 to null, tasks.syncedCount to tasks.stop)
+        assertEquals(1 to null, photos.syncedCount to photos.stop)
+        assertEquals(listOf(TASKS, PHOTOS), server.requests.map { it.table })
     }
 
     private fun row(vararg pairs: Pair<String, String>): JsonObject = buildJsonObject {

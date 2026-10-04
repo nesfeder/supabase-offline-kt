@@ -34,16 +34,7 @@ internal class CacheOwnerRecord(private val queryCacheDao: QueryCacheDao, privat
     /** The owner as last read or written; `null` until it has been read. */
     private val state = MutableStateFlow<Owner?>(null)
 
-    /** How many times the cache was emptied, by a clear or a drop, in this process. */
-    private val emptied = MutableStateFlow(0L)
-
     private val mutex = Mutex()
-
-    /**
-     * How many times the cache was emptied in this process. A payload a reader received under an
-     * earlier count may be gone from the database; see [QueryOverlay.servedPayloadFlow].
-     */
-    fun emptiedCount(): Long = emptied.value
 
     /**
      * The recorded owner, or `null` when none is recorded. When none is, [claimant] is given and
@@ -80,13 +71,12 @@ internal class CacheOwnerRecord(private val queryCacheDao: QueryCacheDao, privat
 
     /**
      * Runs [emptyCache], the caller's transaction that empties the cache and writes [owner]'s
-     * record (none for `null`), then counts it and takes [owner] as the owner. The owner is read by
-     * nobody in between, and the count moves first, so whoever sees the new owner sees it too.
+     * record (none for `null`), then takes [owner] as the owner. The owner is read by nobody in
+     * between, so whoever is told the new owner reads the emptied cache.
      */
     suspend fun emptying(owner: String?, emptyCache: suspend () -> Unit) {
         mutex.withLock {
             emptyCache()
-            emptied.value += 1
             state.value = Owner(owner)
         }
     }

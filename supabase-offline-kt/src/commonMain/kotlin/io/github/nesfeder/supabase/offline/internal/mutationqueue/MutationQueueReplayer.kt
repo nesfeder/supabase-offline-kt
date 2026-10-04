@@ -192,16 +192,17 @@ internal class MutationQueueReplayer(
             return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.SessionNotReady)
         }
         val generation = clearGeneration.value
+        val progress = PassProgress()
         return coroutineScope {
-            val pass = async { runPass(table, schema, generation) }
+            val pass = async { runPass(table, schema, generation, progress) }
             activePasses.update { passes -> passes + pass }
             try {
                 pass.await()
             } catch (cancellation: CancellationException) {
                 // Rethrows when the caller itself was cancelled; otherwise only the pass was, by
-                // clearLocalData, and there is nothing left to report on.
+                // clearLocalData, which left nothing queued: report what it sent before
                 currentCoroutineContext().ensureActive()
-                SyncReport(0, emptyList(), 0, SyncStop.LocalDataCleared)
+                progress.report(remainingCount = 0, stop = SyncStop.LocalDataCleared)
             } finally {
                 activePasses.update { passes -> passes - pass }
             }
@@ -483,10 +484,12 @@ internal class MutationQueueReplayer(
     /**
      * Claims [candidate], the next of [identity]'s mutations as the pass loaded them, or says why
      * the pass ends. Nothing earlier may still be in flight, so order holds across concurrent
-     * senders. Caller holds [sendLock].
+     * senders; and a pass for one [table] stops at a write that has an earlier one of [identity]
+     * still queued, in another table, so it never overtakes it. Caller holds [sendLock].
      */
     private suspend fun claim(
         candidate: MutationRow,
+        table: String?,
         identity: QueueIdentity,
         generation: Long,
     ): Claim {
@@ -497,16 +500,48 @@ internal class MutationQueueReplayer(
         if (inFlight.value.any { id -> id <= candidate.id })
             return Claim.Stop(SyncStop.HeadInFlight)
         if (!mutationQueue.isPending(candidate.id)) return Claim.Skip
+        if (
+            table != null &&
+                mutationQueue.hasEarlierPendingMutation(candidate.id, identity.storedValue)
+        )
+            return Claim.Stop(SyncStop.HeldBehindOtherTables(candidate.id))
         inFlight.update { ids -> ids + candidate.id }
         return Claim.Send(candidate)
     }
 
     /**
-     * One pass. Reads the identity's queue once, then re-checks each mutation as it claims it.
-     * Cancelled, it stops between mutations: a request already sent finishes and its answer is
-     * recorded, since a write the server applied but the queue kept would be sent again.
+     * What a pass sent and recorded so far. Kept outside the pass, so one a clear cancels still
+     * reports the writes the server accepted or refused before.
      */
-    private suspend fun runPass(table: String?, schema: String, generation: Long): SyncReport {
+    private inner class PassProgress {
+        var syncedCount = 0
+        var alreadyOnServerCount = 0
+        val rejected = mutableListOf<StoredRejection>()
+
+        /** The report of a pass that ended with [remainingCount] queued, for [stop]. */
+        fun report(remainingCount: Int, stop: SyncStop?): SyncReport =
+            SyncReport(
+                syncedCount = syncedCount,
+                rejected =
+                    rejected.map { entry -> entry.toRejectedMutation(EngineJson, primaryKeys) },
+                remainingCount = remainingCount,
+                stop = stop,
+                alreadyOnServerCount = alreadyOnServerCount,
+            )
+    }
+
+    /**
+     * One pass, counting into [progress]. Reads the identity's queue once, then re-checks each
+     * mutation as it claims it. Cancelled, it stops between mutations: a request already sent
+     * finishes and its answer is recorded, since a write the server applied but the queue kept
+     * would be sent again.
+     */
+    private suspend fun runPass(
+        table: String?,
+        schema: String,
+        generation: Long,
+        progress: PassProgress,
+    ): SyncReport {
         val pass = currentCoroutineContext().job
         val identity = currentIdentity()
         if (identity == null) {
@@ -528,15 +563,14 @@ internal class MutationQueueReplayer(
 
         val tableApis = mutableMapOf<String, RemoteTable>()
         val syncedTables = mutableSetOf<String>()
-        val rejected = mutableListOf<StoredRejection>()
-        var syncedCount = 0
-        var alreadyOnServerCount = 0
         var stop: SyncStop? = null
 
         for (candidate in queue) {
             pass.ensureActive()
             val mutation =
-                when (val claim = sendLock.withLock { claim(candidate, identity, generation) }) {
+                when (
+                    val claim = sendLock.withLock { claim(candidate, table, identity, generation) }
+                ) {
                     is Claim.Stop -> {
                         stop = claim.stop
                         break
@@ -576,7 +610,13 @@ internal class MutationQueueReplayer(
                             released = true
                             outcome to
                                 if (clearGeneration.value != generation) SyncStop.LocalDataCleared
-                                else recordOutcome(mutation, outcome, rejected, syncedTables)
+                                else
+                                    recordOutcome(
+                                        mutation,
+                                        outcome,
+                                        progress.rejected,
+                                        syncedTables,
+                                    )
                         }
                     }
                 } finally {
@@ -586,8 +626,8 @@ internal class MutationQueueReplayer(
                         }
                 }
             if (outcome is ReplayOutcome.Synced && recorded == null) {
-                syncedCount++
-                if (outcome.rowsWereOnServer) alreadyOnServerCount++
+                progress.syncedCount++
+                if (outcome.rowsWereOnServer) progress.alreadyOnServerCount++
             }
             if (recorded != null) {
                 stop = recorded
@@ -602,16 +642,10 @@ internal class MutationQueueReplayer(
         }
 
         engineLogger.info {
-            if (table == null) "Sync complete: $syncedCount mutations synced"
-            else "Sync complete: $syncedCount mutations synced for $table"
+            if (table == null) "Sync complete: ${progress.syncedCount} mutations synced"
+            else "Sync complete: ${progress.syncedCount} mutations synced for $table"
         }
-        return SyncReport(
-            syncedCount = syncedCount,
-            rejected = rejected.map { entry -> entry.toRejectedMutation(EngineJson, primaryKeys) },
-            remainingCount = remainingFor(identity, table),
-            stop = stop,
-            alreadyOnServerCount = alreadyOnServerCount,
-        )
+        return progress.report(remainingCount = remainingFor(identity, table), stop = stop)
     }
 
     /**
@@ -744,7 +778,7 @@ internal class MutationQueueReplayer(
     ): ReplayOutcome =
         when {
             failure.isNetworkOrConnectivityFailure() -> {
-                engineLogger.warning { "Network unavailable, pausing sync for ${mutation.table}" }
+                engineLogger.info { "Network unavailable, pausing sync for ${mutation.table}" }
                 ReplayOutcome.Stopped(failure)
             }
 

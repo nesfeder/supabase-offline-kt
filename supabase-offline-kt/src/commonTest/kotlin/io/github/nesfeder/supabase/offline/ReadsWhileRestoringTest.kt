@@ -48,7 +48,7 @@ class ReadsWhileRestoringTest {
         val sessions: FakeHeldSessionManager,
     )
 
-    private fun TestScope.restoringClient(): Restoring {
+    private fun TestScope.restoringClient(storeHangs: Boolean = false): Restoring {
         val sessions =
             FakeHeldSessionManager(
                 UserSession(
@@ -56,7 +56,8 @@ class ReadsWhileRestoringTest {
                     refreshToken = "refresh-token",
                     expiresIn = 3600,
                     tokenType = "bearer",
-                )
+                ),
+                holdsEveryLoad = storeHangs,
             )
         val dispatcher = StandardTestDispatcher(testScheduler)
         val server =
@@ -170,6 +171,25 @@ class ReadsWhileRestoringTest {
         assertEquals(USER_ROWS, cacheOnly.data)
         assertEquals(USER_ROWS, reactive.result?.data)
         assertEquals(0, server.reads())
+    }
+
+    @Test
+    fun a_read_waits_for_a_session_store_that_never_answers_only_so_long() = runTest {
+        // Given — the list cached, and a session store whose every load hangs
+        queryCacheDao.seedPayload(table = TABLE, cacheKey = TABLE, payload = USER_ROWS)
+        val (server, items, sessions) = restoringClient(storeHangs = true)
+
+        // When — a read the cache would answer, once it can tell whose the cache is
+        val read = async { items.select(readStrategy = ReadStrategy.CacheFirst()) }
+        advanceTimeBy(30.seconds)
+        runCurrent()
+        val completed = read.isCompleted
+        sessions.release()
+
+        // Then — it stopped waiting for the store, and asked the network instead
+        assertTrue(completed, "the read is still waiting for the session store")
+        assertTrue(server.reads() >= 1, "the read sent nothing")
+        assertEquals("[]", read.await().data)
     }
 
     @Test
