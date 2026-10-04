@@ -26,7 +26,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,7 +33,6 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 
@@ -155,7 +153,8 @@ internal constructor(
      * Calls a database function on the server. Network only: never cached, never queued.
      *
      * @param call the call's description (function, method, filters), as JSON text.
-     * @param arguments the function's arguments, a JSON object as text, or `null` for none.
+     * @param arguments the function's arguments, a JSON object as text, or `null` for none. A call
+     *   by GET or HEAD takes none: it fails with [BridgeErrorKind.INVALID_REQUEST].
      */
     public fun rpc(
         call: String,
@@ -164,6 +163,7 @@ internal constructor(
     ): BridgeCancellable =
         runner.runOnce("rpc", completion) {
             val rpc = rpcDescription(call)
+            rpc.refuseArgumentsUnlessPost(arguments)
             val result =
                 if (arguments == null) {
                     offline.rpc(rpc.function) { rpc.applyTo(this) }
@@ -375,23 +375,22 @@ internal constructor(
      */
     public fun close(completion: (BridgeError?) -> Unit): BridgeCancellable {
         val first = closing.compareAndSet(expectedValue = false, newValue = true)
-        val job = lifecycleScope.launch {
-            withContext(NonCancellable) {
-                val error =
-                    if (first) {
-                        closeEverything()
-                    } else {
-                        closed.await()
-                        null
-                    }
-                try {
-                    completion(error)
-                } catch (failure: Throwable) {
-                    runner.report(failure, "The completion of close")
+        // The handle holds no job: a close cancelled before it started would never close at all.
+        lifecycleScope.launch {
+            val error =
+                if (first) {
+                    closeEverything()
+                } else {
+                    closed.await()
+                    null
                 }
+            try {
+                completion(error)
+            } catch (failure: Throwable) {
+                runner.report(failure, "The completion of close")
             }
         }
-        return BridgeCancellable(job) { runner.report(it, "Cancelling close") }
+        return BridgeCancellable(null) { runner.report(it, "Cancelling close") }
     }
 
     /**

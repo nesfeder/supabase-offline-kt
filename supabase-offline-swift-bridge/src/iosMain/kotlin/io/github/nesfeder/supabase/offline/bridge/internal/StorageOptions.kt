@@ -13,6 +13,7 @@ import io.github.jan.supabase.storage.SortOrder
 import io.github.jan.supabase.storage.StorageListFilter
 import io.github.jan.supabase.storage.UploadOptionBuilder
 import io.github.jan.supabase.storage.UploadSignedUrl
+import io.github.nesfeder.supabase.offline.bridge.BridgeErrorKind
 import io.ktor.http.BadContentTypeFormatException
 import io.ktor.http.ContentType
 import kotlinx.cinterop.BetaInteropApi
@@ -201,11 +202,23 @@ internal fun encodeFileObjects(objects: List<FileObject>): String =
 internal fun encodeFileObject(details: FileObjectV2): String =
     Json.encodeToString(FileObjectV2.serializer(), details)
 
-/** The bytes of this [NSData], copied once. */
+/**
+ * The size of a Kotlin copy of [length] bytes, which an array holds up to [Int.MAX_VALUE] of.
+ *
+ * @throws IllegalArgumentException for more, [BridgeErrorKind.INVALID_ARGUMENT] at the boundary.
+ */
+internal fun byteArraySizeOf(length: ULong): Int {
+    require(length <= Int.MAX_VALUE.toULong()) {
+        "The data holds $length bytes; one call takes at most ${Int.MAX_VALUE}"
+    }
+    return length.toInt()
+}
+
+/** The bytes of this [NSData], copied once; refused above [Int.MAX_VALUE] bytes. */
 internal fun NSData.toByteArray(): ByteArray {
-    val size = length.toInt()
+    val size = byteArraySizeOf(length)
     val copied = ByteArray(size)
-    if (size > 0) copied.usePinned { memcpy(it.addressOf(0), bytes, length) }
+    if (size > 0) copied.usePinned { memcpy(it.addressOf(0), bytes, size.convert()) }
     return copied
 }
 

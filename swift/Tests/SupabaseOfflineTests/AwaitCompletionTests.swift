@@ -31,7 +31,7 @@ struct AwaitCompletionTests {
         let result = await Task {
             try await awaitCompletion { complete in
                 let handle = call.start(complete)
-                call.answer(.failure(OfflineError(code: .network, message: "offline")))
+                call.answer(.failure(OfflineError(code: .connectivity, message: "offline")))
                 return handle
             }
         }.result

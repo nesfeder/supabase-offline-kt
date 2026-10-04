@@ -13,41 +13,51 @@ extension OfflineError {
             httpStatus: failure.httpStatus?.intValue,
             serverCode: failure.code,
             details: failure.details,
-            hint: failure.hint
+            hint: failure.hint,
+            isConnectivityFailure: failure.isConnectivityFailure
         )
     }
 
     /// The error a caller catches for a core failure of `kind`, with the fields it carries.
     ///
-    /// Total: a kind this release does not know is ``Code/internal``.
+    /// Total: a kind this release does not know is ``Code/unexpected``. Only the text the core
+    /// writes about its own failures is cleared of runtime names; a server's text, the app's and
+    /// the request's own values reach the caller exactly as written.
     static func thrown(
         kind: BridgeErrorKind,
         message rawMessage: String,
         httpStatus: Int?,
         serverCode: String?,
         details: String?,
-        hint: String?
+        hint: String?,
+        isConnectivityFailure: Bool
     ) -> any Error {
-        let message = redactingRuntimeNames(rawMessage)
-        let serverError = httpStatus.map {
-            ServerError(status: $0, code: serverCode, message: message, details: details, hint: hint)
-        }
         let code: Code
+        var describesTheCore = false
         switch kind {
         case .cancelled: return CancellationError()
         case .server, .http: code = .server
-        case .connectivity: code = .network
+        case .connectivity: (code, describesTheCore) = (.connectivity, true)
         case .cacheMiss: code = .cacheMiss
         case .networkDisabled: code = .networkDisabled
         case .mutationNotQueueable: code = .mutationNotQueueable
         case .syncFailed: code = .syncFailed
         case .clientClosed: code = .clientClosed
         case .accessToken: code = .accessToken
-        case .invalidRequest, .unsupported, .invalidArgument: code = .invalidRequest
-        case .decoding: code = .decoding
-        case .unexpected: code = .internal
-        default: code = .internal
+        case .invalidRequest, .unsupported: code = .invalidRequest
+        case .invalidArgument: (code, describesTheCore) = (.invalidRequest, true)
+        case .decoding: (code, describesTheCore) = (.decoding, true)
+        default: (code, describesTheCore) = (.unexpected, true)
         }
-        return OfflineError(code: code, message: message, serverError: serverError)
+        let message = describesTheCore ? redactingRuntimeNames(rawMessage) : rawMessage
+        let serverError = httpStatus.map {
+            ServerError(status: $0, code: serverCode, message: message, details: details, hint: hint)
+        }
+        return OfflineError(
+            code: code,
+            message: message,
+            serverError: serverError,
+            isNetworkOrConnectivityFailure: isConnectivityFailure || code == .connectivity
+        )
     }
 }

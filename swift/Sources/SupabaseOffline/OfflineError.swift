@@ -26,7 +26,7 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
         public static let server = Code(rawValue: "server")
 
         /// The request could not reach the server, or got no answer in time.
-        public static let network = Code(rawValue: "network")
+        public static let connectivity = Code(rawValue: "connectivity")
 
         /// A cache-only read found nothing it may serve; nothing was sent.
         public static let cacheMiss = Code(rawValue: "cacheMiss")
@@ -55,11 +55,11 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
         /// A value could not be encoded as JSON.
         public static let encoding = Code(rawValue: "encoding")
 
-        /// The client could not be opened with its options.
+        /// The client could not be opened with its configuration.
         public static let configuration = Code(rawValue: "configuration")
 
         /// A defect in the package, reported as an error instead of ending the app.
-        public static let `internal` = Code(rawValue: "internal")
+        public static let unexpected = Code(rawValue: "unexpected")
 
         /// Whether `error` is an ``OfflineError`` with this code, so `catch OfflineError.cacheMiss` works.
         public static func ~= (code: Code, error: any Error) -> Bool {
@@ -103,19 +103,30 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
     /// The server's refusal: set for ``Code/server``, and for a ``Code/syncFailed`` the server caused.
     public let serverError: ServerError?
 
-    /// The Swift error behind this one, such as a `DecodingError` or the access-token closure's own.
+    /// The Swift error behind this one: the `DecodingError` of a ``Code/decoding`` failure, or the
+    /// `EncodingError` of an ``Code/encoding`` one; otherwise `nil`.
     public let underlyingError: (any Error)?
+
+    /// Whether the network failed rather than the server: true for ``Code/connectivity``,
+    /// ``Code/networkDisabled`` and ``Code/mutationNotQueueable``, and for a ``Code/syncFailed``
+    /// the network caused.
+    public let isNetworkOrConnectivityFailure: Bool
+
+    /// The server's HTTP status, when the server answered: ``ServerError/status``.
+    public var httpStatus: Int? { serverError?.status }
 
     init(
         code: Code,
         message: String,
         serverError: ServerError? = nil,
-        underlyingError: (any Error)? = nil
+        underlyingError: (any Error)? = nil,
+        isNetworkOrConnectivityFailure: Bool = false
     ) {
         self.code = code
         self.message = message
         self.serverError = serverError
         self.underlyingError = underlyingError
+        self.isNetworkOrConnectivityFailure = isNetworkOrConnectivityFailure
     }
 
     /// The code and message, and the server's status and code when it refused; never its details.
@@ -137,8 +148,8 @@ extension OfflineError {
     /// ``Code/server``, for `catch OfflineError.server`.
     public static var server: Code { .server }
 
-    /// ``Code/network``, for `catch OfflineError.network`.
-    public static var network: Code { .network }
+    /// ``Code/connectivity``, for `catch OfflineError.connectivity`.
+    public static var connectivity: Code { .connectivity }
 
     /// ``Code/cacheMiss``, for `catch OfflineError.cacheMiss`.
     public static var cacheMiss: Code { .cacheMiss }
@@ -170,6 +181,6 @@ extension OfflineError {
     /// ``Code/configuration``, for `catch OfflineError.configuration`.
     public static var configuration: Code { .configuration }
 
-    /// ``Code/internal``, for `catch OfflineError.internal`.
-    public static var `internal`: Code { .internal }
+    /// ``Code/unexpected``, for `catch OfflineError.unexpected`.
+    public static var unexpected: Code { .unexpected }
 }

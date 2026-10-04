@@ -20,23 +20,23 @@ public final class SupabaseOfflineClient: Sendable {
     /// - Parameters:
     ///   - supabaseURL: The project's URL, such as `https://xyzcompany.supabase.co`.
     ///   - supabaseKey: The project's publishable key. A signed-in user's token comes from
-    ///     ``Options/accessToken``.
-    ///   - options: Where the local data lives, how large it may grow, and how the client behaves.
-    public convenience init(supabaseURL: URL, supabaseKey: String, options: Options = Options()) {
-        self.init(supabaseURL: supabaseURL, supabaseKey: supabaseKey, options: options) {
+    ///     ``Config/accessToken``.
+    ///   - config: Where the local data lives, how large it may grow, and how the client behaves.
+    public convenience init(supabaseURL: URL, supabaseKey: String, config: Config = Config()) {
+        self.init(supabaseURL: supabaseURL, supabaseKey: supabaseKey, config: config) {
             BridgeClient.companion.open(options: $0)
         }
     }
 
-    /// A client whose core `opening` opens from the options; the testing product's entry point.
+    /// A client whose core `opening` opens from the configuration; the testing product's entry point.
     package init(
         supabaseURL: URL,
         supabaseKey: String,
-        options: Options,
+        config: Config,
         opening: @escaping @Sendable (BridgeClientOptions) -> BridgeOpenResult
     ) {
         connection = CoreConnection {
-            let coreOptions = try SupabaseOfflineClient.coreOptions(supabaseURL: supabaseURL, supabaseKey: supabaseKey, options: options)
+            let coreOptions = try SupabaseOfflineClient.coreOptions(supabaseURL: supabaseURL, supabaseKey: supabaseKey, config: config)
             let opened = opening(coreOptions)
             guard let client = opened.client else {
                 let reason = opened.error.map { redactingRuntimeNames($0.message) } ?? "no reason given"
@@ -60,13 +60,13 @@ public final class SupabaseOfflineClient: Sendable {
         try await connection.close()
     }
 
-    /// The core's options for `options`, with the default data directory filled in.
+    /// The core's options for `config`, with the default data directory filled in.
     static func coreOptions(
         supabaseURL: URL,
         supabaseKey: String,
-        options: Options
+        config: Config
     ) throws -> BridgeClientOptions {
-        let dataDirectory = options.dataDirectory ?? Options.defaultDataDirectory
+        let dataDirectory = config.dataDirectory ?? Config.defaultDataDirectory
         guard dataDirectory.isFileURL else {
             throw OfflineError(code: .configuration, message: "The data directory must be a file URL")
         }
@@ -75,21 +75,21 @@ public final class SupabaseOfflineClient: Sendable {
             supabaseKey: supabaseKey,
             dataDirectory: dataDirectory.path(percentEncoded: false)
         )
-        coreOptions.schema = options.schema
-        coreOptions.accessTokenProvider = options.accessToken.map(AccessTokenRelay.init)
-        coreOptions.cacheSizeBytes = options.cacheLimit.coreBytes
-        coreOptions.fileCacheSizeBytes = options.fileCacheLimit.coreBytes
-        coreOptions.autoSync = options.syncsAutomatically
-        coreOptions.primaryKeys = options.primaryKeys
+        coreOptions.schema = config.defaultSchema
+        coreOptions.accessTokenProvider = config.accessToken.map(AccessTokenRelay.init)
+        coreOptions.cacheSizeBytes = config.cacheSize.coreBytes
+        coreOptions.fileCacheSizeBytes = config.fileCacheSize.coreBytes
+        coreOptions.autoSync = config.autoSync
+        coreOptions.primaryKeys = config.primaryKeys
         coreOptions.logSink = SystemLogRelay()
-        coreOptions.logLevel = options.logLevel.coreLevel
+        coreOptions.logLevel = config.logLevel.coreLevel
         return coreOptions
     }
 }
 
-extension SupabaseOfflineClient.CacheLimit {
+extension SupabaseOfflineClient.CacheSize {
 
-    /// The limit as the core reads it: a byte count, or its value for no limit.
+    /// The size as the core reads it: a byte count, or its value for no limit.
     var coreBytes: Int64 {
         switch self {
         case .bytes(let count): return Int64(count)

@@ -417,16 +417,63 @@
       }
     },
     {
-      "name": "a function call by GET keeps its arguments in the body, as supabase-kt 3.6 sends them",
+      "name": "a function call by HEAD without arguments",
       "call": "rpc",
-      "description": {"v": 1, "function": "find_todo", "method": "get"},
-      "payload": "{\"todo_id\":7}",
+      "description": {"v": 1, "function": "count_open", "method": "head", "count": "exact"},
+      "request": {
+        "method": "HEAD",
+        "path": "/rest/v1/rpc/count_open",
+        "query": [],
+        "headers": {"Prefer": "count=exact"}
+      }
+    },
+    {
+      "name": "two or groups nested in one and group",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [
+          {
+            "kind": "and",
+            "filters": [
+              {"kind": "or", "filters": [
+                {"kind": "filter", "column": "a", "operator": "eq", "value": "1"},
+                {"kind": "filter", "column": "b", "operator": "eq", "value": "2"}
+              ]},
+              {"kind": "or", "filters": [
+                {"kind": "filter", "column": "c", "operator": "eq", "value": "3"},
+                {"kind": "filter", "column": "d", "operator": "eq", "value": "4"}
+              ]}
+            ]
+          }
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
       "request": {
         "method": "GET",
-        "path": "/rest/v1/rpc/find_todo",
-        "query": [],
-        "headers": {"Accept-Profile": "public"},
-        "body": {"todo_id": 7}
+        "path": "/rest/v1/todos",
+        "query": [["and", "(or(c.eq.3,d.eq.4),or(a.eq.1,b.eq.2))"], ["select", "*"]]
+      }
+    },
+    {
+      "name": "two filters on one column in an and group",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "people",
+        "filters": [
+          {"kind": "and", "filters": [
+            {"kind": "filter", "column": "age", "operator": "gte", "value": "18"},
+            {"kind": "filter", "column": "age", "operator": "lt", "value": "65"}
+          ]}
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/people",
+        "query": [["and", "(age.gte.18,age.lt.65)"], ["select", "*"]]
       }
     },
     {
@@ -491,6 +538,19 @@
       "description": {"v": 1, "operation": "insert", "table": "todos"},
       "payload": "[1, 2]",
       "error": "INVALID_REQUEST"
-    }
+    },
+    {"name": "a function call by GET with arguments is refused", "call": "rpc", "description": {"v": 1, "function": "find_todo", "method": "get"}, "payload": "{\"todo_id\":7}", "error": "INVALID_REQUEST"},
+    {"name": "a list for an operator that takes one value is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "values": ["x", "y"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "a range for an operator that takes one value is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "range": ["x", "y"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "a list for a range operator is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "sl", "values": ["1", "2", "3"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "one value for in is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "in", "value": "1"}]}, "error": "INVALID_REQUEST"},
+    {"name": "a filter with no value is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "eq"}]}, "error": "INVALID_REQUEST"},
+    {"name": "a null list is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "in", "values": null}]}, "error": "INVALID_REQUEST"},
+    {"name": "a range of three bounds is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "a", "operator": "sl", "range": ["1", "2", "3"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "two or groups at the top level are refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "or", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "value": "1"}, {"kind": "filter", "column": "b", "operator": "eq", "value": "2"}]}, {"kind": "or", "filters": [{"kind": "filter", "column": "c", "operator": "eq", "value": "3"}, {"kind": "filter", "column": "d", "operator": "eq", "value": "4"}]}]}, "error": "INVALID_REQUEST"},
+    {"name": "an empty group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "or", "filters": []}]}, "error": "INVALID_REQUEST"},
+    {"name": "an empty group inside a group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "value": "1"}, {"kind": "or", "filters": []}]}]}, "error": "INVALID_REQUEST"},
+    {"name": "two filters on one column at the top level are refused", "call": "select", "description": {"v": 1, "table": "people", "filters": [{"kind": "filter", "column": "age", "operator": "gte", "value": "18"}, {"kind": "filter", "column": "age", "operator": "lt", "value": "65"}]}, "error": "INVALID_REQUEST"},
+    {"name": "a text search after a filter on its column is refused", "call": "select", "description": {"v": 1, "table": "notes", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "tsv", "operator": "neq", "value": "x"}, {"kind": "textSearch", "column": "tsv", "query": "cat"}]}]}, "error": "INVALID_REQUEST"}
   ]
 }

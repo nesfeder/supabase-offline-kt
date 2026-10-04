@@ -4,11 +4,11 @@ public import Foundation
 
 extension SupabaseOfflineClient {
 
-    /// How a client is set up; every option has a default.
-    public struct Options: Sendable {
+    /// How a client is set up; every setting has a default.
+    public struct Config: Sendable {
 
         /// The PostgREST schema a query without its own reads and writes.
-        public var schema: String
+        public var defaultSchema: String
 
         /// Returns the signed-in user's access token, or `nil` to send the publishable key alone.
         ///
@@ -22,13 +22,13 @@ extension SupabaseOfflineClient {
         public var dataDirectory: URL?
 
         /// The most cached query results may take on disk; the least recently used go first.
-        public var cacheLimit: CacheLimit
+        public var cacheSize: CacheSize
 
         /// The most cached Storage files may take on disk; the least recently used go first.
-        public var fileCacheLimit: CacheLimit
+        public var fileCacheSize: CacheSize
 
         /// Whether queued writes are sent by themselves when the network comes back.
-        public var syncsAutomatically: Bool
+        public var autoSync: Bool
 
         /// Each table's primary-key columns, by table name; a table not named here has the key `id`.
         public var primaryKeys: [String: [String]]
@@ -36,23 +36,23 @@ extension SupabaseOfflineClient {
         /// The least severe message written to the unified log, under the subsystem `SupabaseOffline`.
         public var logLevel: LogLevel
 
-        /// Options with every value given or defaulted.
+        /// A configuration with every value given or defaulted.
         public init(
-            schema: String = "public",
+            defaultSchema: String = "public",
             accessToken: (@Sendable () async throws -> String?)? = nil,
             dataDirectory: URL? = nil,
-            cacheLimit: CacheLimit = .bytes(100 * 1_024 * 1_024),
-            fileCacheLimit: CacheLimit = .bytes(256 * 1_024 * 1_024),
-            syncsAutomatically: Bool = true,
+            cacheSize: CacheSize = .bytes(100 * 1_024 * 1_024),
+            fileCacheSize: CacheSize = .bytes(256 * 1_024 * 1_024),
+            autoSync: Bool = true,
             primaryKeys: [String: [String]] = [:],
             logLevel: LogLevel = .warning
         ) {
-            self.schema = schema
+            self.defaultSchema = defaultSchema
             self.accessToken = accessToken
             self.dataDirectory = dataDirectory
-            self.cacheLimit = cacheLimit
-            self.fileCacheLimit = fileCacheLimit
-            self.syncsAutomatically = syncsAutomatically
+            self.cacheSize = cacheSize
+            self.fileCacheSize = fileCacheSize
+            self.autoSync = autoSync
             self.primaryKeys = primaryKeys
             self.logLevel = logLevel
         }
@@ -64,7 +64,7 @@ extension SupabaseOfflineClient {
     }
 
     /// How much a local cache may hold.
-    public enum CacheLimit: Sendable, Hashable {
+    public enum CacheSize: Sendable, Hashable {
 
         /// At most this many bytes.
         case bytes(Int)

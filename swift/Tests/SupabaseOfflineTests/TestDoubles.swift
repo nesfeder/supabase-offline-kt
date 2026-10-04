@@ -114,6 +114,27 @@ final class RecordingList<Element: Sendable>: @unchecked Sendable {
     }
 }
 
+/// A weak reference a test reads from any thread, to see when an object is freed.
+final class WeakReference<Object: AnyObject>: @unchecked Sendable {
+
+    /// Guards `object`.
+    private let lock = NSLock()
+
+    /// The object, until nothing else holds it.
+    private weak var object: Object?
+
+    init(_ object: Object) {
+        self.object = object
+    }
+
+    /// The object, or `nil` once it is freed.
+    var value: Object? {
+        lock.lock()
+        defer { lock.unlock() }
+        return object
+    }
+}
+
 /// Waits until `condition` holds, polling, for at most `limit`; the condition's last value.
 func eventually(within limit: Duration = .seconds(5), _ condition: @Sendable () -> Bool) async -> Bool {
     let clock = ContinuousClock()
@@ -152,18 +173,15 @@ extension SupabaseOfflineClient {
 
     /// The core's count of queued writes, as a stream.
     func pendingMutationCounts(recordingEndsIn ends: RecordingList<String>? = nil) -> SubscriptionSequence<Int> {
-        let connection = self.connection
-        return SubscriptionSequence {
-            connection.subscription { core, yield, finish in
-                core.observePendingMutationCount(
-                    table: nil,
-                    onCount: { count in yield(count.intValue) },
-                    onCompletion: { failure in
-                        ends?.append(failure?.kind.name ?? "nil")
-                        finish(failure.map { OfflineError.thrown(for: $0) })
-                    }
-                )
-            }
+        liveSequence { core, yield, finish in
+            core.observePendingMutationCount(
+                table: nil,
+                onCount: { count in yield(count.intValue) },
+                onCompletion: { failure in
+                    ends?.append(failure?.kind.name ?? "nil")
+                    finish(failure.map { OfflineError.thrown(for: $0) })
+                }
+            )
         }
     }
 }

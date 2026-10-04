@@ -96,16 +96,19 @@ internal constructor(
  * answer, or one after the request was abandoned, is dropped.
  */
 public class BridgeHttpResponder
-internal constructor(private val answer: (FakeServerAnswer) -> Unit) {
+internal constructor(private val answer: (makeAnswer: () -> FakeServerAnswer) -> Unit) {
 
-    /** Answers with an HTTP response. */
+    /**
+     * Answers with an HTTP response. A body over [Int.MAX_VALUE] bytes fails the request instead,
+     * as a transport failure naming the size.
+     */
     public fun respond(status: Int, headers: Map<String, String>, body: NSData) {
-        answer(FakeServerAnswer.Response(status, headers, body.toByteArray()))
+        answer { FakeServerAnswer.Response(status, headers, body.toByteArray()) }
     }
 
     /** Answers as a request that never reached the server: the client reads it as offline. */
     public fun failWithoutConnection(message: String) {
-        answer(FakeServerAnswer.NoConnection(message))
+        answer { FakeServerAnswer.NoConnection(message) }
     }
 }
 
@@ -118,6 +121,9 @@ internal sealed interface FakeServerAnswer {
 
     /** A failed connection, which the client sees as a transport failure. */
     class NoConnection(val message: String) : FakeServerAnswer
+
+    /** An answer that could not be read, such as a body too large to copy: the request fails. */
+    class Unreadable(val failure: Throwable) : FakeServerAnswer
 }
 
 /** A Ktor engine whose every request [server] answers. */
@@ -132,6 +138,7 @@ private fun fakeServerEngine(server: BridgeFakeServer, logSink: BridgeLogSink?):
                         headers { answer.headers.forEach { (name, value) -> append(name, value) } },
                 )
             is FakeServerAnswer.NoConnection -> throw IOException(answer.message)
+            is FakeServerAnswer.Unreadable -> throw answer.failure
         }
     }
 
@@ -144,9 +151,15 @@ private suspend fun awaitAnswer(
     val bridgeRequest = request.toBridge()
     return suspendCancellableCoroutine { continuation ->
         val answered = AtomicBoolean(false)
-        val responder = BridgeHttpResponder { answer ->
+        val responder = BridgeHttpResponder { makeAnswer ->
             try {
                 if (answered.compareAndSet(expectedValue = false, newValue = true)) {
+                    val answer =
+                        try {
+                            makeAnswer()
+                        } catch (failure: Throwable) {
+                            FakeServerAnswer.Unreadable(failure)
+                        }
                     continuation.resume(answer)
                 }
             } catch (failure: Throwable) {

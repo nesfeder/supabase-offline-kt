@@ -30,7 +30,7 @@ struct SubscriptionStreamTests {
         let stream = subscriptionStream(keepingNewest: 10) { (yield: @escaping @Sendable (Int) -> Void, finish) in
             yield(1)
             yield(2)
-            finish(OfflineError(code: .network, message: "lost the connection"))
+            finish(OfflineError(code: .connectivity, message: "lost the connection"))
             return RecordingCallHandle()
         }
 
@@ -45,7 +45,7 @@ struct SubscriptionStreamTests {
 
         // Then
         #expect(received == [1, 2])
-        #expect((failure as? OfflineError)?.code == .network)
+        #expect((failure as? OfflineError)?.code == .connectivity)
     }
 
     @Test func aSlowReaderSeesTheNewestValueAndNothingPilesUp() async throws {

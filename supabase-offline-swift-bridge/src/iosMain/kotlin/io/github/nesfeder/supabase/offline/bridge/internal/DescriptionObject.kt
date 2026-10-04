@@ -63,6 +63,9 @@ internal class DescriptionObject(private val json: JsonObject, val path: String)
     /** Whether [key] is present and not `null`. */
     fun has(key: String): Boolean = json[key].let { it != null && it !is JsonNull }
 
+    /** Whether [key] is present at all, `null` included. */
+    fun containsKey(key: String): Boolean = json.containsKey(key)
+
     /** The raw value of [key], or `null` when absent or `null`. */
     fun element(key: String): JsonElement? {
         readFields += key
@@ -133,6 +136,10 @@ internal class DescriptionObject(private val json: JsonObject, val path: String)
             item.content
         }
     }
+
+    /** The strings of the array [key]; required, `null` refused. */
+    fun strings(key: String): List<String> =
+        optionalStrings(key) ?: wrongType(key, "an array of strings")
 
     /** The whole numbers of the array [key], or `null` when absent. */
     fun optionalLongs(key: String): List<Long>? {

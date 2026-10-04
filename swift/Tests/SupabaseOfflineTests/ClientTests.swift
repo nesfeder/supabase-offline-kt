@@ -6,33 +6,33 @@ import SupabaseOfflineTesting
 import Testing
 @testable import SupabaseOffline
 
-/// Opening, options and closing, on the real core.
+/// Opening, configuration and closing, on the real core.
 struct ClientTests {
 
     /// The project every test here names.
     private static let projectURL = URL(string: "https://project.supabase.co")!
 
-    @Test func everyOptionReachesTheCore() throws {
+    @Test func everySettingReachesTheCore() throws {
         // Given
-        let directory = URL(filePath: "/tmp/offline-options", directoryHint: .isDirectory)
-        let options = SupabaseOfflineClient.Options(
-            schema: "app",
+        let directory = URL(filePath: "/tmp/offline-config", directoryHint: .isDirectory)
+        let config = SupabaseOfflineClient.Config(
+            defaultSchema: "app",
             accessToken: { "token" },
             dataDirectory: directory,
-            cacheLimit: .bytes(1_000),
-            fileCacheLimit: .unlimited,
-            syncsAutomatically: false,
+            cacheSize: .bytes(1_000),
+            fileCacheSize: .unlimited,
+            autoSync: false,
             primaryKeys: ["memberships": ["team_id", "user_id"]],
             logLevel: .debug
         )
 
         // When
-        let core = try SupabaseOfflineClient.coreOptions(supabaseURL: Self.projectURL, supabaseKey: "key", options: options)
+        let core = try SupabaseOfflineClient.coreOptions(supabaseURL: Self.projectURL, supabaseKey: "key", config: config)
 
         // Then
         #expect(core.supabaseUrl == "https://project.supabase.co")
         #expect(core.supabaseKey == "key")
-        #expect(core.dataDirectory == "/tmp/offline-options/")
+        #expect(core.dataDirectory == "/tmp/offline-config/")
         #expect(core.schema == "app")
         #expect(core.accessTokenProvider is AccessTokenRelay)
         #expect(core.cacheSizeBytes == 1_000)
@@ -45,7 +45,7 @@ struct ClientTests {
 
     @Test func theDefaultsAreTheCoresAndTheDataLivesInApplicationSupport() throws {
         // When
-        let core = try SupabaseOfflineClient.coreOptions(supabaseURL: Self.projectURL, supabaseKey: "key", options: .init())
+        let core = try SupabaseOfflineClient.coreOptions(supabaseURL: Self.projectURL, supabaseKey: "key", config: .init())
 
         // Then
         #expect(core.schema == "public")
@@ -74,7 +74,7 @@ struct ClientTests {
         let created = ContinuousClock.now
 
         // When
-        let client = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", options: .init()) {
+        let client = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", config: .init()) {
             openedOnMain.append(isOnMainThread())
             Thread.sleep(forTimeInterval: 0.3)
             return BridgeTesting.shared.openInMemory(options: $0, server: FakeSilentServer(), clock: nil)
@@ -116,7 +116,7 @@ struct ClientTests {
         let client = SupabaseOfflineClient(
             supabaseURL: Self.projectURL,
             supabaseKey: "key",
-            options: .init(dataDirectory: URL(string: "https://not-a-directory.example")!)
+            config: .init(dataDirectory: URL(string: "https://not-a-directory.example")!)
         )
 
         // When
@@ -131,15 +131,15 @@ struct ClientTests {
         // Given a client open over a directory of its own
         let directory = FileManager.default.temporaryDirectory.appending(path: "offline-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let options = SupabaseOfflineClient.Options(dataDirectory: directory)
-        let first = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", options: options)
+        let config = SupabaseOfflineClient.Config(dataDirectory: directory)
+        let first = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", config: config)
         #expect(try await first.rawPendingMutationCount() == 0)
 
         // When
-        let second = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", options: options)
+        let second = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", config: config)
         let error = await #expect(throws: OfflineError.self) { try await second.rawPendingMutationCount() }
         try await first.close()
-        let third = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", options: options)
+        let third = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", config: config)
 
         // Then
         #expect(error?.code == .configuration)
@@ -176,6 +176,33 @@ struct ClientTests {
 
         // Then
         await #expect(throws: Never.self) { try await reading.value }
+    }
+
+    @Test func anIteratorKeepsItsClientOpenAndLeavingItLetsTheClientGo() async throws {
+        // Given an iterator whose client nothing else holds
+        var client: SupabaseOfflineClient? = SupabaseOfflineClient.inMemory()
+        let reference = WeakReference(try #require(client))
+        let ends = RecordingList<String>()
+        var iterator: SubscriptionSequence<Int>.AsyncIterator? =
+            client?.pendingMutationCounts(recordingEndsIn: ends).makeAsyncIterator()
+        client = nil
+
+        // When
+        let first = try await iterator?.next()
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Then the subscription runs on, and the client is open
+        #expect(first == 0)
+        #expect(reference.value != nil)
+        #expect(ends.values.isEmpty)
+
+        // When the iterator is let go
+        iterator = nil
+
+        // Then the subscription ends (cancelled, or by the freed client's close) and the client is freed
+        #expect(await eventually { ends.values.count == 1 })
+        #expect(["CANCELLED", "nil"].contains(ends.values.first ?? ""))
+        #expect(await eventually { reference.value == nil })
     }
 
     @Test func leavingALoopCancelsTheCoresSubscription() async throws {

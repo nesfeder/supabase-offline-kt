@@ -13,7 +13,7 @@ struct ErrorMappingTests {
     private static let expectedCodes: [String: OfflineError.Code?] = [
         "CANCELLED": nil,
         "CLIENT_CLOSED": .clientClosed,
-        "CONNECTIVITY": .network,
+        "CONNECTIVITY": .connectivity,
         "SERVER": .server,
         "HTTP": .server,
         "CACHE_MISS": .cacheMiss,
@@ -25,7 +25,7 @@ struct ErrorMappingTests {
         "UNSUPPORTED": .invalidRequest,
         "INVALID_ARGUMENT": .invalidRequest,
         "DECODING": .decoding,
-        "UNEXPECTED": .internal,
+        "UNEXPECTED": .unexpected,
     ]
 
     @Test func everyKindTheCoreHasLandsOnItsCode() {
@@ -36,7 +36,8 @@ struct ErrorMappingTests {
         for kind in kinds {
             // When
             let thrown = OfflineError.thrown(
-                kind: kind, message: "failed", httpStatus: nil, serverCode: nil, details: nil, hint: nil
+                kind: kind, message: "failed", httpStatus: nil, serverCode: nil, details: nil, hint: nil,
+                isConnectivityFailure: false
             )
 
             // Then
@@ -56,7 +57,8 @@ struct ErrorMappingTests {
             httpStatus: 409,
             serverCode: "23505",
             details: "Key (id)=(1) already exists.",
-            hint: "Pick another id"
+            hint: "Pick another id",
+            isConnectivityFailure: false
         )
 
         // Then
@@ -72,8 +74,34 @@ struct ErrorMappingTests {
                     hint: "Pick another id"
                 )
         )
+        #expect(error.httpStatus == 409)
+        #expect(!error.isNetworkOrConnectivityFailure)
         #expect(error.localizedDescription == "duplicate key value violates unique constraint")
         #expect(error.description == "server (status 409, code 23505): duplicate key value violates unique constraint")
+    }
+
+    @Test func aNetworkFailureSaysSoAndCarriesNoStatus() throws {
+        // When
+        let offline = OfflineError.thrown(
+            kind: .connectivity, message: "offline", httpStatus: nil, serverCode: nil, details: nil, hint: nil,
+            isConnectivityFailure: false
+        )
+        let stalledSync = OfflineError.thrown(
+            kind: .syncFailed, message: "offline", httpStatus: nil, serverCode: nil, details: nil, hint: nil,
+            isConnectivityFailure: true
+        )
+        let refusedSync = OfflineError.thrown(
+            kind: .syncFailed, message: "refused", httpStatus: 403, serverCode: "42501", details: nil, hint: nil,
+            isConnectivityFailure: false
+        )
+
+        // Then
+        #expect((offline as? OfflineError)?.isNetworkOrConnectivityFailure == true)
+        #expect((offline as? OfflineError)?.httpStatus == nil)
+        #expect((stalledSync as? OfflineError)?.isNetworkOrConnectivityFailure == true)
+        #expect((refusedSync as? OfflineError)?.isNetworkOrConnectivityFailure == false)
+        #expect((refusedSync as? OfflineError)?.httpStatus == 403)
+        #expect((refusedSync as? OfflineError)?.serverError?.code == "42501")
     }
 
     @Test func aMessageNamesNoRuntimeUnderThePackage() throws {
@@ -84,12 +112,31 @@ struct ErrorMappingTests {
             httpStatus: nil,
             serverCode: nil,
             details: nil,
-            hint: nil
+            hint: nil,
+            isConnectivityFailure: false
         )
 
         // Then
         let error = try #require(thrown as? OfflineError)
         #expect(error.message == "A core call failed unexpectedly (IllegalStateException)")
+    }
+
+    @Test(arguments: ["SERVER", "HTTP", "SYNC_FAILED", "ACCESS_TOKEN", "INVALID_REQUEST"])
+    func textTheCoreDidNotWriteReachesTheCallerVerbatim(kindName: String) throws {
+        // Given a message naming a table called "bridge", which is the app's own data
+        let kind = try #require(BridgeErrorKind.entries.first { $0.name == kindName })
+        let serverText = #"relation "bridge" does not exist"#
+
+        // When
+        let thrown = OfflineError.thrown(
+            kind: kind, message: serverText, httpStatus: 404, serverCode: "42P01", details: nil, hint: nil,
+            isConnectivityFailure: false
+        )
+
+        // Then
+        let error = try #require(thrown as? OfflineError)
+        #expect(error.message == serverText, "\(kind.name)")
+        #expect(error.serverError?.message == serverText, "\(kind.name)")
     }
 
     @Test func aCatchClauseMatchesByCode() {
@@ -100,8 +147,8 @@ struct ErrorMappingTests {
         var caught: OfflineError.Code?
         do {
             try readFromCache()
-        } catch OfflineError.network {
-            caught = .network
+        } catch OfflineError.connectivity {
+            caught = .connectivity
         } catch OfflineError.cacheMiss {
             caught = .cacheMiss
         } catch {
@@ -125,13 +172,31 @@ struct ErrorMappingTests {
 
         // Then
         #expect(error?.code == .server)
+        #expect(error?.httpStatus == 403)
+        #expect(error?.isNetworkOrConnectivityFailure == false)
         #expect(error?.serverError?.status == 403)
         #expect(error?.serverError?.code == "42501")
         #expect(error?.serverError?.hint == "Grant select")
         #expect(error?.message == "permission denied for table todos")
     }
 
-    @Test func anUnreachableServerThrowsNetwork() async {
+    @Test func aServersOwnTextReachesTheAppAsSent() async throws {
+        // Given
+        let refusal = #"{"code":"42P01","details":null,"hint":null,"message":"relation \"public.bridge\" does not exist"}"#
+        let client = SupabaseOfflineClient.inMemory(server: FakeServer { _ in .json(refusal, status: 404) })
+        defer { Task { try? await client.close() } }
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.rawSelect(readDescription(table: "bridge", strategy: "networkOnly"))
+        }
+
+        // Then
+        #expect(error?.message == #"relation "public.bridge" does not exist"#)
+        #expect(error?.serverError?.message == #"relation "public.bridge" does not exist"#)
+    }
+
+    @Test func anUnreachableServerThrowsConnectivity() async {
         // Given
         let client = SupabaseOfflineClient.inMemory()
         defer { Task { try? await client.close() } }
@@ -142,7 +207,8 @@ struct ErrorMappingTests {
         }
 
         // Then
-        #expect(error?.code == .network)
+        #expect(error?.code == .connectivity)
+        #expect(error?.isNetworkOrConnectivityFailure == true)
     }
 
     @Test func aCacheOnlyReadOfNothingThrowsCacheMiss() async {
