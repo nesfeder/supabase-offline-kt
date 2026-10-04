@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -99,7 +100,9 @@ internal fun refreshBackoff(failures: Int): Duration =
  * @param wakeUps Edge-triggered wake-ups that short-circuit the current backoff sleep.
  * @param onRefreshState Callback invoked on each refresh lifecycle transition.
  * @param backoff Backoff schedule; injectable so tests can shrink or reshape delays.
- * @param refreshRequests Each emission after the first success runs the refresh again.
+ * @param refreshRequests The query's count of refresh requests, emitting it at once and as it
+ *   moves: the refresh runs again whenever it moved since the last refresh began, so a request
+ *   made while a refresh runs, or before the loop got to wait for one, is never lost.
  * @param networkAccess whether the network is known down, or access to it off.
  * @param isWaiting see [refreshUntilSuccess].
  */
@@ -109,7 +112,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
     wakeUps: Flow<Unit> = emptyFlow(),
     onRefreshState: (RefreshState) -> Unit = {},
     backoff: (failures: Int) -> Duration = ::refreshBackoff,
-    refreshRequests: Flow<Unit> = emptyFlow(),
+    refreshRequests: Flow<Long> = emptyFlow(),
     networkAccess: NetworkAccess = NetworkAccess(),
     isWaiting: (Exception) -> Boolean = { false },
 ): Flow<T> = channelFlow {
@@ -126,15 +129,8 @@ internal fun <T> cacheFirstWithParallelRefresh(
     }
     // In parallel, refresh the cache with self-healing backoff, and again on each later request.
     launch {
-        refreshUntilSuccess(
-            refresh = refresh,
-            wakeUps = wakeUps,
-            onRefreshState = onRefreshState,
-            backoff = backoff,
-            networkAccess = networkAccess,
-            isWaiting = isWaiting,
-        )
-        refreshRequests.conflate().collect {
+        var answered = refreshRequests.firstOrNull()
+        while (true) {
             refreshUntilSuccess(
                 refresh = refresh,
                 wakeUps = wakeUps,
@@ -143,6 +139,7 @@ internal fun <T> cacheFirstWithParallelRefresh(
                 networkAccess = networkAccess,
                 isWaiting = isWaiting,
             )
+            answered = refreshRequests.firstOrNull { count -> count != answered } ?: break
         }
     }
 }

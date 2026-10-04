@@ -8,16 +8,14 @@ import io.github.nesfeder.supabase.offline.internal.newEngineScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.conflate
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.takeWhile
@@ -67,37 +65,50 @@ internal class LiveQueries(
     /** Table → (signature → live-collector count). A signature is "live" while its count is > 0. */
     private val liveCacheKeys = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
 
-    /**
-     * Queries that should fetch again, by table, `null` for all of it; only readers already waiting
-     * see a request.
-     */
-    private val refreshRequests =
-        MutableSharedFlow<RefreshRequest>(
-            extraBufferCapacity = REFRESH_REQUEST_BUFFER,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-        )
+    /** How many refreshes each table, and each live query, was asked for; see [requestRefresh]. */
+    private val refreshRequests = MutableStateFlow(RefreshRequestCounts())
 
     /**
-     * A request that the live queries of [table] fetch again: those cached under [cacheKeys], or
-     * every one when it is `null`.
+     * Counts of refresh requests: [byTable] for every query of a table, [byQuery] for one live
+     * query of it. Only a live query is counted, and its count goes when its last reader leaves.
      */
-    private data class RefreshRequest(val table: String, val cacheKeys: Set<String>?)
-
-    /**
-     * Asks every live `CacheFirstThenNetwork` query of [table] whose refresh has finished to run it
-     * again, or only those cached under [cacheKeys] when given.
-     */
-    fun requestRefresh(table: String, cacheKeys: Set<String>? = null) {
-        refreshRequests.tryEmit(RefreshRequest(table, cacheKeys))
+    private data class RefreshRequestCounts(
+        val byTable: Map<String, Long> = emptyMap(),
+        val byQuery: Map<Key, Long> = emptyMap(),
+    ) {
+        /** The requests that reach the query of [table] cached under [cacheKey]. */
+        fun of(table: String, cacheKey: String): Long =
+            (byTable[table] ?: 0L) + (byQuery[Key(table, cacheKey)] ?: 0L)
     }
 
-    /** The refresh requests for the query of [table] cached under [cacheKey], one [Unit] each. */
-    fun refreshRequestsFor(table: String, cacheKey: String): Flow<Unit> =
-        refreshRequests
-            .filter { request ->
-                request.table == table && (request.cacheKeys?.contains(cacheKey) ?: true)
+    /**
+     * Asks every live query of [table] that refreshes to fetch again, or only those cached under
+     * [cacheKeys] when given. A refresh running when it is asked runs again once it is done.
+     */
+    fun requestRefresh(table: String, cacheKeys: Set<String>? = null) {
+        refreshRequests.update { counts ->
+            if (cacheKeys == null) {
+                counts.copy(byTable = counts.byTable + (table to (counts.byTable[table] ?: 0L) + 1))
+            } else {
+                val live = liveCacheKeysOf(table)
+                counts.copy(
+                    byQuery =
+                        counts.byQuery +
+                            cacheKeys.filter { cacheKey -> cacheKey in live }.associate { cacheKey ->
+                                val key = Key(table, cacheKey)
+                                key to (counts.byQuery[key] ?: 0L) + 1
+                            }
+                )
             }
-            .map {}
+        }
+    }
+
+    /**
+     * The count of refresh requests that reach the query of [table] cached under [cacheKey], at
+     * once and as it moves.
+     */
+    fun refreshRequestsFor(table: String, cacheKey: String): Flow<Long> =
+        refreshRequests.map { counts -> counts.of(table, cacheKey) }.distinctUntilChanged()
 
     /**
      * The shared read flow for [table]/[cacheKey], built by [upstream] once per live entry. A
@@ -197,6 +208,11 @@ internal class LiveQueries(
      */
     fun unregisterLiveQuery(table: String, cacheKey: String) {
         liveCacheKeys.update { current -> current.adjustCount(table, cacheKey, delta = -1) }
+        if (cacheKey !in liveCacheKeysOf(table)) {
+            refreshRequests.update { counts ->
+                counts.copy(byQuery = counts.byQuery - Key(table, cacheKey))
+            }
+        }
     }
 
     /**
@@ -215,14 +231,6 @@ internal class LiveQueries(
 
     /** The tables with a live collector. */
     fun liveTables(): Set<String> = liveCacheKeys.value.keys
-
-    private companion object {
-        /**
-         * Refresh requests kept for a slow reader; the oldest go first, which a conflated reader
-         * never misses.
-         */
-        const val REFRESH_REQUEST_BUFFER = 16
-    }
 
     private fun Map<String, Map<String, Int>>.adjustCount(
         table: String,
