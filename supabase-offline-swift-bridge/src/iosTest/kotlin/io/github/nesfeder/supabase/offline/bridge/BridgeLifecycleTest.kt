@@ -47,31 +47,29 @@ class BridgeLifecycleTest {
     }
 
     @Test
-    fun a_closed_clients_answer_arrives_after_the_call_returns_and_off_the_callers_thread() =
-        bridgeTest {
-            // Given — a closed client
-            val client = openTestClient(RecordingServer())
-            client.closeAndWait()
+    fun an_answer_known_at_once_never_runs_inside_the_call_that_takes_it() = bridgeTest {
+        // Given — a closed client, whose answer to any call is known before the call returns
+        val client = openTestClient(RecordingServer())
+        client.closeAndWait()
 
-            // When
-            val callerThread = NSThread.currentThread
-            val returned = AtomicBoolean(false)
-            var answeredBeforeReturn: Boolean? = null
-            var answeredOnCaller: Boolean? = null
-            val probe = CompletionProbe<BridgeQueryResult>()
-            client.select(readOf()) { value, error ->
-                answeredBeforeReturn = !returned.load()
-                answeredOnCaller = NSThread.currentThread == callerThread
-                probe.completion(value, error)
-            }
-            returned.store(true)
-            val error = probe.awaitError()
-
-            // Then
-            assertEquals(BridgeErrorKind.CLIENT_CLOSED, error.kind)
-            assertEquals(false, answeredBeforeReturn)
-            assertEquals(false, answeredOnCaller)
+        // When — the completion records whether it runs inside the call: on the caller's thread
+        // before the call has returned. It may run elsewhere before the return, or on the
+        // caller's thread once the caller has moved on, and both are fine.
+        val callerThread = NSThread.currentThread
+        val returned = AtomicBoolean(false)
+        var ranInsideTheCall: Boolean? = null
+        val probe = CompletionProbe<BridgeQueryResult>()
+        client.select(readOf()) { value, error ->
+            ranInsideTheCall = NSThread.currentThread == callerThread && !returned.load()
+            probe.completion(value, error)
         }
+        returned.store(true)
+        val error = probe.awaitError()
+
+        // Then
+        assertEquals(BridgeErrorKind.CLIENT_CLOSED, error.kind)
+        assertEquals(false, ranInsideTheCall)
+    }
 
     @Test
     fun a_second_client_on_the_same_directory_is_refused_until_the_first_closes() = bridgeTest {

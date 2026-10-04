@@ -435,6 +435,62 @@ class SupabaseOfflineClientCloseTest {
     }
 
     @Test
+    fun a_log_an_open_read_still_holds_is_tried_once_more_at_close() = runTest {
+        // Given — a clear whose write-ahead log a read holds for good
+        val logs = RecordingLogSink()
+        var logTries = 0
+        val client =
+            newTestOfflineClient(
+                engineLogger = logs.asEngineLogger(),
+                scrubDatabase = { false },
+                emptyWriteAheadLog = {
+                    logTries++
+                    false
+                },
+            )
+        client.clearLocalData()
+
+        // When
+        client.close()
+
+        // Then — close tried the log once more, and said what it could not do
+        assertTrue(logTries > 0, "nothing tried the log")
+        assertTrue(
+            logs.entries.any { it.level == EngineLogLevel.WARNING && "until close" in it.message },
+            "${logs.entries}",
+        )
+    }
+
+    @Test
+    fun a_database_that_fails_to_close_is_logged_and_close_still_returns() = runTest {
+        // Given — a client whose database fails as it is closed
+        val logs = RecordingLogSink()
+        var closes = 0
+        val client =
+            newTestOfflineClient(
+                engineLogger = logs.asEngineLogger(),
+                onClose = {
+                    closes++
+                    error("Scripted failure closing the database")
+                },
+            )
+
+        // When
+        val closing = runCatching { client.close() }
+
+        // Then — close() did not throw, the failure is logged by type, and the next close returns
+        assertNull(closing.exceptionOrNull(), "close() threw ${closing.exceptionOrNull()}")
+        assertTrue(
+            logs.entries.any {
+                it.level == EngineLogLevel.ERROR && "IllegalStateException" in it.message
+            },
+            "${logs.entries}",
+        )
+        client.close()
+        assertEquals(1, closes)
+    }
+
+    @Test
     fun a_second_close_returns_only_once_the_database_is_released() = runTest {
         // Given — a write on the wire, held at the server, and a first close() waiting for it
         val releases = AtomicInt(0)

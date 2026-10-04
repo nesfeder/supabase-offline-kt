@@ -4,10 +4,10 @@ package io.github.nesfeder.supabase.offline.internal.network
 
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.NetworkStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -51,8 +51,11 @@ internal class NetworkAccess(private val source: Flow<Boolean>? = null) {
     val status: NetworkStatus
         get() = inputs.value.status()
 
-    /** The status as it changes, starting with the current one. */
-    val statusChanges: Flow<NetworkStatus> = inputs.map { it.status() }.distinctUntilChanged()
+    /**
+     * The status each time anything it is made of changes, starting with the current one. Not
+     * distinct, so a reader that reads [status] on each emission always ends on the current one.
+     */
+    val statusChanges: Flow<NetworkStatus> = inputs.map { it.status() }
 
     /** Whether the app has turned network access off. */
     val isDisabled: Boolean
@@ -78,18 +81,32 @@ internal class NetworkAccess(private val source: Flow<Boolean>? = null) {
     }
 
     /**
-     * Watches [source] in [scope] until [scope] ends: a platform monitor registers when collection
-     * starts and unregisters when [scope] is cancelled. [onReconnected] runs in that collection
-     * each time the monitor makes the network reachable again.
+     * Watches [source] in [scope] until [scope] ends, when a platform monitor unregisters;
+     * [onReconnected] runs each time it makes the network reachable again. When the source fails
+     * (rethrown for [scope] to log) or ends, the status falls back to [NetworkStatus.UNKNOWN], so a
+     * monitor that stopped while saying offline holds nothing back.
      */
     fun watchIn(scope: CoroutineScope, onReconnected: suspend () -> Unit) {
         val watched = source ?: return
         scope.launch {
-            watched.collect { online ->
-                val monitored = if (online) NetworkStatus.ONLINE else NetworkStatus.OFFLINE
-                if (change { current -> current.copy(monitored = monitored) }) onReconnected()
+            try {
+                watched.collect { online ->
+                    val monitored = if (online) NetworkStatus.ONLINE else NetworkStatus.OFFLINE
+                    if (change { current -> current.copy(monitored = monitored) }) onReconnected()
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                stopMonitoring(onReconnected)
+                throw failure
             }
+            stopMonitoring(onReconnected)
         }
+    }
+
+    /** A source that says no more: [NetworkStatus.UNKNOWN], a reconnection when it said offline. */
+    private suspend fun stopMonitoring(onReconnected: suspend () -> Unit) {
+        if (change { current -> current.copy(monitored = NetworkStatus.UNKNOWN) }) onReconnected()
     }
 
     /** Turns network access off: nothing more is sent until [enable]. */

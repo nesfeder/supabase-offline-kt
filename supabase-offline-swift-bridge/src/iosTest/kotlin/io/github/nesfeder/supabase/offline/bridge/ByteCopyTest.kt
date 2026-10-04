@@ -63,10 +63,9 @@ class ByteCopyTest {
                 .respond(200, emptyMap(), FakeOversizedData(3UL * 1024UL * 1024UL * 1024UL))
             val error = probe.awaitError()
 
-            // Then — the request failed as a transport failure naming the size, and the client
-            // still reads
+            // Then — the request failed as a transport failure, and the client still reads
             assertEquals(BridgeErrorKind.CONNECTIVITY, error.kind)
-            assertTrue(error.message.contains("3221225472"))
+            assertEquals("The request could not reach the server", error.message)
             server.answer = RecordingServer::defaultAnswer
             assertEquals(SERVER_ROWS, client.selectAndWait(readOf()).first?.data)
             client.closeAndWait()

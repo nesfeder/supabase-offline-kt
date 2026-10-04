@@ -26,6 +26,7 @@ import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.update
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -52,7 +53,8 @@ import kotlinx.serialization.json.JsonElement
  * @param ownerlessMutationsAreAnonymous whether mutations queued with no owner are the anonymous
  *   identity's: without the Auth plugin there is no other.
  * @param liveCacheKeysOf a table's queries with a live reader; retirement keeps what they wait for.
- * @param engineLogger where the rejected list reports a row it could not read.
+ * @param engineLogger where the rejected list reports a row it could not read, and where a failed
+ *   read of the queue is reported.
  */
 internal class MutationQueue(
     private val mutationDao: MutationDao,
@@ -66,7 +68,7 @@ internal class MutationQueue(
     private val identityChanges: Flow<Any?>,
     private val ownerlessMutationsAreAnonymous: Boolean,
     private val liveCacheKeysOf: (table: String) -> Set<String>,
-    engineLogger: EngineLogger,
+    private val engineLogger: EngineLogger,
 ) {
 
     /** The mutation queue's record kept beside the rows: the rejected list. */
@@ -252,7 +254,7 @@ internal class MutationQueue(
     /**
      * How many changes this queue made to each table's mutation rows, each counted once committed:
      * a flow, because readers collect it and read a table's rows again only when its count moves
-     * ([mutationsOfTableFlow], [queueChanges]). One queue per database ([OpenDatabaseRegistry]).
+     * ([mutationChangesOf], [queueChanges]). One queue per database ([OpenDatabaseRegistry]).
      */
     private val mutationChanges = MutableStateFlow(ChangeCounts())
 
@@ -279,15 +281,20 @@ internal class MutationQueue(
     }
 
     /**
-     * [table]'s mutation rows, pending and synced, in order: read once, and again each time this
-     * store changes them. Another table's changes cost this reader a comparison, not a read, and
-     * the table's readers share one read, and each body's parse, per change.
+     * Emits once at once, and again each time this queue changes [table]'s mutation rows, without
+     * reading them: the reader reads them itself, with [tableMutationsNow]. Another table's changes
+     * cost it a comparison, not a read.
      */
-    fun mutationsOfTableFlow(table: String): Flow<TableMutations> =
-        mutationChanges
-            .map { counts -> counts.of(table) }
-            .distinctUntilChanged()
-            .map { counts -> tableMutationsAt(table, counts) }
+    fun mutationChangesOf(table: String): Flow<Unit> =
+        mutationChanges.map { counts -> counts.of(table) }.distinctUntilChanged().map {}
+
+    /**
+     * [table]'s mutation rows, pending and synced, in order, as they stand now. The table's readers
+     * share one read, and each body's parse, per change; an overlay reads them in the same step as
+     * the payload it lays them over.
+     */
+    suspend fun tableMutationsNow(table: String): TableMutations =
+        tableMutationsAt(table, mutationChanges.value.of(table))
 
     /**
      * Each table's mutation rows as last read for its readers, with the counts they were read at.
@@ -375,6 +382,24 @@ internal class MutationQueue(
             mayAdoptOwnerlessMutations(identity),
             beforeId = Long.MAX_VALUE,
         )
+
+    /**
+     * [hasPendingMutationsOf], or `true` when the queue cannot be read. For a caller deciding
+     * whether to ask for a pass, which reads the queue itself: a failed read never loses the pass.
+     * Throws only a cancellation.
+     */
+    suspend fun mayHavePendingMutationsOf(identity: String): Boolean =
+        try {
+            hasPendingMutationsOf(identity)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not read whether queued writes wait (${failure::class.simpleName}); " +
+                    "taking it that they do"
+            }
+            true
+        }
 
     /**
      * Records [identity] as the owner of every pending mutation that has none — rows queued with no
@@ -487,6 +512,8 @@ internal class MutationQueue(
                 } else {
                     null
                 }
+            // Removed already, as an accepted head write is under its table's readers' lock
+            if (touched.isEmpty() && rejected == null) return@withLock
             mutationDao.runInTransaction {
                 idSet.forEach { id -> mutationDao.deleteById(id) }
                 rejected?.let { (row, _) -> queryCacheDao.upsert(row) }

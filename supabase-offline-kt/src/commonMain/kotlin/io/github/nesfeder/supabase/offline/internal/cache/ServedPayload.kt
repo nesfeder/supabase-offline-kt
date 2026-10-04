@@ -25,3 +25,12 @@ internal data class ServedPayload(
     val isStale: Boolean,
     val hasPendingMutations: Boolean,
 )
+
+/**
+ * A cached payload as a one-shot read serves it.
+ *
+ * @property overlay the payload with the identity's mutations overlaid, and whether a pending one
+ *   changed a shown row.
+ * @property updatedAt the stored payload's fetch stamp, negated when it is stale.
+ */
+internal class OverlaidCachedPayload(val overlay: ServedOverlay, val updatedAt: Long)

@@ -31,8 +31,16 @@ UNLISTED=(Desktop Documents Downloads Movies Music Pictures .Trash)
 #   settings, at about 23:04 UTC), which moves them. The name still shows a runner folder added or
 #   removed.
 # - SwiftPM's folder of links: SwiftPM deletes and re-creates its `security` link on every package
-#   build, xcodebuild's included, so the job's Swift package step moves the folder's times.
+#   build, in any session and in the job's Swift package step (xcodebuild), which moves the
+#   folder's times.
 UNTIMED=('actions-runner-*' '.swiftpm')
+
+# Recorded by name, link target and mode, never timed: a symbolic link that something deletes and
+# re-creates to the same target on its own schedule. A link re-pointed elsewhere, or replaced by a
+# file or a folder, still shows; what is inside its target is not followed.
+# - SwiftPM's `security` link (to ~/Library/org.swift.swiftpm/security, where SwiftPM keeps package
+#   fingerprints and signing trust): re-created on every package build, as for its folder above.
+BY_TARGET=('.swiftpm/security')
 
 # Neither recorded nor listed. Something other than the job writes each of these while it runs;
 # each line says what, and why the job does not write there. Everything else is watched, including
@@ -56,6 +64,10 @@ EXCLUDED=(
     'Library/Caches'
     'Library/Group Containers'
     'Library/Application Scripts'
+    # Applications the machine's user runs, on their own schedule: the browser's state, and the
+    # documents an editor saves by itself. The job starts no application that writes in either.
+    'Library/Safari'
+    'Library/Autosave Information'
     # macOS services that write on their own schedule: Shortcuts, Siri suggestions, Wallet,
     # HomeKit, the energy daemon, on-device intelligence and translation, and Google's updater.
     'Library/Shortcuts'
@@ -67,10 +79,6 @@ EXCLUDED=(
     'Library/DataDeliveryServices'
     'Library/Translation'
     'Library/Google'
-    # The link SwiftPM re-creates, to the same target, on every package build in any session: the
-    # job's Swift package step (xcodebuild) does too, and nothing else of the job writes there.
-    # Its target, ~/Library/org.swift.swiftpm, and the folder's other links stay watched.
-    '.swiftpm/security'
     # Gradle's temporary folder and the Kotlin Gradle plugin's build statistics, written by every
     # other Gradle build as the user. The job's Gradle User Home is its own, so it writes neither.
     '.gradle/.tmp'
@@ -128,7 +136,7 @@ take_snapshot() {
         find_args+=(-path "./$pattern")
         first=0
     done
-    local format='%N%t%z%t%m%t%c%t%p' name_only='%N%t-%t-%t-%t-'
+    local format='%N%t%z%t%m%t%c%t%p' name_only='%N%t-%t-%t-%t-' by_target='%N%t%Y%t-%t-%t%p'
     find_args+=(')' -prune -exec stat -f "$name_only" '{}' + -o '(')
     first=1
     for pattern in "${UNTIMED[@]}"; do
@@ -137,7 +145,14 @@ take_snapshot() {
         find_args+=('(' -path "./$pattern" ! -path "./$pattern/*" ')')
         first=0
     done
-    find_args+=(')' -exec stat -f "$name_only" '{}' + -o -exec stat -f "$format" '{}' +)
+    find_args+=(')' -exec stat -f "$name_only" '{}' + -o '(')
+    first=1
+    for pattern in "${BY_TARGET[@]}"; do
+        if [[ "$first" -eq 0 ]]; then find_args+=(-o); fi
+        find_args+=(-path "./$pattern")
+        first=0
+    done
+    find_args+=(')' -exec stat -f "$by_target" '{}' + -o -exec stat -f "$format" '{}' +)
     (
         cd "$home" || exit 1
         failed=0

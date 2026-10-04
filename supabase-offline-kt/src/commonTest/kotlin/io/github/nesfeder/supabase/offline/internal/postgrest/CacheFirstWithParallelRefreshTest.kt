@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.take
@@ -382,6 +383,46 @@ class CacheFirstWithParallelRefreshTest {
             // Then: the loop already ended — no extra attempts
             assertEquals(1, attemptCount, "success ends the loop permanently")
 
+            collector.cancelAndJoin()
+        }
+
+    @Test
+    fun a_refresh_request_made_while_a_refresh_runs_runs_it_again_after() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: a refresh held on the wire
+            val cache = MutableSharedFlow<String>(replay = 1)
+            cache.tryEmit("[]")
+            val requests = MutableStateFlow(0L)
+            val held = CompletableDeferred<Unit>()
+            var attemptCount = 0
+            val collector = launch {
+                cacheFirstWithParallelRefresh(
+                        cache = cache,
+                        refresh = {
+                            attemptCount++
+                            if (attemptCount == 1) held.await()
+                        },
+                        refreshRequests = requests,
+                    )
+                    .collect {}
+            }
+            runCurrent()
+
+            // When: a refresh is asked for while it runs, then it finishes
+            requests.value = 1L
+            runCurrent()
+            held.complete(Unit)
+            runCurrent()
+
+            // Then: the request was not lost — the refresh ran again, once
+            assertEquals(2, attemptCount)
+
+            // When: asked again once the loop waits
+            requests.value = 2L
+            runCurrent()
+
+            // Then: it runs again
+            assertEquals(3, attemptCount)
             collector.cancelAndJoin()
         }
 

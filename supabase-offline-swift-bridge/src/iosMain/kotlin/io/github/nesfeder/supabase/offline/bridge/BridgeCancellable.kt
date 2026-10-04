@@ -6,7 +6,8 @@ import kotlinx.coroutines.Job
 
 /**
  * The handle every asynchronous bridge call returns: cancelling it cancels the Kotlin work behind
- * the call, whose completion then fires with [BridgeErrorKind.CANCELLED] unless it already fired.
+ * the call, whose completion then fires with [BridgeErrorKind.CANCELLED] unless its answer was
+ * already decided.
  */
 public class BridgeCancellable
 internal constructor(private val job: Job?, private val reportFailure: (Throwable) -> Unit) {

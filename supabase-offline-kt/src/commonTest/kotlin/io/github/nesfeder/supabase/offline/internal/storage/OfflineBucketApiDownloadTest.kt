@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
+import io.github.jan.supabase.exceptions.UnauthorizedRestException
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
@@ -192,7 +194,7 @@ class OfflineBucketApiDownloadTest {
     }
 
     @Test
-    fun downloadPublic_fallback_logsWarning() = runTest {
+    fun downloadPublic_fallback_offline_logsInfo() = runTest {
         // Given — cached by a first download, then the network fails
         delegate.onDownload = { BYTES }
         api.downloadPublic(PATH) {}
@@ -201,26 +203,50 @@ class OfflineBucketApiDownloadTest {
         // When
         api.downloadPublic(PATH) {}
 
-        // Then
+        // Then — an expected offline condition, so nothing above INFO
         assertEquals(
             listOf("Storage download from $BUCKET failed; serving the cached copy"),
-            messagesAt(EngineLogLevel.WARNING),
+            messagesAt(EngineLogLevel.INFO),
+        )
+        assertEquals(
+            emptyList(),
+            messagesAt(EngineLogLevel.WARNING) + messagesAt(EngineLogLevel.ERROR),
         )
     }
 
     @Test
-    fun downloadPublic_noCache_logsError() = runTest {
+    fun downloadPublic_noCache_offline_logsInfo() = runTest {
         // Given — nothing cached, and the network fails
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When
         assertFailsWith<IOException> { api.downloadPublic(PATH) {} }
 
-        // Then
+        // Then — an expected offline condition, so nothing above INFO
         assertEquals(
             listOf("Storage download from $BUCKET failed and nothing is cached"),
-            messagesAt(EngineLogLevel.ERROR),
+            messagesAt(EngineLogLevel.INFO),
         )
+        assertEquals(
+            emptyList(),
+            messagesAt(EngineLogLevel.WARNING) + messagesAt(EngineLogLevel.ERROR),
+        )
+    }
+
+    @Test
+    fun downloadPublic_noCache_refused_logsWarning() = runTest {
+        // Given — nothing cached, and the server refuses the download
+        delegate.onDownload = { throw forbiddenRestException() }
+
+        // When
+        assertFailsWith<UnauthorizedRestException> { api.downloadPublic(PATH) {} }
+
+        // Then — not an offline condition: WARNING, and nothing above
+        assertEquals(
+            listOf("Storage download from $BUCKET failed and nothing is cached"),
+            messagesAt(EngineLogLevel.WARNING),
+        )
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.ERROR))
     }
 
     @Test
@@ -243,7 +269,7 @@ class OfflineBucketApiDownloadTest {
     }
 
     @Test
-    fun downloadAuthenticated_fallback_logsWarning() = runTest {
+    fun downloadAuthenticated_fallback_offline_logsInfo() = runTest {
         // Given — cached by a first download, then the network fails
         delegate.onDownload = { BYTES }
         api.downloadAuthenticated(PATH) {}
@@ -252,26 +278,50 @@ class OfflineBucketApiDownloadTest {
         // When
         api.downloadAuthenticated(PATH) {}
 
-        // Then
+        // Then — an expected offline condition, so nothing above INFO
         assertEquals(
             listOf("Storage download from $BUCKET failed; serving the cached copy"),
-            messagesAt(EngineLogLevel.WARNING),
+            messagesAt(EngineLogLevel.INFO),
+        )
+        assertEquals(
+            emptyList(),
+            messagesAt(EngineLogLevel.WARNING) + messagesAt(EngineLogLevel.ERROR),
         )
     }
 
     @Test
-    fun downloadAuthenticated_noCache_logsError() = runTest {
+    fun downloadAuthenticated_noCache_offline_logsInfo() = runTest {
         // Given — nothing cached, and the network fails
         delegate.onDownload = { throw IOException("network unreachable") }
 
         // When
         assertFailsWith<IOException> { api.downloadAuthenticated(PATH) {} }
 
-        // Then
+        // Then — an expected offline condition, so nothing above INFO
         assertEquals(
             listOf("Storage download from $BUCKET failed and nothing is cached"),
-            messagesAt(EngineLogLevel.ERROR),
+            messagesAt(EngineLogLevel.INFO),
         )
+        assertEquals(
+            emptyList(),
+            messagesAt(EngineLogLevel.WARNING) + messagesAt(EngineLogLevel.ERROR),
+        )
+    }
+
+    @Test
+    fun downloadAuthenticated_noCache_refused_logsWarning() = runTest {
+        // Given — nothing cached, and the server refuses the download
+        delegate.onDownload = { throw forbiddenRestException() }
+
+        // When
+        assertFailsWith<UnauthorizedRestException> { api.downloadAuthenticated(PATH) {} }
+
+        // Then — not an offline condition: WARNING, and nothing above
+        assertEquals(
+            listOf("Storage download from $BUCKET failed and nothing is cached"),
+            messagesAt(EngineLogLevel.WARNING),
+        )
+        assertEquals(emptyList(), messagesAt(EngineLogLevel.ERROR))
     }
 
     @Test

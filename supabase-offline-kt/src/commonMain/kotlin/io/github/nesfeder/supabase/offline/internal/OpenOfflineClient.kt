@@ -13,7 +13,8 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.OfflineDatabase
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
-import io.github.nesfeder.supabase.offline.internal.db.scrubDeletedRows
+import io.github.nesfeder.supabase.offline.internal.db.emptyWriteAheadLog
+import io.github.nesfeder.supabase.offline.internal.db.rewriteWithoutDeletedRows
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.logging.engineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMARY_KEY
@@ -22,6 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import okio.FileSystem
@@ -63,13 +65,8 @@ internal fun openOfflineClient(
             dataDirectory = dataDirectory,
             prepareFileCacheDirectories = true,
             engineLogger = engineLogger,
-            scrubDatabase = {
-                if (!database.scrubDeletedRows()) {
-                    engineLogger.warning {
-                        "Clearing local data could not empty the database's write-ahead log; the next checkpoint will"
-                    }
-                }
-            },
+            scrubDatabase = database::rewriteWithoutDeletedRows,
+            emptyWriteAheadLog = database::emptyWriteAheadLog,
             onClose = {
                 try {
                     database.close()
@@ -101,9 +98,13 @@ internal fun openOfflineClient(
  * @param engineLogger where the engine logs; by default supabase-kt's logging at
  *   [Offline.Config.logLevel].
  * @param coordinatorScope the parent of the client's own scope; `null` for the engine's own.
- * @param scrubDatabase rewrites the database without the rows a clear deleted.
+ * @param scrubDatabase rewrites the database without the rows a clear deleted, and tries once to
+ *   empty its write-ahead log: whether it did.
+ * @param emptyWriteAheadLog tries once, waiting for no read, to empty the write-ahead log.
  * @param onClose releases what the opener opened, when the client closes.
  * @param onStillClosing told when a close returns before the release.
+ * @param closeWait how long a close waits for calls in flight; a test whose client work never runs
+ *   shortens it.
  * @param fileSystem where the Storage file cache keeps its files: the device's disk unless a test
  *   keeps them in memory.
  * @param markFileUsed records a use time on one of [fileSystem]'s files.
@@ -121,9 +122,11 @@ internal fun Offline.Config.buildOfflineClient(
     prepareFileCacheDirectories: Boolean,
     engineLogger: EngineLogger = supabase.engineLogger(logLevel),
     coordinatorScope: CoroutineScope? = null,
-    scrubDatabase: suspend () -> Unit = {},
+    scrubDatabase: suspend () -> Boolean = { true },
+    emptyWriteAheadLog: suspend () -> Boolean = { true },
     onClose: () -> Unit = {},
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
+    closeWait: Duration = OfflineClient.CLOSE_WAIT,
     fileSystem: FileSystem = FileSystem.SYSTEM,
     markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
     clock: Clock = Clock.System,
@@ -143,8 +146,10 @@ internal fun Offline.Config.buildOfflineClient(
         fileCacheMaxBytes = fileCacheBoundOrNull(),
         prepareFileCacheDirectories = prepareFileCacheDirectories,
         scrubDatabase = scrubDatabase,
+        emptyWriteAheadLog = emptyWriteAheadLog,
         onClose = onClose,
         onStillClosing = onStillClosing,
+        closeWait = closeWait,
         primaryKeys = primaryKeysByTable(),
         responseTrust = responseTrustPolicy(),
         config = this,

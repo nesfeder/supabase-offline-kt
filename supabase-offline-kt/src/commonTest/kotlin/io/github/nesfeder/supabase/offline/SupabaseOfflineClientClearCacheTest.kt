@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:OptIn(ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class, ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline
 
@@ -10,14 +10,26 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.ktor.client.engine.mock.MockEngine
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
@@ -37,6 +49,46 @@ class SupabaseOfflineClientClearCacheTest {
     @AfterTest
     fun tearDown() {
         createdDirs.forEach { FileSystem.SYSTEM.deleteRecursively(it, mustExist = false) }
+    }
+
+    @Test
+    fun a_clear_cancelled_under_its_locks_still_leaves_the_log_to_the_background() = runTest {
+        // Given — a read holds the write-ahead log, and the clear's caller is cancelled while the
+        // rewrite runs under the clear's locks
+        val held = AtomicBoolean(true)
+        val emptied = AtomicBoolean(false)
+        val clear = CompletableDeferred<Job>()
+        val client =
+            newTestOfflineClient(
+                scrubDatabase = {
+                    clear.await().cancel()
+                    false
+                },
+                emptyWriteAheadLog = {
+                    emptied.store(!held.load())
+                    emptied.load()
+                },
+            )
+        val job =
+            launch(Dispatchers.Default, start = CoroutineStart.LAZY) { client.clearLocalData() }
+        clear.complete(job)
+        job.start()
+        job.join()
+
+        // When — the read ends
+        held.store(false)
+        val emptiedInTime =
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(10.seconds) {
+                    while (!emptied.load()) delay(10.milliseconds)
+                    true
+                }
+            }
+
+        // Then — the background emptied it, though the clear was cancelled
+        assertTrue(job.isCancelled, "the clear was not cancelled")
+        assertEquals(true, emptiedInTime, "nothing emptied the log after the cancelled clear")
+        client.close()
     }
 
     @Test
@@ -78,7 +130,10 @@ class SupabaseOfflineClientClearCacheTest {
             newTestOfflineClient(
                 supabase = newTestSupabaseClient(plugins = {}),
                 cachedFileDao = cachedFileDao,
-                scrubDatabase = { rowsLeftAtScrub = cachedFileDao.all().size },
+                scrubDatabase = {
+                    rowsLeftAtScrub = cachedFileDao.all().size
+                    true
+                },
             )
 
         // When

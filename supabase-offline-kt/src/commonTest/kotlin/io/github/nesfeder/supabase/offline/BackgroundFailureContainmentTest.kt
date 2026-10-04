@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.auth.auth
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
@@ -16,6 +17,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingUncaughtExceptio
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
+import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -135,6 +137,43 @@ class BackgroundFailureContainmentTest {
     }
 
     @Test
+    fun a_sign_in_after_a_failed_queue_read_still_sends_the_users_writes() = runTest {
+        // Given — the identity watcher's first read of the queue, at start, fails
+        val mutationDao = FakeMutationDao().apply { failNextHasPendingOwnedBy = true }
+        val supabase = newTestSupabaseClientWithAuth(server.engine)
+        val client =
+            newTestOfflineClient(
+                supabase = supabase,
+                mutationDao = mutationDao,
+                engineLogger = logs.asEngineLogger(),
+                coordinatorScope = appScope,
+            )
+        awaitLogged("IllegalStateException")
+        // The user's edit queued while the server cannot be reached, then the user signs out
+        supabase.signInForTest(USER)
+        server.answer = { connectivityFailure() }
+        assertIs<MutationOutcome.Queued>(
+            client.from(TABLE).insert(rowsToWrite(id = 4, title = "offline edit"))
+        )
+        supabase.auth.clearSession()
+
+        // When — the server is back and the user signs in: only the sign-in asks for a pass
+        server.answer = { okJson("[]") }
+        supabase.signInForTest(USER)
+        val drained =
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(WAIT) {
+                    client.pendingMutationCountFlow().first { pending -> pending == 0 }
+                }
+            }
+
+        // Then
+        assertEquals(0, drained, "the sign-in sent nothing: ${logs.entries}")
+        assertEquals(emptyList(), uncaught.recorded())
+        client.close()
+    }
+
+    @Test
     fun a_connectivity_monitor_that_fails_is_logged_and_the_client_keeps_serving() = runTest {
         // Given — a monitor that reports offline, then breaks
         server.answer = { okJson(ROWS) }
@@ -153,8 +192,16 @@ class BackgroundFailureContainmentTest {
             )
         awaitLogged("IllegalStateException")
 
-        // Then — a request is still tried (the monitor is a hint), and nothing escaped
+        // Then — a request is still tried (the monitor is a hint), the status no longer says
+        // offline, so the library tries by itself again, and nothing escaped
         assertEquals(ROWS, client.from(TABLE).select().data)
+        val network =
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(WAIT) {
+                    client.syncStatus.first { status -> status.network == NetworkStatus.UNKNOWN }
+                }
+            }
+        assertEquals(NetworkStatus.UNKNOWN, network?.network, "${client.syncStatus.value}")
         assertEquals(emptyList(), uncaught.recorded())
         client.close()
     }
@@ -207,6 +254,7 @@ class BackgroundFailureContainmentTest {
     private companion object {
         const val TABLE = "todos"
         const val ROWS = """[{"id":1,"title":"Buy milk"}]"""
+        const val USER = "user-a"
         val WAIT = 10.seconds
         val POLL = 10.milliseconds
     }

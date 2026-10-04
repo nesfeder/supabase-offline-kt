@@ -58,6 +58,35 @@ class QueueIdentityTest {
     }
 
     @Test
+    fun an_identity_read_while_restoring_is_read_again_once_the_status_changes() = runTest {
+        // Given — user A remembered while the session restored
+        var status: SessionStatus = SessionStatus.Initializing
+        var stored = session(userId = "user-a")
+        var loads = 0
+        val reader =
+            QueueIdentityReader(
+                sessionStatus = { status },
+                loadStoredSession = {
+                    loads++
+                    stored
+                },
+            )
+        val whileRestoring = listOf(reader.current(), reader.current())
+
+        // When — user B is signed in, and B's token refresh fails
+        stored = session(userId = "user-b")
+        @Suppress("DEPRECATION")
+        status =
+            SessionStatus.RefreshFailure(RefreshFailureCause.NetworkError(Exception("offline")))
+        val afterTheRefreshFailed = reader.current()
+
+        // Then — A's identity served the restore with one read, and B's write is B's
+        assertEquals(List(2) { QueueIdentity.User("user-a") }, whileRestoring)
+        assertEquals(QueueIdentity.User("user-b"), afterTheRefreshFailed)
+        assertEquals(2, loads)
+    }
+
+    @Test
     fun a_restoring_session_is_its_stored_user() = runTest {
         // Given / When
         val identity = queueIdentityFor(SessionStatus.Initializing) { session(userId = "user-a") }
