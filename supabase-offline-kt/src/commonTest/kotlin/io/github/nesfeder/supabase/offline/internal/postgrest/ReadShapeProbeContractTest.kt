@@ -57,7 +57,7 @@ class ReadShapeProbeContractTest {
     fun each_read_shape_is_told_without_sending_the_read() = runTest {
         // Given
         val reads: List<Pair<ReadShape, SelectRequestBuilder.() -> Unit>> =
-            listOf(
+            listOf<Pair<ReadShape, SelectRequestBuilder.() -> Unit>>(
                 ReadShape.RowList to { filter { eq("id", 1) } },
                 ReadShape.RowList to
                     {
@@ -66,10 +66,6 @@ class ReadShapeProbeContractTest {
                         limit(5)
                     },
                 ReadShape.Uncacheable("a single object (single(), maybeSingle())") to { single() },
-                ReadShape.Uncacheable("a single object (single(), maybeSingle())") to
-                    {
-                        maybeSingle()
-                    },
                 ReadShape.Uncacheable("a HEAD request") to { head = true },
                 ReadShape.Uncacheable("a read with a row count") to { count(Count.EXACT) },
                 ReadShape.Uncacheable("another media type (csv(), geojson())") to { csv() },
@@ -83,7 +79,7 @@ class ReadShapeProbeContractTest {
                     {
                         headers.append("Accept", "application/vnd.pgrst.object+json")
                     },
-            )
+            ) + maybeSingleProbeReads
 
         // When
         val shapes = reads.map { (_, request) -> handle.shapeOf(Columns.ALL, request) }

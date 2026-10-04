@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
-import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
@@ -31,10 +30,8 @@ import kotlinx.serialization.json.JsonElement
 /**
  * A dry run must never reach the queue, so the engine classifies a write before it persists it.
  * When it cannot tell whether a write is a dry run, it does not persist it at all: it sends it, and
- * never queues it — and says so, once, at ERROR. On the online-success path the server's own
- * `Preference-Applied` header decides whether the write was rolled back: PostgREST's default
- * `db-tx-end` ignores `tx=rollback` and commits, and then the write must be overlaid like any
- * other.
+ * never queues it — and says so, once, at ERROR. What happens to an actual dry run is in
+ * `DryRunOutcomeTest`, which needs supabase-kt 3.8's `dryRun()`.
  */
 class DryRunClassificationTest {
 
@@ -78,76 +75,6 @@ class DryRunClassificationTest {
                 logger.entriesAt(EngineLogLevel.ERROR).count { it.message.contains("dry run") },
             )
         }
-
-    @Test
-    fun a_dry_run_the_server_did_not_honour_is_overlaid_like_any_committed_write() = runTest {
-        // Given — a server on PostgREST's default db-tx-end: tx=rollback is ignored and the write
-        // commits
-        val server = RecordingPostgrestServer(answer = { okJson("[]") })
-        queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
-        val builder =
-            newTestOfflineTable(
-                delegate = server.supabaseClient().postgrest.from(TABLE),
-                store = store,
-            )
-
-        // When
-        builder.update(patch(), MutationStrategy.QueueIfOffline) {
-            filter { eq("id", 1) }
-            dryRun()
-        }
-
-        // Then — the cache shows the committed write
-        assertEquals(
-            """[{"id":1,"title":"new"}]""",
-            queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload,
-        )
-    }
-
-    @Test
-    fun a_dry_run_the_server_rolled_back_leaves_the_cache_untouched() = runTest {
-        // Given — a server that allows the override and says so
-        val server =
-            RecordingPostgrestServer(
-                answer = { okJson("[]", mapOf(PREFERENCE_APPLIED to "tx=rollback")) }
-            )
-        queryCacheDao.seedPayload(TABLE, CACHE_KEY, ORIGINAL)
-        val builder =
-            newTestOfflineTable(
-                delegate = server.supabaseClient().postgrest.from(TABLE),
-                store = store,
-            )
-
-        // When
-        builder.update(patch(), MutationStrategy.QueueIfOffline) {
-            filter { eq("id", 1) }
-            dryRun()
-        }
-
-        // Then
-        assertEquals(ORIGINAL, queryCacheDao.getRow(TABLE, CACHE_KEY)?.payload)
-        assertTrue(mutationDao.inserted.isEmpty())
-    }
-
-    @Test
-    fun an_offline_dry_run_is_never_persisted() = runTest {
-        // Given — offline
-        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
-        val builder =
-            newTestOfflineTable(
-                delegate = server.supabaseClient().postgrest.from(TABLE),
-                store = store,
-            )
-
-        // When / Then
-        assertNotQueueable<HttpRequestException> {
-            builder.update(patch(), MutationStrategy.QueueIfOffline) {
-                filter { eq("id", 1) }
-                dryRun()
-            }
-        }
-        assertTrue(mutationDao.inserted.isEmpty())
-    }
 
     @Test
     fun a_write_whose_session_token_cannot_be_refreshed_is_classified_and_queued() = runTest {
@@ -216,8 +143,5 @@ class DryRunClassificationTest {
 
     private companion object {
         const val TABLE = "todos"
-        const val CACHE_KEY = "todos?id=eq.1"
-        const val ORIGINAL = """[{"id":1,"title":"committed"}]"""
-        const val PREFERENCE_APPLIED = "Preference-Applied"
     }
 }
