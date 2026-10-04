@@ -153,6 +153,24 @@ class ChannelDownloadStatusTest {
         assertNull(bucket.cachedFile(PATH))
     }
 
+    @Test
+    fun a_channel_download_of_a_name_sent_unencoded_still_checks_the_status() = runTest {
+        // Given — a stored object Storage refuses to serve, under a name supabase-kt before 3.8
+        // puts in the URL as written, so it is downloaded but never cached
+        server.objects["$BUCKET/$NAME_SENT_UNENCODED"] = CONTENT
+        server.downloadRefusal = HttpStatusCode.Forbidden
+        val bytesFailure = failureOf { bucket.downloadAuthenticated(NAME_SENT_UNENCODED) {} }
+        val channel = ByteChannel(autoFlush = true)
+
+        // When — the app downloads it into a channel
+        val failure = failureOf { bucket.downloadAuthenticated(NAME_SENT_UNENCODED, channel) {} }
+
+        // Then — the bytes download's failure, and no bytes
+        assertSameFailure(bytesFailure, failure)
+        assertEquals(HttpStatusCode.Forbidden.value, (failure as RestException).statusCode)
+        assertEquals(0, bytesLeftIn(channel).size)
+    }
+
     private suspend fun failureOf(call: suspend () -> Unit): Throwable =
         assertNotNull(runCatching { call() }.exceptionOrNull(), "the call returned")
 
@@ -174,6 +192,7 @@ class ChannelDownloadStatusTest {
     private companion object {
         const val BUCKET = "photos"
         const val PATH = "u/photo.jpg"
+        const val NAME_SENT_UNENCODED = "u/photo?1.jpg"
         val CONTENT = "the photo's bytes".encodeToByteArray()
     }
 }
