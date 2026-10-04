@@ -42,8 +42,9 @@ import kotlinx.serialization.json.JsonObject
  *
  * Reads and writes are plain JSON descriptions the bridge applies onto supabase-kt's own builders
  * (the format is in the contract note beside this module); bodies and records cross as JSON text. A
- * completion fires exactly once, on a background thread; a live read's values arrive in order, on a
- * background thread, and never block it. Nothing here throws: a failure arrives as a [BridgeError].
+ * completion fires exactly once, on the bridge's background threads and never inside the call that
+ * takes it; it may run before that call returns. A live read's values arrive in order and never
+ * block it. Nothing here throws: a failure arrives as a [BridgeError].
  *
  * Build one with [open]; [close] it when done, which frees its database for another client.
  */
