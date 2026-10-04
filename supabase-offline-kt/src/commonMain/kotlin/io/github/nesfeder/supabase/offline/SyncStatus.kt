@@ -23,8 +23,8 @@ import kotlin.time.Instant
  *   or by a write sent at once, by the device's clock; `null` until it happens. Kept in memory
  *   only: a new client starts without it.
  * @property lastSyncError why the last sync pass stopped with writes still queued, as a
- *   [SyncFailedException]; `null` once a later pass runs to the end, or sending empties the queue.
- *   It carries no row, filter value or token.
+ *   [SyncFailedException]; `null` once a later pass runs to the end, sending empties the queue, or
+ *   local data is cleared. It carries no row, filter value or token.
  */
 @ConsistentCopyVisibility
 public data class SyncStatus
