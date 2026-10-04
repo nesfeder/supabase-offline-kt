@@ -118,37 +118,6 @@ internal class MutationQueue(
 
     /* ────────────────────────────── Mutation queue ────────────────────────────── */
 
-    /** Queues an INSERT with no recorded owner; see [MutationWriter.enqueueInsert]. */
-    suspend fun enqueueInsert(
-        table: String,
-        body: JsonArray,
-        filter: FilterDescriptor? = null,
-        defaultToNull: Boolean = true,
-    ): Long = MutationWriter(owner = null).enqueueInsert(table, body, filter, defaultToNull)
-
-    /** Queues an UPSERT with no recorded owner; see [MutationWriter.enqueueUpsert]. */
-    suspend fun enqueueUpsert(
-        table: String,
-        bodyJson: JsonArray,
-        filter: FilterDescriptor? = null,
-        onConflict: String? = null,
-        ignoreDuplicates: Boolean = false,
-        defaultToNull: Boolean = true,
-    ): Long =
-        MutationWriter(owner = null)
-            .enqueueUpsert(table, bodyJson, filter, onConflict, ignoreDuplicates, defaultToNull)
-
-    /** Queues an UPDATE with no recorded owner; see [MutationWriter.enqueueUpdate]. */
-    suspend fun enqueueUpdate(
-        table: String,
-        body: JsonElement,
-        filter: FilterDescriptor? = null,
-    ): Long = MutationWriter(owner = null).enqueueUpdate(table, body, filter)
-
-    /** Queues a DELETE with no recorded owner; see [MutationWriter.enqueueDelete]. */
-    suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): Long =
-        MutationWriter(owner = null).enqueueDelete(table, filter)
-
     /**
      * Queues writes for [owner]: each row is stored with its owner in one insert, and the readers
      * of its table are told.
@@ -617,16 +586,6 @@ internal class MutationQueue(
             newId
         }
 
-    /**
-     * Removes the rejected mutation [id] from the list.
-     *
-     * @param id The rejected mutation's id.
-     * @return `true` when an entry was removed.
-     */
-    suspend fun dismissRejectedMutation(id: Long): Boolean = mutationQueueMutex.withLock {
-        rejectedList.removeRejection(id) != null
-    }
-
     /** [table]'s pending mutations, whatever their owner, in insertion order. */
     suspend fun pendingMutationsForTable(table: String): List<MutationRow> =
         mutationDao.pendingForTable(table)
@@ -635,36 +594,6 @@ internal class MutationQueue(
      * Returns all pending mutations in insertion order across **all tables**, whatever their owner.
      */
     suspend fun allPendingMutations(): List<MutationRow> = mutationDao.pendingAll()
-
-    /**
-     * The current identity's pending mutations — of [table], or of every table when it is `null` —
-     * in insertion order, re-emitted on each change.
-     *
-     * @param table The table to observe, or `null` for the whole queue.
-     * @return A flow of pending mutation rows.
-     */
-    fun pendingMutationsFlow(table: String?): Flow<List<MutationRow>> =
-        combine(mutationDao.pendingAllFlow(), identityChanges) { rows, _ ->
-                visibleTo(identityProvider(), rows).filter { row ->
-                    table == null || row.table == table
-                }
-            }
-            .distinctUntilChanged()
-
-    /** The current identity's pending mutations across all tables. */
-    suspend fun pendingMutationCount(): Int =
-        visibleTo(identityProvider(), mutationDao.pendingAll()).size
-
-    /** Flow of the current identity's pending mutations across all tables. */
-    fun pendingMutationCountFlow(): Flow<Int> = pendingMutationsFlow(null).map { rows -> rows.size }
-
-    /** The current identity's pending mutations for a specific [table]. */
-    suspend fun pendingMutationCountForTable(table: String): Int =
-        visibleTo(identityProvider(), mutationDao.pendingForTable(table)).size
-
-    /** Flow of the current identity's pending mutations for a specific [table]. */
-    fun pendingMutationCountForTableFlow(table: String): Flow<Int> =
-        pendingMutationsFlow(table).map { rows -> rows.size }
 
     /*
      * What the app is shown of the queue: the current identity's mutations and the ownerless ones

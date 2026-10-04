@@ -186,18 +186,6 @@ internal class RejectedMutationList(
     }
 
     /**
-     * Adds [entry] as the newest rejection and writes the list. See [rejectedRowWith].
-     *
-     * @param entry The rejection.
-     */
-    // test-only: moves in C3b
-    suspend fun addRejection(entry: StoredRejection) {
-        val (row, list) = rejectedRowWith(add = entry)
-        queryCacheDao.upsert(row)
-        rejectedWritten(list)
-    }
-
-    /**
      * Removes the rejection with [id], if present, and writes the list.
      *
      * @param id The rejected mutation's id.

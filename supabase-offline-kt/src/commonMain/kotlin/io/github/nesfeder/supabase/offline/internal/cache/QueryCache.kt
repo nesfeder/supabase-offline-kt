@@ -13,8 +13,6 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.update
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -82,11 +80,10 @@ internal class ParsedPayload(val text: String, val rows: List<JsonElement>?) {
 }
 
 /**
- * The cached queries' rows: a response written behind its admission guards, a payload read,
- * observed, deleted or a table emptied, size eviction, each query's shape record, and the parsed
- * rows kept for reuse. Owns the per-table write locks ([TableWriteLocks]), each held across a whole
- * read-modify-write and never taken under the queue or clear lock; and the eviction lock, taken
- * with no other held.
+ * The cached queries' rows: a response written behind its admission guards, a payload read, size
+ * eviction, each query's shape record, and the parsed rows kept for reuse. Owns the per-table write
+ * locks ([TableWriteLocks]), each held across a whole read-modify-write and never taken under the
+ * queue or clear lock; and the eviction lock, taken with no other held.
  *
  * @param mutationQueue whose lock and sync sequence a written response is stamped under.
  * @param allLiveCacheKeys the queries with a live reader, which eviction keeps.
@@ -237,13 +234,6 @@ internal class QueryCache(
     }
 
     /**
-     * The payload cached for [table]/[cacheKey], or `null` when none is, or the cache is not the
-     * current identity's.
-     */
-    suspend fun getPayload(table: String, cacheKey: String): String? =
-        getPayloadWithTimestamp(table, cacheKey)?.first
-
-    /**
      * The payload cached for [table]/[cacheKey] with the time it was written, or `null` when none
      * is, or the cache is not the current identity's.
      */
@@ -251,35 +241,6 @@ internal class QueryCache(
         if (isReservedTable(table) || !ownership.cacheServesCurrentIdentity()) return null
         val row = queryCacheDao.get(table, cacheKey) ?: return null
         return row.payload to row.updatedAt
-    }
-
-    /** The payload cached for [table]/[cacheKey] as it changes, whoever's the cache is. */
-    fun observePayload(table: String, cacheKey: String): Flow<String?> {
-        if (isReservedTable(table)) return flowOf(null)
-        return queryCacheDao.observe(table, cacheKey).map { row -> row?.payload }
-    }
-
-    /** Deletes the payload cached for [table]/[cacheKey], with its shape record. */
-    suspend fun deleteTablePayload(table: String, cacheKey: String) {
-        requireUserTable(table)
-        tableWriteLocks.of(table).withLock {
-            queryCacheDao.delete(table, cacheKey)
-            queryShapes.forget(table, cacheKey)
-        }
-    }
-
-    /**
-     * Drops every cached payload of [table], and advances its watermark: an emptied table is local
-     * truth, so a refresh already in flight must not land on it. A fetch afterwards is the
-     * recovery.
-     */
-    suspend fun clearTable(table: String) {
-        requireUserTable(table)
-        tableWriteLocks.of(table).withLock {
-            freshness.advanceLocalWriteWatermark(table)
-            queryCacheDao.deleteTable(table)
-            queryShapes.forgetTable(table)
-        }
     }
 
     /**
