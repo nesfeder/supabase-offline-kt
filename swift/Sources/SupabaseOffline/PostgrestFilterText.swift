@@ -108,7 +108,8 @@ enum PostgrestFilterText {
     }
 
     /// The elements of `text`, a list between `opening` and `closing` separated by commas, each
-    /// plain or double-quoted.
+    /// plain or double-quoted. In a `{…}` array literal a `\` in a plain element escapes the next
+    /// character, as Postgres reads it; in a `(…)` list it is kept, as PostgREST reads it.
     static func listElements(of text: String, opening: Character, closing: Character) throws(FilterTextError) -> [String] {
         var reader = FilterTextReader(text)
         guard reader.read(opening) else {
@@ -117,7 +118,10 @@ enum PostgrestFilterText {
         var elements: [String] = []
         if !reader.read(closing) {
             repeat {
-                elements.append(try reader.readValue(stoppingAt: [",", closing]))
+                elements.append(
+                    opening == "{"
+                        ? try reader.readArrayElement(closing: closing) : try reader.readValue(stoppingAt: [",", closing])
+                )
             } while reader.read(",")
             guard reader.read(closing) else { throw reader.unexpected("\"\(closing)\"") }
         }
@@ -276,6 +280,24 @@ struct FilterTextReader {
         }
         var text = ""
         while position < characters.count, !stops.contains(characters[position]) {
+            text.append(characters[position])
+            position += 1
+        }
+        return text
+    }
+
+    /// One element of a Postgres array literal: double-quoted, or plain up to a `,` or `closing`
+    /// (not consumed), a `\` taking the character after it as written.
+    mutating func readArrayElement(closing: Character) throws(FilterTextError) -> String {
+        if position < characters.count, characters[position] == "\"" {
+            return try readQuoted()
+        }
+        var text = ""
+        while position < characters.count, characters[position] != ",", characters[position] != closing {
+            if characters[position] == "\\" {
+                position += 1
+                guard position < characters.count else { throw FilterTextError(message: "A list ends in an unfinished escape") }
+            }
             text.append(characters[position])
             position += 1
         }

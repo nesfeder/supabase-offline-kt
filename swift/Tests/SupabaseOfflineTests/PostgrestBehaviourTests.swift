@@ -473,6 +473,43 @@ struct PostgrestBehaviourTests {
         try await client.close()
     }
 
+    @Test func aPatternListWrittenAsTextIsSentAsPostgresReadsIt() async throws {
+        // Given
+        let server = RecordingFakeServer(rows: "[]")
+        let client = SupabaseOfflineClient.inMemory(server: server.server)
+
+        // When: an escaped backslash and an escaped quote in plain elements of an array literal
+        _ = try await client.from("todos").select().or(#"code.like(any).{a\\b,c}"#).execute()
+        _ = try await client.from("todos").select().filter("code", operator: "like(any)", value: #"{a\\b,c}"#).execute()
+        _ = try await client.from("todos").select().filter("code", operator: "like(any)", value: #"{a\"b,c}"#).execute()
+
+        // Then: each is sent as written, so Postgres reads `a\b` and `a"b`, as written
+        #expect(server.requests.values.map(\.queryParameters) == [
+            [["or", #"(code.like(any).{a\\b,c})"#], ["select", "*"]],
+            [["code", #"like(any).{a\\b,c}"#], ["select", "*"]],
+            [["code", #"like(any).{a\"b,c}"#], ["select", "*"]],
+        ])
+        try await client.close()
+    }
+
+    @Test func aRefusedValueInAnEmbeddedPairIsNamedByTheColumnAsWritten() async throws {
+        // Given
+        let server = RecordingFakeServer(rows: "[]")
+        let client = SupabaseOfflineClient.inMemory(server: server.server)
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.from("books").select().neq("authors.name", value: #"a\b"#).neq("authors.name", value: "c")
+                .execute()
+        }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
+        #expect(error?.message.contains(#""authors.name""#) == true)
+        #expect(server.requests.values.isEmpty)
+        try await client.close()
+    }
+
     // MARK: - Embedded columns
 
     @Test func twoConditionsOnAnEmbeddedColumnAreSentInThatTablesOwnGroup() async throws {
