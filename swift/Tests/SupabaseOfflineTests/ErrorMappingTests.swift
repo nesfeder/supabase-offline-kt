@@ -118,7 +118,8 @@ struct ErrorMappingTests {
 
         // Then
         let error = try #require(thrown as? OfflineError)
-        #expect(error.message == "A library call failed unexpectedly (IllegalStateException)")
+        #expect(error.message == "The call failed unexpectedly")
+        #expect(!error.localizedDescription.contains("IllegalStateException"))
     }
 
     @Test(arguments: ["SERVER", "HTTP", "SYNC_FAILED", "ACCESS_TOKEN", "INVALID_REQUEST"])
@@ -182,7 +183,7 @@ struct ErrorMappingTests {
 
     @Test func aServersOwnTextReachesTheAppAsSent() async throws {
         // Given
-        let refusal = #"{"code":"42P01","details":null,"hint":null,"message":"relation \"public.bridge\" does not exist"}"#
+        let refusal = #"{"code":"42P01","details":null,"hint":"Kotlin clients qualify the relation","message":"relation \"bridge\" does not exist"}"#
         let client = SupabaseOfflineClient.inMemory(server: FakeServer { _ in .json(refusal, status: 404) })
         defer { Task { try? await client.close() } }
 
@@ -192,8 +193,38 @@ struct ErrorMappingTests {
         }
 
         // Then
-        #expect(error?.message == #"relation "public.bridge" does not exist"#)
-        #expect(error?.serverError?.message == #"relation "public.bridge" does not exist"#)
+        #expect(error?.message == #"relation "bridge" does not exist"#)
+        #expect(error?.serverError?.message == #"relation "bridge" does not exist"#)
+        #expect(error?.serverError?.hint == "Kotlin clients qualify the relation")
+    }
+
+    @Test func aRefusedConnectionNamesNeitherTheRequestNorItsValues() async throws {
+        // Given a client of a local port nothing listens on
+        let directory = FileManager.default.temporaryDirectory.appending(path: "refused-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = SupabaseOfflineClient(
+            supabaseURL: URL(string: "http://127.0.0.1:9")!,
+            supabaseKey: "key",
+            config: .init(dataDirectory: directory)
+        )
+
+        // When a read of a table is filtered on a value nobody should see in an error
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.rawSelect(
+                #"{"v":1,"table":"patients","filters":[{"kind":"filter","column":"email","operator":"eq","value":"secret-filter-value"}],"strategy":{"kind":"networkOnly"}}"#
+            )
+        }
+        try await client.close()
+
+        // Then
+        let thrown = try #require(error)
+        #expect(thrown.code == .connectivity)
+        #expect(thrown.isNetworkOrConnectivityFailure)
+        for text in [thrown.message, thrown.localizedDescription, thrown.description] {
+            for leak in ["secret-filter-value", "patients", "127.0.0.1", "http"] {
+                #expect(!text.contains(leak), "\(text)")
+            }
+        }
     }
 
     @Test func anUnreachableServerThrowsConnectivity() async {
