@@ -15,6 +15,12 @@ extension SupabaseOfflineClient {
         /// Called per request, off the main actor; with supabase-swift's Auth it is
         /// `{ try? await supabase.auth.session.accessToken }`. A throw fails that request with
         /// ``OfflineError/Code/accessToken``.
+        ///
+        /// Signing in and out needs no call: the next request carries whatever this returns. The
+        /// client keeps one identity, though, so its cache and its queued writes are not kept apart
+        /// by user: when a different user signs in, call ``SupabaseOfflineClient/clearLocalData()``
+        /// first, or the new user sees the last one's cached rows and their queued writes are sent
+        /// with the new token.
         public var accessToken: (@Sendable () async throws -> String?)?
 
         /// The directory for the local database and cached files, created when missing; `nil` for

@@ -94,7 +94,7 @@ enum BodyDecoding {
 
 /// Cancels a core subscription from inside its own value handler, which runs before the handle may
 /// have been returned: a stop that comes first cancels the handle as soon as it is attached.
-private final class SubscriptionStopper: @unchecked Sendable {
+final class SubscriptionStopper: @unchecked Sendable {
 
     /// Guards every property below.
     private let lock = NSLock()

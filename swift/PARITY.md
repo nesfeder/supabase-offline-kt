@@ -131,3 +131,32 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `MutationOutcome` (`applied(result:)`, `queued(pendingMutation:)`, `isQueued`, `result`) | `MutationOutcome` (`Applied(result)`, `Queued(pendingMutation)`, `isQueued`, `resultOrNull()`) | `result` is an optional property, as Swift writes `resultOrNull()` |
 | `PendingMutation` (`id`, `table`, `operation`, `createdAt`, `rowKeys`, `body`) | `PendingMutation` (the same fields) | `Date` for `createdAt`; `OfflineJSON` for the row keys and the body |
 | `MutationOperation` (`insert`, `upsert`, `update`, `delete`) | `MutationOperation` (`INSERT`, `UPSERT`, `UPDATE`, `DELETE`) | Lower-camel cases |
+
+## The mutation queue, sync, status and lifecycle
+
+| Swift | Kotlin | Same / reason |
+| --- | --- | --- |
+| `pendingMutations(table:)` | `Offline.pendingMutations(table)` | Same; it returns a `PendingMutationSequence` where Kotlin returns a `Flow<List<PendingMutation>>` |
+| `PendingMutationSequence`, `PendingMutationSequence.Iterator` | `Flow<List<PendingMutation>>` | An `AsyncSequence` of `[PendingMutation]` for the `Flow` |
+| `PendingMutationSequence.first()` | `Flow.first()` | Same: the list as it is now, read once (without subscribing) |
+| `pendingMutationCount(table:)` | `Offline.pendingMutationCount(table)` | Same; `async throws` for `suspend` |
+| `pendingMutationCountSequence(table:)` | `Offline.pendingMutationCountFlow(table)` | `Sequence` for `Flow` in the name, as `selectAsSequence` is to `selectAsFlow` |
+| `PendingMutationCountSequence`, `PendingMutationCountSequence.Iterator` | `Flow<Int>` | An `AsyncSequence` of `Int` for the `Flow` |
+| `discardPendingMutation(id:)` | `Offline.discardPendingMutation(id)` | Same; the label names the argument, as Swift writes it |
+| `rejectedMutations()` | `Offline.rejectedMutations()` | Same; it returns a `RejectedMutationSequence` where Kotlin returns a `Flow<List<RejectedMutation>>` |
+| `RejectedMutationSequence`, `RejectedMutationSequence.Iterator` | `Flow<List<RejectedMutation>>` | An `AsyncSequence` of `[RejectedMutation]` for the `Flow` |
+| `RejectedMutationSequence.first()` | `Flow.first()` | Same, as for the pending list |
+| `dismissRejectedMutation(id:)`, `retryRejectedMutation(id:)` | `Offline.dismissRejectedMutation(id)`, `Offline.retryRejectedMutation(id)` | Same. A retry Kotlin refuses with `IllegalArgumentException` throws `OfflineError.invalidRequest` |
+| `RejectedMutation` (`id`, `table`, `operation`, `createdAt`, `rowKeys`, `body`, `serverError`, `message`, `rejectedAt`, `isRetryable`) | `RejectedMutation` (the same fields) | Same; `Date` for the times, `OfflineJSON` for the row keys and the body, `OfflineError.ServerError` for `ServerError` |
+| `syncPendingMutations(table:)` | `Offline.syncPendingMutations(table)` | Same; `@discardableResult`, as the report is often not read |
+| `SyncReport` (`syncedCount`, `rejected`, `remainingCount`, `alreadyOnServerCount`) | `SyncReport` (the same fields) | Same |
+| `syncStatus` | `Offline.syncStatus` | Same name; a `SyncStatusSequence` for the `StateFlow<SyncStatus>` |
+| `SyncStatusSequence`, `SyncStatusSequence.Iterator` | `StateFlow<SyncStatus>` | An `AsyncSequence` of `SyncStatus` for the `StateFlow`; iterating one begun after `close()` throws `clientClosed`, where Kotlin's flow keeps its last value |
+| `SyncStatusSequence.value` | `StateFlow.value` | Same: the status now, without waiting. Before the client has opened its database (it opens in the background) it is the status of a client that has done nothing yet |
+| `SyncStatus` (`network`, `pendingMutationCount`, `rejectedMutationCount`, `isSyncing`, `lastSyncedAt`, `lastSyncError`) | `SyncStatus` (the same fields) | Same; `Date?` for `lastSyncedAt`, and `OfflineError?` (code `syncFailed`, with the server's status and code in `serverError`) for the `SyncFailedException` in `lastSyncError` |
+| `SyncStatus ==` | the data class's `equals` | Two sync errors are equal when their code, message, server error and network flag are, as `OfflineError` is not `Equatable` |
+| `NetworkStatus` (`unknown`, `online`, `offline`, `disabled`) | `NetworkStatus` (`UNKNOWN`, `ONLINE`, `OFFLINE`, `DISABLED`) | Lower-camel cases |
+| `disableNetwork()`, `enableNetwork()` | `Offline.disableNetwork()`, `Offline.enableNetwork()` | Same; `async throws` for `suspend` |
+| `clearLocalData()` | `Offline.clearLocalData()` | Same |
+| `applyServerRecord(table:record:primaryKeys:schema:)` (an `Encodable`, or `[String: OfflineJSON]`) | `Offline.applyServerRecord(table, record, primaryKeys, schema)` (a `JsonObject`, or the reified `T`) | Same parameters in the same order; `Encodable` for the reified form, a dictionary of `OfflineJSON` for `JsonObject`. A record that is not a JSON object throws `invalidRequest` where Kotlin throws `IllegalArgumentException` |
+| `applyServerDelete(table:oldRecord:primaryKeys:schema:)` (an `Encodable`, or `[String: OfflineJSON]`) | `Offline.applyServerDelete(table, oldRecord, primaryKeys, schema)` | As `applyServerRecord`; Kotlin takes a `JsonObject` only |
