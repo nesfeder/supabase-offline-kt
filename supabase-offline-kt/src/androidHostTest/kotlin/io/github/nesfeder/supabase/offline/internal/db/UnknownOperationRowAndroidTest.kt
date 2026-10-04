@@ -14,8 +14,8 @@ import org.junit.runner.RunWith
 
 /**
  * A queued write whose stored operation this build does not write, on a real Android database file:
- * it is refused alone, and the table's reads, the pending lists and the rest of the queue go on. See
- * [UnknownOperationRowScenario].
+ * it is refused alone, and the table's reads, the pending lists and the rest of the queue go on.
+ * See [UnknownOperationRowScenario].
  */
 @RunWith(AndroidJUnit4::class)
 class UnknownOperationRowAndroidTest {

@@ -16,13 +16,13 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.first
 
 /**
- * A queued write whose stored operation this build does not write, on a real Room database: the
- * row is isolated, as every queue row the engine cannot read is. Reads of its table still answer,
- * the pending lists leave it out, a replay pass refuses it to the rejected list where the app sees
- * it, and the writes queued around it are sent.
+ * A queued write whose stored operation this build does not write, on a real Room database: the row
+ * is isolated, as every queue row the engine cannot read is. Reads of its table still answer, the
+ * pending lists leave it out, a replay pass refuses it to the rejected list where the app sees it,
+ * and the writes queued around it are sent.
  *
- * Both platform test classes run it; only opening the database differs by platform, so it is
- * passed in.
+ * Both platform test classes run it; only opening the database differs by platform, so it is passed
+ * in.
  *
  * @param open Opens the file at the given path through the library's own database builder.
  */
@@ -125,8 +125,8 @@ internal class UnknownOperationRowScenario(private val open: (path: String) -> O
         const val SERVED = """[{"id":2,"title":"Walk the dog","done":false,"user_id":"u-1"}]"""
 
         /**
-         * [SERVED] with the queued writes applied: the UPDATE of row 2, and the rows of both pending
-         * INSERTs added — the shipped one and the one behind the unknown write.
+         * [SERVED] with the queued writes applied: the UPDATE of row 2, and the rows of both
+         * pending INSERTs added — the shipped one and the one behind the unknown write.
          */
         const val OVERLAID =
             """[{"id":2,"title":"Walk the dog twice","done":true,"user_id":"u-1"},""" +
