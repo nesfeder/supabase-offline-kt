@@ -221,13 +221,14 @@ public interface Offline : SupabasePlugin<Offline.Config> {
 
     /**
      * The current user's queued writes the server refused for good when they were replayed, oldest
-     * first, as the list changes: what an app shows so its user can fix or drop a write that will
-     * never go through on its own.
+     * first (the queue's order; show the newest first if you like), as the list changes: what an
+     * app shows so its user can fix or drop a write that will never go through on its own.
      *
      * The list is kept on the device across restarts until each entry is dismissed or retried, and
      * holds the newest 100 entries of every user together, within a size bound; when it is full,
-     * the oldest entries go, and their writes are lost. It shows the current user's entries, and
-     * those with no user recorded that they may take over; never another user's.
+     * the oldest entries go, and their writes are lost, with nothing to report it. Let the user
+     * dismiss or retry each entry, so the list stays short. It shows the current user's entries,
+     * and those with no user recorded that they may take over; never another user's.
      *
      * A write sent at once, because nothing of the user was queued ahead of it, that the server
      * refuses is not listed: its caller gets the server's error, as from supabase-kt. A collection
@@ -280,6 +281,10 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * can be sent now: [SyncReport.remainingCount] is what is still queued after both, and the
      * report's other counts are what this call sent. While network access is off ([disableNetwork])
      * it sends nothing.
+     *
+     * Nothing sends the queue when the app comes to the foreground: a write that failed in a way
+     * that may pass waits for the library's next pass, up to a minute later, or as long as a
+     * server's `Retry-After` asks. Call this as the app comes to the foreground to send at once.
      *
      * @param table the table, or `null` for every table.
      * @return what this call sent, what was refused, and what is still queued.
@@ -388,7 +393,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * Call it when a user signs out for good, switches account, or deletes their account, so one
      * user's rows, unsent writes and files never reach the next. With [Auth] installed, the cache
      * already belongs to one user at a time (it is dropped when the session settles as someone
-     * else), but queued writes stay with the user who made them until this call.
+     * else), but queued writes stay with the user who made them until this call. Clear before
+     * `auth.signOut()`, or in a `finally` around it: offline, `signOut()` throws and keeps the
+     * session, so a clear after it would never run.
      *
      * A replay pass in progress is cancelled first, and nothing queued is sent once clearing has
      * begun. A write already on the wire is neither applied to the cache nor queued when it
