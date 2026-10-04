@@ -69,6 +69,19 @@ Semantic versioning in the usual sense:
    pages, such as the order in which queued mutations replay.
 5. **The supabase-kt version** the release is built and tested against (below).
 
+## The testing artifact
+
+Use `supabase-offline-kt-testing` at exactly the version of the library it sits beside. Its
+factories and its in-memory client call into the library outside the API records, so they work only
+with the library of their own version. Its published metadata pins that version (a `strictly`
+constraint): a build that resolves another version of the library beside it fails dependency
+resolution, rather than a test failing with a missing method.
+
+When a value type gains a field, its factory in the testing artifact gains an overload that takes
+it; the existing factory is not given a new parameter with a default. A new defaulted parameter
+breaks every compiled caller, and from 0.1.0 on the overload is the compatible way to grow: the
+earlier form stays, hidden from new code.
+
 ## What it does not cover
 
 - Anything in a package whose name contains `internal`, and anything marked `@OfflineInternal`.
@@ -119,7 +132,10 @@ kotlinx.coroutines are held at the versions supabase-kt 3.6.0 was released with 
 - supabase-kt 3.8 API: `dryRun()`, `maybeSingle()`, the `isdistinct` filter operator
   (`FilterOperator.ISDISTINCT`), and `purgeCache` / `purgeBucketCache`.
 - On 3.6, write a dry run by adding the header yourself: `headers.append("Prefer", "tx=rollback")`
-  in the request block. The library reads every `Prefer` value, so such a write is never queued.
+  in the request block, which supabase-kt marks experimental
+  (`@OptIn(SupabaseExperimental::class)`). The library reads every `Prefer` value, so such a write
+  is never queued. A hosted Supabase project commits a dry run all the same, unless it allows the
+  rollback: see [the write path](architecture.md#the-write-path).
 - Storage object names containing `%`, `?` or `#`. supabase-kt 3.6.0 puts the name in the URL as
   written: a `%` fails the request, and a `?` or `#` can fetch a different object (`x?y.png`
   fetches `x`). The library downloads such a name as supabase-kt does but never caches it or
@@ -159,7 +175,9 @@ the changelog, and closes the issue.
   script cannot see it.
 - Parameter names and their order, which the ABI records do not show, have a record of their own:
   a renamed or reordered parameter breaks a call that names it, so it changes that record and is
-  rated breaking.
+  rated breaking. That record also shows which parameters have a default, so giving an existing
+  parameter one changes it too and is rated breaking: a conservative rating, since the change
+  breaks no source.
 - Some changes reach no record, so a reviewer checks them by hand: changed defaults and documented
   behaviour, the bodies of inline functions, and new deprecation levels or opt-in requirements.
 - The release workflow runs the same script over everything since the last release tag, and

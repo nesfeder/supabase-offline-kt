@@ -18,7 +18,6 @@ If you are looking for the **how to use it** surface (strategies, exception tabl
 - [Read path (caching deep-dive)](#read-path-caching-deep-dive)
     - [Cache key: the SELECT signature](#cache-key-the-select-signature)
     - [`cacheDuration` is TTL-at-read, not TTL-at-write](#cacheduration-is-ttl-at-read-not-ttl-at-write)
-    - [Subset derivation](#subset-derivation)
     - [Mutation overlay during reads](#mutation-overlay-during-reads)
     - [Read strategy state machines](#read-strategy-state-machines)
 - [Write path (mutation queueing)](#write-path-mutation-queueing)
@@ -198,23 +197,6 @@ caller's stricter `cacheDuration` would consider expired.
 
 **Stale = missing.** A stale row is treated identically to "no row" — `CacheFirst` falls back
 to network, `CacheOnly` throws `NoSuchElementException`, etc.
-
-### Subset derivation
-
-Sometimes a narrower SELECT can be answered from a broader cached payload that already lives in
-`object_cache`. Example: the list screen cached `SELECT * FROM assets ORDER BY updated_at DESC
-LIMIT 50`, and now the detail screen asks for `SELECT * FROM assets WHERE id = '…'`. We have the
-row in memory — we should not need the network just to filter the cached list.
-
-This is handled by [CacheSubsetResolver.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/CacheSubsetResolver.kt),
-which (a) parses the signature back into a structured `SelectQueryMetadata` via
-[SelectQueryMetadataParser.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/postgrest/parser/SelectQueryMetadataParser.kt),
-(b) decides via `canProvideSubsetFor` whether a candidate cached payload could satisfy the new
-request, and (c) `deriveSubsetPayload` applies the requested filters/order in memory.
-
-Subset derivation only kicks in when the candidate payload's metadata says it's safe (no truncating
-`range`, compatible select columns, etc.). When it isn't safe, the SDK falls through to the
-normal network/cache miss path.
 
 ### Mutation overlay during reads
 
