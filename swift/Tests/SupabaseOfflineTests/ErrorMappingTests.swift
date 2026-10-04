@@ -92,6 +92,23 @@ struct ErrorMappingTests {
         #expect(error.message == "A core call failed unexpectedly (IllegalStateException)")
     }
 
+    @Test(arguments: ["SERVER", "HTTP", "SYNC_FAILED", "ACCESS_TOKEN", "INVALID_REQUEST"])
+    func textTheCoreDidNotWriteReachesTheCallerVerbatim(kindName: String) throws {
+        // Given a message naming a table called "bridge", which is the app's own data
+        let kind = try #require(BridgeErrorKind.entries.first { $0.name == kindName })
+        let serverText = #"relation "bridge" does not exist"#
+
+        // When
+        let thrown = OfflineError.thrown(
+            kind: kind, message: serverText, httpStatus: 404, serverCode: "42P01", details: nil, hint: nil
+        )
+
+        // Then
+        let error = try #require(thrown as? OfflineError)
+        #expect(error.message == serverText, "\(kind.name)")
+        #expect(error.serverError?.message == serverText, "\(kind.name)")
+    }
+
     @Test func aCatchClauseMatchesByCode() {
         // Given
         func readFromCache() throws { throw OfflineError(code: .cacheMiss, message: "nothing cached") }
@@ -129,6 +146,22 @@ struct ErrorMappingTests {
         #expect(error?.serverError?.code == "42501")
         #expect(error?.serverError?.hint == "Grant select")
         #expect(error?.message == "permission denied for table todos")
+    }
+
+    @Test func aServersOwnTextReachesTheAppAsSent() async throws {
+        // Given
+        let refusal = #"{"code":"42P01","details":null,"hint":null,"message":"relation \"public.bridge\" does not exist"}"#
+        let client = SupabaseOfflineClient.inMemory(server: FakeServer { _ in .json(refusal, status: 404) })
+        defer { Task { try? await client.close() } }
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.rawSelect(readDescription(table: "bridge", strategy: "networkOnly"))
+        }
+
+        // Then
+        #expect(error?.message == #"relation "public.bridge" does not exist"#)
+        #expect(error?.serverError?.message == #"relation "public.bridge" does not exist"#)
     }
 
     @Test func anUnreachableServerThrowsConnectivity() async {

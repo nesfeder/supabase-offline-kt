@@ -19,7 +19,9 @@ extension OfflineError {
 
     /// The error a caller catches for a core failure of `kind`, with the fields it carries.
     ///
-    /// Total: a kind this release does not know is ``Code/unexpected``.
+    /// Total: a kind this release does not know is ``Code/unexpected``. Only the text the core
+    /// writes about its own failures is cleared of runtime names; a server's text, the app's and
+    /// the request's own values reach the caller exactly as written.
     static func thrown(
         kind: BridgeErrorKind,
         message rawMessage: String,
@@ -28,25 +30,26 @@ extension OfflineError {
         details: String?,
         hint: String?
     ) -> any Error {
-        let message = redactingRuntimeNames(rawMessage)
-        let serverError = httpStatus.map {
-            ServerError(status: $0, code: serverCode, message: message, details: details, hint: hint)
-        }
         let code: Code
+        var describesTheCore = false
         switch kind {
         case .cancelled: return CancellationError()
         case .server, .http: code = .server
-        case .connectivity: code = .connectivity
+        case .connectivity: (code, describesTheCore) = (.connectivity, true)
         case .cacheMiss: code = .cacheMiss
         case .networkDisabled: code = .networkDisabled
         case .mutationNotQueueable: code = .mutationNotQueueable
         case .syncFailed: code = .syncFailed
         case .clientClosed: code = .clientClosed
         case .accessToken: code = .accessToken
-        case .invalidRequest, .unsupported, .invalidArgument: code = .invalidRequest
-        case .decoding: code = .decoding
-        case .unexpected: code = .unexpected
-        default: code = .unexpected
+        case .invalidRequest, .unsupported: code = .invalidRequest
+        case .invalidArgument: (code, describesTheCore) = (.invalidRequest, true)
+        case .decoding: (code, describesTheCore) = (.decoding, true)
+        default: (code, describesTheCore) = (.unexpected, true)
+        }
+        let message = describesTheCore ? redactingRuntimeNames(rawMessage) : rawMessage
+        let serverError = httpStatus.map {
+            ServerError(status: $0, code: serverCode, message: message, details: details, hint: hint)
         }
         return OfflineError(code: code, message: message, serverError: serverError)
     }
