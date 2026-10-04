@@ -6,6 +6,7 @@ import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.PhotoUnreadableException
 import io.github.nesfeder.offlinetasks.data.TaskRepository
+import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
 import io.github.nesfeder.offlinetasks.testing.FakePhotoEncoder
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
 import io.github.nesfeder.offlinetasks.testing.awaitPendingCount
@@ -125,6 +126,23 @@ class TaskDetailViewModelTest {
         assertTrue(viewModel.editing { it.uploads.isNotEmpty() }.uploads.single().fraction < 1f)
         val done = viewModel.editing { it.photos.isNotEmpty() && it.uploads.isEmpty() }
         assertEquals(task.id, done.photos.single().taskId)
+    }
+
+    @Test
+    fun a_failing_read_is_a_message_and_the_task_stays_editable() = runTest {
+        // Given — the task and its photos read, then their reads failing
+        val fixture = repositoryFixture(seedSampleTasks = true).repository
+        val task = fixture.awaitServerTasks().first()
+        val failure = IllegalStateException("A row the app cannot read")
+        val viewModel =
+            detailViewModel(FailingReadsTaskRepository(fixture, failure), task.id, backgroundScope)
+
+        // When
+        viewModel.editing()
+
+        // Then — reported, not thrown, and the task is still there to edit
+        assertEquals(failure, failures.reported.first())
+        assertEquals(task.title, assertIs<TaskDetailUiState.Editing>(viewModel.uiState.value).title)
     }
 
     @Test

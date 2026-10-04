@@ -6,7 +6,10 @@ import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskRepository
+import io.github.nesfeder.offlinetasks.platform.SessionState
+import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
+import io.github.nesfeder.offlinetasks.testing.awaitRejectedCount
 import io.github.nesfeder.offlinetasks.testing.awaitServerTasks
 import io.github.nesfeder.offlinetasks.testing.repositoryFixture
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
@@ -15,11 +18,15 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
 
 class TasksViewModelTest {
@@ -27,6 +34,7 @@ class TasksViewModelTest {
     @get:Rule val mainDispatcher = MainDispatcherRule()
 
     private val failures = FailureReports()
+    private val signedIn = MutableStateFlow<SessionState>(SessionState.SignedIn)
 
     @Test
     fun the_tasks_load_split_into_open_and_done() = runTest {
@@ -42,6 +50,19 @@ class TasksViewModelTest {
         assertTrue(state.openTasks.none { it.isDone })
         assertEquals(3, state.openCount)
         assertEquals(SyncHeadline.UpToDate, state.headline)
+    }
+
+    @Test
+    fun before_a_session_there_is_nothing_to_show_or_add() = runTest {
+        // Given — the first launch, not signed in yet
+        signedIn.value = SessionState.SigningIn
+        val viewModel = tasksViewModel(repositoryFixture(seedSampleTasks = true).repository)
+
+        // When
+        val state = viewModel.uiState.first { it is TasksUiState.NoSession }
+
+        // Then — the no-session state, while the network is there to sign in with
+        assertTrue(assertIs<TasksUiState.NoSession>(state).isSigningIn)
     }
 
     @Test
@@ -164,6 +185,45 @@ class TasksViewModelTest {
     }
 
     @Test
+    fun a_refusal_dismissed_before_the_screen_shows_it_is_not_announced() = runTest {
+        // Given — a refusal found on replay while the user is on another screen
+        val fixture = repositoryFixture(online = false)
+        val repository = fixture.repository
+        val viewModel = tasksViewModel(repository)
+        viewModel.uiState.first { it.headline is SyncHeadline.Offline }
+        repository.addTask(" ", notes = null)
+        fixture.goOnline()
+        val rejection = repository.rejectedMutations().first { it.isNotEmpty() }.single()
+
+        // When — dismissed on the Sync screen before the Tasks screen shows its messages
+        repository.dismissRejectedMutation(rejection.id)
+        repository.awaitRejectedCount(0)
+        testScheduler.runCurrent()
+
+        // Then — the announcement waiting for the screen is dropped
+        assertNull(withTimeoutOrNull(10.seconds) { viewModel.messages.first() })
+    }
+
+    @Test
+    fun a_failing_read_is_a_message_and_the_list_stays() = runTest {
+        // Given — the list loads, then its read fails
+        val failure = IllegalStateException("A row the app cannot read")
+        val repository =
+            FailingReadsTaskRepository(
+                repositoryFixture(seedSampleTasks = true).repository,
+                failure,
+            )
+        val viewModel = tasksViewModel(repository)
+
+        // When
+        viewModel.loaded()
+
+        // Then — reported for a message, not thrown, and the list still shows
+        assertEquals(failure, failures.reported.first())
+        assertEquals(3, assertIs<TasksUiState.Loaded>(viewModel.uiState.value).openTasks.size)
+    }
+
+    @Test
     fun a_failed_refresh_is_a_message_and_the_indicator_stops() = runTest {
         // Given — loaded, then the server failing while the network stays up
         val repository = repositoryFixture(seedSampleTasks = true).repository
@@ -201,7 +261,12 @@ class TasksViewModelTest {
     }
 
     private fun TestScope.tasksViewModel(repository: TaskRepository) =
-        TasksViewModel(repository, commitScope = backgroundScope, failures = failures)
+        TasksViewModel(
+            repository,
+            sessionState = signedIn,
+            commitScope = backgroundScope,
+            failures = failures,
+        )
 
     /** The first loaded state that [matches]. */
     private suspend fun TasksViewModel.loaded(

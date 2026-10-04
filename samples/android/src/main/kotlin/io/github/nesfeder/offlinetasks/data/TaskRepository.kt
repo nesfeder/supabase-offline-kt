@@ -25,6 +25,11 @@ import kotlinx.coroutines.flow.StateFlow
  *   [ServerUnreachableException] when the server does not answer.
  * - Photo uploads, downloads and deletes throw Storage's refusals as [PhotoStorageException], and
  *   fail at once with [NetworkUnavailableException] while the network is off.
+ * - A read whose rows cannot be read (a row the app cannot decode, a server that answers wrong)
+ *   fails its flow; it never turns into an empty list.
+ *
+ * Everything belongs to the signed-in user. Before there is a session, every read shows nothing
+ * yet, and a call that needs the user's id throws [IllegalStateException]: the app offers none.
  *
  * The exceptions named here are the sample's own. A repository built on the library maps the
  * library's onto them: a refused write's `PostgrestRestException` onto [TaskWriteRefusedException],
@@ -33,16 +38,17 @@ import kotlinx.coroutines.flow.StateFlow
  * planned for; the screens report every failure as a message, so none of them crashes the app.
  *
  * **Cancellation.** A call that has started a write finishes it even if its caller is cancelled: a
- * screen that closes mid-delete cannot leave a photo's file deleted and its row in place. The
- * caller only stops waiting for the result.
+ * screen that closes mid-delete cannot leave a photo's file deleted and its row in place, and one
+ * that closes mid-upload cannot leave a file with no row. The caller only stops waiting for the
+ * result.
  */
 interface TaskRepository {
     /** The user's tasks, newest first. */
     fun tasks(): Flow<TaskListSnapshot>
 
     /**
-     * The task with [id], as a select filtered on it returns it: a list of at most one row, empty
-     * once the device or the server says it does not exist.
+     * The task with [id], as [tasks] holds it: a list of at most one row, empty once the device or
+     * the server says it does not exist.
      */
     fun task(id: String): Flow<TaskListSnapshot>
 
@@ -90,13 +96,13 @@ interface TaskRepository {
     fun attachPhoto(taskId: String, photo: EncodedPhoto): Flow<PhotoUpload>
 
     /**
-     * Deletes a photo's file and then its row. The file needs the network.
+     * Deletes [photo]'s file and then its row. The file needs the network.
      *
      * @throws NetworkUnavailableException while the network is off; nothing is deleted.
      * @throws ServerUnreachableException when the server does not answer; nothing is deleted.
      * @throws PhotoStorageException when Storage refuses; nothing is deleted.
      */
-    suspend fun deletePhoto(photoId: String): TaskMutationOutcome
+    suspend fun deletePhoto(photo: TaskPhoto): TaskMutationOutcome
 
     /** The photo's file if it is on this device, without touching the network. */
     suspend fun cachedPhotoFile(photo: TaskPhoto): PhotoFile?
@@ -149,31 +155,24 @@ interface TaskRepository {
     /** Switches the app's own network access off ("Simulate offline") or back on. */
     suspend fun setNetworkEnabled(enabled: Boolean)
 
-    /** Deletes everything this device holds: cached rows and files, queued and refused writes. */
+    /**
+     * Deletes everything this device holds: cached rows and files, queued and refused writes.
+     * Online, the lists are then read again from the server.
+     *
+     * @throws NetworkUnavailableException when that read loses the network, and
+     *   [ServerUnreachableException] when the server does not answer it; the device is cleared
+     *   either way.
+     */
     suspend fun clearLocalData()
 
     /**
-     * Starts again as a new anonymous user with no tasks. While online it first deletes the current
-     * user's own photo files and rows from the server, so nothing is left behind there; offline
-     * they stay. Then it clears local data, signs out and signs in again.
+     * Starts again as a new anonymous user with no tasks: clears local data, which stops a replay
+     * already running, then deletes the current user's own photo files and rows from the server, so
+     * nothing is left behind there, then signs out and signs in again. If a delete fails, its
+     * failure is thrown: the device is cleared, the server keeps what was not deleted yet, and the
+     * same user stays signed in, so Start over can be tried again.
+     *
+     * @throws NetworkUnavailableException while the network is off; nothing is deleted or cleared.
      */
     suspend fun startOver()
-}
-
-/**
- * Failures a server can be made to have on purpose, so the app can show what each looks like. Only
- * the in-memory repository has them.
- */
-interface ServerFaults {
-    /** True while every request to the server fails. */
-    val isServerOutage: StateFlow<Boolean>
-
-    /** True while Storage refuses every upload, download and delete. */
-    val isStorageFailing: StateFlow<Boolean>
-
-    /** Starts or ends the outage. */
-    fun setServerOutage(active: Boolean)
-
-    /** Starts or stops Storage's refusals. */
-    fun setStorageFailing(active: Boolean)
 }

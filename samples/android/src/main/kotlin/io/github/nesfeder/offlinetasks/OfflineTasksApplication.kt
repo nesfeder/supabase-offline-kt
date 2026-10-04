@@ -8,32 +8,27 @@ import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.AP
 import androidx.lifecycle.viewmodel.CreationExtras
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.TaskRepository
-import io.github.nesfeder.offlinetasks.data.inmemory.InMemoryTaskRepository
+import io.github.nesfeder.offlinetasks.data.supabase.OfflineTaskRepository
 import io.github.nesfeder.offlinetasks.platform.AnonymousSession
-import io.github.nesfeder.offlinetasks.platform.DirectoryPhotoFileStore
 import io.github.nesfeder.offlinetasks.platform.JpegPhotoEncoder
 import io.github.nesfeder.offlinetasks.platform.createSampleSupabaseClient
-import io.github.nesfeder.offlinetasks.platform.internetAvailability
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
-import java.io.File
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.shareIn
 
 /**
- * Owns the app's single instances: the Supabase client, the anonymous session on it and the task
- * repository. They live as long as the process, so a rotation or a theme change never opens a
- * second client or a second database.
+ * Owns the app's single instances: the Supabase client with the offline plugin, the anonymous
+ * session on it and the task repository. They live as long as the process, so a rotation or a theme
+ * change never opens a second client or a second database.
  */
 class OfflineTasksApplication : Application() {
 
     /**
-     * Work that must outlive any screen: replays, refreshes, the session, writes a closing screen
-     * started. The screens report their own failures to [failures]; anything else that fails here
-     * is logged rather than crashing the app.
+     * Work that must outlive any screen: the session, writes a closing screen started, Start over.
+     * The screens report their own failures to [failures]; anything else that fails here is logged
+     * rather than crashing the app.
      */
     val applicationScope: CoroutineScope =
         CoroutineScope(
@@ -46,6 +41,13 @@ class OfflineTasksApplication : Application() {
 
     /** Where every screen reports a failure, to be shown on whichever screen is in front. */
     val failures: FailureReports = FailureReports()
+
+    /**
+     * False when `local.properties` names no Supabase project: the app then shows how to add one,
+     * and none of the members below is set.
+     */
+    var isConfigured: Boolean = false
+        private set
 
     /** Where every screen reads and writes tasks. */
     lateinit var repository: TaskRepository
@@ -61,22 +63,15 @@ class OfflineTasksApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        val internet =
-            internetAvailability().shareIn(applicationScope, SharingStarted.Eagerly, replay = 1)
         val supabase =
             createSampleSupabaseClient(
                 url = BuildConfig.SUPABASE_URL,
                 publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY,
-            )
-        session = AnonymousSession(supabase, applicationScope, internet).also { it.start() }
-        // The in-memory stand-in for the library. Adopting the library replaces this one line.
-        repository =
-            InMemoryTaskRepository(
-                scope = applicationScope,
-                photoFiles = DirectoryPhotoFileStore(File(cacheDir, "photos")),
-                networkAvailability = internet,
-            )
+            ) ?: return
+        session = AnonymousSession(supabase, applicationScope).also { it.start() }
+        repository = OfflineTaskRepository(supabase, session, applicationScope)
         photoEncoder = JpegPhotoEncoder(contentResolver)
+        isConfigured = true
     }
 }
 

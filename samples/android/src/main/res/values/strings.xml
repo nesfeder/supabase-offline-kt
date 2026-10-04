@@ -63,6 +63,9 @@
     <string name="task_not_synced">Not synced yet</string>
     <string name="tasks_loading_title">Loading your tasks</string>
     <string name="tasks_loading_body">Nothing is saved on this device yet, so the list comes from the server this once.</string>
+    <string name="tasks_no_session_title">Not signed in yet</string>
+    <string name="tasks_no_session_signing_in_body">Signing you in, anonymously. Your list starts here in a moment.</string>
+    <string name="tasks_no_session_offline_body">The app signs you in, anonymously, the first time it reaches the internet. Until then there’s nothing to show and nothing to add.</string>
     <string name="tasks_no_data_title">Nothing saved on this device yet</string>
     <string name="tasks_no_data_body">Connect to the internet once to load your tasks. After that they’re here offline too.</string>
     <string name="tasks_empty_title">No tasks yet</string>
@@ -137,7 +140,7 @@
     <string name="network_disabled">Offline (simulated)</string>
     <string name="network_disabled_body">This app’s network is switched off. Everything else on the device is online.</string>
     <string name="sync_simulate_offline">Simulate offline</string>
-    <string name="sync_simulate_offline_body">Cuts this app off from the server, as airplane mode would.</string>
+    <string name="sync_simulate_offline_body">Cuts this app off from the server, as airplane mode would, until you switch it back or the app restarts.</string>
     <string name="sync_queue">Changes waiting</string>
     <string name="sync_queue_empty">Nothing waiting</string>
     <string name="sync_queue_by_table">Tasks: %1$d · Photos: %2$d</string>
@@ -154,10 +157,12 @@
     <string name="sync_refresh_running">Asking the server…</string>
     <string name="sync_refresh_paused">Paused while offline</string>
     <string name="sync_refresh_stalled">Can’t reach the server — showing saved data</string>
+    <string name="sync_refresh_no_session">Waits for the first sign-in</string>
     <string name="sync_rejected">Refused changes</string>
     <string name="sync_rejected_none">Nothing refused</string>
     <string name="sync_rejected_none_body">If the server refuses a change made offline, it shows here.</string>
     <string name="sync_rejected_item">Couldn’t save “%1$s”</string>
+    <string name="sync_rejected_server_answer">The server answered HTTP %1$d · %2$s</string>
     <string name="refused_title">The server refused it: a title can’t be blank or longer than 200 characters.</string>
     <string name="refused_notes">The server refused it: notes can’t be longer than 2,000 characters.</string>
     <string name="refused_missing_task">The server refused it: its task isn’t on the server.</string>
@@ -170,10 +175,7 @@
     <string name="sync_developer">Try it</string>
     <string name="sync_queue_invalid">Queue an invalid title</string>
     <string name="sync_queue_invalid_body">Adds a task with a blank title. Online, the server refuses it at once; offline, when it syncs.</string>
-    <string name="sync_server_outage">Make the server unreachable</string>
-    <string name="sync_server_outage_body">Every request fails while the network stays up, so refreshes stall.</string>
-    <string name="sync_storage_failing">Make Storage refuse</string>
-    <string name="sync_storage_failing_body">Photo uploads, downloads and deletes fail, as when Storage refuses a request.</string>
+    <string name="sync_queue_invalid_no_session">Needs a signed-in user: the app signs in the first time it reaches the internet.</string>
     <string name="sync_local_data">Local data</string>
     <string name="sync_clear">Clear local cache</string>
     <string name="sync_clear_body">Deletes what this device holds. The server’s copy stays.</string>
@@ -182,13 +184,12 @@
     <string name="sync_start_over">Start over</string>
     <string name="sync_start_over_body">Deletes this user’s tasks and photos, then continues as a new anonymous user.</string>
     <string name="sync_start_over_title">Start over as a new user?</string>
-    <string name="sync_start_over_confirm_body">You get an empty list. Online, this user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them. Offline, they stay there.</string>
+    <string name="sync_start_over_confirm_body">You get an empty list. This user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them, so it needs the network.</string>
     <string name="sync_about">About this build</string>
     <string name="sync_session">Supabase</string>
-    <string name="sync_session_not_configured">Not configured: add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to local.properties</string>
     <string name="sync_session_signing_in">Signing in…</string>
     <string name="sync_session_signed_in">Signed in anonymously</string>
     <string name="sync_session_failed">Couldn’t sign in; tries again when online</string>
-    <string name="sync_data_source">Where tasks are kept</string>
-    <string name="sync_data_source_in_memory">In memory, with a simulated server: a stand-in for the library. Everything resets when the app restarts.</string>
+    <string name="not_configured_title">No Supabase project yet</string>
+    <string name="not_configured_body">Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to local.properties, then build the app again.</string>
 </resources>

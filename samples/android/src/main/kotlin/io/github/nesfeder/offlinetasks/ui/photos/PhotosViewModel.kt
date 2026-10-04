@@ -11,6 +11,8 @@ import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
+import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
+import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -25,12 +27,21 @@ sealed interface PhotosUiState {
     data class Loaded(val photos: List<TaskPhoto>, val canReachServer: Boolean) : PhotosUiState
 }
 
-/** Every photo the user has, across tasks. */
-class PhotosViewModel(private val repository: TaskRepository) : ViewModel() {
+/**
+ * Every photo the user has, across tasks.
+ *
+ * @param failures where a failed read is reported, to be shown as a message.
+ */
+class PhotosViewModel(
+    private val repository: TaskRepository,
+    private val failures: FailureReports,
+) : ViewModel() {
 
     /** The screen's state. */
     val uiState: StateFlow<PhotosUiState> =
-        combine(repository.allPhotos(), repository.syncStatus) { snapshot, status ->
+        combine(repository.allPhotos().reportingFailures(failures), repository.syncStatus) {
+                snapshot,
+                status ->
                 val online = status.network == AppNetworkStatus.Online
                 val photos = snapshot.value
                 if (photos == null) {
@@ -51,7 +62,10 @@ class PhotosViewModel(private val repository: TaskRepository) : ViewModel() {
     companion object {
         /** Builds the ViewModel from the app's single repository. */
         val Factory: ViewModelProvider.Factory = viewModelFactory {
-            initializer { PhotosViewModel(offlineTasksApplication.repository) }
+            initializer {
+                val application = offlineTasksApplication
+                PhotosViewModel(application.repository, application.failures)
+            }
         }
     }
 }
