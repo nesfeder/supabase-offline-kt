@@ -118,7 +118,7 @@ struct ErrorMappingTests {
 
         // Then
         let error = try #require(thrown as? OfflineError)
-        #expect(error.message == "A core call failed unexpectedly (IllegalStateException)")
+        #expect(error.message == "A library call failed unexpectedly (IllegalStateException)")
     }
 
     @Test(arguments: ["SERVER", "HTTP", "SYNC_FAILED", "ACCESS_TOKEN", "INVALID_REQUEST"])
