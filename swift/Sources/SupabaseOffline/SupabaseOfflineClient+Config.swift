@@ -44,7 +44,10 @@ extension SupabaseOfflineClient {
         /// A hint, never a gate: while it says offline the client still tries every request the app
         /// makes, and ``SupabaseOfflineClient/disableNetwork()`` is the switch that stops requests. It
         /// decides when the client tries by itself (a reconnection starts a sync pass with
-        /// ``autoSync``), what a waiting refresh reports, and ``SyncStatus/network``.
+        /// ``autoSync``), what a waiting refresh reports, and ``SyncStatus/network``. While it says
+        /// offline the client's own passes still run until one fails for want of a connection; after
+        /// that, queued writes wait for the signal to stop saying offline, for the session to settle
+        /// anew, or for the app's own ``SupabaseOfflineClient/syncPendingMutations(table:)``.
         public var networkAvailability: (@Sendable () -> AsyncStream<Bool>)?
 
         /// Whether queued writes are sent by themselves when the network comes back.

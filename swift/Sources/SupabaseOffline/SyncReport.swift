@@ -13,19 +13,33 @@ public struct SyncReport: Sendable, Hashable {
     /// now on the rejected list.
     public let rejected: [RejectedMutation]
 
-    /// The writes still queued when the call returned.
+    /// The writes still queued when the call returned: more than zero when the network could not
+    /// be reached or the server failed in a way that may pass (``SyncStatus/lastSyncError`` says
+    /// why), or when writes wait behind other tables (``heldBehindOtherTablesCount``).
     public let remainingCount: Int
 
     /// Of ``syncedCount``, the inserts whose rows the server already held, because an earlier send
     /// whose answer was lost had reached it.
     public let alreadyOnServerCount: Int
 
+    /// Of ``remainingCount``, the writes a sync of one table held back because an earlier write of
+    /// the user to another table is still queued: no write is sent ahead of an earlier one, so a
+    /// sync of every table sends them in order. Always `0` for a sync of every table.
+    public let heldBehindOtherTablesCount: Int
+
     /// Built by the package, and by the testing product's factories.
-    package init(syncedCount: Int, rejected: [RejectedMutation], remainingCount: Int, alreadyOnServerCount: Int) {
+    package init(
+        syncedCount: Int,
+        rejected: [RejectedMutation],
+        remainingCount: Int,
+        alreadyOnServerCount: Int,
+        heldBehindOtherTablesCount: Int
+    ) {
         self.syncedCount = syncedCount
         self.rejected = rejected
         self.remainingCount = remainingCount
         self.alreadyOnServerCount = alreadyOnServerCount
+        self.heldBehindOtherTablesCount = heldBehindOtherTablesCount
     }
 }
 
@@ -37,7 +51,8 @@ extension SyncReport {
             syncedCount: Int(report.syncedCount),
             rejected: try report.rejected.map(RejectedMutation.init(core:)),
             remainingCount: Int(report.remainingCount),
-            alreadyOnServerCount: Int(report.alreadyOnServerCount)
+            alreadyOnServerCount: Int(report.alreadyOnServerCount),
+            heldBehindOtherTablesCount: Int(report.heldBehindOtherTablesCount)
         )
     }
 }

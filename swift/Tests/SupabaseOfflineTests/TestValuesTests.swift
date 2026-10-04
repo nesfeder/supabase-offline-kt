@@ -96,17 +96,25 @@ struct TestValuesTests {
     @Test func aSyncReportTakesEveryField() {
         // When
         let refused = rejectedMutation(id: 2, table: "todos", operation: .insert, createdAt: Self.at, message: "no", rejectedAt: Self.at)
-        let given = syncReport(syncedCount: 3, rejected: [refused], remainingCount: 1, alreadyOnServerCount: 1)
+        let given = syncReport(
+            syncedCount: 3,
+            rejected: [refused],
+            remainingCount: 2,
+            alreadyOnServerCount: 1,
+            heldBehindOtherTablesCount: 1
+        )
         let defaulted = syncReport(syncedCount: 0)
 
         // Then
         #expect(given.syncedCount == 3)
         #expect(given.rejected == [refused])
-        #expect(given.remainingCount == 1)
+        #expect(given.remainingCount == 2)
         #expect(given.alreadyOnServerCount == 1)
+        #expect(given.heldBehindOtherTablesCount == 1)
         #expect(defaulted.rejected.isEmpty)
         #expect(defaulted.remainingCount == 0)
         #expect(defaulted.alreadyOnServerCount == 0)
+        #expect(defaulted.heldBehindOtherTablesCount == 0)
     }
 
     @Test func aSyncStatusTakesEveryFieldAndDefaultsToAClientThatHasDoneNothing() {

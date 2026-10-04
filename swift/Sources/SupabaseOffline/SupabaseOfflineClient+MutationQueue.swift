@@ -140,8 +140,11 @@ extension SupabaseOfflineClient {
     /// network access is off. When a pass is already sending the same writes, it waits for that pass
     /// and runs again, so it returns once nothing more can be sent now.
     ///
-    /// For one table, a `403` or `409` on a write with an earlier write of the user pending in
-    /// another table is held, not rejected: the earlier write may be the parent row it needs.
+    /// No write is sent ahead of an earlier one, whichever table it is in: a sync of one table stops,
+    /// without sending it, at the first write that has an earlier write of the user still queued in
+    /// another table (which may be the parent row it needs), and counts what it held back in
+    /// ``SyncReport/heldBehindOtherTablesCount``. The report's counts are this call's own; a pass
+    /// the client ran by itself just before is counted nowhere in it.
     ///
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     @discardableResult

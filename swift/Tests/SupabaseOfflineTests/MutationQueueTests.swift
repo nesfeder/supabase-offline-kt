@@ -149,6 +149,42 @@ struct MutationQueueTests {
         try await client.close()
     }
 
+    @Test func aSyncOfOneTableHoldsAWriteBehindAnEarlierOneInAnotherTable() async throws {
+        // Given a parent queued while its table cannot be reached, then a child queued after it;
+        // the client's own passes stop at the parent, so nothing can send the child first
+        let server = RecordingFakeServer { request in
+            request.url.path.hasSuffix("/projects") ? .noConnection : .status(201)
+        }
+        let client = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server.server)
+        let parent = try await client.from("projects").insert(["id": 1, "name": "Home"]).execute()
+        let child = try await client.from("todos").insert(Self.tea).execute()
+
+        // When the app syncs the child's table only
+        let held = try await client.syncPendingMutations(table: "todos")
+
+        // Then the child is held, not sent ahead of its parent, and the report says so
+        #expect(parent.isQueued)
+        #expect(child.isQueued)
+        #expect(held.syncedCount == 0)
+        #expect(held.remainingCount == 1)
+        #expect(held.heldBehindOtherTablesCount == 1)
+        #expect(server.requests.values.filter { $0.url.path.hasSuffix("/todos") }.isEmpty)
+
+        // When the parent's table answers and every table is synced
+        server.answer { _ in .status(201) }
+        let all = try await client.syncPendingMutations()
+
+        // Then both are sent, the parent first, and nothing is held
+        #expect(all.heldBehindOtherTablesCount == 0)
+        #expect(all.remainingCount == 0)
+        let tablesWritten = server.requests(withMethod: "POST").map(\.url.lastPathComponent)
+        let firstChildWrite = try #require(tablesWritten.firstIndex(of: "todos"))
+        #expect(tablesWritten[..<firstChildWrite].contains("projects"))
+        #expect(tablesWritten.last == "todos")
+        #expect(try await client.pendingMutationCount() == 0)
+        try await client.close()
+    }
+
     @Test func aSyncReportsWhatItSentAndWhatRemains() async throws {
         // Given a queued update
         let server = RecordingFakeServer { _ in .noConnection }

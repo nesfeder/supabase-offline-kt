@@ -30,7 +30,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `SupabaseOfflineClient.CacheSize` | `Long` with `Offline.CACHE_SIZE_UNLIMITED` | An enum is Swift's form of a number with a sentinel |
 | `CacheSize.bytes(_:)` | the `Long` value | As above |
 | `CacheSize.unlimited` | `Offline.CACHE_SIZE_UNLIMITED` | A case for the `-1` sentinel |
-| `Config.networkAvailability` | `Offline.Config.networkAvailability` | Same name; a closure that makes an `AsyncStream<Bool>`, called once when each client opens, for a `Flow<Boolean>?`: a Swift stream has one consumer and is finished with its client, where a cold `Flow` is collected afresh by each client. `nil` is the system's path monitor in both |
+| `Config.networkAvailability` | `Offline.Config.networkAvailability` | Same name; a closure that makes an `AsyncStream<Bool>`, called once when each client opens, for a `Flow<Boolean>?`: a Swift stream has one consumer and is finished with its client, where a cold `Flow` is collected afresh by each client. A Swift stream that ends leaves its last value in force, where a Kotlin flow that ends stops being watched and the status falls back to `UNKNOWN`. `nil` is the system's path monitor in both |
 | `Config.autoSync` | `Offline.Config.autoSync` | Same |
 | `Config.primaryKeys` | `Offline.Config.primaryKeys`, `primaryKey(table, vararg columns)` | Same; a dictionary literal for the DSL helper |
 | `Config.logLevel` | supabase-kt `logLevel` (each plugin's `MainConfig.logLevel`) | Same. Kotlin's `null` means the client's own level; Swift has no such client, so it defaults to `.warning` |
@@ -158,7 +158,7 @@ chain written for either upstream compiles against its own platform unchanged. T
 | `dismissRejectedMutation(id:)`, `retryRejectedMutation(id:)` | `Offline.dismissRejectedMutation(id)`, `Offline.retryRejectedMutation(id)` | Same. A retry Kotlin refuses with `IllegalArgumentException` throws `OfflineError.invalidRequest` |
 | `RejectedMutation` (`id`, `table`, `operation`, `createdAt`, `rowKeys`, `body`, `serverError`, `message`, `rejectedAt`, `isRetryable`) | `RejectedMutation` (the same fields) | Same; `Date` for the times, `OfflineJSON` for the row keys and the body, `OfflineError.ServerError` for `ServerError` |
 | `syncPendingMutations(table:)` | `Offline.syncPendingMutations(table)` | Same; `@discardableResult`, as the report is often not read |
-| `SyncReport` (`syncedCount`, `rejected`, `remainingCount`, `alreadyOnServerCount`) | `SyncReport` (the same fields) | Same |
+| `SyncReport` (`syncedCount`, `rejected`, `remainingCount`, `alreadyOnServerCount`, `heldBehindOtherTablesCount`) | `SyncReport` (the same fields) | Same |
 | `syncStatus` | `Offline.syncStatus` | Same name; a `SyncStatusSequence` for the `StateFlow<SyncStatus>` |
 | `SyncStatusSequence`, `SyncStatusSequence.Iterator` | `StateFlow<SyncStatus>` | An `AsyncSequence` of `SyncStatus` for the `StateFlow`; iterating one begun after `close()` throws `clientClosed`, where Kotlin's flow keeps its last value |
 | `SyncStatusSequence.value` | `StateFlow.value` | Same: the status now, without waiting. Before the client has opened its database (it opens in the background) it is the status of a client that has done nothing yet |
@@ -180,7 +180,7 @@ a parameter and defaults for the rest, as the Kotlin testing artifact's are.
 | `pendingMutation(id:table:operation:createdAt:rowKeys:body:)` | `pendingMutation(id, table, operation, createdAt, rowKeys, body)` | Same |
 | `rejectedMutation(id:table:operation:createdAt:rowKeys:body:serverError:message:rejectedAt:isRetryable:)` | `rejectedMutation(…)`, the same parameters | Same |
 | `serverError(status:code:message:details:hint:)` | `serverError(status, code, message, details, hint)` | Same; it builds an `OfflineError.ServerError` |
-| `syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:)` | `syncReport(…)`, the same parameters | Same |
+| `syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:)` | `syncReport(…)`, the same parameters | Same |
 | `syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:)` | `syncStatus(…)`, the same parameters | Same; `lastSyncError` is an `OfflineError` |
 | `querySnapshot(result:isFromCache:fetchedAt:hasPendingMutations:refresh:)` | `querySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)` | Same; generic over the decoded rows |
 | `offlineResponse(value:data:count:isFromCache:fetchedAt:hasPendingMutations:)` | — | Swift only: Kotlin's `PostgrestResult` is supabase-kt's, with a public constructor |

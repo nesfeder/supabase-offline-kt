@@ -93,17 +93,21 @@ public func serverError(
 ///   - rejected: The writes refused for good.
 ///   - remainingCount: The writes still queued.
 ///   - alreadyOnServerCount: Of `syncedCount`, the inserts whose rows the server already held.
+///   - heldBehindOtherTablesCount: Of `remainingCount`, the writes a sync of one table held back
+///     behind an earlier write to another table.
 public func syncReport(
     syncedCount: Int,
     rejected: [RejectedMutation] = [],
     remainingCount: Int = 0,
-    alreadyOnServerCount: Int = 0
+    alreadyOnServerCount: Int = 0,
+    heldBehindOtherTablesCount: Int = 0
 ) -> SyncReport {
     SyncReport(
         syncedCount: syncedCount,
         rejected: rejected,
         remainingCount: remainingCount,
-        alreadyOnServerCount: alreadyOnServerCount
+        alreadyOnServerCount: alreadyOnServerCount,
+        heldBehindOtherTablesCount: heldBehindOtherTablesCount
     )
 }
 
