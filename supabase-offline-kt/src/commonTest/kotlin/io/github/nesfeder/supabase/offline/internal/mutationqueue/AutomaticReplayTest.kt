@@ -4,6 +4,7 @@
 
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.test.Test
@@ -16,6 +17,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.IOException
 
 /**
  * The passes the engine starts on its own are coalesced — at most one runs and one waits, however
@@ -196,31 +198,127 @@ class AutomaticReplayTest {
     }
 
     @Test
-    fun a_pass_asked_for_while_the_network_is_known_down_is_skipped() = runTest {
-        // Given — the network is known to be down
-        var down = true
+    fun no_pass_runs_while_network_access_is_off() = runTest {
+        // Given — the app turned network access off
+        var status = NetworkStatus.DISABLED
         var passes = 0
         val automaticReplay =
             AutomaticReplay(
                 scope = backgroundScope,
                 engineLogger = logger,
-                isNetworkKnownDown = { down },
+                networkStatus = { status },
             ) {
                 passes++
                 SyncReport(0, emptyList(), 0, stop = null)
             }
 
-        // When — passes are asked for, then the network comes back
+        // When — passes are asked for, then access is back on
         repeat(3) { automaticReplay.requestPass() }
         advanceTimeBy(2.minutes)
-        val whileDown = passes
-        down = false
+        val whileOff = passes
+        status = NetworkStatus.UNKNOWN
         automaticReplay.requestPassOnEdge()
         runCurrent()
 
-        // Then — none ran while it was down, and the reconnection's ran at once
-        assertEquals(0, whileDown)
+        // Then — none ran while it was off, and the reconnection's ran at once
+        assertEquals(0, whileOff)
         assertEquals(1, passes)
+    }
+
+    @Test
+    fun while_the_monitor_says_offline_one_failed_attempt_is_made_and_the_wait_does_not_grow() =
+        runTest {
+            // Given — the monitor says offline, and every pass fails for want of a connection
+            var status = NetworkStatus.OFFLINE
+            val passTimes = mutableListOf<Long>()
+            var online = false
+            val automaticReplay =
+                AutomaticReplay(
+                    scope = backgroundScope,
+                    engineLogger = logger,
+                    networkStatus = { status },
+                ) {
+                    passTimes += testScheduler.currentTime
+                    val stop =
+                        if (online) null else SyncStop.TransientFailure(IOException("offline"))
+                    SyncReport(0, emptyList(), 1, stop)
+                }
+
+            // When — writes ask for passes over ten minutes, then the app syncs, then the network
+            // is back
+            repeat(10) {
+                automaticReplay.requestPass()
+                advanceTimeBy(1.minutes)
+            }
+            val inTheOfflinePeriod = passTimes.size
+            automaticReplay.allowAnOfflineAttempt()
+            automaticReplay.requestPass()
+            runCurrent()
+            val afterTheAppSynced = passTimes.size
+            advanceTimeBy(1.minutes)
+            online = true
+            status = NetworkStatus.ONLINE
+            val reconnectedAt = testScheduler.currentTime
+            automaticReplay.requestPass()
+            runCurrent()
+
+            // Then — one attempt in the offline period, one more after the app's sync, and none
+            // of them left a wait: the pass once online ran at once
+            assertEquals(1, inTheOfflinePeriod)
+            assertEquals(2, afterTheAppSynced)
+            assertEquals(reconnectedAt, passTimes.last())
+        }
+
+    @Test
+    fun while_the_monitor_says_offline_passes_that_reach_the_server_keep_running() = runTest {
+        // Given — the monitor wrongly says offline; the server answers
+        var passes = 0
+        val automaticReplay =
+            AutomaticReplay(
+                scope = backgroundScope,
+                engineLogger = logger,
+                networkStatus = { NetworkStatus.OFFLINE },
+            ) {
+                passes++
+                SyncReport(1, emptyList(), 0, stop = null)
+            }
+
+        // When — writes ask for passes over time
+        repeat(5) {
+            automaticReplay.requestPass()
+            advanceTimeBy(10.seconds)
+        }
+
+        // Then — every one ran: a wrong monitor holds nothing back
+        assertEquals(5, passes)
+    }
+
+    @Test
+    fun an_edge_while_the_monitor_says_offline_allows_another_attempt() = runTest {
+        // Given — an attempt made while the monitor says offline failed for want of a connection
+        var passes = 0
+        val automaticReplay =
+            AutomaticReplay(
+                scope = backgroundScope,
+                engineLogger = logger,
+                networkStatus = { NetworkStatus.OFFLINE },
+            ) {
+                passes++
+                SyncReport(0, emptyList(), 1, SyncStop.TransientFailure(IOException("offline")))
+            }
+        automaticReplay.requestPass()
+        runCurrent()
+
+        // When — a write asks again, then the session settles anew
+        automaticReplay.requestPass()
+        runCurrent()
+        val beforeTheEdge = passes
+        automaticReplay.requestPassOnEdge()
+        runCurrent()
+
+        // Then — the write's request was skipped and the edge's ran
+        assertEquals(1, beforeTheEdge)
+        assertEquals(2, passes)
     }
 
     @Test

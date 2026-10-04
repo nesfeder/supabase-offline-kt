@@ -497,11 +497,12 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * The signal is a hint, never a gate: a request is tried whenever the app makes one,
          * whatever it says, because monitors are wrong both ways. It decides when the library tries
          * by itself: when it turns `true`, a reactive read's waiting refresh tries again at once
-         * and, with [autoSync], queued writes are sent. While it is `false`, the library starts no
-         * replay pass by itself, a refresh that cannot reach the network reports
-         * [RefreshState.Paused], and [SyncStatus.network] says [NetworkStatus.OFFLINE]. A signal
-         * that fails is logged and no longer watched, and the network is then
-         * [NetworkStatus.UNKNOWN].
+         * and, with [autoSync], queued writes are sent. While it is `false`, the library's own
+         * passes stop after one fails for want of a connection, until it turns `true`, the session
+         * settles anew or the app calls [syncPendingMutations], so a wrong signal costs one failed
+         * attempt; a refresh that cannot reach the network reports [RefreshState.Paused]; and
+         * [SyncStatus.network] says [NetworkStatus.OFFLINE]. A signal that fails or ends is no
+         * longer watched (a failure is logged), and the network is then [NetworkStatus.UNKNOWN].
          */
         public var networkAvailability: Flow<Boolean>? = null
 
@@ -517,8 +518,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * [syncPendingMutations] itself. Either way, a write queued behind an earlier one of the
          * same user is sent by itself once that one is, as is what a sent, refused or discarded
          * write leaves queued, and a retried rejection: a write made online would otherwise wait
-         * for the app with nothing to show for it. No pass starts by itself while the network is
-         * known to be down.
+         * for the app with nothing to show for it. While the monitor says offline, the library
+         * makes one failed attempt by itself, then waits for the network, the session or the app.
          */
         public var autoSync: Boolean = true
 

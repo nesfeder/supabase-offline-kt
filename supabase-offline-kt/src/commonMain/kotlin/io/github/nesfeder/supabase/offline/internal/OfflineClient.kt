@@ -389,7 +389,7 @@ internal class OfflineClient(
             scope = clientScope,
             engineLogger = engineLogger,
             clock = clock,
-            isNetworkKnownDown = { networkAccess.isKnownUnavailable },
+            networkStatus = { networkAccess.status },
         ) {
             mutationQueueReplayer.sync()
         }
@@ -537,13 +537,17 @@ internal class OfflineClient(
         )
             return
         // The send lock alone: no pass is stopped, as none of the queue goes
-        mutationQueueReplayer.holdingSends {
-            fileCache.clear {
-                localData.dropCacheFor(identity.storedValue)
-                databaseScrub.rewriteAfterDelete()
+        try {
+            mutationQueueReplayer.holdingSends {
+                fileCache.clear {
+                    localData.dropCacheFor(identity.storedValue)
+                    databaseScrub.rewriteAfterDelete()
+                }
             }
+        } finally {
+            // Cancelled too: what the rewrite left goes to the background
+            databaseScrub.finishSoon()
         }
-        databaseScrub.finishSoon()
         engineLogger.info {
             "The session settled into another identity; the cache was emptied for it"
         }
@@ -695,6 +699,8 @@ internal class OfflineClient(
     override suspend fun syncPendingMutations(table: String?): SyncReport =
         operationGate.cancellableCall(clientScope) {
             ensurePostgrestInstalled()
+            // The app's own attempt: the library may try once more by itself while offline
+            automaticReplay.allowAnOfflineAttempt()
             val report = mutationQueueReplayer.syncWaitingOutOtherSenders(table)
             // A pass that could not tell whose queue it was counted every user's: count the shown
             val remaining =
@@ -982,13 +988,17 @@ internal class OfflineClient(
                 authPluginOrNull() != null &&
                     supabaseClient.currentReplayIdentity() == QueueIdentity.Anonymous
             }
-        mutationQueueReplayer.clearLocalData {
-            fileCache.clear {
-                localData.clearLocalData(owner)
-                databaseScrub.rewriteAfterDelete()
+        try {
+            mutationQueueReplayer.clearLocalData {
+                fileCache.clear {
+                    localData.clearLocalData(owner)
+                    databaseScrub.rewriteAfterDelete()
+                }
             }
+        } finally {
+            // Cancelled too: what the rewrite left goes to the background
+            databaseScrub.finishSoon()
         }
-        databaseScrub.finishSoon()
         // The writes an earlier failure held back are gone with it
         publishStatus { status -> status.copy(lastSyncError = null) }
     }

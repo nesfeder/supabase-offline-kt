@@ -82,9 +82,9 @@ internal class NetworkAccess(private val source: Flow<Boolean>? = null) {
 
     /**
      * Watches [source] in [scope] until [scope] ends, when a platform monitor unregisters;
-     * [onReconnected] runs each time it makes the network reachable again. A source that fails is
-     * rethrown for [scope] to log, and the status falls back to [NetworkStatus.UNKNOWN], so a
-     * monitor broken while offline stops nothing.
+     * [onReconnected] runs each time it makes the network reachable again. When the source fails
+     * (rethrown for [scope] to log) or ends, the status falls back to [NetworkStatus.UNKNOWN], so a
+     * monitor that stopped while saying offline holds nothing back.
      */
     fun watchIn(scope: CoroutineScope, onReconnected: suspend () -> Unit) {
         val watched = source ?: return
@@ -97,11 +97,16 @@ internal class NetworkAccess(private val source: Flow<Boolean>? = null) {
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                if (change { current -> current.copy(monitored = NetworkStatus.UNKNOWN) })
-                    onReconnected()
+                stopMonitoring(onReconnected)
                 throw failure
             }
+            stopMonitoring(onReconnected)
         }
+    }
+
+    /** A source that says no more: [NetworkStatus.UNKNOWN], a reconnection when it said offline. */
+    private suspend fun stopMonitoring(onReconnected: suspend () -> Unit) {
+        if (change { current -> current.copy(monitored = NetworkStatus.UNKNOWN) }) onReconnected()
     }
 
     /** Turns network access off: nothing more is sent until [enable]. */

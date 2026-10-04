@@ -11,11 +11,13 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
+import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -277,20 +279,61 @@ class AutoSyncTest {
     }
 
     @Test
-    fun no_pass_runs_by_itself_while_the_monitor_says_offline() = runTest {
-        // Given — the device is offline and a write is queued: its own attempt is the one request
+    fun a_device_offline_makes_one_attempt_by_itself_until_the_network_comes_back() = runTest {
+        // Given — the device is offline and a write is queued: its own attempt is the first request
         val signal = MutableStateFlow(false)
         val rig = rig(autoSync = true, signal = signal)
         rig.client.from(TABLE).insert(row(1))
         runCurrent()
 
-        // When — writes queued behind it ask for passes while the monitor still says offline
+        // When — writes queued behind it ask for passes while the monitor says offline, over time
         rig.client.from(TABLE).insert(row(2))
+        settle()
         rig.client.from(TABLE).insert(row(3))
         settle()
+        val whileOffline = rig.writes
+        // The app syncs itself, which fails too; a write after it is attempted once more
+        rig.client.syncPendingMutations()
+        rig.client.from(TABLE).insert(row(4))
+        settle()
+        rig.client.from(TABLE).insert(row(5))
+        settle()
+        val afterTheAppSynced = rig.writes
 
-        // Then — nothing more was tried until the network comes back
-        assertEquals(listOf(row(1).toString()), rig.writes)
+        // Then — one attempt by the library itself per offline period, the app's own sync starting
+        // another, and everything at once when the network comes back
+        rig.server.answer = { okJson("[]") }
+        signal.value = true
+        runCurrent()
+        assertEquals(List(2) { row(1).toString() }, whileOffline)
+        assertEquals(List(4) { row(1).toString() }, afterTheAppSynced)
+        assertEquals(0, rig.client.pendingMutationCount())
+        rig.scope.cancel()
+    }
+
+    @Test
+    fun a_monitor_stuck_offline_holds_nothing_back_when_the_server_answers() = runTest {
+        // Given — a monitor that wrongly says offline, a server that answers, and two writes an
+        // earlier run left queued
+        val mutationDao = FakeMutationDao()
+        newTestStore(mutationDao = mutationDao).mutationQueue.enqueueInsert(TABLE, row(1))
+        newTestStore(mutationDao = mutationDao).mutationQueue.enqueueInsert(TABLE, row(2))
+        val rig = rig(autoSync = true, signal = MutableStateFlow(false), mutationDao = mutationDao)
+        rig.server.answer = { okJson("[]") }
+
+        // When — the client opens, then a write the server cannot run now is queued, and one
+        // behind it
+        settle()
+        val drainedAtOpen = rig.client.pendingMutationCount()
+        rig.server.answer = { postgrestError(HttpStatusCode.ServiceUnavailable, code = "PGRST000") }
+        rig.client.from(TABLE).insert(row(3))
+        rig.server.answer = { okJson("[]") }
+        rig.client.from(TABLE).insert(row(4))
+        settle()
+
+        // Then — the library sent them by itself both times
+        assertEquals(0, drainedAtOpen)
+        assertEquals(0, rig.client.pendingMutationCount())
         rig.scope.cancel()
     }
 

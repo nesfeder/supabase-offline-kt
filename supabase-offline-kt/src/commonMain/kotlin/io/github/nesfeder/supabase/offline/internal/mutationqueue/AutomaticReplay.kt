@@ -1,9 +1,15 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.NetworkStatus
+import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.retryAfterOrNull
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
@@ -26,8 +32,11 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   however many requests arrive meanwhile, so a burst of writes queued behind the head starts one
  *   pass, not one per write.
  * - **One attempt:** a pass makes one attempt at the head of the queue; nothing here retries it. A
- *   pass runs only when something asked for one, and not while the network is known to be down: the
- *   reconnection asks again.
+ *   pass runs only when something asked for one, and never while network access is off.
+ * - **One failed attempt per offline period:** while the monitor says offline a pass still runs,
+ *   because a monitor can be wrong; once one fails for want of a connection, no more run, and none
+ *   grows the wait, until the monitor stops saying offline, an edge arrives, or the app syncs
+ *   ([allowAnOfflineAttempt]). A wrong monitor costs one failed attempt and strands nothing.
  * - **Backed off:** after a pass that stopped on a failure that may pass (a transient failure, or a
  *   write held behind an earlier one), the next pass waits — [initialBackoff], doubling up to
  *   [maxBackoff] — and a pass that ends any other way resets the wait. So a write the server keeps
@@ -47,8 +56,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * @property maxBackoff The longest wait.
  * @property maxRetryAfter The longest wait a server's `Retry-After` can ask for.
  * @property clock The time a `Retry-After` date is read against.
- * @property isNetworkKnownDown Whether the network is known to be down now: a pass asked for then
- *   is skipped, and grows no wait.
+ * @property networkStatus The network as the client sees it now: no pass runs while it is
+ *   [NetworkStatus.DISABLED], and one failed attempt per offline period while it is
+ *   [NetworkStatus.OFFLINE].
  * @property pass Runs one replay pass.
  */
 internal class AutomaticReplay(
@@ -58,7 +68,7 @@ internal class AutomaticReplay(
     private val maxBackoff: Duration = 60.seconds,
     private val maxRetryAfter: Duration = 1.hours,
     private val clock: Clock = Clock.System,
-    private val isNetworkKnownDown: () -> Boolean = { false },
+    private val networkStatus: () -> NetworkStatus = { NetworkStatus.UNKNOWN },
     private val pass: suspend () -> SyncReport,
 ) {
 
@@ -66,6 +76,12 @@ internal class AutomaticReplay(
 
     /** A reconnection or a settled session since the last pass began: it cuts a wait short. */
     private val edges = Channel<Unit>(Channel.CONFLATED)
+
+    /**
+     * Set when a pass made while the monitor said offline failed for want of a connection: no more
+     * run in this offline period.
+     */
+    private val offlineAttemptFailed = AtomicBoolean(false)
 
     private val worker = scope.launch(start = CoroutineStart.LAZY) { runPasses() }
 
@@ -84,14 +100,36 @@ internal class AutomaticReplay(
         requestPass()
     }
 
+    /** Lets the next pass asked for while the monitor says offline run: the app synced itself. */
+    fun allowAnOfflineAttempt() {
+        offlineAttemptFailed.store(false)
+    }
+
     private suspend fun runPasses() {
         var backoff = Duration.ZERO
         while (true) {
             requests.receive()
             // The pass about to run answers any edge so far, and the wait starts over after it
-            if (edges.tryReceive().isSuccess) backoff = Duration.ZERO
-            if (isNetworkKnownDown()) continue
+            if (edges.tryReceive().isSuccess) {
+                backoff = Duration.ZERO
+                offlineAttemptFailed.store(false)
+            }
+            val monitorSaysOffline =
+                when (networkStatus()) {
+                    NetworkStatus.DISABLED -> continue
+                    NetworkStatus.OFFLINE -> if (offlineAttemptFailed.load()) continue else true
+                    NetworkStatus.ONLINE,
+                    NetworkStatus.UNKNOWN -> {
+                        offlineAttemptFailed.store(false)
+                        false
+                    }
+                }
             val report = passOrNull()
+            // The monitor was right: wait for it, an edge or the app, and grow no wait meanwhile
+            if (monitorSaysOffline && report?.failedForWantOfAConnection() == true) {
+                offlineAttemptFailed.store(true)
+                continue
+            }
             backoff =
                 if (report == null || report.stop.isWorthWaitingOut()) {
                     if (backoff == Duration.ZERO) initialBackoff else minOf(backoff * 2, maxBackoff)
@@ -126,6 +164,10 @@ internal class AutomaticReplay(
         (stop as? SyncStop.TransientFailure)?.cause?.retryAfterOrNull {
             clock.now().toEpochMilliseconds()
         }
+
+    /** Whether the pass stopped because the network could not be reached. */
+    private fun SyncReport.failedForWantOfAConnection(): Boolean =
+        (stop as? SyncStop.TransientFailure)?.cause?.isNetworkOrConnectivityFailure() == true
 
     /** Whether a pass that stopped this way stopped on a failure worth waiting out. */
     private fun SyncStop?.isWorthWaitingOut(): Boolean =

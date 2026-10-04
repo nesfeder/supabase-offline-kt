@@ -334,14 +334,17 @@ waits however many requests arrive:
 | A client without Auth opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them): one pass | Yes |
 | A write is queued behind an earlier one; a write sent, refused or discarded leaves writes queued behind it; a rejected write is retried | No |
 
-The last row always runs. With write-ahead, an online write returns `Queued` whenever anything of
+The last row runs whatever `autoSync` says. With write-ahead, an online write returns `Queued` whenever anything of
 its user waits ahead of it, and only these passes send it; without them it would wait for the app
 with nothing to show for it. After an automatic pass that stopped on a failure that may pass, the
 next automatic pass waits 1 s, doubling up to 60 s, and at least as long as a `Retry-After` the
 server sent, up to an hour. The session settling and the network coming back end that wait at once
 and start it again from 1 s, but never before a `Retry-After` has passed. No automatic pass runs
-while the network is known to be down (the monitor says offline, or access is off): the
-reconnection asks again. A pass the app asks for goes at once and moves no wait. A trigger's own
+while network access is off. While the monitor says offline, an automatic pass still runs, since a
+monitor can be wrong, until one fails for want of a connection: after that, none runs and none
+grows the wait until the monitor stops saying offline, the session settles anew, or the app syncs.
+So a device that is offline makes one attempt per offline period, and a wrong monitor costs one
+failed attempt and strands nothing. A pass the app asks for goes at once and moves no wait. A trigger's own
 read of the queue that fails asks for a pass anyway, which reads the queue itself, so one failed
 read never turns a trigger off.
 
@@ -380,13 +383,13 @@ a connectivity failure, so code that handles being offline handles it too.
 **The monitor.** By default the library watches the platform: on Android `ConnectivityManager`,
 counting a network with internet that Android has validated (the library's manifest declares
 `ACCESS_NETWORK_STATE`, which appears in every app's merged manifest); on iOS, Network's path
-monitor. `networkAvailability` replaces it with the app's own signal. A signal that fails stops being
-watched: the failure is logged, and the status falls back to `UNKNOWN`, which counts as reachable,
-so a monitor that broke while saying offline does not stop the library trying by itself. Either is a hint, never a
-gate: a request the app makes is always tried, because a monitor can be wrong either way. It decides
-only when the library tries by itself (no automatic pass runs while it says offline), what a
-waiting refresh reports, whether a sync returns at once rather than wait for an unsettled session,
-and what `syncStatus.network` says.
+monitor. `networkAvailability` replaces it with the app's own signal. A signal that fails or ends
+stops being watched: a failure is logged, and the status falls back to `UNKNOWN`, which counts as
+reachable. Either is a hint, never a gate: a request the app makes is always tried, because a
+monitor can be wrong either way. It decides only when the library tries by itself (while it says
+offline, one failed attempt per offline period, as above), what a waiting refresh reports, whether
+a sync returns at once rather than wait for an unsettled session, and what `syncStatus.network`
+says.
 
 ### Storage
 
@@ -828,8 +831,10 @@ device clock set back or forward neither keeps nor retires one.
 
 `NetworkAccess` combines the connectivity signal, the platform monitor or the app's flow, with the
 app's switch. It counts reconnections, and each wakes waiting refreshes and, with `autoSync`, starts
-a pass when the settled identity has writes queued, ending the wait a failed pass left. While the
-network is known to be down, a pass any trigger asks for is skipped and grows no wait.
+a pass when the settled identity has writes queued, ending the wait a failed pass left. While access
+is off, a pass any trigger asks for is skipped. While the monitor says offline, `AutomaticReplay`
+runs passes until one fails for want of a connection, then skips them, growing no wait, until the
+monitor stops saying offline, an edge arrives, or the app syncs.
 
 **The automatic replay switch** has two conditions, written into the engine where the triggers live:
 
@@ -1003,8 +1008,8 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-02 | The exceptions, like every value type, have no public constructor; tests build them with the testing artifact's factories. | The library can then change them without breaking a caller. |
 | 2026-10-04 | `syncPendingMutations(table)` keeps the order across tables: it stops at a write with an earlier write of the user queued in another table, and reports what it held back. | The order is the library's first promise, and an app syncing one table expects the rows its writes depend on to go first. |
 | 2026-10-04 | `SyncStatus.lastSyncError` is a `SyncFailedException?`. | It only ever held one; an app reads the server's status and code without a cast, and narrowing it after a release would break binaries. |
-| 2026-10-04 | `syncStatus` follows the queue from the moment the client opens. | Read first at start, it said nothing was waiting while writes were queued; a collector costs nothing measurable. |
-| 2026-10-04 | A reconnection or a settled session cuts the replay backoff short; no automatic pass runs while the network is known to be down; a server's `Retry-After` stays a floor. | A reconnection's pass waited out up to a minute of backoff that passes made while offline had built. |
+| 2026-10-04 | `syncStatus` follows the queue from the moment the client opens. | Read first at start, it said nothing was waiting while writes were queued. Its cost is a count of the queue after each change, conflated: measured on the Android host, a write queued offline at a depth of 1,000 went from about 0.4 to 0.7–0.9 ms of CPU, its wall time from 134–160 to 180–196 µs; online writes and drains are within the noise in wall time. |
+| 2026-10-04 | A reconnection or a settled session cuts the replay backoff short; while the monitor says offline, the library makes one failed attempt per offline period and grows no wait; a server's `Retry-After` stays a floor. | A reconnection's pass waited out up to a minute of backoff that passes made while offline had built. |
 | 2026-10-04 | A client without Auth, with `autoSync` on, sends what an earlier run left queued when it opens. | No other trigger fires for it: its session is settled from the start. |
 | 2026-10-04 | A write that asked for a rollback and was committed is reported with one warning per client. | Hosted projects ignore `tx=rollback`, so an app's dry run changed data, and nothing said so. |
 
