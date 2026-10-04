@@ -3,17 +3,19 @@
 import SupabaseOfflineCore
 
 /// Hands the app's connectivity signal, ``SupabaseOfflineClient/Config/networkAvailability``, to the
-/// core, which then watches no path monitor of its own.
+/// engine, which then watches no path monitor of its own.
 enum NetworkAvailabilityRelay {
 
-    /// Reads `reports` into the core once it opens, until the stream ends or the core closes.
+    /// Once the client opens, makes its stream with `makeReports` and reads it into the engine until
+    /// the stream ends or the client closes, which finishes the stream.
     ///
-    /// The core's sync-status subscription ends when the core closes, by ``SupabaseOfflineClient/close()``
+    /// The engine's sync-status subscription ends when the client closes, by ``SupabaseOfflineClient/close()``
     /// or by a dropped client's background close, so watching it ends the relay without a hook in
     /// the close paths. The relay holds the connection, never the client, so it keeps no client alive.
-    static func start(reading reports: AsyncStream<Bool>, into connection: CoreConnection) {
+    static func start(reading makeReports: @escaping @Sendable () -> AsyncStream<Bool>, into connection: CoreConnection) {
         Task.detached {
             guard let reference = try? await connection.openedClient() else { return }
+            let reports = makeReports()
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     for await isAvailable in reports {
@@ -29,7 +31,7 @@ enum NetworkAvailabilityRelay {
         }
     }
 
-    /// Returns once the core has closed, or once the task is cancelled.
+    /// Returns once the client has closed, or once the task is cancelled.
     private static func waitForClosing(of reference: CoreClientReference) async {
         let statuses: AsyncThrowingStream<Void, any Error> = subscriptionStream { _, finish in
             reference.client.observeSyncStatus(

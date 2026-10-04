@@ -30,7 +30,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `SupabaseOfflineClient.CacheSize` | `Long` with `Offline.CACHE_SIZE_UNLIMITED` | An enum is Swift's form of a number with a sentinel |
 | `CacheSize.bytes(_:)` | the `Long` value | As above |
 | `CacheSize.unlimited` | `Offline.CACHE_SIZE_UNLIMITED` | A case for the `-1` sentinel |
-| `Config.networkAvailability` | `Offline.Config.networkAvailability` | Same; an `AsyncStream<Bool>?` for a `Flow<Boolean>?`. `nil` is the system's path monitor in both. A stream is read by one client, where a cold `Flow` can be collected by several |
+| `Config.networkAvailability` | `Offline.Config.networkAvailability` | Same name; a closure that makes an `AsyncStream<Bool>`, called once when each client opens, for a `Flow<Boolean>?`: a Swift stream has one consumer and is finished with its client, where a cold `Flow` is collected afresh by each client. `nil` is the system's path monitor in both |
 | `Config.autoSync` | `Offline.Config.autoSync` | Same |
 | `Config.primaryKeys` | `Offline.Config.primaryKeys`, `primaryKey(table, vararg columns)` | Same; a dictionary literal for the DSL helper |
 | `Config.logLevel` | supabase-kt `logLevel` (each plugin's `MainConfig.logLevel`) | Same. Kotlin's `null` means the client's own level; Swift has no such client, so it defaults to `.warning` |

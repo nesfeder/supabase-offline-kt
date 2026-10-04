@@ -33,16 +33,18 @@ extension SupabaseOfflineClient {
         /// The most cached Storage files may take on disk; the least recently used go first.
         public var fileCacheSize: CacheSize
 
-        /// The app's own connectivity signal, `true` while online, in place of the system's path
-        /// monitor, which the client watches when this is `nil`.
+        /// Makes the app's own connectivity signal, `true` while online, in place of the system's
+        /// path monitor, which the client watches when this is `nil`.
+        ///
+        /// The closure is called once when the client opens. The stream it returns is that client's
+        /// alone, and is finished when the client closes; when it ends by itself, its last value
+        /// stays in force. Until its first value the network reads as ``NetworkStatus/unknown``.
         ///
         /// A hint, never a gate: while it says offline the client still tries every request the app
         /// makes, and ``SupabaseOfflineClient/disableNetwork()`` is the switch that stops requests. It
         /// decides when the client tries by itself (a reconnection starts a sync pass with
-        /// ``autoSync``), what a waiting refresh reports, and ``SyncStatus/network``. Until its first
-        /// value the network reads as ``NetworkStatus/unknown``. A stream is read by one client: give
-        /// each client a stream of its own.
-        public var networkAvailability: AsyncStream<Bool>?
+        /// ``autoSync``), what a waiting refresh reports, and ``SyncStatus/network``.
+        public var networkAvailability: (@Sendable () -> AsyncStream<Bool>)?
 
         /// Whether queued writes are sent by themselves when the network comes back.
         public var autoSync: Bool
@@ -60,7 +62,7 @@ extension SupabaseOfflineClient {
             dataDirectory: URL? = nil,
             cacheSize: CacheSize = .bytes(100 * 1_024 * 1_024),
             fileCacheSize: CacheSize = .bytes(256 * 1_024 * 1_024),
-            networkAvailability: AsyncStream<Bool>? = nil,
+            networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil,
             autoSync: Bool = true,
             primaryKeys: [String: [String]] = [:],
             logLevel: LogLevel = .warning

@@ -44,27 +44,50 @@ final class LiveRecording<Element: Sendable>: Sendable {
     }
 }
 
-/// A connectivity signal a test drives, for ``SupabaseOfflineClient/Config/networkAvailability``.
-struct FakeNetworkAvailability: Sendable {
+/// A connectivity signal a test drives, for ``SupabaseOfflineClient/Config/networkAvailability``:
+/// each client that opens gets a stream of its own, and a report goes to the newest one.
+final class FakeNetworkAvailability: Sendable {
 
-    /// The stream the client reads.
-    let stream: AsyncStream<Bool>
+    /// Each stream made so far, oldest first, and whether the client has finished reading it.
+    private let streams = OSAllocatedUnfairLock<[(continuation: AsyncStream<Bool>.Continuation, ended: Bool)]>(
+        initialState: []
+    )
 
-    /// Where the test's reports go.
-    private let continuation: AsyncStream<Bool>.Continuation
-
-    init() {
-        (stream, continuation) = AsyncStream.makeStream(of: Bool.self)
+    /// What a configuration is given: makes a new stream each time a client opens.
+    var makeStream: @Sendable () -> AsyncStream<Bool> {
+        { [self] in newStream() }
     }
 
-    /// Reports the device online (`true`) or offline.
+    /// How many streams the clients have asked for.
+    var streamCount: Int {
+        streams.withLock { $0.count }
+    }
+
+    /// How many of those streams have ended: their client closed, or the test finished them.
+    var endedStreamCount: Int {
+        streams.withLock { $0.filter(\.ended).count }
+    }
+
+    /// Reports the device online (`true`) or offline to the newest client.
     func report(_ isAvailable: Bool) {
-        continuation.yield(isAvailable)
+        streams.withLock { $0.last }?.continuation.yield(isAvailable)
     }
 
-    /// Ends the signal.
+    /// Ends every stream, as an app's own monitor might stop.
     func finish() {
-        continuation.finish()
+        streams.withLock { $0.map(\.continuation) }.forEach { $0.finish() }
+    }
+
+    /// A new stream, recorded with its end.
+    private func newStream() -> AsyncStream<Bool> {
+        let (stream, continuation) = AsyncStream.makeStream(of: Bool.self)
+        let recorded = streams
+        let index = recorded.withLock { made in
+            made.append((continuation, false))
+            return made.count - 1
+        }
+        continuation.onTermination = { _ in recorded.withLock { $0[index].ended = true } }
+        return stream
     }
 }
 
