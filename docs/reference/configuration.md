@@ -95,8 +95,8 @@ would wait for the app with nothing to show for it.
 
 ### `primaryKeys`
 
-Each table's primary-key columns, by table name in the client's default schema. A table not named
-has the key `id`. The key is how the cache recognizes a row: where a queued or applied upsert
+Each table's primary-key columns, by table name: the name alone for a table in the client's
+default schema, `schema.table` for one in another schema. A table not named has the key `id`. The key is how the cache recognizes a row: where a queued or applied upsert
 lands, which row a server record replaces, and which rows a queued write reports in
 `PendingMutation.rowKeys`. Set it for every table whose key is not `id`, such as one with a
 composite key, with `primaryKey("task_tags", "task_id", "tag")`. A key with no column throws

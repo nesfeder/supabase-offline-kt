@@ -62,7 +62,8 @@ lacks a key column, or holds one as `null`, an array or an object, cannot be loc
 and dropped. A DELETE's old record carries the key under row-level security, which is all
 `applyServerDelete` needs.
 
-For a table in another schema, pass `schema`; its key is `id` unless you pass `primaryKeys`.
+For a table in another schema, pass `schema`; its key is the one configured as `schema.table`, or
+`id`.
 
 ## Limits
 
