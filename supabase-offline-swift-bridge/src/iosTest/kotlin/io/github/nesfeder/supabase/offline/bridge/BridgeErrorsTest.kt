@@ -12,6 +12,7 @@ import io.ktor.client.request.url
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -282,6 +283,39 @@ class BridgeErrorsTest {
             assertTrue(server.requests.isEmpty())
             tokenClient.closeAndWait()
             keyClient.closeAndWait()
+        }
+
+    @Test
+    fun a_sync_stopped_by_a_token_with_a_control_character_reports_it_without_quoting_it() =
+        bridgeTest {
+            // Given — a write queued with the network off, for a client whose token ends in a
+            // line break
+            val token = "eyJhbGciOi.secret-token-tail\n"
+            val client =
+                openTestClient(server) {
+                    autoSync = false
+                    accessTokenProvider = FakeAccessTokenProvider(token)
+                }
+            awaitErrorOnly { client.disableNetwork(it) }
+            client.mutateAndWait(INSERT_TODO, """{"id":2,"title":"Tea"}""")
+            awaitErrorOnly { client.enableNetwork(it) }
+
+            // When — a sync stops at the header the HTTP client refuses
+            val synced = CompletionProbe<BridgeSyncReport>()
+            client.syncPendingMutations(null, synced.completion)
+            val report = assertNotNull(synced.awaitValue())
+            val error = assertNotNull(client.currentSyncStatus().lastSyncError)
+
+            // Then — the status says so in the library's words, quoting nothing of the header
+            assertEquals(1, report.remainingCount)
+            assertEquals(BridgeErrorKind.SYNC_FAILED, error.kind)
+            val message = error.message
+            assertTrue(message.contains("header cannot carry"), message)
+            assertFalse(message.contains("Exception"), message)
+            assertFalse(message.contains("Bearer"), message)
+            assertFalse(message.contains("secret") || message.contains("eyJ"), message)
+            assertTrue(server.requests.isEmpty())
+            client.closeAndWait()
         }
 
     @Test
