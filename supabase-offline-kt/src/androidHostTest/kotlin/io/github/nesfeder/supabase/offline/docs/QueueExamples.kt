@@ -8,6 +8,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.MutationOutcome
@@ -254,4 +255,15 @@ internal fun syncOnForeground(supabase: SupabaseClient, appScope: CoroutineScope
             }
         )
     // --8<-- [end:foreground]
+}
+
+/** Ending the session on this device after a sign-out that could not reach the server. */
+internal suspend fun forgetSessionOffline(supabase: SupabaseClient) {
+    // --8<-- [start:forget-session]
+    try {
+        supabase.auth.signOut()
+    } catch (offline: HttpRequestException) {
+        supabase.auth.clearSession() // forgets the session here, without asking the server
+    }
+    // --8<-- [end:forget-session]
 }

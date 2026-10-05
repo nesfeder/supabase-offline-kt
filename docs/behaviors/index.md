@@ -13,7 +13,7 @@ the edge cases; the tables at their ends name the test that pins each fact.
 | Store | What it holds | Bound |
 | --- | --- | --- |
 | The query cache | The rows the server answered to each list read, one entry per query | `cacheSizeBytes`, 100 MiB by default; the entries fetched longest ago go first |
-| The mutation queue | Every write not yet accepted by the server, with the user who made it, in the order it was made; and the writes the server refused, on the rejected list | None: a queued write is never evicted |
+| The mutation queue | Every write not yet accepted by the server, with the user who made it, in the order it was made; and the writes the server refused, on the rejected list | The queue: none, a queued write is never evicted. The rejected list: its newest 100 entries; older ones go, and their writes are lost |
 | The file cache | Storage objects you downloaded | `fileCacheSizeBytes`, 256 MiB by default; the least recently used files go first |
 
 The first two live in one SQLite database, `supabase_offline.db`; the files beside it. See

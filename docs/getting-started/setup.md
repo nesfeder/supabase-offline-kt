@@ -168,8 +168,9 @@ stand, for a banner, and `syncPendingMutations()` sends the queue now, for a "Sy
 
 ## Sign-out
 
-Call `supabase.offline.clearLocalData()` when a user signs out for good: it deletes the cached rows,
-the downloaded files and every write still queued. With Auth, the cache already passes from one
+Call `supabase.offline.clearLocalData()` when a user signs out for good, before `auth.signOut()` or
+in a `finally` around it: offline, `signOut()` throws, and a clear after it never runs. It deletes
+the cached rows, the downloaded files and every write still queued. With Auth, the cache already passes from one
 user to the next, but queued writes stay with the user who made them until you clear them. See
 [Signing out and switching users](../behaviors/sign-out.md).
 
@@ -224,7 +225,7 @@ next. Leave them out of your backup rules. For Android 12 and later
 For Android 11 and earlier (`android:fullBackupContent`), put the same four `exclude` lines in a
 `<full-backup-content>` file. On iOS the plugin excludes its files from backups itself.
 
-Or keep everything in a directory Android never backs up, and no rules are needed:
+Or keep everything in a directory Android never backs up, and a new install needs no rules:
 
 ```kotlin
 --8<-- "GettingStartedExamples.kt:no-backup-directory"
@@ -233,8 +234,14 @@ Or keep everything in a directory Android never backs up, and no rules are neede
 ### A data directory, and a second process
 
 When `dataDirectory` names a directory that holds no database yet, and the default location holds
-one, the first client moves the database there, with its unsent writes. When it cannot, it keeps
-using the default one and logs a warning.
+one, the first client moves the database there, with its unsent writes; the downloaded files stay
+where they were. When it cannot, it keeps using the default one and logs a warning.
+
+So an app that already shipped with the default, and then sets `dataDirectory`, keeps its old
+downloads in `<filesDir>/supabase_offline/` (Android) or
+`Library/Application Support/supabase_offline/` (iOS), where `clearLocalData()` no longer reaches
+them and Android's Auto Backup still includes them. Delete that directory yourself once the client
+has opened on the new one, and keep its backup `exclude` line until then.
 
 The claim on the database is per process. If your app runs code in a second process (a service or
 a WorkManager worker declared with `android:process`), do not install the plugin there: two

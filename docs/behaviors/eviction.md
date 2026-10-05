@@ -12,8 +12,8 @@ reader shows is never deleted while it is shown, and the mutation queue is never
 
 The bound counts the length of the cached responses, the JSON text PostgREST sent, summed over
 every cached list. It does not count the database file, which SQLite never shrinks when rows are
-deleted (below), nor the queue, the rejected list or the library's own records, which are never
-evicted.
+deleted (below), nor the queue, the rejected list or the library's own records, which eviction
+never touches (the rejected list has its own bound: its newest 100 entries).
 
 ## When eviction runs
 

@@ -933,8 +933,9 @@ queued as never sent, and a read falls back to the cache as it would offline.
 ### The file cache
 
 `StorageFileCache` runs every commit, eviction, move, invalidation and clear under one lock. A
-download is written to a temporary file and moved into place whole, and its row is recorded only
-then, so no partial file is ever served. A file's last use is recorded as its modification time,
+download is written to a temporary file. Under the lock its row is recorded first, then the file is
+renamed over the entry's own in one move; a failed move puts the previous row back, so no partial
+file is ever served. A file's last use is recorded as its modification time,
 which survives a restart and needs no database column. Once the cache is over its bound, eviction
 takes the least recently used files until the cache is a tenth below it, sparing the file just
 committed, the files being read and any used in the last 30 seconds; when those recently used

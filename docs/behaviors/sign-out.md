@@ -45,8 +45,15 @@ touch the server, and the client stays usable afterward.
 2. **Sign out, and clear in a `finally`.** Offline, supabase-kt's `signOut()` throws
    `HttpRequestException` and keeps the session, since it clears the session only when the server
    answers; clearing in a `finally` deletes the device's data either way.
+3. **Decide about the session.** After an offline sign-out the user is still signed in: the
+   exception reaches your code with the session kept. To end it on this device anyway, forget it
+   without the server; the server-side session stays valid until it expires:
 
-The example at the top does both.
+    ```kotlin
+    --8<-- "QueueExamples.kt:forget-session"
+    ```
+
+The example at the top does the first two.
 
 ## Switching accounts
 
@@ -88,13 +95,14 @@ can:
 - A queued write waits, as the stored user's, and is sent with that user's token once the session
   settles, online or not.
 - An `OnlineOnly` write is sent at once, as supabase-kt sends any request meanwhile: on the anon
-  key. So is every Storage request; a download's answer is cached.
+  key. So are every Storage request and every `rpc`. A download's answer is cached, but a private
+  object refused on the anon key reads as "not found" and loses its cached copy.
 - A read the cache can answer for the stored user sends nothing. One that needs the server is sent
   on the anon key and its answer is not cached; see [One-shot reads](read-strategies.md#edge-cases).
 
-Under row-level security, the anon key reaches less than the user does, so an `OnlineOnly` write
-or a Storage call made in those first seconds can be refused. Make them after
-`supabase.auth.awaitInitialization()`.
+Under row-level security, the anon key reaches less than the user does, so an `OnlineOnly` write,
+an `rpc` or a Storage call made in those first seconds can be refused, and a private download can
+lose its cached copy. Make them after `supabase.auth.awaitInitialization()`.
 <small>`WritesWhileRestoringTest.an_online_write_is_queued_until_the_session_settles_then_sent_as_the_user`,
 `WritesWhileRestoringTest.an_online_only_write_is_sent_at_once_with_the_token_sent_meanwhile`,
 `StorageWhileRestoringTest.a_download_is_sent_at_once_on_the_anon_key_and_cached`,
