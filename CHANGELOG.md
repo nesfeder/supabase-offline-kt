@@ -412,6 +412,10 @@ release.
   happened, is reported as it happened rather than as the failed read.
 - A sync that `clearLocalData()` cut short reports the writes it had sent before.
 - While a stored session restores, reads and writes read it once between them, not once each.
+- A Storage call naming an object whose name holds a `%` that does not begin a percent-escape
+  (`100%.png`) throws `IllegalArgumentException` before anything is sent. supabase-kt 3.6 puts the
+  name in the URL as written, the HTTP client cannot build that URL, and the failure read as a
+  connectivity failure, so an app took itself to be offline.
 - A Storage "not found" answered while the session restores, or after its refresh failed, keeps
   the user's cached copy and is answered from it. The download went out on the anon key, and
   Storage answers an object that key may not read as "not found", so the copy was dropped and an

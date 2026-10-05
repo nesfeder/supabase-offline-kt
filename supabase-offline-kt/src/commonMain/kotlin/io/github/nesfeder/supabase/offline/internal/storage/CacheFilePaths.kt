@@ -72,6 +72,17 @@ internal fun isRequestedByItsOwnName(objectPath: String): Boolean = objectPath.n
     character in CHARACTERS_SENT_UNENCODED
 }
 
+/**
+ * Whether the pinned supabase-kt can build the URL of a request for [objectPath]: not when it puts
+ * `%` in the URL as written and a `%` does not begin a percent-escape, which the HTTP client
+ * refuses before sending, as if the network had failed.
+ */
+internal fun canBuildTheUrlFor(objectPath: String): Boolean =
+    '%' !in CHARACTERS_SENT_UNENCODED || !BARE_PERCENT.containsMatchIn(objectPath)
+
+/** A `%` not followed by two hex digits. */
+private val BARE_PERCENT = Regex("%(?![0-9A-Fa-f]{2})")
+
 private fun isCacheableSegment(segment: String): Boolean =
     segment.isNotEmpty() &&
         segment != "." &&

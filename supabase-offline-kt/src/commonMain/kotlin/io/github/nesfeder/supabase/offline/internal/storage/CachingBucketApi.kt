@@ -117,8 +117,8 @@ internal class CachingBucketApi(
     /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
     private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
         require(isRequestedByItsOwnName(path)) {
-            "This object path cannot be cached on the device: it holds '%', '?' or '#', which this " +
-                "supabase-kt puts in the URL unencoded, so its request can reach another object"
+            "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
+                "into the request's URL unencoded, so its request can reach another object"
         }
         val entry =
             cache.entryFor(bucketId, path)
@@ -231,6 +231,7 @@ internal class CachingBucketApi(
                 wrap: (DownloadOptionBuilder.() -> Unit) -> (DownloadOptionBuilder.() -> Unit)
             ) -> ByteArray,
     ): ByteArray {
+        requireUrlFor(path)
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!cachesDownloadsOf(path)) {
             networkAccess.ensureEnabled()
@@ -272,6 +273,7 @@ internal class CachingBucketApi(
             { target, wrappedOptions ->
                 checkingDownloadStatus { uncheckedFetch(target, wrappedOptions) }
             }
+        requireUrlFor(path)
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!cachesDownloadsOf(path)) {
             networkAccess.ensureEnabled()
@@ -595,6 +597,7 @@ internal class CachingBucketApi(
 
     override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
         operationGate.cancellableCall(backgroundScope) {
+            requireUrlFor(path)
             networkAccess.ensureEnabled()
             delegate.createSignedUploadUrl(path, upsert)
         }
@@ -605,6 +608,7 @@ internal class CachingBucketApi(
         builder: SignedUrlBuilder.() -> Unit,
     ): String =
         operationGate.cancellableCall(backgroundScope) {
+            requireUrlFor(path)
             networkAccess.ensureEnabled()
             delegate.createSignedUrl(path, expiresIn, builder)
         }
@@ -636,12 +640,14 @@ internal class CachingBucketApi(
 
     override suspend fun info(path: String): FileObjectV2 =
         operationGate.cancellableCall(backgroundScope) {
+            requireUrlFor(path)
             networkAccess.ensureEnabled()
             delegate.info(path)
         }
 
     override suspend fun exists(path: String): Boolean =
         operationGate.cancellableCall(backgroundScope) {
+            requireUrlFor(path)
             networkAccess.ensureEnabled()
             delegate.exists(path)
         }
@@ -661,16 +667,26 @@ internal class CachingBucketApi(
             isCacheableObjectPath(path) &&
             isRequestedByItsOwnName(path)
 
+    /** Refuses [path] when the request's URL cannot be built, which reads as a network failure. */
+    private fun requireUrlFor(path: String) {
+        require(canBuildTheUrlFor(path)) {
+            "This object path holds a '%' that does not begin a percent-escape, so the request's " +
+                "URL cannot be built"
+        }
+    }
+
     /** Whether a request sent now goes out on the anon key because the session has not settled. */
     private fun isSessionUnsettled(): Boolean = settledIdentityOf(requestSession()) == null
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
-    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T =
-        storageWrite(
+    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T {
+        requireUrlFor(path)
+        return storageWrite(
             write = write,
             applied = { cache.invalidateObject(bucketId, path) },
             uncertain = { cache.invalidateObject(bucketId, path) },
         )
+    }
 
     /**
      * Runs a Storage write that close() may stop, never queued; [applied] brings the cache in line.

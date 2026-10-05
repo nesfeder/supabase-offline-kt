@@ -460,7 +460,10 @@ cache, so the next read downloads them. Signed URLs, listings, `info`, `exists` 
 status always ask the server. An object path that cannot be mapped safely onto a file (a leading
 `/`, an empty, `.` or `..` segment, a `\`, a control character) still downloads and writes,
 uncached. So does one holding `%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8
-puts the name in the URL as written, so its request can fetch a different object.
+puts the name in the URL as written, so its request can fetch a different object. A `%` there that
+does not begin a percent-escape leaves a URL the HTTP client cannot build, which it reports as a
+network failure, so every call that puts such a name in its URL throws `IllegalArgumentException`
+first.
 
 ### Local data and lifecycle
 
