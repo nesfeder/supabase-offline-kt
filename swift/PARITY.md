@@ -265,4 +265,4 @@ a parameter and defaults for the rest, as the Kotlin testing artifact's are.
 | `cacheMissError(message:)`, `mutationNotQueueableError(message:)`, `networkDisabledError(message:)` | `cacheMissException(message)`, `mutationNotQueueableException(cause, message)`, `networkDisabledException(message)` | `Error` for `Exception`: each builds an `OfflineError` with that code. Swift's has no `cause`; it is a network failure, as Kotlin's is through its cause |
 | `syncFailedError(message:httpStatus:code:isConnectivityFailure:)` | `syncFailedException(message, httpStatus, code, isConnectivityFailure)` | `Error` for `Exception`; the status and code go in `serverError` |
 | `offlineError(code:message:serverError:isNetworkOrConnectivityFailure:)` | — (supabase-kt's own exceptions have public constructors) | Swift only: any other code, such as `server` or `connectivity` |
-| — | `cachedFile(path, fetchedAt, sizeBytes)` | Not yet: Storage's `CachedFile` takes its factory beside it |
+| `cachedFile(path:fetchedAt:sizeBytes:)` | `cachedFile(path, fetchedAt, sizeBytes)` | Same; `Date` for `Instant`, `Int` for `Long` |

@@ -27,7 +27,8 @@ public struct CachedFile: Sendable, Hashable {
         URL(filePath: path, directoryHint: .notDirectory)
     }
 
-    init(path: String, fetchedAt: Date, sizeBytes: Int) {
+    /// Built by the package, and by the testing product's factories.
+    package init(path: String, fetchedAt: Date, sizeBytes: Int) {
         self.path = path
         self.fetchedAt = fetchedAt
         self.sizeBytes = sizeBytes

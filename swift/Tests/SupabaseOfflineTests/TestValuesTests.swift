@@ -185,6 +185,17 @@ struct TestValuesTests {
         #expect(!outcome.isQueued)
     }
 
+    @Test func aCachedFileTakesEveryField() {
+        // When
+        let given = cachedFile(path: "/tmp/photos/a.jpg", fetchedAt: Self.at, sizeBytes: 2_048)
+
+        // Then
+        #expect(given.path == "/tmp/photos/a.jpg")
+        #expect(given.fetchedAt == Self.at)
+        #expect(given.sizeBytes == 2_048)
+        #expect(given.url == URL(filePath: "/tmp/photos/a.jpg"))
+    }
+
     @Test func aCacheMissErrorIsCaughtByItsCode() {
         // When
         let error = cacheMissError()

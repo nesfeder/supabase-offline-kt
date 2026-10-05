@@ -165,6 +165,17 @@ public func querySnapshot<Value: Sendable>(
     )
 }
 
+/// A Storage object's copy in the file cache, as a bucket's `cachedFile(path:)` or
+/// `ensureCachedFile(path:isPublic:)` returns one.
+///
+/// - Parameters:
+///   - path: Where the copy is.
+///   - fetchedAt: When it was downloaded.
+///   - sizeBytes: Its size in bytes.
+public func cachedFile(path: String, fetchedAt: Date, sizeBytes: Int) -> CachedFile {
+    CachedFile(path: path, fetchedAt: fetchedAt, sizeBytes: sizeBytes)
+}
+
 /// The answer to a one-shot read, an applied write or a function call, as `execute` returns one;
 /// wrap it in ``MutationOutcome/applied(result:)`` for a write.
 ///
