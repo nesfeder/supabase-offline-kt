@@ -5,7 +5,8 @@
 # Builds swift/MainActorConsumer, code written as a new Xcode 26 app writes it (Swift 6, the main
 # actor as its default isolation, approachable concurrency), against the Swift package, with the
 # consumer's own warnings errors: a row type, a read, a live read in a `.task`, a write, a Storage
-# download, the status sequence and a preview must compile as an app writes them.
+# download, the status sequence and a preview, and a patch written from an actor of the app's own
+# and a record handed over from a `@Sendable` callback, must compile as an app writes them.
 #
 # Usage, from the repository root, once scripts/test-swift-package.sh has put the core framework
 # in swift/LocalCore:

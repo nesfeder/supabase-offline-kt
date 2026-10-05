@@ -36,9 +36,18 @@ A row is a `Codable`, `Sendable` type whose keys are the table's columns:
 ```
 
 Make the id on the device: a write whose answer was lost is sent again, and with its id the server
-recognizes the row it already has. `nonisolated` lets the package decode the row off the main actor
-in an app whose code runs on the main actor by default, as Xcode 26 sets new apps up; without it, a
-read that decodes the type does not compile.
+recognizes the row it already has.
+
+`nonisolated` matters in an app whose code runs on the main actor by default, as Xcode 26 sets new
+apps up. A value type declared there encodes and decodes on the main actor only, and the package
+works off it, so declare `nonisolated` every value type you hand to the package or read back from
+it: rows, and the patch bodies, Realtime records and filter values of your own that an actor or a
+`@Sendable` callback uses. Without it, a read that decodes the row, or a write from an actor of your
+own, does not compile:
+
+```swift
+--8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:off-main-actor"
+```
 
 ## Create the client
 

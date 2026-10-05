@@ -147,9 +147,35 @@ struct TodoList: View {
 ### Apps whose default isolation is the main actor
 
 Xcode 26 makes new apps' code isolated to the main actor by default (the Default Actor Isolation
-build setting, or `.defaultIsolation(MainActor.self)` in a package). The package decodes rows off
-the main actor, so a row type must not be isolated to it: declare row types `nonisolated`, as `Todo`
-is above. Without it, a read that decodes the type does not compile: "main actor-isolated
-conformance of 'Todo' to 'Decodable' cannot satisfy conformance requirement for a 'Sendable' type
-parameter". Everything else (the client, the request builders, the sequences and the values they
-yield) is `Sendable` and is used from the main actor as it is.
+build setting, or `.defaultIsolation(MainActor.self)` in a package). A value type declared there
+encodes and decodes on the main actor only, and the package works off it. Declare `nonisolated`
+every value type you hand to the package or read back from it: rows, as `Todo` is above, and the
+patch bodies, Realtime records and filter values of your own that code off the main actor uses.
+
+Without it, a read that decodes a row does not compile ("main actor-isolated conformance of
+'Todo' to 'Decodable' cannot satisfy conformance requirement for a 'Sendable' type parameter"), and
+neither does a write from an actor of your own, or from a `@Sendable` callback such as a Realtime
+handler ("main actor-isolated conformance of 'TodoPatch' to 'Encodable' cannot be used in
+actor-isolated context"):
+
+<!-- swift-listing: GettingStartedListings.swift:off-main-actor -->
+```swift
+nonisolated struct TodoPatch: Encodable, Sendable {
+    var done: Bool
+}
+
+actor TodoRepository {
+    let offline: SupabaseOfflineClient
+
+    init(offline: SupabaseOfflineClient) {
+        self.offline = offline
+    }
+
+    func markDone(id: UUID) async throws {
+        try await offline.from("todos").update(TodoPatch(done: true)).eq("id", value: id).execute()
+    }
+}
+```
+
+The client, the request builders, the sequences and the values they yield are `Sendable`, and are
+used from the main actor, or any other, as they are.

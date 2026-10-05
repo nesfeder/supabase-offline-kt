@@ -18,6 +18,24 @@ nonisolated struct Todo: Codable, Sendable, Identifiable {
 }
 // --8<-- [end:row]
 
+// --8<-- [start:off-main-actor]
+nonisolated struct TodoPatch: Encodable, Sendable {
+    var done: Bool
+}
+
+actor TodoRepository {
+    let offline: SupabaseOfflineClient
+
+    init(offline: SupabaseOfflineClient) {
+        self.offline = offline
+    }
+
+    func markDone(id: UUID) async throws {
+        try await offline.from("todos").update(TodoPatch(done: true)).eq("id", value: id).execute()
+    }
+}
+// --8<-- [end:off-main-actor]
+
 /// The article's calls, made through the client an app keeps.
 struct GettingStartedListings {
 
@@ -127,6 +145,12 @@ struct GettingStartedListingsTests {
 
         // Then nothing of theirs is left on the device
         #expect(try await offline.pendingMutationCount() == 0)
+
+        // When an actor of the app's own writes a patch, offline
+        try await TodoRepository(offline: offline).markDone(id: UUID())
+
+        // Then it waits in the queue
+        #expect(try await offline.pendingMutationCount() == 1)
         try await offline.close()
     }
 }

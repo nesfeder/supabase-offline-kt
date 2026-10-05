@@ -85,6 +85,41 @@ The same client gives a SwiftUI preview rows without a network:
 }
 ```
 
+## Files in tests and previews
+
+The in-memory client keeps downloaded files in memory too: the `CachedFile` that
+``OfflineBucketApi/ensureCachedFile(path:isPublic:)`` and ``OfflineBucketApi/cachedFile(path:)``
+return names no file on disk, so reading its ``CachedFile/url`` fails in a test, a preview or a demo
+mode. A view that shows a stored image reads the bytes through
+``OfflineBucketApi/download(path:options:isPublic:)``, which the device's copy answers offline, and
+then works with either client:
+
+<!-- swift-listing: TestingYourAppListings.swift:photo -->
+```swift
+struct PhotoView: View {
+    let offline: SupabaseOfflineClient
+    let path: String
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else {
+                Color.secondary
+            }
+        }
+        .task {
+            // The bytes, from the server or from the device's copy. An in-memory client's copy is
+            // not a file, so a view that previews read them this way, not from a file URL.
+            if let data = try? await offline.storage.from("photos").download(path: path) {
+                image = UIImage(data: data)
+            }
+        }
+    }
+}
+```
+
 ## Values for your own fakes
 
 When your app hides the client behind a protocol of its own, its fakes return the package's values.

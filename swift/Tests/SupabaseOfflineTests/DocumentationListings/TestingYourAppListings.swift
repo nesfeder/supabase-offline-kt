@@ -76,6 +76,55 @@ struct TestingYourAppListings {
     }
 }
 
+// --8<-- [start:photo]
+struct PhotoView: View {
+    let offline: SupabaseOfflineClient
+    let path: String
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else {
+                Color.secondary
+            }
+        }
+        .task {
+            // The bytes, from the server or from the device's copy. An in-memory client's copy is
+            // not a file, so a view that previews read them this way, not from a file URL.
+            if let data = try? await offline.storage.from("photos").download(path: path) {
+                image = UIImage(data: data)
+            }
+        }
+    }
+}
+// --8<-- [end:photo]
+
+/// The in-memory client's file cache, as the Testing article describes it.
+struct InMemoryFileCacheTests {
+
+    @Test func aCachedCopyIsNoFileButItsBytesAreReadThroughDownload() async throws {
+        // Given an in-memory client whose server holds a photo
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        let offline = SupabaseOfflineClient.inMemory(
+            config: .init(autoSync: false),
+            server: FakeServer { _ in .status(200, headers: ["Content-Type": "image/jpeg"], body: jpeg) }
+        )
+
+        // When the photo is kept, and read again offline
+        let cached = try await offline.storage.from("photos").ensureCachedFile(path: "milk.jpg")
+        try await offline.disableNetwork()
+        let bytes = try await offline.storage.from("photos").download(path: "milk.jpg")
+
+        // Then the kept copy has no file on disk, and download answers with its bytes
+        #expect(!FileManager.default.fileExists(atPath: cached.path))
+        #expect((try? Data(contentsOf: cached.url)) == nil)
+        #expect(bytes == jpeg)
+        try await offline.close()
+    }
+}
+
 // --8<-- [start:preview]
 #Preview {
     TodoList(offline: .inMemory(server: FakeServer { _ in
