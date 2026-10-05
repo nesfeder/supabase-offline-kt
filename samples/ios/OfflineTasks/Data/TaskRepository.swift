@@ -283,23 +283,30 @@ final class TaskRepository {
         try await client.clearLocalData()
     }
 
-    /// Starts again as a new anonymous user with no tasks.
+    /// Starts again as a new anonymous user with no tasks, in this order:
     ///
-    /// In this order: local data is cleared, which also stops a sync already sending, so no queued
-    /// write can land after the deletes; then this user's photo files and rows are deleted from the
-    /// server, since an anonymous user cannot sign back in to reach them; then the app signs out
-    /// and in again. The clear comes before the new user's token exists, so nothing of this user's
-    /// is ever sent with it.
+    /// 1. This user's queued writes are discarded (a write already being sent is waited for), so
+    ///    none lands after the deletes.
+    /// 2. Their photo files and rows are deleted from the server, with their token: an anonymous
+    ///    user cannot sign back in to reach them.
+    /// 3. The app signs out, so the client's token closure returns `nil`.
+    /// 4. Local data is cleared. Only now, with no user's token live: a live read still open
+    ///    refetches after a clear, and with this user's token it would cache their rows again for
+    ///    the next user to see.
+    /// 5. The app signs in as a new user.
     ///
-    /// - Throws: ``SampleFailure/needsNetwork`` while offline, when nothing is deleted or cleared.
-    ///   A failed delete is thrown: the device is cleared, the server keeps what was not deleted
-    ///   yet, and the same user stays signed in, so it can be tried again.
+    /// - Throws: ``SampleFailure/needsNetwork`` while offline, when nothing is discarded, deleted or
+    ///   cleared. A failed delete is thrown with the same user still signed in, so it can be tried
+    ///   again; their unsent changes are gone by then.
     func startOver() async throws {
         guard canReachNetwork else { throw SampleFailure.needsNetwork }
-        let userID = session.userID
+        for mutation in try await client.pendingMutations().first() {
+            try await client.discardPendingMutation(id: mutation.id)
+        }
+        if let userID = session.userID { try await deleteEverything(of: userID) }
+        await session.signOut()
         try await client.clearLocalData()
-        if let userID { try await deleteEverything(of: userID) }
-        try await session.signInAsNewUser()
+        try await session.signIn()
     }
 
     // MARK: - Helpers

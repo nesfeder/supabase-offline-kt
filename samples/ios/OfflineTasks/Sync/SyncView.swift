@@ -178,7 +178,7 @@ struct SyncView: View {
                     Button("Start over", role: .destructive) { app.sync.startOver() }
                 } message: {
                     Text(
-                        "You get an empty list. This user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them, so it needs the network."
+                        "You get an empty list. Changes not synced yet are discarded, and this user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them, so it needs the network."
                     )
                 }
         } header: {

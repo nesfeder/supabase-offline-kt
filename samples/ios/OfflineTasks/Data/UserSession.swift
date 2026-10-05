@@ -20,8 +20,8 @@ enum SessionState: Equatable, Sendable {
 /// every row and photo path carries this user's id.
 ///
 /// The offline client learns who the user is only from ``accessToken()``. It cannot tell one user's
-/// queued writes from another's, so the app clears its local data before this can return another
-/// user's token (``TaskRepository/startOver()``).
+/// cached rows and queued writes from another's, so the app clears its local data only while no
+/// user is signed in: after ``signOut()``, before ``signIn()`` (``TaskRepository/startOver()``).
 protocol UserSession: AnyObject, Observable, Sendable {
 
     /// Where the sign-in stands.
@@ -35,8 +35,12 @@ protocol UserSession: AnyObject, Observable, Sendable {
     /// ends.
     func signInWhenReachable(_ statuses: SyncStatusSequence) async
 
-    /// Signs out, and signs in again as a new user with nothing of the last one's.
-    func signInAsNewUser() async throws
+    /// Signs out: from now on ``accessToken()`` returns `nil`. The session leaves the device even
+    /// when the server cannot be told.
+    func signOut() async
+
+    /// Signs in as a new user.
+    func signIn() async throws
 }
 
 extension UserSession {

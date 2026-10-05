@@ -151,10 +151,15 @@ still show.
 
 ### Start over
 
-**Start over**, under **Local data**, deletes this user's photos, photo rows and tasks from your
-project, clears the device, and signs in as a new anonymous user with an empty list. It needs the
+**Start over**, under **Local data**, starts again as a new anonymous user with an empty list. In
+this order, it discards the changes not synced yet, deletes this user's photos, photo rows and
+tasks from your project, signs out, clears the device, and signs in as the new user. It needs the
 network: an anonymous user cannot sign back in to reach what it left behind, so offline it refuses
 and deletes nothing.
+
+The device is cleared only once nobody is signed in. A list still open on screen fetches its rows
+again as soon as the device is cleared, with whatever token the app hands the client at that
+moment; with the old user's, their rows would be back on the device for the next user to read.
 
 ## How the app uses the package
 
@@ -166,9 +171,10 @@ and deletes nothing.
   `ensureCachedFile`.
 - **The user comes from the token alone.** supabase-swift's Auth signs in anonymously
   (`Data/AnonymousSession.swift`), and the client receives its access token through
-  `Config.accessToken`. The client cannot tell one user's queued writes from another's, so Start
-  over clears local data before the new user's token can exist; a model test pins that nothing of the
-  first user is sent or shown afterward.
+  `Config.accessToken`. The client cannot tell one user's cached rows and queued writes from
+  another's, so Start over signs out first, then clears local data while the token closure returns
+  `nil`, and only then signs in the new user. Model tests pin that nothing of the first user is sent
+  or shown afterward, with a list left open throughout.
 - **Ids are made on the device, in lower case** (`uuidString.lowercased()`): Postgres writes a UUID in
   lower case, and the schema compares photo paths as text. Object names hold no `%`, `?` or `#`.
 - **A private photo is downloaded only once a user is signed in.** Without the user's token Storage

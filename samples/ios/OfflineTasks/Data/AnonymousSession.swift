@@ -49,11 +49,15 @@ final class AnonymousSession: UserSession {
         }
     }
 
-    func signInAsNewUser() async throws {
+    func signOut() async {
         state = .signingIn
-        // The old session leaves the device first; the server's answer to the sign-out changes
-        // nothing for an anonymous user nobody can sign in as again.
+        // Auth drops the session from the device before it calls the server, so the token is gone
+        // even when that call fails; for an anonymous user nobody can sign in as again, that is all.
         try? await auth.signOut()
+    }
+
+    func signIn() async throws {
+        state = .signingIn
         do {
             let session = try await auth.signInAnonymously()
             state = .signedIn(userID: session.user.id.uuidString.lowercased())

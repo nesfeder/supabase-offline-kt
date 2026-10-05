@@ -180,6 +180,49 @@ struct OfflineTaskTests {
         try await test.stop()
     }
 
+    @Test("Start over with a list open: offline, the second user's list holds nothing of the first user's")
+    func startOverWithAListOpen() async throws {
+        // Given: the first user's task on the server and in the cache, a live read of the list open
+        // for the whole of Start over, as an open task screen holds one, and a sign-out that takes
+        // a moment, as Auth's does
+        let test = TestApp(signOutDelay: .milliseconds(300))
+        try await test.start()
+        let firstUser = try #require(test.session.userID)
+        test.app.tasks.addTask(title: "The first user's task", notes: "")
+        try await eventually("it reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+        let openList = LiveRecording(test.repository.taskSnapshots())
+        try await eventually("the open list shows it") { openList.last?.result?.count == 1 }
+        // A list read with the first user's token is answered with their rows, as one that reached
+        // the server before the deletes would be; the second user starts with no network.
+        let firstUsersList = try jsonText(await test.server.rows(of: Tables.tasks))
+        await test.server.intercept { request, userID in
+            guard let userID else { return nil }
+            guard userID == firstUser else { return .noConnection }
+            let isListRead = request.method == "GET" && request.url.path().hasSuffix("/rest/v1/\(Tables.tasks)")
+            return isListRead ? .json(firstUsersList) : nil
+        }
+
+        // When
+        test.app.sync.startOver()
+        try await eventually("a new user is signed in") { test.session.userID != firstUser && !test.app.sync.isStartingOver }
+        let secondUser = try #require(test.session.userID)
+        try await test.setOffline(true)
+
+        // Then: nothing of the first user's is on the device, shown, or sent with the new token
+        let cached = try await cachedTaskRows(test.repository)
+        #expect(cached.isEmpty)
+        try await eventually("the open list shows nothing of the first user's") {
+            openList.last.map { $0.result?.contains { $0.userID == firstUser } != true } ?? false
+        }
+        #expect(await test.server.rows(of: Tables.tasks).isEmpty)
+        let requests = await test.server.requests
+        if let firstOfSecondUser = requests.firstIndex(where: { $0.userID == secondUser }) {
+            #expect(!requests[firstOfSecondUser...].contains { $0.userID == firstUser })
+        }
+        openList.stop()
+        try await test.stop()
+    }
+
     @Test("Deleting a task online deletes its files, then its photo rows, then the task")
     func deleteOrder() async throws {
         // Given

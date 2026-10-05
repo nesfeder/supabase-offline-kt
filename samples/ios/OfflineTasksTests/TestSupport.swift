@@ -26,10 +26,10 @@ final class TestApp {
     /// The live reads the tabs share, stopped by ``stop()``.
     private var reads: [Task<Void, Never>] = []
 
-    /// A fresh app on a fresh server, signed in as a new user.
-    init(server: DemoServer = DemoServer()) {
+    /// A fresh app on a fresh server, signed in as a new user whose sign-out takes `signOutDelay`.
+    init(server: DemoServer = DemoServer(), signOutDelay: Duration = .zero) {
         self.server = server
-        session = DemoSession()
+        session = DemoSession(signOutDelay: signOutDelay)
         app = AppModel.demo(server: server, session: session)
     }
 
@@ -117,4 +117,54 @@ func jpegFixture() throws -> Data {
     }
     try #require(!data.isEmpty)
     return data
+}
+
+/// The task list as the device holds it, read without the network: empty when nothing is cached.
+func cachedTaskRows(_ repository: TaskRepository) async throws -> [TaskRow] {
+    do {
+        return try await repository.client.from(Tables.tasks)
+            .select(readStrategy: .cacheOnly)
+            .order("created_at", ascending: false)
+            .execute([TaskRow].self)
+            .value
+    } catch OfflineError.cacheMiss {
+        return []
+    }
+}
+
+/// A live sequence a test iterates in a task of its own, keeping each element, until it ends or the
+/// test stops it.
+final class LiveRecording<Element: Sendable> {
+
+    /// The elements so far, in order.
+    private(set) var values: [Element] = []
+
+    /// The iteration.
+    private var iteration: Task<Void, Never>?
+
+    /// Starts iterating `sequence`.
+    init<Sequence: AsyncSequence>(_ sequence: Sequence) where Sequence.Element == Element {
+        iteration = Task { [weak self] in
+            do {
+                for try await element in sequence { self?.values.append(element) }
+            } catch {
+                // The test reads what arrived; an ended read shows as no newer element.
+            }
+        }
+    }
+
+    /// The newest element.
+    var last: Element? {
+        values.last
+    }
+
+    /// Leaves the loop.
+    func stop() {
+        iteration?.cancel()
+    }
+}
+
+/// `rows` as the JSON array PostgREST would send.
+func jsonText(_ rows: [[String: OfflineJSON]]) throws -> String {
+    String(decoding: try JSONEncoder().encode(OfflineJSON.array(rows.map(OfflineJSON.object))), as: UTF8.self)
 }
