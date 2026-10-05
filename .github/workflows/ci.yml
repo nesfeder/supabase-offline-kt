@@ -10,7 +10,10 @@ name: CI
 #            │                   │                    floors check; the published-artifacts check
 #            ├─ static-checks ───┴─ ios-tests  macOS  iOS simulator tests, bundled and system
 #            │                                        SQLite; iOS device framework link; the Swift
-#            │                                        bridge's tests, framework and header
+#            │                                        bridge's tests, framework and header; the
+#            │                                        Swift package's tests and the iOS sample's
+#            │                                        (when `ios-sample` says so), on the
+#            │                                        self-hosted runner only
 #            └─ docs                           Linux  docs-check.yml
 #   coverage-upload ──── after jvm-tests: sends the coverage report to Codecov (see the job)
 #   coverage-rehearsal ─ after jvm-tests: the upload as a dry run, when CI's configuration changed
@@ -106,6 +109,7 @@ jobs:
       docs: ${{ steps.classify.outputs.docs }}
       workflows: ${{ steps.classify.outputs.workflows }}
       sample: ${{ steps.classify.outputs.sample }}
+      ios-sample: ${{ steps.classify.outputs.ios-sample }}
       formatting: ${{ steps.formatter.outputs.configured }}
       ios-runner: ${{ steps.ios.outputs.ios-runner }}
       ios-allowed: ${{ steps.ios.outputs.ios-allowed }}
@@ -125,6 +129,10 @@ jobs:
       # version catalog, build-logic, any build script or gradle.properties), a change to the
       # library's public API records, and this workflow. Every push to main builds it, so a
       # library change that breaks the sample without moving the API records shows up there.
+      # `ios-sample` runs the iOS sample's tests in ios-tests: for its own sources and what it is
+      # built on (the Swift package, the bridge, the two scripts), and this workflow; every push to
+      # main runs them too, as it builds the Android sample. Its sources still count as a build
+      # input, since ios-tests runs only when `kotlin` says so.
       - name: Classify the changed files
         id: classify
         env:
@@ -162,11 +170,17 @@ jobs:
           docs=false
           workflows=false
           sample=false
+          ios_sample=false
           while IFS= read -r file; do
             case "$file" in
               samples/android/* | gradle/* | build-logic/* | *.gradle.kts | gradle.properties \
                 | */gradle.properties | supabase-offline-kt*/api/* | .github/workflows/ci.yml)
                 sample=true ;;
+            esac
+            case "$file" in
+              samples/ios/* | swift/* | supabase-offline-swift-bridge/* | scripts/test-ios-sample.sh \
+                | scripts/prepare-local-swift-package.sh | .github/workflows/ci.yml)
+                ios_sample=true ;;
             esac
             case "$file" in
               .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/* \
@@ -190,6 +204,7 @@ jobs:
           fi
           if [[ "$everything" == true || "$EVENT_NAME" == push ]]; then
             sample=true
+            ios_sample=true
           fi
 
           # Between stop-commands markers with a random token, so no file name is read as a
@@ -199,12 +214,13 @@ jobs:
           echo "::stop-commands::$token"
           sed 's/^/  /' "$changed_files"
           echo "::$token::"
-          echo "  kotlin=$kotlin docs=$docs workflows=$workflows sample=$sample everything=$everything"
+          echo "  kotlin=$kotlin docs=$docs workflows=$workflows sample=$sample ios-sample=$ios_sample everything=$everything"
           {
             echo "kotlin=$kotlin"
             echo "docs=$docs"
             echo "workflows=$workflows"
             echo "sample=$sample"
+            echo "ios-sample=$ios_sample"
           } >> "$GITHUB_OUTPUT"
 
       # The formatter's configuration lands in its own pull request; until then the job is skipped.
@@ -419,7 +435,8 @@ jobs:
           python3 .github/scripts/check-coverage-report.py --self-test
           python3 .github/scripts/check-workflows.py --self-test
           python3 .github/scripts/check-workflows.py
-          shellcheck --shell=bash .github/scripts/*.sh .github/actions/*/*.sh scripts/test-swift-package.sh
+          shellcheck --shell=bash .github/scripts/*.sh .github/actions/*/*.sh scripts/test-swift-package.sh \
+            scripts/test-ios-sample.sh scripts/prepare-local-swift-package.sh
 
       # Template injection, unpinned actions, broad permissions, persisted credentials. Findings
       # fail the job and appear as annotations; nothing is uploaded to code scanning.
@@ -727,6 +744,16 @@ jobs:
         run: >-
           bash scripts/test-swift-package.sh --simulator "$CI_SIMULATOR_UDID"
           --derived-data "$RUNNER_TEMP/offline-kt-ci/swift-derived-data"
+
+      # The iOS sample on the Swift package and the framework the step above copied into
+      # swift/LocalCore, on the self-hosted runner only: its build with every warning of its own an
+      # error, its model tests and its UI smoke test, in demo mode (no project, no keys). Its remote
+      # packages are fetched into the job's folder at the versions its Package.resolved pins.
+      - name: Test the iOS sample
+        if: env.IOS_RUNNER == 'local' && needs.changes.outputs.ios-sample == 'true'
+        run: >-
+          bash scripts/test-ios-sample.sh --simulator "$CI_SIMULATOR_UDID"
+          --derived-data "$RUNNER_TEMP/offline-kt-ci/ios-sample-derived-data"
 
       - name: Save Kotlin/Native
         if: >-
