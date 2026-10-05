@@ -1,7 +1,7 @@
 // The public interface of SupabaseOffline, from its symbol graph; scripts/api-compat.py rates a
 // change to it. Do not edit: scripts/check-swift-public-api.py --products DIR --update writes it.
 platform iOS 16.0
-property Array.filterText | var filterText: String { get }
+property Array.filterText | var filterText: String { get } | where Element: OfflineFilterValue
 property Bool.filterText | var filterText: String { get }
 struct CachedFile | struct CachedFile
 property CachedFile.fetchedAt | let fetchedAt: Date
@@ -195,8 +195,8 @@ type.property OfflineError.syncFailed | static var syncFailed: OfflineError.Code
 property OfflineError.underlyingError | let underlyingError: (any Error)?
 type.property OfflineError.unexpected | static var unexpected: OfflineError.Code { get }
 protocol OfflineFilterValue | protocol OfflineFilterValue : Sendable
-property OfflineFilterValue.filterText | var filterText: String { get }
 requirement OfflineFilterValue.filterText | var filterText: String { get }
+property OfflineFilterValue.filterText | var filterText: String { get } | where Self: RawRepresentable, Self.RawValue: OfflineFilterValue
 enum OfflineJSON | enum OfflineJSON
 enum.case OfflineJSON.array(_:) | case array([OfflineJSON])
 enum.case OfflineJSON.bool(_:) | case bool(Bool)
@@ -297,7 +297,7 @@ init OfflineTextSearchType.init(rawValue:) | init?(rawValue: String)
 enum.case OfflineTextSearchType.phrase | case phrase
 enum.case OfflineTextSearchType.plain | case plain
 enum.case OfflineTextSearchType.websearch | case websearch
-property Optional.filterText | var filterText: String { get }
+property Optional.filterText | var filterText: String { get } | where Wrapped: OfflineFilterValue
 struct PendingMutation | struct PendingMutation
 property PendingMutation.body | let body: OfflineJSON?
 property PendingMutation.createdAt | let createdAt: Date

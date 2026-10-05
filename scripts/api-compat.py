@@ -1148,6 +1148,7 @@ enum NetworkStatus | enum NetworkStatus
 enum.case NetworkStatus.online | case online
 protocol OfflinePostgrestFilterBuilder | protocol OfflinePostgrestFilterBuilder : Sendable
 requirement OfflinePostgrestFilterBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> Self
+property OfflineFilterValue.filterText | var filterText: String { get } | where Self: RawRepresentable, Self.RawValue: OfflineFilterValue
 conformance SupabaseOfflineClient | Swift.Sendable
 """
 
@@ -1506,6 +1507,20 @@ def self_test() -> int:
         with_swift("conformance SupabaseOfflineClient | Swift.Sendable\n", ""),
         "breaking",
         ["swift-removed"],
+    )
+    scenario(
+        "a Swift declaration made available later",
+        with_swift("method SupabaseOfflineClient.from(_:) | func from(_ table: String) -> OfflinePostgrestQueryBuilder\n",
+                   "method SupabaseOfflineClient.from(_:) | func from(_ table: String) -> OfflinePostgrestQueryBuilder"
+                   " | @available(iOS 17.0)\n"),
+        "breaking",
+        ["swift-removed", "swift-added"],
+    )
+    scenario(
+        "a Swift extension's constraint narrowed",
+        with_swift("Self.RawValue: OfflineFilterValue", "Self.RawValue == String"),
+        "breaking",
+        ["swift-removed", "swift-added"],
     )
     scenario(
         "the Swift package's platform raised",

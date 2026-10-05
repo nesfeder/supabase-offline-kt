@@ -27,9 +27,11 @@ The record is made from the symbol graph rather than an emitted .swiftinterface:
 declarations are a versioned data format that DocC renders and that is extracted from the same
 debug build the tests run, while a module interface needs a separate library-evolution build and
 its text carries compiler-version guards (`#if compiler(>=5.3) && $Feature`) and attributes that move
-with the toolchain. One line per declaration, `<kind> <path> | <declaration>`, sorted; a protocol's
-requirements are kind `requirement`; a conformance is `conformance <type> | <protocol>`; the first
-line is the package's platform, read from swift/Package.swift. A removed or changed line is a
+with the toolchain. One line per declaration, `<kind> <path> | <declaration>`, followed by
+` | where <constraints>` for a member of a constrained extension and ` | @available(<…>)` for a
+declaration with availability of its own, sorted; a protocol's requirements are kind `requirement`;
+a conformance is `conformance <type> | <protocol>`; the first line is the package's platform, read
+from swift/Package.swift. A removed or changed line is a
 breaking change and an added one an addition (scripts/api-compat.py rates them).
 """
 
@@ -124,6 +126,49 @@ def declaration(symbol: dict) -> str:
     return "".join(fragment["spelling"] for fragment in symbol.get("declarationFragments", []))
 
 
+def constraint_text(constraint: dict) -> str:
+    """One generic constraint as Swift writes it: `Element: OfflineFilterValue`, `Value == String`."""
+    operator = {"conformance": ":", "superclass": ":", "sameType": " =="}.get(constraint.get("kind"), " ?")
+    return f"{constraint.get('lhs')}{operator} {constraint.get('rhs')}"
+
+
+def version_text(version: dict) -> str:
+    parts = [version.get("major", 0), version.get("minor", 0)] + ([version["patch"]] if version.get("patch") else [])
+    return ".".join(str(part) for part in parts)
+
+
+def availability_text(entries: list) -> str:
+    """A symbol's own availability as `@available(…)`, one clause per domain; empty when it has none."""
+    clauses = []
+    for entry in entries or []:
+        words = [entry.get("domain", "*")]
+        if "introduced" in entry:
+            words.append(version_text(entry["introduced"]))
+        for key in ("deprecated", "obsoleted"):
+            if key in entry:
+                words.append(f"{key} {version_text(entry[key])}")
+        if entry.get("isUnconditionallyDeprecated"):
+            words.append("deprecated")
+        if entry.get("isUnconditionallyUnavailable"):
+            words.append("unavailable")
+        if entry.get("renamed"):
+            words.append(f"renamed {entry['renamed']}")
+        clauses.append(" ".join(words))
+    return f"@available({', '.join(sorted(clauses))})" if clauses else ""
+
+
+def symbol_line(kind: str, name: str, symbol: dict) -> str:
+    """A declaration's record line: its declaration, its extension's constraints, its availability."""
+    line = f"{kind} {name} | {declaration(symbol)}"
+    constraints = (symbol.get("swiftExtension") or {}).get("constraints") or []
+    if constraints:
+        line += " | where " + ", ".join(constraint_text(constraint) for constraint in constraints)
+    availability = availability_text(symbol.get("availability"))
+    if availability:
+        line += f" | {availability}"
+    return line
+
+
 def interface_record(graphs: list[dict], module: str, platform: str) -> str:
     """The record of one module's public interface, from its symbol graphs (its own and its extensions')."""
     symbols = {}
@@ -149,16 +194,13 @@ def interface_record(graphs: list[dict], module: str, platform: str) -> str:
                 continue
             if "::SYNTHESIZED::" in source or names.get(target) in IMPLICIT_PROTOCOLS:
                 continue
-            constraints = ", ".join(
-                f"{constraint['lhs']}{':' if constraint['kind'] == 'conformance' else ' =='} {constraint['rhs']}"
-                for constraint in relationship.get("swiftConstraints", [])
-            )
+            constraints = ", ".join(constraint_text(constraint) for constraint in relationship.get("swiftConstraints", []))
             where = f" where {constraints}" if constraints else ""
             word = "conformance" if kind == "conformsTo" else "inheritance"
             lines.add(f"{word} {names.get(source, source)} | {names.get(target, target)}{where}")
     for precise, symbol in symbols.items():
         kind = "requirement" if precise in requirements else symbol["kind"]["identifier"].removeprefix("swift.")
-        lines.add(f"{kind} {names[precise]} | {declaration(symbol)}")
+        lines.add(symbol_line(kind, names[precise], symbol))
     def order(line: str):
         word, rest = line.split(" ", 1)
         return (word in ("conformance", "inheritance"), rest, word)
@@ -391,6 +433,12 @@ RECORD_GRAPH = {
         record_symbol("s:Strategy.cacheOnly", "enum.case", ["Strategy", "cacheOnly"], "case cacheOnly"),
         record_symbol("s:Builder", "protocol", ["Builder"], "protocol Builder : Sendable"),
         record_symbol("s:Builder.applying", "method", ["Builder", "applying(_:)"], "func applying(_ change: Change) -> Self"),
+        dict(record_symbol("s:Value.filterText", "property", ["Value", "filterText"], "var filterText: String { get }"),
+             swiftExtension={"extendedModule": "Module", "constraints": [
+                 {"kind": "conformance", "lhs": "Self", "rhs": "RawRepresentable"},
+                 {"kind": "sameType", "lhs": "Self.RawValue", "rhs": "String"}]}),
+        dict(record_symbol("s:Client.sign", "method", ["Client", "sign()"], "func sign() async throws"),
+             availability=[{"domain": "iOS", "introduced": {"major": 17, "minor": 0}}]),
     ],
     "relationships": [
         {"kind": "conformsTo", "source": "s:Client", "target": "s:Sendable", "targetFallback": "Swift.Sendable"},
@@ -407,6 +455,9 @@ RECORD_CASES = [
     ("an enum case", "enum.case Strategy.cacheOnly | case cacheOnly"),
     ("a conformance", "conformance Client | Swift.Sendable"),
     ("the platform", "platform iOS 16.0"),
+    ("an extension's constraints",
+     "property Value.filterText | var filterText: String { get } | where Self: RawRepresentable, Self.RawValue == String"),
+    ("a declaration's availability", "method Client.sign() | func sign() async throws | @available(iOS 17.0)"),
 ]
 
 
