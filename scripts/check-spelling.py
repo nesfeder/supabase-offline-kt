@@ -6,7 +6,9 @@ git tracks, and mkdocs.yml, so no base commit is needed.
 
 It fails on a British form (behaviour, colour, licence, cancelled, labelled, recognise, centre,
 catalogue, towards, whilst and the rest of BRITISH_FORMS below), matched as a whole word in any
-case. What is not prose is left out before anything is matched:
+case, a hyphen ending a word. Every -ise, -ised, -ising and -isation word counts as British but
+those American English spells so too (AMERICAN_ISE_WORDS: promise, otherwise, exercise, and any
+word ending in -wise). What is not prose is left out before anything is matched:
 
     fenced code blocks                       ``` or ~~~, at any indent
     inline code                              `isCancelled`, ``code with a ` in it``
@@ -32,23 +34,35 @@ from typing import Iterator, List, Tuple
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# The -ise words this project uses or is likely to, by stem: the -ize spelling is the American one.
-# Words that are -ise in American English too (advise, revise, otherwise, promise, exercise) are not
-# stems here.
-ISE_STEMS = (
-    "apolog", "author", "capital", "categor", "central", "character", "custom", "deserial",
-    "emphas", "final", "general", "initial", "local", "material", "maxim", "memo", "minim",
-    "normal", "optim", "organ", "parameter", "priorit", "real", "recogn", "sanit", "serial",
-    "special", "stabil", "standard", "summar", "synchron", "token", "util", "visual",
+# Words that end in -ise in American English too, so the general -ise rule leaves them alone. A
+# match is allowed when its base word, with any prefix below taken off, is one of these.
+AMERICAN_ISE_WORDS = frozenset(
+    """
+    advertise advise anise apprise arise bruise chaise chastise circumcise clockwise comprise
+    compromise concise counterclockwise cruise demise despise devise disguise enterprise excise
+    exercise expertise franchise guise improvise incise likewise merchandise mortise noise
+    otherwise paradise poise porpoise praise precise premise promise raise reprise revise rise
+    sunrise supervise surmise surprise televise tortoise treatise turquoise uprise valise vise
+    wise
+    """.split()
 )
+
+# What follows the "is" of an -ise word: "recognise", "recognised", "recognising", "recognisation".
+ISE_SUFFIX = r"(?:e|es|ed|er|ers|ing|able|ation|ations|ational)"
 
 # (British pattern, how to make the American form of a match): each pattern is matched as a whole
 # word, ignoring case; the rewrites are applied in order to the matched text, in lower case.
 BRITISH_FORMS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
-    (r"(?:behavi|col|fav|hon|neighb|lab|flav)our\w*", ((r"our", "or"),)),
     (
-        r"(?:" + "|".join(ISE_STEMS) + r")is(?:e|es|ed|er|ers|ing|able|ation|ations|ational)",
-        ((r"is(?=e|ed|er|ing|able|ation)", "iz"),),
+        r"(?:behavi|col|fav|hon|neighb|lab|flav|rum|hum|harb|vap|arm|endeav|od|splend|val|vig|rig"
+        r"|sav|parl|cand|clam|ferv)our\w*",
+        ((r"our", "or"),),
+    ),
+    # Every -ise, -ised, -ising, -isation word but those is_american_ise() accepts; "practise" has
+    # its own rule below.
+    (
+        r"(?!practis)\w+is" + ISE_SUFFIX,
+        ((r"is(?=" + ISE_SUFFIX + r"$)", "iz"),),
     ),
     (r"(?:analys|paralys)(?:e|ed|ing)", ((r"ys", "yz"),)),
     (
@@ -87,12 +101,25 @@ BRITISH_FORMS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
 )
 
 # A prefix the British form may carry: "unlabelled", "unrecognised".
-PREFIX = r"(?:un|re|mis|pre|non|over|under)?"
+PREFIXES = ("un", "re", "mis", "pre", "non", "over", "under", "dis")
+PREFIX = "(?:" + "|".join(PREFIXES) + ")?"
 
+# A hyphen ends a word: "colour-coded" and "user-cancelled" are checked.
 PATTERNS: Tuple[Tuple["re.Pattern[str]", Tuple[Tuple[str, str], ...]], ...] = tuple(
-    (re.compile(r"(?<![\w-])" + PREFIX + british + r"(?![\w-])", re.IGNORECASE), rewrites)
+    (re.compile(r"(?<!\w)" + PREFIX + british + r"(?!\w)", re.IGNORECASE), rewrites)
     for british, rewrites in BRITISH_FORMS
 )
+
+
+def is_american_ise(word: str) -> bool:
+    """Whether [word] is an -ise word American English spells so too ("promise", "otherwise")."""
+    base = re.sub(r"is" + ISE_SUFFIX + r"$", "ise", word.lower())
+    for prefix in ("",) + PREFIXES:
+        if base.startswith(prefix):
+            unprefixed = base[len(prefix):]
+            if unprefixed in AMERICAN_ISE_WORDS or unprefixed.endswith("wise"):
+                return True
+    return False
 
 
 def american_form(british: str, rewrites: Tuple[Tuple[str, str], ...]) -> str:
@@ -171,7 +198,7 @@ def violations_in(path: str, text: str) -> List[str]:
                     for phrase, _ in ALLOWED_PHRASES
                     for phrase_match in re.finditer(re.escape(phrase), line)
                 )
-                if not allowed:
+                if not allowed and not is_american_ise(match.group(0)):
                     american = american_form(match.group(0), rewrites)
                     found.append(f"{path}:{number}: '{match.group(0)}', American '{american}'")
     return found
@@ -208,6 +235,17 @@ SELF_TEST_CASES: Tuple[Tuple[str, str, int], ...] = (
     ("cancelled", "A cancelled pass sends nothing, and a cancelling caller waits.", 2),
     ("labelled", "The issue is labelled upstream-pin.", 1),
     ("with a prefix", "An unlabelled argument and an unrecognised key.", 2),
+    ("before a hyphen", "A colour-coded banner.", 1),
+    ("after a hyphen", "A user-cancelled pass.", 1),
+    ("an -ise word of no list", "Rows are parallelised and canonicalised.", 2),
+    ("an -isation word of no list", "Containerisation and modularisation.", 2),
+    ("an -our word", "The rumour and the vigour.", 2),
+    (
+        "-ise words American spells so",
+        "A promise, otherwise precise, concise; exercise your expertise; advertise; a rising "
+        "surprise, improvised, revised and supervised; pairwise noise.",
+        0,
+    ),
     ("licence", "MIT licence.", 1),
     ("centre", "A centred card.", 1),
     ("catalogue", "The version catalogue.", 1),
@@ -257,6 +295,9 @@ SUGGESTION_CASES: Tuple[Tuple[str, str], ...] = (
     ("towards", "toward"),
     ("grey", "gray"),
     ("unlabelled", "unlabeled"),
+    ("parallelised", "parallelized"),
+    ("canonicalisation", "canonicalization"),
+    ("rumour", "rumor"),
 )
 
 
