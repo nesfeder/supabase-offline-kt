@@ -212,7 +212,13 @@ class InMemoryTaskRepository(
                 height = photo.height,
                 createdAt = clock.now(),
             )
-        write { QueuedMutation.InsertPhoto(it, row) }
+        try {
+            write { QueuedMutation.InsertPhoto(it, row) }
+        } catch (refused: TaskWriteRefusedException) {
+            // As the library-backed repository does: no row will ever name the file.
+            server.deleteFiles(listOf(objectPath))
+            throw refused
+        }
         emit(PhotoUpload.Attached(row))
     }
 

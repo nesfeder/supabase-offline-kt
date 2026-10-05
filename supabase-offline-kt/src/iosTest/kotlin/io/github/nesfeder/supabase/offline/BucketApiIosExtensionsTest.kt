@@ -48,7 +48,7 @@ class BucketApiIosExtensionsTest {
         fakeBucket.onDownload = { "content".encodeToByteArray() }
 
         // When
-        val path = offlineApi.ensureLocalPath("a b/test.txt", isPublic = true)
+        val path: String = offlineApi.ensureLocalPath("a b/test.txt", isPublic = true)
 
         // Then
         assertEquals((directory / "storage" / "test-bucket" / "a b" / "test.txt").toString(), path)

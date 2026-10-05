@@ -40,11 +40,11 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   does not say offline. A wrong monitor costs nothing while requests reach the server; after one
  *   fails for want of a connection, queued writes wait for the monitor, the session or the app's
  *   sync.
- * - **Backed off:** after a pass that stopped on a failure that may pass (a transient failure, or a
- *   write held behind an earlier one), the next pass waits — [initialBackoff], doubling up to
- *   [maxBackoff] — and a pass that ends any other way resets the wait. So a write the server keeps
- *   failing is not hammered by every write queued behind it. A `Retry-After` the server sent with
- *   the failure makes the wait at least that long, up to [maxRetryAfter].
+ * - **Backed off:** after a pass that stopped on a failure that may pass, the next pass waits —
+ *   [initialBackoff], doubling up to [maxBackoff] — and a pass that ends any other way resets the
+ *   wait. So a write the server keeps failing is not hammered by every write queued behind it. A
+ *   `Retry-After` the server sent with the failure makes the wait at least that long, up to
+ *   [maxRetryAfter].
  * - **Cut short by an edge:** a reconnection or a settled session ([requestPassOnEdge]) ends the
  *   wait at once and resets it, but never before a server's `Retry-After` has passed.
  *

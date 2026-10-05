@@ -51,6 +51,11 @@ import kotlinx.serialization.json.jsonArray
  *   one. Keep realtime calls on `supabase.from(table)`.
  * - **The typed `rpc`** is this library's extension on [Offline]: import
  *   `io.github.nesfeder.supabase.offline.rpc` in place of `io.github.jan.supabase.postgrest.rpc`.
+ * - **Two top-level filters on one column**, as in `filter { gte("age", 1); lte("age", 10) }`:
+ *   supabase-kt sends only the first, so a read, an update or a delete here throws
+ *   [IllegalArgumentException] before anything is sent or queued. Put them in one group, `filter {
+ *   and { gte("age", 1); lte("age", 10) } }`, which sends both. A second top-level `or` group, or a
+ *   text search after a filter on its column, replaces what came before, and is not caught.
  *
  * A verb may run its `request` lambda more than once: a read once to learn its shape and once per
  * request sent, a queueable write up to three times. The lambda must configure the same request
@@ -73,12 +78,16 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
     /**
      * Reads rows once, from the server or the device's cache as [readStrategy] says.
      *
+     * Each request is cached on its own, under its columns, filters, order and range: offline, a
+     * request never answered online has nothing cached, even when another cached read of the table
+     * holds the rows it asks for. To show one row offline, read the list a screen already reads,
+     * with the same request, and pick the row from it.
+     *
      * Only a list of rows is cached. A read that asks for another shape (`single()`,
      * `maybeSingle()` from supabase-kt 3.8, `head`, a `count` with rows or without, `csv()`,
      * `geojson()`, `stripNulls()` or `explain()`) goes to the server under every strategy but
      * [ReadStrategy.CacheOnly], is not stored, and offline fails as [ReadStrategy.NetworkOnly]
-     * does; under [ReadStrategy.CacheOnly] it sends nothing and throws [CacheMissException]. To
-     * read one row offline, read the list and take its first row.
+     * does; under [ReadStrategy.CacheOnly] it sends nothing and throws [CacheMissException].
      *
      * @param columns the columns to select.
      * @param readStrategy where the rows come from; [ReadStrategy.NetworkFirst] by default, which
@@ -89,6 +98,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   [PostgrestResult.hasPendingMutations] say which, and how old.
      * @throws CacheMissException under [ReadStrategy.CacheOnly], when nothing cached may answer the
      *   read, or the read asks for a shape the cache never holds.
+     * @throws NetworkDisabledException while network access is off ([Offline.disableNetwork]) and
+     *   the cache cannot answer the read.
      * @throws IllegalStateException when the client is closed.
      */
     @Throws(Throwable::class)
@@ -104,14 +115,21 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *
      * Each emission is a [QuerySnapshot]: its rows (`null` while nothing is known yet; `[]` when
      * the server returned no rows), whether they are the cache's, when they were fetched, whether a
-     * queued write changed them, and how the refresh behind them stands ([RefreshState]).
+     * queued write changed them, and how the refresh behind them stands ([RefreshState]). Each
+     * request is cached on its own, as for [select].
+     *
+     * A queued write shows at once, as it was sent: the new rows a queued INSERT or UPSERT adds
+     * that the request's filters admit come after the server's rows, whatever the request's order
+     * and limit, and lack the columns the server fills in (defaults, triggers) until it has the
+     * write. Decode such rows into a type whose server-filled fields are optional.
      *
      * Every strategy ends the same way when the client closes: a collection live at [Offline.close]
-     * completes, so a screen torn down with the client sees its flow end, not an error; one started
-     * after it fails with [IllegalStateException] through the flow's own error channel. A read that
-     * fails for another reason delivers the values before the failure, then the failure itself. A
-     * slow collector can be handed a value a newer one has already replaced; the last it is handed
-     * is the latest.
+     * completes, so a screen torn down with the client sees its flow end, not an error, and
+     * `first()` on one that has not emitted yet throws [NoSuchElementException] (`firstOrNull()`
+     * returns `null`); one started after it fails with [IllegalStateException] through the flow's
+     * own error channel. A read that fails for another reason delivers the values before the
+     * failure, then the failure itself. A slow collector can be handed a value a newer one has
+     * already replaced; the last it is handed is the latest.
      *
      * A read of a shape the cache does not hold (see [select]) emits the server's answer once, with
      * [RefreshState.Idle], and completes; offline it fails, and under [FlowReadStrategy.CacheOnly]
