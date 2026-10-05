@@ -42,7 +42,6 @@ final class TestApp {
     func start() async throws {
         let app = app
         run = Task { await app.run() }
-        try await eventually("the app is ready") { app.isReady }
         startReads()
         try await eventually("the task list is read") { app.tasks.rows != nil }
     }

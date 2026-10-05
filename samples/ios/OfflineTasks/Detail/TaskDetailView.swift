@@ -58,6 +58,7 @@ struct TaskDetailView: View {
                     .accessibilityIdentifier("detail-title")
                 TextField("Notes", text: Binding(get: { model.draftNotes }, set: { model.editNotes($0) }), axis: .vertical)
                     .lineLimit(2...10)
+                    .accessibilityIdentifier("detail-notes")
             } footer: {
                 if model.isTitleBlank {
                     Text("A task needs a title")

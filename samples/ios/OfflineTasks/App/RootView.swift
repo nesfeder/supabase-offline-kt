@@ -10,26 +10,20 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var app = app
-        Group {
-            if app.isReady {
-                tabs
-            } else {
-                ProgressView()
-            }
-        }
-        .task { await app.run() }
-        // The live reads the tabs share run here, for as long as the app does, once the app is
-        // ready, and start again for each user.
-        .task(id: app.readKey) { if app.isReady { await app.tasks.observeTasks() } }
-        .task(id: app.readKey) { if app.isReady { await app.tasks.observePendingTasks() } }
-        .task(id: app.readKey) { if app.isReady { await app.sync.observe() } }
+        tabs
+            .task { await app.run() }
+            // The live reads the tabs share run here, for as long as the app does, and start again
+            // for each user.
+            .task(id: app.session.userID) { await app.tasks.observeTasks() }
+            .task(id: app.session.userID) { await app.tasks.observePendingTasks() }
+            .task(id: app.session.userID) { await app.sync.observe() }
         .alert(
             app.failure?.message ?? "",
             isPresented: Binding(get: { app.failure != nil }, set: { if !$0 { app.dismissFailure() } }),
             presenting: app.failure
         ) { failure in
             if failure.opensRefusedChanges {
-                Button("View") { app.selectedTab = .sync }
+                Button("View") { app.openRefusedChanges() }
             }
             Button("OK", role: .cancel) {}
         }

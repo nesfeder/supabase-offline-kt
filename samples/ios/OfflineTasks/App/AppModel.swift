@@ -27,11 +27,11 @@ final class AppModel {
     /// The tab in front.
     var selectedTab: AppTab = .tasks
 
+    /// Counts the requests to show the refused changes, so the Sync tab scrolls to them each time.
+    private(set) var refusedChangesRequests = 0
+
     /// The status of the queue and the network, as the client last reported it.
     private(set) var syncStatus: SyncStatus
-
-    /// Whether the app has re-applied Simulate offline, so its screens may start reading.
-    private(set) var isReady = false
 
     /// The failure shown now; the next one waits until it is dismissed.
     private(set) var failure: FailureAlert?
@@ -45,18 +45,10 @@ final class AppModel {
     /// The ids of the refused writes already announced.
     @ObservationIgnored private var announcedRejections: Set<Int64>?
 
-    /// Where Simulate offline is kept between launches, for a cold start offline on a simulator,
-    /// which has no airplane mode.
-    @ObservationIgnored private let defaults: UserDefaults
-
-    /// The key Simulate offline is kept under.
-    static let simulateOfflineKey = "simulateOffline"
-
     /// The app over `repository`, running as `mode`.
-    init(mode: LaunchMode, repository: TaskRepository, defaults: UserDefaults = .standard) {
+    init(mode: LaunchMode, repository: TaskRepository) {
         self.mode = mode
         self.repository = repository
-        self.defaults = defaults
         syncStatus = repository.syncStatus.value
         let failures = FailureSink()
         failureSink = failures
@@ -68,12 +60,6 @@ final class AppModel {
     /// Who is signed in.
     var session: any UserSession {
         repository.session
-    }
-
-    /// What the shared live reads depend on: they start once the app is ready, and again for each
-    /// user.
-    var readKey: ReadKey {
-        ReadKey(userID: session.userID, isReady: isReady)
     }
 
     /// What the app says about syncing now.
@@ -89,15 +75,9 @@ final class AppModel {
 
     // MARK: - Running
 
-    /// Runs for as long as the app does: re-applies Simulate offline, then follows the sync status,
-    /// signs in when the network allows, and announces refused writes.
+    /// Runs for as long as the app does: follows the sync status, signs in when the network allows,
+    /// and announces refused writes.
     func run() async {
-        if !mode.isDemo, defaults.bool(forKey: Self.simulateOfflineKey) {
-            // Before any screen reads: the switch is not kept by the client.
-            await perform { try await self.repository.setNetworkEnabled(false) }
-        }
-        syncStatus = repository.syncStatus.value
-        isReady = true
         await withDiscardingTaskGroup { group in
             group.addTask { await self.followSyncStatus() }
             group.addTask { await self.session.signInWhenReachable(self.repository.syncStatus) }
@@ -105,9 +85,8 @@ final class AppModel {
         }
     }
 
-    /// Switches Simulate offline on or off, and keeps the choice for the next launch.
+    /// Switches Simulate offline on or off: the client's network access, until the app restarts.
     func setSimulateOffline(_ isOn: Bool) {
-        if !mode.isDemo { defaults.set(isOn, forKey: Self.simulateOfflineKey) }
         Task { await perform { try await self.repository.setNetworkEnabled(!isOn) } }
     }
 
@@ -120,6 +99,12 @@ final class AppModel {
         } catch {
             report(error)
         }
+    }
+
+    /// Opens the Sync tab at its refused changes.
+    func openRefusedChanges() {
+        selectedTab = .sync
+        refusedChangesRequests += 1
     }
 
     /// Takes the failure shown away, and shows the next one waiting, if any.
@@ -180,12 +165,6 @@ final class AppModel {
             report(error)
         }
     }
-}
-
-/// The user and the readiness the shared live reads depend on.
-struct ReadKey: Hashable {
-    let userID: String?
-    let isReady: Bool
 }
 
 /// The app's tabs.
@@ -254,8 +233,7 @@ extension AppModel {
     static func demo(
         mode: LaunchMode = .demo(reason: .requested),
         server: DemoServer = DemoServer(),
-        session: DemoSession = DemoSession(),
-        defaults: UserDefaults = .standard
+        session: DemoSession = DemoSession()
     ) -> AppModel {
         let client = SupabaseOfflineClient.inMemory(
             config: SupabaseOfflineClient.Config(
@@ -266,7 +244,7 @@ extension AppModel {
             server: server.fakeServer
         )
         let repository = TaskRepository(client: client, session: session, photoBytes: .bucketDownload)
-        return AppModel(mode: mode, repository: repository, defaults: defaults)
+        return AppModel(mode: mode, repository: repository)
     }
 }
 

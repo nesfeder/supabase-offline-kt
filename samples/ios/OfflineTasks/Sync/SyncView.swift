@@ -12,15 +12,23 @@ struct SyncView: View {
     @State private var isConfirmingClear = false
     @State private var isConfirmingStartOver = false
 
+    /// The refused changes' section, which an alert's View scrolls to.
+    private static let refusedChangesID = "refused-changes"
+
     var body: some View {
-        Form {
-            connection
-            changesWaiting
-            refresh
-            refusedChanges
-            tryIt
-            localData
-            about
+        ScrollViewReader { proxy in
+            Form {
+                connection
+                changesWaiting
+                refresh
+                refusedChanges.id(Self.refusedChangesID)
+                tryIt
+                localData
+                about
+            }
+            .onChange(of: app.refusedChangesRequests) {
+                withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(Self.refusedChangesID, anchor: .top) }
+            }
         }
         .navigationTitle("Sync")
         .disabled(app.sync.isStartingOver)
@@ -54,11 +62,7 @@ struct SyncView: View {
         } header: {
             Text("Connection")
         } footer: {
-            Text(
-                app.mode.isDemo
-                    ? "Cuts this app off from the server, as airplane mode would, until you switch it back."
-                    : "Cuts this app off from the server, as airplane mode would, until you switch it back. It stays on when the app restarts, so a simulator, which has no airplane mode, can start offline."
-            )
+            Text("Cuts this app off from the server, as airplane mode would, until you switch it back or the app restarts.")
         }
     }
 

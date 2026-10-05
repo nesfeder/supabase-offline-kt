@@ -28,6 +28,7 @@ struct NewTaskSheet: View {
                 Section {
                     TextField("Notes", text: $notes, axis: .vertical)
                         .lineLimit(3...8)
+                        .accessibilityIdentifier("new-task-notes")
                 }
             }
             .navigationTitle("New task")
