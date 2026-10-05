@@ -30,8 +30,8 @@ and its copy is its lines with their common indentation removed. On a docs site 
 block holds such an include line and nothing else, or is marked not compiled.
 
 Pages checked: the Markdown of the Swift package's documentation catalogs
-(swift/Sources/*/*.docc), the README's "### Swift" section, and the site's Swift pages
-(SITE_PAGES).
+(swift/Sources/*/*.docc), the package's own README (swift/README.md, its front page once published),
+the README's "### Swift" section, and the site's Swift pages (SITE_PAGES).
 
 Usage (from the repository root):
     scripts/check-swift-doc-listings.py              check
@@ -55,6 +55,7 @@ from typing import Dict, List, Optional, Tuple
 LISTINGS = Path("swift/Tests/SupabaseOfflineTests/DocumentationListings")
 CATALOGS = Path("swift/Sources")
 README = Path("README.md")
+PACKAGE_README = Path("swift/README.md")
 README_SECTION = "### Swift"
 SITE_PAGES = (Path("docs/getting-started/swift.md"), Path("docs/help/under-the-hood.md"))
 
@@ -105,6 +106,8 @@ def pages(root: Path) -> List[Path]:
     """The pages checked, those that exist; the README's Swift section is cut out when read."""
     found = sorted((root / CATALOGS).glob("*/*.docc/**/*.md"))
     found += [root / page for page in SITE_PAGES if (root / page).is_file()]
+    if (root / PACKAGE_README).is_file():
+        found.append(root / PACKAGE_README)
     if (root / README).is_file():
         found.append(root / README)
     return found
@@ -318,6 +321,7 @@ def self_test() -> int:
             (LISTINGS / "Listings.swift").as_posix(): LISTING_FIXTURE,
             "swift/Sources/SupabaseOffline/SupabaseOffline.docc/GettingStarted.md": ARTICLE_FIXTURE,
             README.as_posix(): README_FIXTURE,
+            PACKAGE_README.as_posix(): ARTICLE_FIXTURE,
             SITE_PAGES[0].as_posix(): SITE_FIXTURE,
         }
         files.update(changes)
@@ -349,7 +353,13 @@ def self_test() -> int:
 
     article = "swift/Sources/SupabaseOffline/SupabaseOffline.docc/GettingStarted.md"
     cases = [
-        ("pages equal to their sections pass", {}, 0, "4 blocks on 3 pages"),
+        ("pages equal to their sections pass", {}, 0, "6 blocks on 4 pages"),
+        ("a changed line in the package's README",
+         {PACKAGE_README.as_posix(): ARTICLE_FIXTURE.replace("print(todos)", "print(todos * 2)")},
+         1, "swift/README.md:4: differs from Listings.swift:read"),
+        ("an uncompiled block in the package's README",
+         {PACKAGE_README.as_posix(): "# SupabaseOffline\n\n```swift\nstruct Todo: Codable {}\n```\n"},
+         1, "swift/README.md:3: a swift block needs"),
         ("a changed line in an article", {article: ARTICLE_FIXTURE.replace("print(todos)", "print(todos + 1)")},
          1, "differs from Listings.swift:read"),
         ("a block with no mark", {article: ARTICLE_FIXTURE.replace("<!-- swift-listing: Listings.swift:read -->\n", "")},

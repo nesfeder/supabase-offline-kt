@@ -64,15 +64,19 @@ requests go with the publishable key alone.
 ## When the user changes
 
 The client learns who the user is only from the token the closure returns, so it cannot tell one
-user's cached rows and queued writes from another's. Call `clearLocalData()` before the closure can
-return another user's token, most simply at sign-out:
+user's cached rows and queued writes from another's: clear them with `clearLocalData()` while no
+user's token is live. A live read fetches again right after the clear, with whatever token the
+closure returns then, so a clear made while it still returns the outgoing user's token puts that
+user's rows back for the next one. So at sign-out: sync the user's queued writes if they should
+still go, sign out so the closure returns `nil` (and clear even if that throws), clear, and only
+then let the next user sign in:
 
 ```swift
 --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:sign-out"
 ```
 
 Signing out and back in as the same user needs nothing. If a session can end without your sign-out
-code running, clear local data before the next user signs in too.
+code running, clear local data once it has ended, before the next user signs in.
 
 ## Read
 

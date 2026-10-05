@@ -59,12 +59,19 @@ struct GettingStartedListings {
 
     // --8<-- [start:sign-out]
     func signOut() async throws {
-        // Send the user's queued writes while the closure still returns their token. Offline this
-        // returns at once with the writes still queued, and the clear below drops them.
+        // Send the user's queued writes while they are signed in. Offline this returns at once,
+        // with the writes still queued, and the clear below drops them.
         try await offline.syncPendingMutations()
-        // Forget the user's rows and queued writes before Auth can return another user's token.
+        // Sign out first, so the access-token closure returns nil, and clear even if that throws.
+        do {
+            try await supabase.auth.signOut()
+        } catch {
+            try await offline.clearLocalData()
+            throw error
+        }
+        // A live read fetches again right after the clear, with the token the closure returns then:
+        // none, so nothing of the user's comes back. Only now may the next user sign in.
         try await offline.clearLocalData()
-        try await supabase.auth.signOut()
     }
     // --8<-- [end:sign-out]
 
@@ -151,6 +158,54 @@ struct GettingStartedListingsTests {
 
         // Then it waits in the queue
         #expect(try await offline.pendingMutationCount() == 1)
+        try await offline.close()
+    }
+
+    @Test func aSignOutWithALiveReadOpenLeavesNothingOfTheUserForTheNext() async throws {
+        // Given user A signed in, with a live read of A's rows open, on a server that answers by token
+        let supabase = FakeSupabaseSwiftClient(signedInWith: "user-a-token")
+        let server = FakeServer { request in
+            guard request.method == "GET" else { return .json("[]", status: 201) }
+            let authorization = request.headers["Authorization"] ?? ""
+            if authorization.hasSuffix("user-a-token") {
+                return .json(#"[{"id":"7f4c8e2a-1b3d-4e5f-8a9b-0c1d2e3f4a5b","title":"A's errand","done":false}]"#)
+            }
+            if authorization.hasSuffix("user-b-token") {
+                return .json(#"[{"id":"0b9d6c3e-2a1f-4e7d-9c8b-1a2b3c4d5e6f","title":"B's errand","done":false}]"#)
+            }
+            return .json("[]")
+        }
+        let offline = SupabaseOfflineClient.inMemory(
+            config: .init(accessToken: { try? await supabase.auth.session.accessToken }, autoSync: false),
+            server: server
+        )
+        let snapshots = RecordingList<QuerySnapshot<[Todo]>>()
+        let live = Task {
+            for try await snapshot in offline.from("todos").selectAsSequence(as: [Todo].self) {
+                snapshots.append(snapshot)
+            }
+        }
+        #expect(
+            await eventually {
+                snapshots.values.contains { $0.result?.map(\.title) == ["A's errand"] && $0.refresh == .idle }
+            }
+        )
+        let beforeSignOut = snapshots.values.count
+
+        // When A signs out as the article shows, the live read still open
+        try await GettingStartedListings(offline: offline, supabase: supabase).signOut()
+        #expect(await eventually { snapshots.values.dropFirst(beforeSignOut).contains { !$0.isFromCache } })
+        live.cancel()
+
+        // And B signs in, and reads offline
+        supabase.auth.signIn(accessToken: "user-b-token")
+        try await offline.disableNetwork()
+        let cached = try? await offline.from("todos").select(readStrategy: .cacheOnly).execute([Todo].self).value
+
+        // Then the live read fetched again with no user's token, and B sees nothing of A's
+        let fetchedAfterSignOut = snapshots.values.dropFirst(beforeSignOut).filter { !$0.isFromCache }
+        #expect(fetchedAfterSignOut.allSatisfy { $0.result?.contains { $0.title == "A's errand" } != true })
+        #expect(cached?.contains { $0.title == "A's errand" } != true)
         try await offline.close()
     }
 }

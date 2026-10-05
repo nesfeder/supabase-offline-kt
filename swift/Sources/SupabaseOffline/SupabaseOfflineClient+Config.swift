@@ -18,11 +18,13 @@ extension SupabaseOfflineClient {
         ///
         /// The client learns who the user is only from the token this returns, and cannot tell one
         /// user's cached rows and queued writes from another's: a sync that starts once this returns
-        /// another user's token sends the last user's queued writes with that token. So call
-        /// ``SupabaseOfflineClient/clearLocalData()`` before this can return another user's token,
-        /// most simply at sign-out. If the signed-in user's queued writes should still be sent, call
-        /// ``SupabaseOfflineClient/syncPendingMutations(table:)`` before signing out, while this still
-        /// returns their token. Signing out and back in as the same user needs nothing.
+        /// another user's token sends the last user's queued writes with that token, and a live read
+        /// fetches again right after ``SupabaseOfflineClient/clearLocalData()`` with whatever token
+        /// this returns then. So at sign-out: sync with
+        /// ``SupabaseOfflineClient/syncPendingMutations(table:)`` while the user is signed in, if their
+        /// queued writes should still be sent; sign out, so this returns `nil`; clear local data; and
+        /// only then let this return the next user's token. Signing out and back in as the same user
+        /// needs nothing.
         public var accessToken: (@Sendable () async throws -> String?)?
 
         /// The directory for the local database and cached files, created when missing; `nil` for

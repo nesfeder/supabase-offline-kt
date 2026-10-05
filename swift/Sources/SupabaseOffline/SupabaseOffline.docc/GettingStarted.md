@@ -64,24 +64,37 @@ requests go with the publishable key alone.
 ### When the user changes
 
 The client learns who the user is only from the token the closure returns, so it cannot tell one
-user's cached rows and queued writes from another's. Call
-``SupabaseOfflineClient/clearLocalData()`` before the closure can return another user's token: most
-simply at sign-out, before supabase-swift signs the user out.
+user's cached rows and queued writes from another's: clear them with
+``SupabaseOfflineClient/clearLocalData()`` while no user's token is live. A live read fetches again
+right after the clear, with whatever token the closure returns then, so a clear made while it still
+returns the outgoing user's token puts that user's rows back for the next one. At sign-out:
+
+1. if the user's queued writes should still be sent, sync while they are signed in;
+2. sign out, so the closure returns `nil`, and clear even if the sign-out throws;
+3. clear local data;
+4. only then let the next user sign in.
 
 <!-- swift-listing: GettingStartedListings.swift:sign-out -->
 ```swift
 func signOut() async throws {
-    // Send the user's queued writes while the closure still returns their token. Offline this
-    // returns at once with the writes still queued, and the clear below drops them.
+    // Send the user's queued writes while they are signed in. Offline this returns at once,
+    // with the writes still queued, and the clear below drops them.
     try await offline.syncPendingMutations()
-    // Forget the user's rows and queued writes before Auth can return another user's token.
+    // Sign out first, so the access-token closure returns nil, and clear even if that throws.
+    do {
+        try await supabase.auth.signOut()
+    } catch {
+        try await offline.clearLocalData()
+        throw error
+    }
+    // A live read fetches again right after the clear, with the token the closure returns then:
+    // none, so nothing of the user's comes back. Only now may the next user sign in.
     try await offline.clearLocalData()
-    try await supabase.auth.signOut()
 }
 ```
 
 Signing out and back in as the same user needs nothing. If a session can end without your sign-out
-code running, clear local data before the next user signs in too.
+code running, clear local data once it has ended, before the next user signs in.
 
 ### Read
 

@@ -143,9 +143,9 @@ let outcome = try await offline.from("todos").insert(todo).execute()
 // reads show it already, and the client sends it when the network is back.
 ```
 
-Clear local data when the signed-in user changes, before the closure can return the next user's
-token: the [guide for Swift apps](./docs/getting-started/swift.md) shows how, and what else the
-package does.
+When the user signs out, clear local data once the closure returns `nil` and before the next user
+signs in: the [guide for Swift apps](./docs/getting-started/swift.md) shows the order, and what else
+the package does.
 
 ## Documentation
 
