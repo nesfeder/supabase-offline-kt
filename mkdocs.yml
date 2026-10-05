@@ -121,6 +121,8 @@ markdown_extensions:
   - pymdownx.snippets:
       base_path: ["."]
       check_paths: true
+      # A sample's lines are indented as its function body is; the page shows them unindented.
+      dedent_subsections: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -162,6 +164,7 @@ nav:
   - Help:
       - FAQ and troubleshooting: help/faq.md
       - Security and privacy: help/security.md
+      - Under the hood: help/under-the-hood.md
   - Project:
       - Architecture: project/architecture.md
       - Changelog: project/changelog.md

@@ -95,8 +95,57 @@ network comes back.
 
 ### Swift
 
-The Swift package is being rebuilt as a native Swift API, and this build has no Swift API to call
-yet; its quick start comes with it.
+An iOS app in Swift uses the Swift package: the same library as a native Swift API, beside
+supabase-swift, which keeps Auth. In Xcode, add `https://github.com/nesfeder/supabase-offline-swift`
+with **File > Add Package Dependencies…** (in a manifest, `.upToNextMinor(from: "0.1.0")`), the
+`SupabaseOffline` library to your app's target and `SupabaseOfflineTesting` to its tests. It needs
+iOS 16 and Xcode 26, and runs on arm64 simulators only: a simulator build that includes x86_64 fails
+to link, so build for a specific simulator, or with `ARCHS=arm64`.
+
+Create one client; its access-token closure hands it the signed-in user's token from
+supabase-swift's Auth:
+
+<!-- swift-listing: GettingStartedListings.swift:client -->
+```swift
+let offline = SupabaseOfflineClient(
+    supabaseURL: URL(string: "https://your-project.supabase.co")!,
+    supabaseKey: "your-publishable-key",
+    config: .init(accessToken: { try? await supabase.auth.session.accessToken })
+)
+```
+
+Read, and write with an id made on the device:
+
+<!-- swift-listing: GettingStartedListings.swift:row -->
+```swift
+nonisolated struct Todo: Codable, Sendable, Identifiable {
+    var id: UUID
+    var title: String
+    var done: Bool
+}
+```
+
+<!-- swift-listing: GettingStartedListings.swift:first-read -->
+```swift
+let todos: [Todo] = try await offline.from("todos")
+    .select()
+    .eq("done", value: false)
+    .order("title")
+    .execute()
+    .value
+```
+
+<!-- swift-listing: GettingStartedListings.swift:queued-write -->
+```swift
+let todo = Todo(id: UUID(), title: "Buy milk", done: false)
+let outcome = try await offline.from("todos").insert(todo).execute()
+// .applied: the server has the row. .queued(let pending): the row waits on the device,
+// reads show it already, and the client sends it when the network is back.
+```
+
+Clear local data when the signed-in user changes, before the closure can return the next user's
+token: the [guide for Swift apps](./docs/getting-started/swift.md) shows how, and what else the
+package does.
 
 ## Documentation
 
