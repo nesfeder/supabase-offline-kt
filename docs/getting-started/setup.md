@@ -171,8 +171,10 @@ stand, for a banner, and `syncPendingMutations()` sends the queue now, for a "Sy
 Call `supabase.offline.clearLocalData()` when a user signs out for good, before `auth.signOut()` or
 in a `finally` around it: offline, `signOut()` throws, and a clear after it never runs. It deletes
 the cached rows, the downloaded files and every write still queued. With Auth, the cache already passes from one
-user to the next, but queued writes stay with the user who made them until you clear them. See
-[Signing out and switching users](../behaviors/sign-out.md).
+user to the next, but queued writes stay with the user who made them until you clear them. With
+your own token provider and no Auth plugin, clear only once the provider has stopped returning the
+outgoing user's token: a live read fetches again right after the clear with whatever token it gets.
+See [Signing out and switching users](../behaviors/sign-out.md).
 
 ## Logging
 
