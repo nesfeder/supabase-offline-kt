@@ -177,11 +177,18 @@ jobs:
               .github/workflows/* | .github/dependabot.yml)
                 workflows=true ;;
               swift/*.md)
-                # The Swift package's README is published with it; its PARITY.md sits beside it.
-                kotlin=true ;;
-              docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | samples/supabase/*)
+                # The Swift package's README is published with it, and its PARITY.md sits beside
+                # it: the Kotlin jobs check the published tree, the docs job's spelling check reads
+                # every Markdown file.
+                kotlin=true; docs=true ;;
+              # Every other Markdown file: the docs job's spelling check reads them all.
+              docs/* | mkdocs.yml | *.md | samples/supabase/* | scripts/check-spelling.py)
                 docs=true ;;
-              .github/* | *.md | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
+              # The site's Kotlin samples: the Kotlin jobs compile them, the docs build includes them.
+              supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/* \
+                | supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/docs/*)
+                kotlin=true; docs=true ;;
+              .github/* | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
                 | .kempt.toml | config/license-header* | *.properties.example)
                 ;;
               *)

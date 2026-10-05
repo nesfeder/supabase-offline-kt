@@ -89,7 +89,7 @@ when (val outcome = supabase.offline.from("tasks").insert(task)) {
 ```
 
 Make the row's id on the device. A write that was sent but whose answer never arrived stays queued
-and is sent again; with its id it is recognised as the row already there instead of being inserted
+and is sent again; with its id it is recognized as the row already there instead of being inserted
 twice. Reads show a queued write at once, and the library sends the queue by itself when the
 network comes back.
 

@@ -14,7 +14,7 @@ and the steps or the code that show it.
 
 ## What happens next
 
-- You get an acknowledgement within seven days.
+- You get an acknowledgment within seven days.
 - The fix ships in the next release of the latest minor line: a patch release when the release
   rules in CONTRIBUTING allow one (no change to the public API, a stored format, a dependency a
   consumer sees, or a minimum platform version), otherwise the next minor release. A GitHub
