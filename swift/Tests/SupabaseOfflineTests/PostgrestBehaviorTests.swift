@@ -393,6 +393,7 @@ struct PostgrestBehaviorTests {
         for error in [inList, notInList] {
             #expect(error?.code == .invalidRequest)
             #expect(error?.message.contains("double quote or a backslash") == true)
+            #expect(!namesTheRuntime(error?.message ?? ""))
         }
         #expect(inList?.message.contains(#"a"b"#) == false)
         #expect(server.requests.values.isEmpty)
@@ -527,6 +528,7 @@ struct PostgrestBehaviorTests {
         #expect(!message.contains("Bearer"), "\(message)")
         #expect(!message.contains("secret"), "\(message)")
         #expect(!message.contains("eyJ"), "\(message)")
+        #expect(!namesTheRuntime(message), "\(message)")
         #expect(server.requests.values.isEmpty)
         try await client.close()
     }
