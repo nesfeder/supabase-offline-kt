@@ -250,6 +250,21 @@ The XCFrameworks the Swift package builds against locally come from
 `assembleSupabaseOfflineCoreDebugXCFramework` and `assembleSupabaseOfflineCoreReleaseXCFramework`,
 with the same property.
 
+The framework ships with a privacy manifest (`swift/Sources/SupabaseOffline/PrivacyInfo.xcprivacy`,
+copied into each slice by the release), which declares a reason for each kind of Apple's
+required-reason APIs the framework references. Those APIs are recorded in
+`supabase-offline-swift-bridge/privacy/required-reason-apis.txt`, and CI's iOS job fails when the
+linked release framework references a different set. When a change adds or drops one (a new
+dependency that reads a file's date, say), record it again, declare or remove its category's
+reason in the manifest, and commit both:
+
+```bash
+./gradlew :supabase-offline-swift-bridge:linkReleaseFrameworkIosArm64 \
+    -Psupabase.offline.iosSqlite=system
+python3 scripts/swift-release.py check-required-reasons --update \
+    --framework supabase-offline-swift-bridge/build/bin/iosArm64/releaseFramework/SupabaseOfflineCore.framework
+```
+
 ## The Swift package
 
 The Swift package lives in `swift/`, laid out as the repository the release publishes it to: its
@@ -267,9 +282,37 @@ followed by the check that the public API names nothing of the framework underne
 scripts/test-swift-package.sh --simulator <simulator UDID> --derived-data <a scratch folder>
 ```
 
-The script copies the framework into `swift/LocalCore/`. To open the package in Xcode afterwards,
+The script copies the framework into `swift/LocalCore/`; `--framework <path>` tests against
+another build of it instead, such as the release's. To open the package in Xcode afterward,
 start Xcode with the variable set: `SUPABASE_OFFLINE_LOCAL_CORE=1 open -a Xcode swift/Package.swift`.
-CI runs the same script in the iOS job on the self-hosted runner.
+CI runs the same script in the iOS job on the self-hosted runner, and the release runs it on
+GitHub's macOS runner against the release framework. GitHub's own runners do not run it in CI (the
+merge queue and the weekly run skip it, to save macOS minutes), so a change to the bridge or to
+`swift/` should run it locally before review, and a framework change that breaks the package is
+caught at the latest by the release's `framework` job, before anything is published.
+
+`swift/` is not what a Swift developer sees. A release publishes part of it to the package's own
+repository, `nesfeder/supabase-offline-swift`: `Package.swift` up to its `// MARK: Development only`
+line (so without the local-framework switch and the test target), with the version and the
+framework's checksum set; `Sources/`; `swift/README.md` as the repository's README; and the root
+`LICENSE`. `Tests/` and `swift/PARITY.md` stay here. The release refuses a tree that holds anything
+else, or says Kotlin, KMP, Konan or kfun anywhere but in the code of `Sources/` (where the
+framework's own types and the patterns that redact them carry the word): keep it out of doc
+comments, comments, string literals, file names and `swift/README.md`. To see
+exactly what a release would publish from your branch, build and zip the release framework and
+stage the tree (macOS; nothing is pushed):
+
+```bash
+python3 scripts/swift-release.py build --out <a scratch folder>
+python3 scripts/swift-release.py zip --framework <the scratch folder>/SupabaseOfflineCore.xcframework \
+    --out <the scratch folder>/SupabaseOfflineCore.xcframework.zip
+python3 scripts/swift-release.py publish --dry-run --version 0.1.0 --sha HEAD \
+    --zip <the scratch folder>/SupabaseOfflineCore.xcframework.zip --out <an empty folder>
+```
+
+`publish --dry-run` reads the committed `swift/`, not your working tree, so commit first. Without a
+framework, `python3 scripts/swift-release.py check-sources` stages the same tree from `HEAD` with a
+stand-in for it and runs the same check; CI's Static checks run it on every pull request.
 
 The core framework is imported `internal` everywhere (`InternalImportsByDefault`), so the compiler
 refuses a public declaration that names one of its types; the one file that needs more is the
@@ -280,7 +323,9 @@ the core's own threads, so it must not inherit an actor: the adapters in
 ## Releasing
 
 Releases are published from GitHub Actions by the Release workflow, which a maintainer starts by
-hand; nothing is published from a laptop. The steps, what the owner does in the Central Portal and
+hand; nothing is published from a laptop. A release publishes the Maven artifacts, the Swift
+package (to `nesfeder/supabase-offline-swift`, with its framework on this repository's GitHub
+Release) and the documentation site. The steps, what the owner does in the Central Portal and
 in the repository settings, and what to do when a release stops halfway are in
 [RELEASING.md](https://github.com/nesfeder/supabase-offline-kt/blob/main/RELEASING.md). A pull
 request prepares a release by setting `VERSION_NAME` without `-SNAPSHOT` and naming the changelog
