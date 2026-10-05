@@ -21,7 +21,8 @@ strategy says.
 - **`NetworkFirstThenCache`** asks the server first, then emits the cached rows as they change.
   Offline with the query cached, it emits the cached rows at once and keeps asking until the
   server answers. With nothing cached, or when the server answers with an error, the flow fails.
-- **`CacheOnly`** emits the cached rows and never sends a request.
+- **`CacheOnly`** emits the cached rows and never sends a request. For a query that is not
+  cached it emits `null` rows, or only the queued writes the query admits, rather than failing.
 
 ## What each emission says
 
@@ -37,7 +38,10 @@ Each emission is a `QuerySnapshot`, and its fields are true together:
 
 ## Mapping to a screen
 
-`result == null` is a loading state; an empty body is an empty list. Next to rows the screen
+`result == null` is a loading state; an empty body is an empty list. A row a queued insert or
+upsert adds comes after the server's rows, whatever the query's order and limit, and lacks the
+columns the server fills in until the server has the write: sort on the device when the order
+matters, and decode into a type whose server-filled fields are optional. Next to rows the screen
 already shows, `refresh` says whether to show a note:
 
 ```kotlin
@@ -73,8 +77,9 @@ back another collector.
 
 A failure the read cannot recover from ends the flow after the values before it. A refresh that
 fails is not such a failure: it is reported in `refresh`. When the client closes, a collection
-still running completes, so a screen torn down with the client sees its flow end; a flow collected
-after `close()` fails with `IllegalStateException`.
+still running completes, so a screen torn down with the client sees its flow end, and `first()` on
+one that has not emitted yet throws `NoSuchElementException` (`firstOrNull()` returns `null`); a
+flow collected after `close()` fails with `IllegalStateException`.
 
 A read of a shape the cache does not hold (`single()`, a `count`, `csv()`, …) emits the server's
 answer once, with `Idle`, and completes; offline it fails, and under `CacheOnly` it fails at once

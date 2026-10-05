@@ -6,9 +6,11 @@ import android.net.Uri
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
+import io.github.nesfeder.supabase.offline.ensureLocalFile
 import io.github.nesfeder.supabase.offline.ensureLocalUri
 import io.github.nesfeder.supabase.offline.localUriIfCached
 import io.github.nesfeder.supabase.offline.offline
+import java.io.File
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 
@@ -46,11 +48,12 @@ internal suspend fun photoFile(photos: OfflineBucketApi, path: String): CachedFi
     return if (isOld) cached else file
 }
 
-/** The Android helpers: the cached copy as a `file:` [Uri], for an image loader. */
-internal suspend fun photoUris(photos: OfflineBucketApi, path: String): List<Uri?> {
+/** The Android helpers: the cached copy as a `file:` [Uri] or a [File], for an image loader. */
+internal suspend fun photoUris(photos: OfflineBucketApi, path: String): List<Any?> {
     // --8<-- [start:android-helpers]
-    val shownNow: Uri? = photos.localUriIfCached(path) // never touches the network
-    val shownSoon: Uri? = photos.ensureLocalUri(path) // downloads it first when needed
+    val shownNow: Uri? = photos.localUriIfCached(path) // null when nothing is cached; no request
+    val shownSoon: Uri = photos.ensureLocalUri(path) // downloads it into the cache first if needed
+    val file: File = photos.ensureLocalFile(path) // the same copy, as a File
     // --8<-- [end:android-helpers]
-    return listOf(shownNow, shownSoon)
+    return listOf(shownNow, shownSoon, file)
 }

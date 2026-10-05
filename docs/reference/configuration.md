@@ -45,7 +45,8 @@ in the last 30 seconds, are kept. Any other value below zero counts as zero.
 The directory for everything the plugin keeps on the device: the database, `supabase_offline.db`,
 and the Storage file cache. `null` keeps them where the platform's convention puts them: the
 database in the app's database directory and the files under `<filesDir>/supabase_offline` on
-Android, both under `Documents` on iOS.
+Android, both under `Library/Application Support` on iOS. On iOS, a database found in `Documents`,
+where an earlier build kept it, is first moved to that default place with its files.
 
 When the directory has no database yet and the default location has one that no client of this
 process holds, the first client moves it there, its unsent writes included. When it cannot, it

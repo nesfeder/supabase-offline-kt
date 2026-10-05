@@ -53,22 +53,23 @@ soon after you get it, or copy it if it must outlive those.
 **Nothing revalidates a cached file.** A copy is returned however old: compare `fetchedAt` with
 your own rule, and download again when it is too old.
 
-On Android, two helpers on any `BucketApi` from the offline client give the cached copy as a
-`file:` `Uri` (`ensureLocalFile` gives a `File`):
+On Android, three helpers on the offline bucket give the cached copy in the platform's terms, for
+an image loader:
 
 ```kotlin
 --8<-- "StorageExamples.kt:android-helpers"
 ```
 
-On iOS, `ensureLocalPath(path)` and `localPathIfCached(path)` give the absolute path. Each returns
-`null` for a bucket that did not come from the offline client.
+`ensureLocalUri` and `ensureLocalFile` are `ensureCachedFile` as a `Uri` or a `File`, and throw what
+it throws; `localUriIfCached` is `cachedFile` as a `Uri`, `null` when nothing is cached. On iOS,
+`ensureLocalPath(path)` and `localPathIfCached(path)` give the absolute path the same way.
 
 ## Writes
 
 Uploads, updates, deletes, moves and copies are online only, and nothing is queued:
 
-- **Offline**, a write fails with supabase-kt's own connectivity error, as it does without the
-  library.
+- **Offline**, a write is tried whatever the connectivity monitor says, and fails with
+  supabase-kt's own connectivity error, as it does without the library.
 - **With network access off** (`disableNetwork()`), every Storage call other than a download
   throws `NetworkDisabledException` and sends nothing; a download is answered from the file
   cache, or throws `NetworkDisabledException` when nothing is cached.

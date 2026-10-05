@@ -25,7 +25,7 @@ the ones you handle and keep a branch for the rest:
 
 | Exception | When |
 | --- | --- |
-| `CacheMissException` | A `CacheOnly` read found nothing it may serve. Nothing was sent |
+| `CacheMissException` | A one-shot `CacheOnly` read found nothing it may serve, or any `CacheOnly` read asked for a shape the cache never holds. Nothing was sent. A live `CacheOnly` read of a query that is not cached emits `null` rows, or only the queued writes it admits, instead |
 | `MutationNotQueueableException` | A write the queue cannot hold could not be sent for want of a connection. Its `cause` is that failure, so it counts as a connectivity failure |
 | `NetworkDisabledException` | A request that must reach the server was made after `disableNetwork()`. It counts as a connectivity failure |
 | `SyncFailedException` | Why a sync pass stopped with writes still queued, as `syncStatus.value.lastSyncError` says. It is never thrown; it carries `httpStatus` and `code` only |

@@ -127,6 +127,7 @@ markdown_extensions:
       base_path:
         - "."
         - supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs
+        - supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/docs
       check_paths: true
       # A sample's lines are indented as its function body is; the page shows them unindented.
       dedent_subsections: true
@@ -143,7 +144,7 @@ nav:
   - Getting started:
       - Project setup: getting-started/setup.md
       - iOS apps in Swift: getting-started/swift.md
-      - Migrating from supabase-kt: getting-started/migrating.md
+      - Coming from supabase-kt: getting-started/migrating.md
       - Testing your app: getting-started/testing.md
   - Behaviors:
       - behaviors/index.md
@@ -177,7 +178,6 @@ nav:
       - Contributing: project/contributing.md
       - Releasing: project/releasing.md
       - Compatibility: project/compatibility.md
-      - Internals: project/internals.md
   # A placeholder page until the Dokka reference is generated into docs/api/. That change replaces
   # this entry with `api/index.html`, deletes docs/api/index.md and gitignores docs/api/.
   - API: api/index.md

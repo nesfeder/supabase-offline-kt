@@ -9,8 +9,13 @@ are, what they hold, and what removes it.
 | | Database | Downloaded files |
 | --- | --- | --- |
 | Android, by default | The app's database directory: `getDatabasePath("supabase_offline.db")` | `<filesDir>/supabase_offline/` |
-| iOS, by default | `Documents/supabase_offline.db` | `Documents/supabase_offline/` |
+| iOS, by default | `Library/Application Support/supabase_offline.db` | `Library/Application Support/supabase_offline/` |
 | With `dataDirectory` set | `<dataDirectory>/supabase_offline.db` | `<dataDirectory>/` |
+
+On iOS, a database found in `Documents`, where an earlier build kept it, is moved to the default
+place with its side files and its file cache when the client opens, unless the default place
+already holds a database (then it is left, and a warning logged). `Documents` is for the user's
+own files: with file sharing on, the Files app shows them, and the user can delete them.
 
 Beside the database, SQLite keeps its write-ahead log and its index, `supabase_offline.db-wal` and
 `supabase_offline.db-shm`. On iOS the plugin excludes its files from iCloud and device backups; on

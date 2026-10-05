@@ -17,7 +17,8 @@ security on your project.
 
 The database is SQLite, and nothing in it or in the files is encrypted by the library. Both are in
 the app's private storage, which other apps cannot read, and the device's own storage encryption
-applies to them as to the rest of the app's data. Where each lives is on
+applies to them as to the rest of the app's data. On iOS they are in `Library/Application Support`,
+which the Files app does not show, never in `Documents`. Where each lives is on
 [On-device data](../reference/on-device-data.md).
 
 ## Backups

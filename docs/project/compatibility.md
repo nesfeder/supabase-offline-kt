@@ -13,7 +13,7 @@ Versions are `0.MINOR.PATCH`.
   or the lowest Kotlin, Android or iOS version it supports. You can take any patch release without
   reading its notes.
 - **A minor release (0.1.x → 0.2.0) may change anything**, including in ways that break your build
-  or change behaviour you rely on. Every such change is listed under **Breaking** in the
+  or change behavior you rely on. Every such change is listed under **Breaking** in the
   [changelog](changelog.md), with what to do about it.
 - Where it can, the library deprecates before it removes: a deprecated API keeps working for at
   least one minor release, and its deprecation message names the replacement.
@@ -45,8 +45,8 @@ Semantic versioning in the usual sense:
 | Release | What it may contain |
 | --- | --- |
 | Patch (1.2.3 → 1.2.4) | Fixes only, as before 1.0 |
-| Minor (1.2 → 1.3) | New API; deprecations; a new supabase-kt minor; a raised minimum Kotlin, Android or iOS version; a new database schema version with its migration; changes to documented defaults that keep a way to get the old behaviour |
-| Major (1 → 2) | Anything that breaks source or binary compatibility, or changes documented behaviour with no way back |
+| Minor (1.2 → 1.3) | New API; deprecations; a new supabase-kt minor; a raised minimum Kotlin, Android or iOS version; a new database schema version with its migration; changes to documented defaults that keep a way to get the old behavior |
+| Major (1 → 2) | Anything that breaks source or binary compatibility, or changes documented behavior with no way back |
 
 ## What the promise covers
 
@@ -65,7 +65,7 @@ Semantic versioning in the usual sense:
     version is not supported, and loses the mutations queued since; a release that moves the
     schema version says so at the top of its changelog entry. See
     [On-device data](../reference/on-device-data.md).
-4. **Documented behaviour**: the defaults and guarantees on the [Behaviours](../behaviors/index.md)
+4. **Documented behavior**: the defaults and guarantees on the [Behaviors](../behaviors/index.md)
    pages, such as the order in which queued mutations replay.
 5. **The supabase-kt version** the release is built and tested against (below).
 
@@ -159,12 +159,7 @@ delete with `IllegalArgumentException` before anything is sent or queued. Write 
 as one group, which sends both:
 
 ```kotlin
-filter {
-    and {
-        gte("age", 1)
-        lte("age", 10)
-    }
-}
+--8<-- "ReadExamples.kt:same-column"
 ```
 
 The refusal sees a parameter that holds two values. It cannot see the calls that replace one: a
@@ -182,7 +177,7 @@ so the library's pin is a floor, not a ceiling.
   instead (`supabase.storage.from(…)`).
 
 Every Monday a scheduled job looks for a newer supabase-kt minor, builds this library against it,
-runs its Android host tests, and reports the result in one issue labelled
+runs its Android host tests, and reports the result in one issue labeled
 [`upstream-pin`](https://github.com/nesfeder/supabase-offline-kt/labels/upstream-pin). A maintainer
 adopts that minor deliberately, in a pull request that records it in this table, adds an entry to
 the changelog, and closes the issue.
@@ -202,7 +197,7 @@ the changelog, and closes the issue.
   parameter one changes it too and is rated breaking: a conservative rating, since the change
   breaks no source.
 - Some changes reach no record, so a reviewer checks them by hand: changed defaults and documented
-  behaviour, the bodies of inline functions, and new deprecation levels or opt-in requirements.
+  behavior, the bodies of inline functions, and new deprecation levels or opt-in requirements.
 - The release workflow runs the same script over everything since the last release tag, and
   refuses a version number too small for what it finds ([Releasing](releasing.md)).
 

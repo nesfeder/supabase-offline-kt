@@ -125,9 +125,11 @@ The library is built against supabase-kt 3.6 ([why](../project/compatibility.md#
 which lacks a few things 3.8 has:
 
 - **`dryRun()`.** Write a dry run by adding the header yourself:
-  `headers.append("Prefer", "tx=rollback")` in the request block. The library never queues such a
-  write. A hosted Supabase project commits it anyway, since it ignores `tx=rollback`; the library
-  then logs one warning for the client's life.
+  `headers.append("Prefer", "tx=rollback")` in the request block, which supabase-kt marks
+  experimental. The library never queues such a write. PostgREST rolls it back only when the
+  project lets a request choose (`db-tx-end`), which a hosted Supabase project does not by
+  default: there a dry run commits, and the library applies it as any write and logs one warning
+  for the client's life. See [Writes and the offline queue](../behaviors/mutations.md#dry-runs).
 - **`maybeSingle()`**, the `isdistinct` filter operator and `purgeCache`.
 - **Storage object names with `%`, `?` or `#`.** supabase-kt 3.6 puts the name in the URL as
   written: a `%` fails the request, and a `?` or `#` can fetch a different object. The library

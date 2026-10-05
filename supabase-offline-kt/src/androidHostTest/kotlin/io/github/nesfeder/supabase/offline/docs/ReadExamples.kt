@@ -162,3 +162,16 @@ internal fun readPendingMarks(supabase: SupabaseClient): Flow<List<ShownTodo>> {
     // --8<-- [end:pending-marks]
     return shown
 }
+
+/** A detail screen's row, picked from the list a list screen already reads. */
+internal fun todoById(supabase: SupabaseClient, id: String): Flow<Todo?> {
+    // --8<-- [start:row-from-list]
+    // The list screen's own request, so the cached answer is the same one
+    val todo: Flow<Todo?> =
+        supabase.offline
+            .from("todos")
+            .selectAsFlow { order("created_at", Order.DESCENDING) }
+            .map { snapshot -> snapshot.result?.decodeList<Todo>()?.firstOrNull { it.id == id } }
+    // --8<-- [end:row-from-list]
+    return todo
+}
