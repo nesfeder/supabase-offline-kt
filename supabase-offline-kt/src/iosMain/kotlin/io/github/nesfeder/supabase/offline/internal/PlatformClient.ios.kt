@@ -7,8 +7,10 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.internal.db.BackupExclusionCallback
 import io.github.nesfeder.supabase.offline.internal.db.OFFLINE_DATABASE_FILE_NAME
 import io.github.nesfeder.supabase.offline.internal.db.buildOfflineDatabase
+import io.github.nesfeder.supabase.offline.internal.db.dataLocationInDocuments
 import io.github.nesfeder.supabase.offline.internal.db.defaultDatabasePath
 import io.github.nesfeder.supabase.offline.internal.db.offlineDatabaseBuilder
+import io.github.nesfeder.supabase.offline.internal.logging.engineLogger
 import io.github.nesfeder.supabase.offline.internal.network.pathMonitorNetworkAvailability
 import io.github.nesfeder.supabase.offline.internal.storage.PlatformBaseDirectory
 import io.github.nesfeder.supabase.offline.internal.storage.excludeFromBackup
@@ -18,17 +20,24 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
- * Opens [config]'s client over Room. The database is `Documents/supabase_offline.db` and downloaded
- * files live under `Documents/supabase_offline`, or both in [Offline.Config.dataDirectory] when it
- * is set; a database at the default location moves there. Both are excluded from iCloud and device
- * backups.
+ * Opens [config]'s client over Room. The database is `supabase_offline.db` and downloaded files
+ * live under `supabase_offline`, both in `Library/Application Support`, or both in
+ * [Offline.Config.dataDirectory] when it is set; a database at the default location moves there,
+ * and one in `Documents`, an earlier default, first moves to the default location with its files.
+ * Both are excluded from iCloud and device backups.
  */
 internal actual fun openPlatformClient(
     supabase: SupabaseClient,
     config: Offline.Config,
 ): OfflineClient {
     val configuredDirectory = config.dataDirectory?.toPath()
-    val dataDirectory = configuredDirectory ?: PlatformBaseDirectory().path
+    val defaultLocation =
+        moveEarlierDefaultIfUnclaimed(
+            current = DataLocation(defaultDatabasePath(), PlatformBaseDirectory().path),
+            earlier = dataLocationInDocuments(),
+            engineLogger = supabase.engineLogger(config.logLevel),
+        )
+    val dataDirectory = configuredDirectory ?: defaultLocation.dataDirectory
     if (configuredDirectory == null) {
         // The default data directory is the library's own; exclude all of it, whatever it holds
         try {
@@ -38,7 +47,7 @@ internal actual fun openPlatformClient(
             // Best effort: the cache directories inside it are excluded on their own as well
         }
     }
-    val defaultPath = defaultDatabasePath()
+    val defaultPath = defaultLocation.databasePath
     return openOfflineClient(
         supabase = supabase,
         config = config,

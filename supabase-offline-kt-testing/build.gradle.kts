@@ -27,3 +27,16 @@ kotlin {
         }
     }
 }
+
+// The factories and the in-memory client call into the library outside its API records, so they
+// work with the library of their own version only. With a strict constraint in the published
+// metadata, a newer library beside an older testing artifact fails resolution rather than a test;
+// a newer testing artifact instead raises the library on the test classpath, which no rule stops.
+dependencies {
+    constraints {
+        add("commonMainApi", "${project.group}:supabase-offline-kt") {
+            version { strictly(project.version.toString()) }
+            because("the testing artifact calls into the library outside its API records")
+        }
+    }
+}

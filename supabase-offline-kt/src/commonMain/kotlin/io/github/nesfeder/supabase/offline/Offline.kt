@@ -113,6 +113,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * @param table the table or view.
      * @return the table's builder.
+     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
     public operator fun get(table: String): OfflinePostgrestQueryBuilder = from(table)
 
@@ -122,6 +123,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param schema the schema.
      * @param table the table or view.
      * @return the table's builder.
+     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
      */
     public operator fun get(schema: String, table: String): OfflinePostgrestQueryBuilder =
         from(schema, table)
@@ -219,13 +221,14 @@ public interface Offline : SupabasePlugin<Offline.Config> {
 
     /**
      * The current user's queued writes the server refused for good when they were replayed, oldest
-     * first, as the list changes: what an app shows so its user can fix or drop a write that will
-     * never go through on its own.
+     * first (the queue's order; show the newest first if you like), as the list changes: what an
+     * app shows so its user can fix or drop a write that will never go through on its own.
      *
      * The list is kept on the device across restarts until each entry is dismissed or retried, and
      * holds the newest 100 entries of every user together, within a size bound; when it is full,
-     * the oldest entries go, and their writes are lost. It shows the current user's entries, and
-     * those with no user recorded that they may take over; never another user's.
+     * the oldest entries go, and their writes are lost, with nothing to report it. Let the user
+     * dismiss or retry each entry, so the list stays short. It shows the current user's entries,
+     * and those with no user recorded that they may take over; never another user's.
      *
      * A write sent at once, because nothing of the user was queued ahead of it, that the server
      * refuses is not listed: its caller gets the server's error, as from supabase-kt. A collection
@@ -278,6 +281,10 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * can be sent now: [SyncReport.remainingCount] is what is still queued after both, and the
      * report's other counts are what this call sent. While network access is off ([disableNetwork])
      * it sends nothing.
+     *
+     * Nothing sends the queue when the app comes to the foreground: a write that failed in a way
+     * that may pass waits for the library's next pass, up to a minute later, or as long as a
+     * server's `Retry-After` asks. Call this as the app comes to the foreground to send at once.
      *
      * @param table the table, or `null` for every table.
      * @return what this call sent, what was refused, and what is still queued.
@@ -344,8 +351,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param table the table.
      * @param record the row as the server sent it.
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
-     *   as [Config.primaryKeys] gives it (`id` unless configured, and for a table of another
-     *   schema).
+     *   as [Config.primaryKeys] gives it: `id` unless configured there.
      * @param schema the table's schema, or `null` for the client's default schema.
      * @throws IllegalStateException when the client is closed.
      */
@@ -367,8 +373,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param table the table.
      * @param oldRecord the deleted row's values, carrying at least its key.
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
-     *   as [Config.primaryKeys] gives it (`id` unless configured, and for a table of another
-     *   schema).
+     *   as [Config.primaryKeys] gives it: `id` unless configured there.
      * @param schema the table's schema, or `null` for the client's default schema.
      * @throws IllegalStateException when the client is closed.
      */
@@ -388,7 +393,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * Call it when a user signs out for good, switches account, or deletes their account, so one
      * user's rows, unsent writes and files never reach the next. With [Auth] installed, the cache
      * already belongs to one user at a time (it is dropped when the session settles as someone
-     * else), but queued writes stay with the user who made them until this call.
+     * else), but queued writes stay with the user who made them until this call. Clear before
+     * `auth.signOut()`, or in a `finally` around it: offline, `signOut()` throws and keeps the
+     * session, so a clear after it would never run.
      *
      * A replay pass in progress is cancelled first, and nothing queued is sent once clearing has
      * begun. A write already on the wire is neither applied to the cache nor queued when it
@@ -478,7 +485,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * The directory for everything the plugin keeps on the device: the database
          * (`supabase_offline.db`) and the Storage file cache. `null`, the default, keeps them where
          * the platform's convention puts them: the database in the app's database directory and the
-         * files under `<filesDir>/supabase_offline` on Android, both under `Documents` on iOS.
+         * files under `<filesDir>/supabase_offline` on Android, both under `Library/Application
+         * Support` on iOS. On iOS a database found in `Documents`, where an earlier default kept
+         * it, is first moved to the default location with its files.
          *
          * When the directory has no database yet and the default location has one, the first client
          * moves it here, unsent writes included; when it cannot, the default one stays in use and a
@@ -526,8 +535,9 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         public var autoSync: Boolean = true
 
         /**
-         * Each table's primary-key columns, by table name in the client's default schema. A table
-         * not named here has the key `id`.
+         * Each table's primary-key columns, by table name: the name alone for a table in the
+         * client's default schema, `schema.table` for one in another schema. A table not named here
+         * has the key `id`.
          *
          * The key is how the cache recognises a row: where a queued or applied upsert lands, which
          * row a server record replaces, and which rows a queued write reports in
@@ -539,7 +549,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         /**
          * Sets [table]'s primary key to [columns], in [primaryKeys].
          *
-         * @param table the table, in the client's default schema.
+         * @param table the table: its name in the client's default schema, `schema.table` in
+         *   another.
          * @param columns the key's columns, in any order; at least one.
          * @throws IllegalArgumentException when [columns] is empty.
          */

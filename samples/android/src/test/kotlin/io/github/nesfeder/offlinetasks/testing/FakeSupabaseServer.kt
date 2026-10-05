@@ -43,13 +43,17 @@ private const val BUCKET = "task-photos"
 /** The longest title the schema's check accepts. */
 private const val TITLE_LIMIT = 200
 
+/** The path a photo row is inserted at. */
+private const val PHOTO_ROWS_PATH = "/rest/v1/task_photos"
+
 /** The path every upload to the bucket is sent to, before the object's own path. */
 private const val UPLOAD_PREFIX = "/storage/v1/object/$BUCKET/"
 
 /**
  * The samples' Supabase project, faked on a Ktor [MockEngine] for one test: the `tasks` and
- * `task_photos` tables with the schema's title check, and the `task-photos` bucket. It answers the
- * PostgREST and Storage requests the sample makes, and records them.
+ * `task_photos` tables with the schema's title check and a photo's foreign key to its task, and the
+ * `task-photos` bucket. It answers the PostgREST and Storage requests the sample makes, and records
+ * them.
  */
 class FakeSupabaseServer {
 
@@ -81,6 +85,15 @@ class FakeSupabaseServer {
     /** How many uploads are stored and waiting on [holdUploadAnswers]. */
     val uploadsHeld: MutableStateFlow<Int> = MutableStateFlow(0)
 
+    /**
+     * While set, a photo row's insert waits for it before the row is stored, and fails at the
+     * transport when it completes with `false`, as a connection lost on the way would.
+     */
+    var holdPhotoRowInserts: CompletableDeferred<Boolean>? = null
+
+    /** How many photo row inserts are waiting on [holdPhotoRowInserts]. */
+    val photoRowInsertsHeld: MutableStateFlow<Int> = MutableStateFlow(0)
+
     private val lock = Any()
 
     /**
@@ -103,6 +116,11 @@ class FakeSupabaseServer {
         synchronized(lock) { tables.getValue(table) += row }
     }
 
+    /** Deletes every row of [table] on the server, as if another device had deleted them. */
+    fun deleteRows(table: String) {
+        synchronized(lock) { tables.getValue(table).clear() }
+    }
+
     /** The rows of [table], as the test reads the server's copy. */
     fun rows(table: String): List<JsonObject> =
         synchronized(lock) { tables.getValue(table).toList() }
@@ -111,6 +129,11 @@ class FakeSupabaseServer {
         val path = request.url.encodedPath
         synchronized(lock) { requests += "${request.method.value} $path" }
         if (!isReachable) throw IOException("network unreachable")
+        val rowHold = holdPhotoRowInserts
+        if (rowHold != null && request.method == HttpMethod.Post && path == PHOTO_ROWS_PATH) {
+            photoRowInsertsHeld.update { it + 1 }
+            if (!rowHold.await()) throw IOException("connection lost")
+        }
         val body = request.body.toByteArray()
         val response =
             synchronized(lock) {
@@ -237,11 +260,15 @@ class FakeSupabaseServer {
         }
     }
 
-    /** The schema's check on a task's title: not blank, at most 200 characters; else 23514. */
+    /**
+     * The schema's checks: a task's title is not blank and at most 200 characters, else 23514; a
+     * photo's task exists, else 23503.
+     */
     private fun MockRequestHandleScope.refusalOf(
         table: String,
         row: JsonObject,
     ): HttpResponseData? {
+        if (table == "task_photos") return missingTaskOf(row)
         if (table != "tasks") return null
         val title = row["title"]?.jsonPrimitive?.contentOrNull ?: return null
         if (
@@ -252,6 +279,17 @@ class FakeSupabaseServer {
         return json(
             """{"code":"23514","details":null,"hint":null,"message":"new row for relation \"tasks\" violates check constraint \"tasks_title_length\""}""",
             HttpStatusCode.BadRequest,
+        )
+    }
+
+    /** The foreign key from a photo to its task: PostgREST's 409 with 23503 when it names none. */
+    private fun MockRequestHandleScope.missingTaskOf(photo: JsonObject): HttpResponseData? {
+        val taskId = photo["task_id"]?.jsonPrimitive?.contentOrNull
+        if (tables.getValue("tasks").any { it["id"]?.jsonPrimitive?.contentOrNull == taskId })
+            return null
+        return json(
+            """{"code":"23503","details":null,"hint":null,"message":"insert or update on table \"task_photos\" violates foreign key constraint \"task_photos_task_fkey\""}""",
+            HttpStatusCode.Conflict,
         )
     }
 

@@ -21,7 +21,10 @@ node_modules/
 /samples/ios/Configuration/Secrets.xcconfig
 # No longer read by the build; still ignored, so an old local copy holding a token is never committed.
 github.properties
-/ios/distribution/
+# The Swift package: the locally built core framework and SwiftPM's own state
+/swift/LocalCore/
+/swift/.build/
+/swift/.swiftpm/
 
 # Documentation site: local virtualenv and build output
 /.venv-docs/

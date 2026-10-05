@@ -29,11 +29,11 @@ io.github.nesfeder.supabase.offline: fun ReadStrategy.CacheOnly.toString()
 io.github.nesfeder.supabase.offline: fun ReadStrategy.NetworkFirst.equals(other: Any?)
 io.github.nesfeder.supabase.offline: fun ReadStrategy.NetworkFirst.hashCode()
 io.github.nesfeder.supabase.offline: fun ReadStrategy.NetworkFirst.toString()
-io.github.nesfeder.supabase.offline: suspend fun (BucketApi).ensureLocalFile(objectPath: String, isPublic: Boolean = …)  // androidMain
-io.github.nesfeder.supabase.offline: suspend fun (BucketApi).ensureLocalPath(objectPath: String, isPublic: Boolean = …)  // iosMain
-io.github.nesfeder.supabase.offline: suspend fun (BucketApi).ensureLocalUri(objectPath: String, isPublic: Boolean = …)  // androidMain
-io.github.nesfeder.supabase.offline: suspend fun (BucketApi).localPathIfCached(objectPath: String)  // iosMain
-io.github.nesfeder.supabase.offline: suspend fun (BucketApi).localUriIfCached(objectPath: String)  // androidMain
+io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalFile(path: String, isPublic: Boolean = …)  // androidMain
+io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalPath(path: String, isPublic: Boolean = …)  // iosMain
+io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalUri(path: String, isPublic: Boolean = …)  // androidMain
+io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).localPathIfCached(path: String)  // iosMain
+io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).localUriIfCached(path: String)  // androidMain
 io.github.nesfeder.supabase.offline: suspend fun <reified T : Any> (Offline).applyServerRecord(table: String, record: T, primaryKeys: List<String>? = …, schema: String? = …)
 io.github.nesfeder.supabase.offline: suspend fun <reified T : Any> (Offline).rpc(function: String, parameters: T, request: RpcRequestBuilder.() -> Unit = …)
 io.github.nesfeder.supabase.offline: suspend fun <reified T : Any> OfflinePostgrestQueryBuilder.insert(value: T, mutationStrategy: MutationStrategy = …, request: InsertRequestBuilder.() -> Unit = …)

@@ -69,13 +69,11 @@ private val DownloadStatusCheckInstallation =
     AttributeKey<AtomicBoolean>("io.github.nesfeder.supabase.offline.DownloadStatusCheck")
 
 /**
- * Installs, once per client with the Storage plugin, an interceptor next to the engine that fails a
- * download made through [checkingDownloadStatus] whose response is not a success: with the
- * exception the Storage plugin makes of that response, which is what its bytes download throws. The
- * response is read whole first, so its connection is released. A redirect the client follows passes
- * through, and the answer it leads to is checked in turn; one from https to plain http is refused,
- * as the bytes download refuses it. An HTTP retry plugin the app installed, or a Ktor bearer-auth
- * refresh on `401`, sits further from the engine, and sees the failure as an exception.
+ * Installs, once per client with Storage, an interceptor beside the engine that fails a download
+ * made through [checkingDownloadStatus] whose response is not a success. It throws what the bytes
+ * download throws, after reading the response whole. A redirect Ktor follows is checked where it
+ * ends; one from https to plain http is refused, even with Ktor's `allowHttpsDowngrade` on, where
+ * the bytes download follows it. An app's retry or bearer-refresh plugin sees the failure thrown.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installDownloadStatusCheck() {

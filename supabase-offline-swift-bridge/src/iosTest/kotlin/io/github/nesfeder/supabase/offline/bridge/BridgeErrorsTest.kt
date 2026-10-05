@@ -1,13 +1,25 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalForeignApi::class)
+
 package io.github.nesfeder.supabase.offline.bridge
 
+import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.nesfeder.supabase.offline.bridge.internal.transportReason
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.url
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.io.IOException
 import platform.Foundation.NSData
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSTemporaryDirectory
+import platform.Foundation.NSUUID
 
 /** How each kind of failure arrives: as one error value with the fields its kind promises. */
 class BridgeErrorsTest {
@@ -68,6 +80,93 @@ class BridgeErrorsTest {
     }
 
     @Test
+    fun a_storage_refusal_carries_storages_code_and_message_and_nothing_else() = bridgeTest {
+        // Given — Storage's own refusals, and a gateway page that is not Storage's
+        val refusals =
+            listOf(
+                Triple(403, "Unauthorized", "new row violates row-level security policy"),
+                Triple(404, "not_found", "Object not found"),
+                Triple(409, "Duplicate", "The resource already exists"),
+            )
+        val client = openTestClient(server)
+
+        for ((status, code, message) in refusals) {
+            server.answer = {
+                ScriptedAnswer.json(
+                    status,
+                    """{"statusCode":"$status","error":"$code","message":"$message"}""",
+                )
+            }
+
+            // When
+            val probe = CompletionProbe<NSData>()
+            client.storage.download("avatars", "a.png", false, null, probe.completion)
+            val error = probe.awaitError()
+
+            // Then
+            assertEquals(BridgeErrorKind.HTTP, error.kind)
+            assertEquals(status, error.httpStatus)
+            assertEquals(code, error.code)
+            assertEquals(message, error.message)
+            assertEquals(null, error.details)
+        }
+        server.answer = {
+            ScriptedAnswer(502, "<html>Bad gateway</html>".encodeToByteArray(), "text/html")
+        }
+        val probe = CompletionProbe<NSData>()
+        client.storage.download("avatars", "a.png", false, null, probe.completion)
+        val gateway = probe.awaitError()
+        assertEquals(502, gateway.httpStatus)
+        assertEquals(null, gateway.code)
+        assertEquals("The server answered 502", gateway.message)
+        client.closeAndWait()
+    }
+
+    @Test
+    fun a_decoding_failure_says_where_and_names_no_type_or_payload() = bridgeTest {
+        // Given — a listing missing a field, and a batch of signed URLs with a null one
+        server.answer = { request ->
+            if (request.path.startsWith("/storage/v1/object/list/")) {
+                ScriptedAnswer.json(200, """[{"id":"secret-object"}]""")
+            } else {
+                ScriptedAnswer.json(
+                    200,
+                    """[{"error":"Either the object does not exist","signedURL":null,"path":"secret-path.png"}]""",
+                )
+            }
+        }
+        val client = openTestClient(server)
+
+        // When
+        val listing = CompletionProbe<String>()
+        client.storage.list("avatars", "", null, listing.completion)
+        val signing = CompletionProbe<String>()
+        client.storage.createSignedUrls(
+            "avatars",
+            listOf("secret-path.png"),
+            60,
+            signing.completion,
+        )
+        val errors = listOf(listing.awaitError(), signing.awaitError())
+
+        // Then
+        for (error in errors) {
+            assertEquals(BridgeErrorKind.DECODING, error.kind)
+            assertTrue(error.message.startsWith("The server's answer could not be read"))
+            assertFalse(error.message.contains("secret"))
+            assertFalse(
+                Regex("""[A-Z][A-Za-z]*(Exception|Error)\b|kotlin|ktor|Json""")
+                    .containsMatchIn(error.message)
+            )
+        }
+        assertEquals(
+            "The server's answer could not be read: the value at \$[0].signedURL is missing or of the wrong type",
+            errors[1].message,
+        )
+        client.closeAndWait()
+    }
+
+    @Test
     fun a_transport_failure_is_connectivity_and_never_quotes_the_url() = bridgeTest {
         // Given — a server that cannot be reached
         server.online = false
@@ -85,8 +184,67 @@ class BridgeErrorsTest {
         assertEquals(true, error?.isConnectivityFailure)
         assertFalse(error?.message.orEmpty().contains("secret-value"))
         assertFalse(error?.message.orEmpty().contains("fixture.supabase.co"))
-        assertTrue(error?.message.orEmpty().contains("network down"))
+        assertEquals("The request could not reach the server", error?.message)
         client.closeAndWait()
+    }
+
+    @Test
+    fun a_refused_connection_names_neither_the_request_nor_its_values() = bridgeTest {
+        // Given — a real client of a local port nothing listens on
+        val directory = NSTemporaryDirectory() + "bridge-refused-" + NSUUID().UUIDString()
+        try {
+            val options =
+                BridgeClientOptions(
+                    supabaseUrl = "http://127.0.0.1:9",
+                    supabaseKey = "fixture-anon-key",
+                    dataDirectory = directory,
+                )
+            val opened = BridgeClient.open(options)
+            val client = checkNotNull(opened.client) { "the client did not open: ${opened.error}" }
+
+            // When — a read of a table, filtered on a value nobody should see in an error
+            val (_, error) =
+                client.selectAndWait(
+                    """{"v":1,"table":"patients","filters":[{"kind":"filter","column":"email",
+                       "operator":"eq","value":"secret-filter-value"}],"strategy":{"kind":"networkOnly"}}"""
+                )
+
+            // Then — the library's sentence, with at most a platform error's domain and code
+            assertEquals(BridgeErrorKind.CONNECTIVITY, error?.kind)
+            val message = error?.message.orEmpty()
+            assertTrue(FIXED_CONNECTIVITY_MESSAGE.matches(message), message)
+            for (leak in listOf("secret-filter-value", "patients", "127.0.0.1", "http")) {
+                assertFalse(message.contains(leak), "the message names $leak: $message")
+            }
+            client.closeAndWait()
+        } finally {
+            NSFileManager.defaultManager.removeItemAtPath(directory, error = null)
+        }
+    }
+
+    @Test
+    fun a_transport_reason_is_a_platform_errors_domain_and_code_or_a_timeout_and_nothing_else() {
+        // Given — the texts supabase-kt keeps of a Darwin failure, a timeout and anything else
+        val request =
+            HttpRequestBuilder().apply {
+                url("https://fixture.supabase.co/rest/v1/patients?email=eq.secret")
+            }
+        val offline =
+            HttpRequestException(
+                """Exception in http request: Error Domain=NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline." UserInfo={NSErrorFailingURLStringKey=https://fixture.supabase.co/rest/v1/patients?email=eq.secret}""",
+                request,
+            )
+        val timeout =
+            HttpRequestException(
+                "Request timeout has expired [url=https://fixture.supabase.co/rest/v1/patients?email=eq.secret]",
+                request,
+            )
+
+        // Then
+        assertEquals("NSURLErrorDomain -1009", transportReason(offline))
+        assertEquals("timed out", transportReason(timeout))
+        assertNull(transportReason(HttpRequestException("secret went wrong", request)))
+        assertNull(transportReason(IOException("Error Domain=NSURLErrorDomain Code=-1009 secret")))
     }
 
     @Test
@@ -153,3 +311,9 @@ class BridgeErrorsTest {
         client.closeAndWait()
     }
 }
+
+/** The connectivity message: the library's sentence, then at most a fixed-vocabulary reason. */
+private val FIXED_CONNECTIVITY_MESSAGE =
+    Regex(
+        """The request could not reach the server( \((timed out|[A-Za-z][A-Za-z0-9_.]* -?\d+)\))?"""
+    )

@@ -36,6 +36,11 @@ public sealed interface MutationStrategy {
      * default schema only), and a write that was on its way into the queue while local data was
      * cleared. When one of them cannot be sent for want of a connection, it throws
      * [MutationNotQueueableException] with that failure as its cause.
+     *
+     * A dry run commits on a server that ignores the rollback, as a hosted Supabase project does
+     * unless its PostgREST lets a request choose (`db-tx-end`). The library reads the server's
+     * answer: a write it did not roll back is applied like any other, patched into the cache, and
+     * logged once per client at WARNING.
      */
     public data object QueueIfOffline : MutationStrategy
 }

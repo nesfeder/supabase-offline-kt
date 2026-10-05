@@ -31,6 +31,22 @@ which the engine does not read.
 `WritesToAnotherSchemaTest.the_cached_queries_of_that_schema_are_fetched_again`,
 `NonDefaultSchemaTest.an_online_only_write_to_another_schema_is_sent_to_it`</small>
 
+An update or a delete with two top-level filters on one column (`gte("age", 1); lte("age", 10)`)
+throws `IllegalArgumentException` under either strategy, online or offline, before anything is sent
+or queued: supabase-kt would send only the first, and the write would reach more rows than it
+names, now or when the queue replays it. Write them as one `and { }` group, which sends both. An
+update or a delete with a group is sent at once and never queued: offline it throws
+`MutationNotQueueableException`.
+
+A dry run, a write carrying `Prefer: tx=rollback` (supabase-kt 3.8's `dryRun()`, or on 3.6 the
+header added by hand), is never queued: it is sent at once, and offline it throws
+`MutationNotQueueableException`. PostgREST rolls it back only when the project allows a request to
+choose (`db-tx-end` set to `commit-allow-override` or `rollback-allow-override`). A hosted Supabase
+project does not by default, so there **a dry run commits**. The library reads the server's
+`Preference-Applied` answer: a write the server did not roll back is applied like any other, its
+rows are patched into the cache, and a warning is logged once per client. Check a dry run against a
+project that allows the override, or do not rely on it.
+
 A write runs its `request` lambda up to three times: once built to read its schema, filter and
 `select()`, once to tell a dry run, and once to send it (an `OnlineOnly` write, once). It must
 configure the same request every time: no side effects, and no clock or counter read inside it.
