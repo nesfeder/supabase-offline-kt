@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 
 /**
  * Downloaded storage objects stay under `<filesDir>/supabase_offline`, where existing installs keep
- * them and where `clearAllCache` looks for them.
+ * them and where `clearLocalData` looks for them.
  */
 @RunWith(AndroidJUnit4::class)
 class PlatformBaseDirectoryAndroidTest {

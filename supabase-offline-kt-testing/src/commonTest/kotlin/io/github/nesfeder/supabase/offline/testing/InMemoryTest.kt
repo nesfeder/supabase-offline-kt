@@ -13,6 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -100,6 +101,30 @@ class InMemoryTest {
         assertFailsWith<CacheMissException> {
             supabase.offline.from(TABLE).select(readStrategy = fiveMinutes)
         }
+        supabase.close()
+    }
+
+    @Test
+    fun a_queued_write_and_a_sync_are_stamped_by_the_clock_the_test_gives() = runTest {
+        // Given — a client offline, on the test's clock
+        val clock = FakeClock(Instant.parse("2026-01-01T00:00:00Z"))
+        server.online = false
+        val supabase = server.supabaseClient { inMemory(clock = clock) }
+
+        // When — a write is queued, then sent a minute later
+        supabase.offline
+            .from(TABLE)
+            .insert(JsonArray(listOf(buildJsonObject { put("title", "Buy milk") })))
+        val queuedAt = supabase.offline.pendingMutations().first().single().createdAt
+        clock.now = clock.now + 1.minutes
+        server.online = true
+        val report = supabase.offline.syncPendingMutations()
+        val syncedAt = supabase.offline.syncStatus.first { it.lastSyncedAt != null }.lastSyncedAt
+
+        // Then — both times are the clock's, not the device's
+        assertEquals(Instant.parse("2026-01-01T00:00:00Z"), queuedAt)
+        assertEquals(1, report.syncedCount)
+        assertEquals(Instant.parse("2026-01-01T00:01:00Z"), syncedAt)
         supabase.close()
     }
 

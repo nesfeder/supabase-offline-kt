@@ -35,6 +35,17 @@ import kotlin.time.Clock
  * To see how the app meets a server that fails or a connection that drops, fail the requests in the
  * mock engine instead.
  *
+ * The client runs on real time, not a test's virtual clock. supabase-kt retries a request that
+ * fails at the transport, so a read the cache cannot answer waits out its retries (about seven
+ * seconds) unless the test installs `Postgrest { maxRetries = 0 }`. A refresh or a replay that
+ * failed waits a few seconds, then up to a minute, before it tries again by itself: a
+ * `networkAvailability` flow turning `true` wakes the refresh at once, and the replay too with
+ * `autoSync` on, and `syncPendingMutations()` sends without waiting.
+ *
+ * Use it under Robolectric too. The platform's own database needs a SQLite binary for the host, and
+ * it records the application context once per process, so a later test's client would open an
+ * earlier test's database.
+ *
  * @param clock the time the client sees: when rows were fetched and writes queued, and so how old a
  *   cached read is against a `maxAge`.
  */

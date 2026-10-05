@@ -4,22 +4,25 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import okio.Path
 import okio.Path.Companion.toPath
-import platform.Foundation.NSDocumentDirectory
+import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
 import platform.Foundation.NSUserDomainMask
 
-/** `Documents/supabase_offline`, or the same name in the temporary directory without Documents. */
+/**
+ * `Library/Application Support/supabase_offline`, or the same name in the temporary directory when
+ * iOS gives no Application Support directory.
+ */
 internal actual class PlatformBaseDirectory {
 
     actual val path: Path by lazy {
         val urls =
             NSFileManager.defaultManager.URLsForDirectory(
-                directory = NSDocumentDirectory,
+                directory = NSApplicationSupportDirectory,
                 inDomains = NSUserDomainMask,
             )
-        val docs = (urls.lastOrNull() as? NSURL)?.path ?: NSTemporaryDirectory()
-        "$docs/supabase_offline".toPath()
+        val applicationSupport = (urls.lastOrNull() as? NSURL)?.path ?: NSTemporaryDirectory()
+        "$applicationSupport/$PLATFORM_DATA_DIRECTORY_NAME".toPath()
     }
 }

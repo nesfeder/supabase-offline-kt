@@ -2,36 +2,25 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
-import io.github.jan.supabase.storage.BucketApi
-
 /**
- * The absolute path of the cached copy of [objectPath], downloading it first when none is cached. A
- * thin convenience over [OfflineBucketApi.ensureCachedFile]; see there for what it throws.
+ * The absolute path of the cached copy of the object at [path], downloading it into the cache first
+ * when none is cached: [OfflineBucketApi.ensureCachedFile]'s path. It throws what that throws.
  *
- * @param objectPath the object path within this bucket.
+ * @param path the object path within this bucket.
  * @param isPublic whether to download through the public URL rather than the authenticated one.
- * @return the file's absolute path, or `null` only when this bucket did not come from the offline
- *   client.
  */
 @Throws(Throwable::class)
-public suspend fun BucketApi.ensureLocalPath(
-    objectPath: String,
+public suspend fun OfflineBucketApi.ensureLocalPath(
+    path: String,
     isPublic: Boolean = false,
-): String? {
-    val offline = this as? OfflineBucketApi ?: return null
-    return offline.ensureCachedFile(objectPath, isPublic).path
-}
+): String = ensureCachedFile(path, isPublic).path
 
 /**
- * The absolute path of the cached copy of [objectPath] when one is cached; never touches the
- * network. A thin convenience over [OfflineBucketApi.cachedFile].
+ * The absolute path of the cached copy of the object at [path], or `null` when none is cached:
+ * [OfflineBucketApi.cachedFile]'s path. Never touches the network.
  *
- * @param objectPath the object path within this bucket.
- * @return the file's absolute path, or `null` when nothing is cached or this bucket did not come
- *   from the offline client.
+ * @param path the object path within this bucket.
  */
 @Throws(Throwable::class)
-public suspend fun BucketApi.localPathIfCached(objectPath: String): String? {
-    val offline = this as? OfflineBucketApi ?: return null
-    return offline.cachedFile(objectPath)?.path
-}
+public suspend fun OfflineBucketApi.localPathIfCached(path: String): String? =
+    cachedFile(path)?.path

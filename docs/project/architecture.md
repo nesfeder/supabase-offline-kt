@@ -6,20 +6,20 @@ behind it works, the decisions that shaped both, and what the library promises. 
 
 ## What it is
 
-supabase-offline-kt is a plugin for [supabase-kt](https://github.com/supabase-community/supabase-kt),
-for Kotlin Multiplatform apps on Android and iOS. An app installs it with `install(Offline) { … }`
-beside PostgREST and reaches it as `supabase.offline`, and `supabase.offline.from("todos")` takes
-supabase-kt's own verbs, overloads and request DSL. A read is answered from a cache on the device
-or from the server, as its read strategy says, and the server's answers to list reads refresh the
-cache. A write is saved to a mutation queue on the device first, sent at once when nothing of the
-same user waits ahead of it, and otherwise sent, in the order it was made, by a later replay pass,
-which the library starts by itself when the network comes back. Storage downloads are kept on disk
-and served from there offline. A write returns a `MutationOutcome` rather than the server's result,
-because a queued write has none yet: that is the one difference in what a call returns, and a few
-call shapes need an edit (see [Moving a call from supabase-kt](#moving-a-call-from-supabase-kt)).
-Each minor
-release is built and tested against exactly one supabase-kt minor: today 3.6, until a supabase-kt
-release carries the two Realtime fixes 3.7.0 and 3.8.0 lack (see [Decisions](#decisions)).
+supabase-offline-kt is a plugin for
+[supabase-kt](https://github.com/supabase-community/supabase-kt), for Kotlin Multiplatform apps on
+Android and iOS. An app installs it with `install(Offline) { … }` beside PostgREST and reaches it as
+`supabase.offline`, and `supabase.offline.from("todos")` takes supabase-kt's own verbs, overloads
+and request DSL. A read is answered from a cache on the device or from the server, as its read
+strategy says, and the server's answers to list reads refresh the cache. A write is saved to a
+mutation queue on the device first, sent at once when nothing of the same user waits ahead of it,
+and otherwise sent, in the order it was made, by a later replay pass, which the library starts by
+itself when the network comes back. Storage downloads are kept on disk and served from there
+offline. A write returns a `MutationOutcome` rather than the server's result, because a queued write
+has none yet: that is the one difference in what a call returns, and a few call shapes need an edit
+(see [Moving a call from supabase-kt](#moving-a-call-from-supabase-kt)). Each minor release is built
+and tested against exactly one supabase-kt minor: today 3.6, until a supabase-kt release carries the
+two Realtime fixes 3.7.0 and 3.8.0 lack (see [Decisions](#decisions)).
 
 ```kotlin
 val supabase = createSupabaseClient(url, key) {
@@ -93,10 +93,10 @@ The settings:
 | --- | --- | --- |
 | `cacheSizeBytes: Long` | 100 MiB | The most the cached query results may hold, counted as the summed length of the cached responses, not the database file. Past it, the results fetched longest ago are evicted, never one of up to 500 queries a live reader shows. Any other value below 4 KiB counts as 4 KiB; `CACHE_SIZE_UNLIMITED` turns eviction off. |
 | `fileCacheSizeBytes: Long` | 256 MiB | The most the Storage file cache may hold. Past it, the least recently used files are deleted, never one being read or used in the last 30 seconds. Any other value below zero counts as zero; `CACHE_SIZE_UNLIMITED` turns eviction off. |
-| `dataDirectory: String?` | `null` | Where the database, `supabase_offline.db`, and the file cache live. `null` is the platform's place: the app's database directory and `<filesDir>/supabase_offline` on Android, `Documents` on iOS. When this directory has no database and the default place has one no client holds, the first client moves it here, unsent writes included; when it cannot, it opens the one it can without leaving queued writes behind, and logs a warning. |
+| `dataDirectory: String?` | `null` | Where the database, `supabase_offline.db`, and the file cache live. `null` is the platform's place: the app's database directory and `<filesDir>/supabase_offline` on Android, `Library/Application Support` on iOS, where a database found in `Documents`, an earlier default, is first moved with its files. When this directory has no database and the default place has one no client holds, the first client moves it here, unsent writes included; when it cannot, it opens the one it can without leaving queued writes behind, and logs a warning. |
 | `networkAvailability: Flow<Boolean>?` | `null` | The app's own connectivity signal, `true` while online, in place of the platform's monitor. `null` uses the monitor. |
 | `autoSync: Boolean` | `true` | Whether the library sends queued writes by itself when the session settles and when the network comes back. |
-| `primaryKeys`, `primaryKey(table, vararg columns)` | `id` | Each default-schema table's key columns: how the cache recognises a row. `primaryKey` throws `IllegalArgumentException` for no column. |
+| `primaryKeys`, `primaryKey(table, vararg columns)` | `id` | Each table's key columns, by its name in the default schema and as `schema.table` in another: how the cache recognises a row. `primaryKey` throws `IllegalArgumentException` for no column. |
 | `responseTrust: ResponseTrust` | `SettledSession` | Which server responses may replace what the cache holds. |
 | `logLevel: LogLevel?` | `null` | The least severe level the plugin logs at; `null` takes the client's `defaultLogLevel`. |
 
@@ -107,22 +107,22 @@ The settings:
 | `SettledSession` (default) | A response replaces the cache when its request went out under a settled session (signed in, signed out, or a client without Auth) that had not changed when it answered. A session that is restoring, or whose refresh failed, never writes to the cache: supabase-kt then sends the anon key, and row-level security can answer with fewer rows, or none. |
 | `AuthenticatedSessionOnly` | An empty response is written only when the same user was signed in before and after the request; a response with rows is written signed out too, under the same exclusions. For an app that reads public rows signed out and must never see an empty signed-out answer replace them. |
 
-**Installing.** PostgREST is required: `from` throws `IllegalStateException` without it. Storage
-is needed only for `storage`. Auth is optional. With it, the cache belongs to
-one user at a time and the mutation queue keeps each user's writes apart; without it, or with the
-app's own token provider, there is one identity for the life of the install, and an app whose own
-provider serves several users must clear local data itself when the user changes. On Android the
-plugin takes the application context from androidx.startup, so it needs no `Context`. Opening
-claims the database and creates its directory on the thread that calls `createSupabaseClient`. A
-second client over the same database or data directory throws `IllegalStateException` until the
-first is closed, and a failure while opening fails `createSupabaseClient`. Install the plugin last:
-when a plugin installed after it fails to set up, the client is never returned and the database
-stays claimed until the process ends.
+**Installing.** PostgREST is required: `from` throws `IllegalStateException` without it. Storage is
+needed only for `storage`. Auth is optional. With it, the cache belongs to one user at a time and
+the mutation queue keeps each user's writes apart; without it, or with the app's own token provider,
+there is one identity for the life of the install, and an app whose own provider serves several
+users must clear local data itself when the user changes. On Android the plugin takes the
+application context from androidx.startup, so it needs no `Context`. Opening claims the database and
+creates its directory on the thread that calls `createSupabaseClient`, and on iOS first moves a
+database an earlier default left in `Documents`. A second client over the same database or data
+directory throws `IllegalStateException` until the first is closed, and a failure while opening
+fails `createSupabaseClient`. Install the plugin last: when a plugin installed after it fails to set
+up, the client is never returned and the database stays claimed until the process ends.
 
 **Logging** goes through supabase-kt's own. The plugin logs to the logging processor the client
 was built with (`defaultLoggingFactory`), tagged `Supabase-Offline`, at `logLevel` or the client's
 `defaultLogLevel`; there is no second logging setup. Messages at `INFO` and above never carry rows,
-filter values, tokens or object paths; `DEBUG` may.
+filter values or object paths; `DEBUG` may.
 
 ### Reading
 
@@ -130,12 +130,28 @@ filter values, tokens or object paths; `DEBUG` may.
 | --- | --- | --- | --- |
 | `from(table)`, `from(schema, table)`, `get(table)`, `get(schema, table)` | A table's `OfflinePostgrestQueryBuilder`; `offline["todos"]` is `offline.from("todos")`. | A table of another schema is cached apart from the default schema's table of the same name. | `IllegalStateException` without PostgREST |
 | `class OfflinePostgrestQueryBuilder` | The offline counterpart of supabase-kt's `PostgrestQueryBuilder`, with its `postgrest`, `table` and `schema`. | Final, with an internal constructor. Each verb takes its offline choice as a named parameter with a default, before the trailing request lambda. | — |
-| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Only a list of rows is cached. `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer |
-| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no Realtime channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached |
+| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Each request is cached on its own. Only a list of rows is cached. `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer; `IllegalArgumentException` for two top-level filters on one column |
+| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no Realtime channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for two top-level filters on one column |
 
 A verb may run its `request` lambda more than once: a read once to learn its shape and once per
 request sent, a queueable write up to three times. The lambda must build the same request every
 time: no side effects, and no clock or counter read.
+
+**Each request is cached on its own**, under its columns, filters, order and range. Offline, a
+request never answered online has nothing cached, even when another cached request of the table
+holds the rows it asks for: a read is never answered from another query's rows. A detail screen
+reads the list a list screen already reads, with the same request, and picks its row from it.
+
+**Two top-level filters on one column are refused.** supabase-kt, every release to date, sends only
+the first value of each top-level query parameter: `filter { gte("age", 1); lte("age", 10) }` sends
+`age=gte.1` alone. A read, an update or a delete whose built request holds a top-level parameter
+with two values throws `IllegalArgumentException`, naming the column and never a value, before
+anything is sent, queued or read from the cache, under every strategy, online and offline. One
+group, `filter { and { gte("age", 1); lte("age", 10) } }`, sends both. The rule cannot see the
+calls that replace an earlier value and leave one: a second top-level `or` group, or a text search
+after a filter on its column. A test pins what supabase-kt itself sends, so the day it sends every
+value this rule, and the query shape and queue capture that read a column's first value alone, are
+revisited before the pin moves.
 
 `ReadStrategy`, for `select`:
 
@@ -152,7 +168,7 @@ time: no side effects, and no clock or counter read.
 | --- | --- | --- |
 | `CacheFirstThenNetwork` | Emits the cached rows at once and refreshes them from the server in parallel. | A failing refresh leaves the rows on screen and is retried for as long as the flow is collected, at most a minute apart, and at once when the session settles or the network comes back. |
 | `NetworkFirstThenCache` | Asks the server first, then emits the cached rows as they change. | Offline with the query cached, it emits the cached rows at once, `Stalled` (`Paused` when the network is known down), and keeps asking until the server answers. Then it fetches again only after a write the cache could not follow, a change of the cache's owner, or `clearLocalData()`. With nothing cached, or on a server error, the flow fails. |
-| `CacheOnly` | Emits the cached rows and never sends a request. | A shape the cache never holds fails with `CacheMissException`. |
+| `CacheOnly` | Emits the cached rows and never sends a request. | A query not cached emits `null` rows, or only the queued writes it admits; it has no `maxAge`. A shape the cache never holds fails with `CacheMissException`. |
 
 `QuerySnapshot` is one emission:
 
@@ -172,7 +188,7 @@ together, and a change to any of them emits.
 | Case | Meaning |
 | --- | --- |
 | `Idle` | No refresh is running or waiting: the last one succeeded, or the read does not refresh. |
-| `Refreshing` | A refresh is running, or is about to be tried again soon after a failure, or waits for a session that is still settling, which is not a failure. Under `AuthenticatedSessionOnly`, a live read of an empty table made signed out or without Auth stays here, retried at most a minute apart, until a user signs in. |
+| `Refreshing` | A refresh is running, or is about to be tried again soon after a failure, or waits for a session that is still settling, which is not a failure. Under `AuthenticatedSessionOnly`, a live read of an empty table made signed out stays here, retried at most a minute apart, until the table has rows or a user signs in; without Auth, only rows end it. |
 | `Paused` | The refresh waits for the network, which the library knows to be unavailable. Nothing is failing. |
 | `Stalled(cause)` | The refresh keeps failing; `cause` is the failure that stalled it, and a later, different failure does not replace it. It is still tried, at most a minute apart. |
 
@@ -190,8 +206,8 @@ asked for a shape the cache never holds. No request was sent.
 | --- | --- | --- | --- |
 | `insert(body: JsonArray, mutationStrategy, request)`; reified `insert(value: T, …)`, `insert(values: List<T>, …)` | Inserts rows. | A typed value is encoded by `postgrest.serializer`, as supabase-kt encodes it. | `MutationNotQueueableException` |
 | `upsert(body: JsonArray, …)`; reified `upsert(value: T, …)`, `upsert(values: List<T>, …)` | Inserts rows, or merges them into the rows they conflict with. | Shown merged by `onConflict`'s columns, or by the table's key. | `MutationNotQueueableException` |
-| `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException` |
-| `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException` |
+| `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column |
+| `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column |
 
 Each returns a `MutationOutcome`, and `mutationStrategy` defaults to `QueueIfOffline`. An
 `OnlineOnly` write made while network access is off throws `NetworkDisabledException`.
@@ -236,7 +252,9 @@ filter the queue cannot record), the queries it may reach marked stale. A rolled
 write that answered after local data was cleared, leave the cache as it was. These writes are:
 
 - a dry run, a write carrying `Prefer: tx=rollback` (supabase-kt 3.8's `dryRun()`, or the header
-  added by hand), or a write whose request could not be inspected to tell whether it is one;
+  added by hand), or a write whose request could not be inspected to tell whether it is one. A
+  hosted Supabase project ignores the rollback unless its PostgREST lets a request choose
+  (`db-tx-end`), so there a dry run commits: it is applied like any write, and a warning is logged;
 - an UPDATE or DELETE whose filter the queue cannot record exactly or would not replay in full:
   such as a logical group, an embedded table's column, a negated or unknown operator, a `limit`,
   `order` or `offset`, or no filter at all;
@@ -286,22 +304,23 @@ list. Writes are sent in id order, not `createdAt` order.
 **The rejected list's bounds.** It holds the newest 100 entries of every user together, within
 512 K characters. A body longer than 16 K characters is not kept (its length is), so that entry has
 `isRetryable = false`; the server's message, details and hint are kept to 4 K characters each.
-When the list is full the oldest entries go, and their writes are lost.
+When the list is full the oldest entries go, and their writes are lost; nothing reports it, so an
+app lets its user dismiss or retry each entry.
 
 ### Sync
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `syncPendingMutations(table: String? = null): SyncReport` | Sends the current user's queued writes now, of one table or all, in the order they were made, and says what happened. | Returns promptly offline, and sends nothing while network access is off. A failure that may pass stops it and is not thrown. | `IllegalStateException` without PostgREST |
+| `syncPendingMutations(table: String? = null): SyncReport` | Sends the current user's queued writes now, of one table or all, in the order they were made, and says what happened. | Returns promptly offline, and sends nothing while network access is off. A failure that may pass stops it and is not thrown. Nothing else fires when the app comes to the foreground, so an app calls it then. | `IllegalStateException` without PostgREST |
 
 `SyncReport`: `syncedCount` (the writes this call sent and the server accepted), `rejected` (the
-`RejectedMutation`s refused during this call, by the server or by the library itself), `remainingCount` (the writes still queued
-when it returned), `alreadyOnServerCount` (of `syncedCount`, the inserts whose rows the server
-already held because an earlier send whose answer was lost had reached it) and
-`heldBehindOtherTablesCount` (of `remainingCount`, the writes a call for one table held back behind
-an earlier write of the user to another table; `0` for a call over every table). Its counts are the
-call's own: a pass the library ran by itself just before is counted nowhere in it, and a refusal
-it made is found on the rejected list.
+`RejectedMutation`s refused during this call, by the server or by the library itself),
+`remainingCount` (the writes still queued when it returned), `alreadyOnServerCount` (of
+`syncedCount`, the inserts whose rows the server already held because an earlier send whose answer
+was lost had reached it) and `heldBehindOtherTablesCount` (of `remainingCount`, the writes a call
+for one table held back behind an earlier write of the user to another table; `0` for a call over
+every table). Its counts are the call's own: a pass the library ran by itself just before is counted
+nowhere in it, and a refusal it made is found on the rejected list.
 
 `SyncFailedException`, with `httpStatus: Int?` and `code: String?`: why a pass stopped with writes
 still queued, as `SyncStatus.lastSyncError` reports it. It keeps the status and the PostgREST or
@@ -335,21 +354,21 @@ waits however many requests arrive:
 | A client without Auth opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them): one pass | Yes |
 | A write is queued behind an earlier one; a write sent, refused or discarded leaves writes queued behind it; a rejected write is retried | No |
 
-The last row runs whatever `autoSync` says. With write-ahead, an online write returns `Queued` whenever anything of
-its user waits ahead of it, and only these passes send it; without them it would wait for the app
-with nothing to show for it. After an automatic pass that stopped on a failure that may pass, the
-next automatic pass waits 1 s, doubling up to 60 s, and at least as long as a `Retry-After` the
-server sent, up to an hour. The session settling and the network coming back end that wait at once
-and start it again from 1 s, but never before a `Retry-After` has passed. No automatic pass runs
-while network access is off. While the monitor says offline, an automatic pass still runs, since a
-monitor can be wrong, until one fails for want of a connection: after that, none runs and none
-grows the wait until the monitor stops saying offline, the session settles anew, or the app syncs,
-each of which starts a new offline period whether or not a pass is asked for then. So a device
-that is offline makes one attempt per offline period. A wrong monitor costs nothing while requests
-reach the server; after one fails for want of a connection, queued writes wait for the monitor,
-the session or the app's sync. A pass the app asks for goes at once and moves no wait. A trigger's
-own read of the queue that fails asks for a pass anyway, which reads the queue itself, so one
-failed read never turns a trigger off.
+The last row runs whatever `autoSync` says. With write-ahead, an online write returns `Queued`
+whenever anything of its user waits ahead of it, and only these passes send it; without them it
+would wait for the app with nothing to show for it. After an automatic pass that stopped on a
+failure that may pass, the next automatic pass waits 1 s, doubling up to 60 s, and at least as long
+as a `Retry-After` the server sent, up to an hour. The session settling and the network coming back
+end that wait at once and start it again from 1 s, but never before a `Retry-After` has passed. No
+automatic pass runs while network access is off. While the monitor says offline, an automatic pass
+still runs, since a monitor can be wrong, until one fails for want of a connection: after that, none
+runs and none grows the wait until the monitor stops saying offline, the session settles anew, or
+the app syncs, each of which starts a new offline period whether or not a pass is asked for then. So
+a device that is offline makes one attempt per offline period. A wrong monitor costs nothing while
+requests reach the server; after one fails for want of a connection, queued writes wait for the
+monitor, the session or the app's sync. A pass the app asks for goes at once and moves no wait. A
+trigger's own read of the queue that fails asks for a pass anyway, which reads the queue itself, so
+one failed read never turns a trigger off.
 
 ### Status and the network switch
 
@@ -391,8 +410,9 @@ stops being watched: a failure is logged, and the status falls back to `UNKNOWN`
 reachable. Either is a hint, never a gate: a request the app makes is always tried, because a
 monitor can be wrong either way. It decides only when the library tries by itself (while it says
 offline, one failed attempt per offline period, as above), what a waiting refresh reports, whether
-a sync returns at once rather than wait for an unsettled session, and what `syncStatus.network`
-says.
+a list read the cache cannot answer goes out once rather than with supabase-kt's transport retries,
+whether a sync returns at once rather than wait for an unsettled session, and what
+`syncStatus.network` says.
 
 ### Storage
 
@@ -403,8 +423,8 @@ says.
 | `interface OfflineBucketApi : BucketApi` | Every `BucketApi` operation, plus the file cache. | Only the library implements it. `setHeader` returns an offline bucket that still caches. | — |
 | `cachedFile(path): CachedFile?` | The cached copy, or `null`; never touches the network. | Only an untransformed download or `ensureCachedFile` caches the copy it returns. | — |
 | `ensureCachedFile(path, isPublic = false): CachedFile` | The cached copy, downloading it into the cache first when there is none. | A cached copy is returned however old: compare `fetchedAt` with your own rule. | `IllegalArgumentException` for a path that cannot be cached; `IllegalStateException` when local data was cleared during the download; `IOException` when the file cache could not store the download, or the file left the cache before it could be returned; `NetworkDisabledException` while network access is off and nothing is cached |
-| Android `BucketApi.ensureLocalFile`, `ensureLocalUri`; iOS `BucketApi.ensureLocalPath` | The cached copy as a `File`, a `file:` `Uri` or a path, downloading it first when none is cached. | `null` when the bucket did not come from the offline client. | As `ensureCachedFile` |
-| Android `BucketApi.localUriIfCached`; iOS `BucketApi.localPathIfCached` | The cached copy as a `file:` `Uri` or a path, when one is cached; never touches the network. | `null` when nothing is cached, the path cannot be cached, or the bucket did not come from the offline client. | — |
+| Android `OfflineBucketApi.ensureLocalFile(path, isPublic = false): File`, `ensureLocalUri(…): Uri`; iOS `OfflineBucketApi.ensureLocalPath(…): String` | The cached copy as a `File`, a `file:` `Uri` or a path, downloading it first when none is cached. | `ensureCachedFile`'s copy, on the platform's terms. | As `ensureCachedFile` |
+| Android `OfflineBucketApi.localUriIfCached(path): Uri?`; iOS `OfflineBucketApi.localPathIfCached(path): String?` | The cached copy as a `file:` `Uri` or a path, when one is cached; never touches the network. | `null` when nothing is cached or the path cannot be cached. | — |
 
 `CachedFile(path, fetchedAt, sizeBytes)` is the cache's own copy, at an absolute path. Read it, open
 it, hand it to an image loader, but do not move or write it. The cache may delete it when the
@@ -413,28 +433,31 @@ server reports it gone, when the cache passes its bound and the file has not bee
 seconds, when the cache is dropped for a new owner, and when local data is cleared.
 
 **What is cached, and what is not.** Downloads (`downloadAuthenticated` and `downloadPublic`, to
-bytes or to a channel) go to the network first. A success is written to the cache; a "not found" from the server drops the
-copy and is rethrown; any other failure is answered from the cached copy when there is one. An
-error answer is a failure for a channel download too: supabase-kt's own channel download copies
-whatever the server answers into the channel, so the offline bucket checks the status first and
-throws what the bytes download throws, and nothing of the answer is cached or handed on. A download with an image transform is cached per transform, apart from the original, and
-a channel download streams through a file on disk instead of being held in memory. Writes (uploads,
+bytes or to a channel) go to the network first. A success is written to the cache; a "not found"
+from the server drops the copy and is rethrown; any other failure is answered from the cached copy
+when there is one. An error answer is a failure for a channel download too: supabase-kt's own
+channel download copies whatever the server answers into the channel, so the offline bucket checks
+the status first and throws what the bytes download throws, and nothing of the answer is cached or
+handed on. One difference remains: with Ktor's `allowHttpsDowngrade` on, the bytes download follows
+a redirect from https to plain http, while `ensureCachedFile` and a channel download refuse it and
+throw. A download with an image transform is cached per transform, apart from the original, and a
+channel download streams through a file on disk instead of being held in memory. Writes (uploads,
 updates, deletes, moves and copies) are online-only and never queued: offline they fail with
-supabase-kt's error, and one that reaches the server drops the cached copies it made stale. A
-resumable upload drops them once it finishes, unless it finishes after `close()`, which leaves the
-stale copy. An upload does not put its bytes in the cache, so the
-next read downloads them. Signed URLs, listings, `info`, `exists` and the public status always ask
-the server. An object path that cannot be mapped safely onto a file (a leading `/`, an empty, `.` or
-`..` segment, a `\`, a control character) still downloads and writes, uncached. So does one holding
-`%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8 puts the name in the URL as
-written, so its request can fetch a different object.
+supabase-kt's error (with network access off, `NetworkDisabledException`), and one that reaches the
+server drops the cached copies it made stale. A resumable upload drops them once it finishes, unless
+it finishes after `close()`, which leaves the stale copy. An upload does not put its bytes in the
+cache, so the next read downloads them. Signed URLs, listings, `info`, `exists` and the public
+status always ask the server. An object path that cannot be mapped safely onto a file (a leading
+`/`, an empty, `.` or `..` segment, a `\`, a control character) still downloads and writes,
+uncached. So does one holding `%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8
+puts the name in the URL as written, so its request can fetch a different object.
 
 ### Local data and lifecycle
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. Live reads open through it fetch again, as after a change of owner. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background as soon as the read ends, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. | — |
-| `applyServerRecord(table, record: JsonObject, primaryKeys = null, schema = null)`; reified `applyServerRecord(table, record: T, …)` | Applies a row the server reports, such as a Realtime INSERT or UPDATE record, to every cached query of the table. | The cached row with the same key is replaced, and a query that admits the row gains it. A record without its whole key is logged and dropped. `primaryKeys = null` is the table's configured key, and `id` for a table of another schema. | The reified form: `IllegalArgumentException` when `record` does not encode to a JSON object |
+| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. Live reads open through it fetch again, as after a change of owner. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background as soon as the read ends, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. On sign-out, clear before `auth.signOut()` or in a `finally` around it: offline, `signOut()` throws and keeps the session. | — |
+| `applyServerRecord(table, record: JsonObject, primaryKeys = null, schema = null)`; reified `applyServerRecord(table, record: T, …)` | Applies a row the server reports, such as a Realtime INSERT or UPDATE record, to every cached query of the table. | The cached row with the same key is replaced, and a query that admits the row gains it. A record without its whole key is logged and dropped. `primaryKeys = null` is the table's key as `primaryKeys` gives it (`schema.table` for another schema), `id` when none is configured. | The reified form: `IllegalArgumentException` when `record` does not encode to a JSON object |
 | `applyServerDelete(table, oldRecord, primaryKeys = null, schema = null)` | Removes a row the server reports deleted from every cached query of the table. | As `applyServerRecord`. | — |
 | `rpc(function, request)`, `rpc(function, parameters: JsonObject, request)`; reified `rpc(function, parameters: T, request)` | Calls a database function, as `supabase.postgrest.rpc` does. | Network only: never cached, never queued, since a function may change data. | `NetworkDisabledException` while access is off; `IllegalStateException` without PostgREST; the reified form, `IllegalArgumentException` when `parameters` does not encode to a JSON object |
 | `close()` | Closes the plugin and frees its database for another client. Nothing is deleted. | The close contract, below. | — |
@@ -459,7 +482,7 @@ not yet sent go out.
 | Member | What it is |
 | --- | --- |
 | `abstract class OfflineException : Exception` | A failure the library itself reports. The hierarchy is open: a release may add a subclass, so match the ones you handle and keep a branch for the rest. No public constructor. |
-| `CacheMissException` | A cache-only read found nothing it may serve. |
+| `CacheMissException` | A cache-only read found nothing it may serve; a reactive one only for a shape the cache never holds. |
 | `MutationNotQueueableException` | A write the queue cannot hold could not be sent for want of a connection. |
 | `NetworkDisabledException` | A request that must reach the server was made while network access was off. |
 | `SyncFailedException` | Why a pass stopped with writes queued; `httpStatus` and `code`. |
@@ -487,12 +510,16 @@ val supabase = createSupabaseClient(url, key) {
 
 | Member | What it does | Rule |
 | --- | --- | --- |
-| `Offline.Config.inMemory(clock: Clock = Clock.System)` | Keeps the cache, the mutation queue and the Storage file cache in the client's memory; nothing is written to disk. `clock` is the time the client sees: fetch, queue and rejection times, and so how old a cached read is against a `maxAge`. | Every other setting applies as in an app but `dataDirectory`, which has no effect, and each client starts empty. It watches no monitor: `syncStatus.network` stays `UNKNOWN`, which counts as online, until the test sets `networkAvailability` or calls `disableNetwork()`, the way to take it offline. The client's work runs in the library's scope, so a background failure is logged, never thrown into the test. supabase-kt's own plugins keep their own state: give Storage a `MemoryResumableCache` and Auth a session manager that keeps the session in memory. |
+| `Offline.Config.inMemory(clock: Clock = Clock.System)` | Keeps the cache, the mutation queue and the Storage file cache in the client's memory; nothing is written to disk. `clock` is the time the client sees: fetch, queue and rejection times, and so how old a cached read is against a `maxAge`. | Every other setting applies as in an app but `dataDirectory`, which has no effect, and each client starts empty. It watches no monitor: `syncStatus.network` stays `UNKNOWN`, which counts as online, until the test sets `networkAvailability` or calls `disableNetwork()`, the way to take it offline. The client's work runs in the library's scope, so a background failure is logged, never thrown into the test. supabase-kt's own plugins keep their own state: give Storage a `MemoryResumableCache` and Auth a session manager that keeps the session in memory. The client runs on real time: install `Postgrest { maxRetries = 0 }`, or a read the cache cannot answer waits out supabase-kt's transport retries. Use it under Robolectric too. |
 | `appliedOutcome`, `queuedOutcome`, `pendingMutation`, `rejectedMutation`, `serverError`, `querySnapshot`, `stalledRefresh`, `syncReport`, `syncStatus`, `cachedFile` | Build the value types, for an app's own test doubles. | Every field is a parameter; the ones a test rarely sets have defaults. |
 | `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `syncFailedException` | Build the exceptions. | `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts. |
 
-**The version rule.** Use the testing artifact at exactly the library's version. It depends on the
-core at its own version, and calls hooks marked `@OfflineInternal`, which change between releases.
+**The version rule.** Use the testing artifact at exactly the library's version. It calls hooks
+marked `@OfflineInternal`, which change between releases, so its published metadata pins the library
+at its own version with a strict constraint. An older testing artifact beside a newer library fails
+dependency resolution; a newer one raises the library in the test classpath to its own version
+without a word. Keep both on one version. When a value type gains a field, its factory gains an
+overload rather than a new defaulted parameter.
 
 ### Moving a call from supabase-kt
 
@@ -511,6 +538,7 @@ lambda, so supabase-kt's call shapes resolve unchanged. These need an edit:
 | Realtime's `selectAsFlow(…)` on a table | The builder's own `selectAsFlow` is the offline one. | Keep realtime calls on `supabase.from(table)`. |
 | The typed `rpc(function, parameters)` | It is this library's extension on `Offline`. | Import `io.github.nesfeder.supabase.offline.rpc` in place of `io.github.jan.supabase.postgrest.rpc`. |
 | Any call through the plugin | The accessor is an extension of its own. | Import `io.github.nesfeder.supabase.offline.offline`. |
+| Two top-level filters on one column: `filter { gte("age", 1); lte("age", 10) }` | supabase-kt sends only the first, so the library refuses the read or write before anything is sent. | One group: `filter { and { gte("age", 1); lte("age", 10) } }`. |
 
 ## How it works
 
@@ -518,10 +546,10 @@ lambda, so supabase-kt's call shapes resolve unchanged. These need an edit:
 
 The plugin forwards every call to one internal `OfflineClient`, which builds the parts below over
 the database's tables and owns their lifecycle. One function, `buildCacheComponents`, wires the
-cache and queue parts, for the client and for the engine's tests alike. Calls go downward. The cache reports back up only
-through callbacks the client wires in: which queries are live, which went stale, who the current
-identity is, and a cache another identity owns. The client also builds the public types it hands
-out.
+cache and queue parts, for the client and for the engine's tests alike. Calls go downward. The cache
+reports back up only through callbacks the client wires in: which queries are live, which went
+stale, who the current identity is, and a cache another identity owns. The client also builds the
+public types it hands out.
 
 The client and its parts:
 
@@ -531,6 +559,7 @@ flowchart TB
     B["OfflinePostgrestQueryBuilder"] --> T["OfflineTable"]
     S["OfflineBucketApi"] --> FC["StorageFileCache"]
     OC --> T
+    OC --> QR["QueryReader and LiveQueries"]
     OC --> R["MutationQueueReplayer and AutomaticReplay"]
     OC --> FC
     OC --> G["ClientOperationGate"]
@@ -564,7 +593,10 @@ flowchart TB
     T --> CP
     QR["QueryReader"] --> QO["QueryOverlay"]
     QR --> QC["QueryCache"]
+    QR --> MQ
+    QR --> CF["CacheFreshness"]
     R["MutationQueueReplayer"] --> MQ
+    R --> CF
     FC["StorageFileCache"] --> CO
     LD --> QO
     LD --> QC
@@ -585,6 +617,9 @@ flowchart TB
     QC --> DB[("Room database")]
     MQ --> DB
     CO --> DB
+    QO --> DB
+    CP --> DB
+    LD --> DB
 ```
 
 The client's parts:
@@ -613,15 +648,17 @@ own locks.
 
 ### The lock order
 
-Outermost first: the replayer's send lock, then the file cache's lock, then a table's snapshot
-lock, then its write lock, then the queue lock, then the clear lock, then the owner record's and
-the query-shape records' own locks. A reader holds a table's snapshot lock only while it reads the
-table's queue and one payload, taking nothing else under it. Every commit, eviction, move and invalidation of a file takes the file cache's lock too, but
-only a clear or a drop holds it while taking the cache's and the queue's locks; its other users take
-none of them under it. A clear or a drop takes no table lock: a write that holds one checks the
-watermarks under the clear lock instead. The eviction lock and the queue's per-table read locks are
-taken with none of these held. No lock is held across a request: the send lock covers choosing a
-write and recording its outcome, and the queue lock short sections of database calls.
+Outermost first: the replayer's send lock, then the file cache's lock, then a table's snapshot lock,
+then its write lock, then the queue lock, then the clear lock, then the owner record's and the
+query-shape records' own locks. A reader holds a table's snapshot lock only while it reads the
+table's queue and one payload, taking nothing else under it. Every commit, eviction, move and
+invalidation of a file takes the file cache's lock too, but only a clear or a drop holds it while
+taking the cache's and the queue's locks; its other users take none of them under it. A clear or a
+drop takes no table lock: a write that holds one checks the watermarks under the clear lock instead.
+The eviction lock and the queue's per-table read locks are taken with none of these held. The
+identity reader's lock, held while one read of the stored session runs, is a leaf: nothing is taken
+under it. No lock is held across a request: the send lock covers choosing a write and recording its
+outcome, and the queue lock short sections of database calls.
 
 ### The read path
 
@@ -653,20 +690,25 @@ network as it is.
 **The cache key.** A cached query lives under `(table, cache key)`. The key is the table, its query
 parameters sorted by name and its range, such as
 `assets?deleted=eq.false&order=updatedAt.desc|range=0-49`, and a table of another schema is named
-`schema.table`. The key is a fingerprint and is never parsed back. What the query admits is captured
-from its request instead, when it is read: its select list, its conditions on plain columns and
-what it asks of the tables it embeds, recorded as a query shape beside the payload.
+`schema.table`. The key is a fingerprint and is never parsed back, and no query is answered from
+another's key. What the query admits is captured from its request instead, when it is read: its
+select list, its conditions on plain columns and what it asks of the tables it embeds, recorded as
+a query shape beside the payload. The shape, like the queue's capture of a write's filter, reads a
+column's first value only, as supabase-kt sends only that one; a request with two is refused
+before this point.
 
 **The overlay of pending writes.** What a read serves is the stored payload with the writes it does
 not hold laid on top, oldest first: the current identity's queued writes, and replayed writes newer
 than the payload. The engine evaluates `eq`, `neq`, `in` and `is` with Postgres's rules for nulls;
 any other condition, and any comparison whose answer depends on the column's type, is unknown.
-Unknown admits a row into a list and never lets a queued UPDATE or DELETE touch it. An INSERT places
-the rows the query admits; an UPSERT merges by its conflict columns or the key; an UPDATE patches
-the rows its filter provably matches and moves a row out of, or into, a list as its membership
-changes, borrowing a row only from a query read with the same select list and embedded options; a
-DELETE removes provable matches. A queued row is appended past a list's order and limit. A write
-that fails part-way is undone from a journal and reported once, and the rest still show.
+Unknown admits a row into a list and never lets a queued UPDATE or DELETE touch it. An INSERT adds
+the rows the query admits after the list's own rows, past its order and limit; an UPSERT merges by
+its conflict columns or the key, adding a new row the same way; an UPDATE patches the rows its
+filter provably matches and moves a row out of, or into, a list as its membership changes,
+borrowing a row only from a query read with the same select list and embedded options; a DELETE
+removes provable matches. A queued row reads back as it was sent, without the columns the server
+fills in. A write that fails part-way is undone from a journal and reported once, and the rest
+still show.
 
 **One view per emission.** The payload, the table's queue, the sends that may have reached the
 server and the refresh's progress change together at their writers but would reach a reader in any
@@ -710,16 +752,17 @@ time, down to 50 MB below the bound (or to the bound when it is 50 MB or less), 
 
 **Retries and refreshes.** A `NetworkFirst` read with a warm cache, a `CacheFirst` read fetching a
 stale payload again, a `NetworkFirstThenCache` read's first request with a warm cache, and every
-reactive refresh send their SELECT with supabase-kt's transport retries off, so a transport failure falls back at once; a
-`503` or `520` is still retried on supabase-kt's schedule. A `CacheFirstThenNetwork` refresh retries
-after 300, 900 and 2,400 ms, then after 5 s, 15 s and every 60 s, for as long as the flow is
-collected: `Stalled` after the fourth failure (about 3.6 s), `Paused` instead when the network is
-known down, and `Refreshing` for as long as the answers come back under a session still settling,
-which is a wait, not a failure. A session settling or the network coming back cuts the wait short.
-A read the cache cannot answer, sent while the network is known down, goes out once with transport
-retries off too: the monitor is a hint, so it is still tried, but supabase-kt's waits could only
-delay the failure. A slow collector is
-handed the latest snapshot, never holding back the query's other collectors.
+reactive refresh send their SELECT with supabase-kt's transport retries off, so a transport failure
+falls back at once; a `503` or `520` is still retried on supabase-kt's schedule. A
+`CacheFirstThenNetwork` refresh retries after 300, 900 and 2,400 ms, then after 5 s, 15 s and every
+60 s, for as long as the flow is collected: `Stalled` after the fourth failure (about 3.6 s),
+`Paused` instead when the network is known down, and `Refreshing` for as long as the answers come
+back under a session still settling, which is a wait, not a failure. A session settling or the
+network coming back cuts the wait short. A list read the cache cannot answer, sent while the network
+is known down, goes out once with transport retries off too (a shape the cache never holds keeps
+supabase-kt's retries): the monitor is a hint, so it is still
+tried, but supabase-kt's waits could only delay the failure. A slow collector is handed the latest
+snapshot, never holding back the query's other collectors.
 
 ### The write path
 
@@ -775,20 +818,23 @@ refusals. The order is the row's autoincrement id.
 out, its send is recorded as possibly delivered. The request runs carrying its owner, which the
 replay-token check below reads. Accepted, the response is patched into the cache, then the row, its
 send record and any stale rejected entry are deleted, both under the table's snapshot lock, so no
-live read sees one without the other, and the caller gets `Applied`; if the patch,
-the delete or the read of the queue that follows (whether anything waits behind it) fails, the
-caller still gets `Applied`, since the server has the write, and the failure is logged. A refusal
-is likewise thrown as the server's error whatever that read does. A failure that may not have run keeps the row. The send record is cleared only on proof
-that the write did not run: every attempt the HTTP engine made failed before connecting (each retry
-an app plugin made, and each attempt an engine carried as a suppressed exception, must prove it
-too), PostgREST answered `503` with `PGRST000` or `PGRST002`, the token could not be refreshed, the
-schema cache did not know the table or a column, or network access was off. Anything else that answers deletes
-the row and throws: the immediate refusal.
+live read sees one without the other, and the caller gets `Applied`; if the patch, the delete or the
+read of the queue that follows (whether anything waits behind it) fails, the caller still gets
+`Applied`, since the server has the write, and the failure is logged. A refusal is likewise thrown
+as the server's error whatever that read does. A failure that may not have run keeps the row. The
+send record is cleared only on proof that the write did not run: every attempt the HTTP engine made
+failed before connecting (each retry an app plugin made, and each attempt an engine carried as a
+suppressed exception, must prove it too), PostgREST answered `503` with `PGRST000` or `PGRST002`,
+the token could not be refreshed, the schema cache did not know the table or a column, or network
+access was off. Anything else that answers deletes the row and throws: the immediate refusal.
 
 **Dry runs.** A dry run is never queued. Whether the server rolled it back is read from its
-`Preference-Applied` answer, and only a rolled-back write is left out of the cache. A check beside
-the HTTP engine notices a successful write that asked for the rollback (`Prefer: tx=rollback`) and
-was committed instead, and the client logs one warning for its life, naming nothing else.
+`Preference-Applied` answer, and only a rolled-back write is left out of the cache. PostgREST rolls
+a write back only when the project lets a request choose (`db-tx-end` set to `commit-allow-override`
+or `rollback-allow-override`); a hosted Supabase project does not by default, so there a dry run
+commits. A check beside the HTTP engine notices a successful write that asked for the rollback
+(`Prefer: tx=rollback`) and was committed instead, and the client logs one warning for its life,
+naming nothing else.
 
 **The cache patch of an online write.** The rows the server accepted, or returned when the write
 asked for rows back, are laid into every cached query of the table that admits them, matched by
@@ -801,9 +847,9 @@ is not patched.
 **Replay in order.** A pass reads the identity's queue once, then claims each write in turn under
 the send lock: still pending, no earlier write in flight whoever owns it, network access still on,
 no clear since the pass began, and, in a pass for one table, no earlier write of the identity still
-queued in another table. It reads the identity again before every request and stops if it changed. A cancelled pass
-stops between writes: a request already on the wire runs to its answer, which is recorded, because a
-write the server applied but the queue kept would be sent again.
+queued in another table. It reads the identity again before every request and stops if it changed. A
+cancelled pass stops between writes: a request already on the wire runs to its answer, which is
+recorded, because a write the server applied but the queue kept would be sent again.
 
 - **An INSERT that may already be on the server**, a keyed INSERT with its send record set, replays
   as an upsert on the primary key that ignores duplicates, with `Prefer: count=exact`. The returned
@@ -811,9 +857,10 @@ write the server applied but the queue kept would be sent again.
   the table has no unique key to match (`42P10`) it is sent again as the plain INSERT.
 - **Every other INSERT** replays as it was sent, so a genuine duplicate id is refused with `23505`
   and reaches the rejected list with the server's own error.
-- **An UPSERT, an UPDATE and a DELETE** replay as sent; they are idempotent, and a replay after a lost
-  response overwrites a change another writer made in between. A stored filter that can no longer be
-  read, or would not replay in full, is never sent: the write is rejected by the library itself.
+- **An UPSERT, an UPDATE and a DELETE** replay as sent; they are idempotent, and a replay after a
+  lost response overwrites a change another writer made in between. A stored filter that can no
+  longer be read, or would not replay in full, is never sent: the write is rejected by the library
+  itself.
 - **Accepted**, a write's table watermark advances, then, in one transaction, the write is marked
   replayed with the next sync sequence, its send record cleared and any stale rejected entry
   removed.
@@ -840,8 +887,8 @@ sends that token whoever is signed in, so it is not checked.
 
 **The rejected list.** It is one bounded value in a reserved row of `object_cache`, read once and
 written whole under the queue lock. Moving a write onto it, deleting its row and clearing its send
-record are one transaction. An unreadable list is kept aside under a new name, logged at `ERROR`, and
-started afresh.
+record are one transaction. An unreadable list is kept aside under a new name, logged at `ERROR`,
+and started afresh.
 
 **Retirement.** A replayed write stays, marked with its sync sequence, for the queries fetched
 before it replayed. Each payload written from a response records the sync sequence it has seen
@@ -858,12 +905,14 @@ app's switch. It counts reconnections, and each wakes waiting refreshes and, wit
 a pass when the settled identity has writes queued, ending the wait a failed pass left. While access
 is off, a pass any trigger asks for is skipped. While the monitor says offline, `AutomaticReplay`
 runs passes until one fails for want of a connection, then skips them, growing no wait, until the
-monitor stops saying offline, an edge arrives, or the app syncs.
+monitor stops saying offline, the session settles anew, or the app syncs, each of which starts a
+new offline period whether or not a pass is asked for then.
 
 **The automatic replay switch** has two conditions, written into the engine where the triggers live:
 
-1. `autoSync = false` turns off the session-settle trigger, the reconnection trigger, and the one
-   pass a client without Auth starts when it opens with writes queued.
+1. `autoSync = false` turns off the passes the session-settle and reconnection triggers ask for
+   (each still starts a new offline period), and the one pass a client without Auth starts when it
+   opens with writes queued.
 2. It never turns off the passes the write path asks for: a write queued behind an earlier one, what
    a sent, refused or discarded write leaves queued, a retried rejection. With write-ahead, those
    passes are what sends an online write that returned `Queued`.
@@ -871,9 +920,10 @@ monitor stops saying offline, an edge arrives, or the app syncs.
 **The `disableNetwork()` interception.** The switch is checked where requests start, never by
 cancelling them. Each PostgREST verb of a table handle throws `NetworkDisabledException` before
 supabase-kt is called; the head send leaves its write queued; a pass sends nothing; a refresh waits,
-`Paused`; the bucket answers a download from the file cache and throws for any other call, but a
-resumable upload's handle, supabase-kt's own, still sends its chunks; `rpc` throws. The exception proves the request was never sent: a write it stops stays queued as never
-sent, and a read falls back to the cache as it would offline.
+`Paused`; the bucket answers a download from the file cache when it holds the file, and otherwise
+throws, as for any other call, but a resumable upload's handle, supabase-kt's own, still sends its
+chunks; `rpc` throws. The exception proves the request was never sent: a write it stops stays
+queued as never sent, and a read falls back to the cache as it would offline.
 
 ### Lifecycle
 
@@ -883,34 +933,39 @@ version the app resolved with the tested one: it reads the version supabase-kt r
 `X-Client-Info` header, and logs one warning when the major or minor differs.
 
 **The database claim.** Opening registers the database file and the data directory, with every
-symbolic link resolved, in a process-wide registry, and fails when another open client holds
-either. With `dataDirectory` set, a database at the default place moves there when that directory
-has none and nothing holds the default one. Room then opens the database on the bundled SQLite, and
-the client is built over it: every setting of `Offline.Config` reaches the engine in that one
-function, read once (the opener also reads `dataDirectory`, and the version check `logLevel`). The client installs its
-request-pipeline phases once (the dry-run check, the read-shape check, the transport-failure capture
-and the replay-token check) and the committed dry-run check beside the engine, and starts its
-watchers: connectivity, the session-settle trigger when `autoSync` is on, the cache owner, and the
-sync status's, so `syncStatus` counts the queue from the start. A client without Auth, with
-`autoSync` on, also asks for one pass when writes an earlier run left are queued.
+symbolic link resolved, in a process-wide registry, and fails when another open client holds either.
+On iOS, a database in `Documents`, where an earlier default kept it, first moves to the default
+place in `Library/Application Support` with its side files and its file cache, unless another client
+holds it or the default place already has a database (then it is left, and a warning logged); a file
+cache that cannot move is deleted, so no cached file outlives a clear. With `dataDirectory` set, a
+database at the default place moves there when that directory has none and nothing holds the default
+one. Room then opens the database on the bundled SQLite, and the client is built over it: every
+setting of `Offline.Config` reaches the engine in that one function, read once (the opener also
+reads `dataDirectory`, and the version check `logLevel`). The client installs its request-pipeline
+phases once (the dry-run check, the read-shape check, the transport-failure capture and the
+replay-token check) and the committed dry-run check beside the engine, and starts its watchers:
+connectivity, the session-settle trigger (it starts a new offline period whatever `autoSync` says,
+and asks for a pass only when it is on), the cache owner, and the sync status's, so `syncStatus`
+counts the queue from the start. A client without Auth, with `autoSync` on, also asks for one pass
+when writes an earlier run left are queued.
 
 **The operation gate.** Every public call and every flow passes the client's gate, which counts the
-calls in flight whoever's coroutine runs them. A flow is checked when it is collected and counted for
-as long as it is; its upstream runs in a child job of the collection, so closing can stop it however
-the collector behaves. Everything the client starts itself (refreshes, passes, watchers) runs in the
-client's own scope, a child of the engine's scope, whose exception handler logs a background failure
-by type instead of crashing the process.
+calls in flight whoever's coroutine runs them. A flow is checked when it is collected and counted
+for as long as it is; its upstream runs in a child job of the collection, so closing can stop it
+however the collector behaves. Everything the client starts itself (refreshes, passes, watchers)
+runs in the client's own scope, a child of the engine's scope, whose exception handler logs a
+background failure by type instead of crashing the process.
 
 **`close()` through `supabase.close()`.** supabase-kt closes its HTTP client, then each plugin. In
 between, a request that fails with the closed client's cancellation while its caller still runs
-becomes an internal `TransportClosedException`, an `IOException`, so the engine handles it as offline:
-the cache answers a read, the queue keeps a write. The gate turns any such failure, or a cancellation
-the closing caused, that reaches a call's edge into the closed error. The plugin's own `close()` then
-runs, in order:
+becomes an internal `TransportClosedException`, an `IOException`, so the engine handles it as
+offline: the cache answers a read, the queue keeps a write. The gate turns any such failure, or a
+cancellation the closing caused, that reaches a call's edge into the closed error. The plugin's own
+`close()` then runs, in order:
 
 1. The gate shuts: every new call fails with the closed error, and every collection completes.
-2. The client's scope is cancelled, which stops its own work, the syncs and every Storage call, and
-   `syncStatus` takes its last value.
+2. The client's scope is cancelled, which stops its own work, the syncs and every Storage call in
+   progress but `cachedFile` and a resumable upload, and `syncStatus` takes its last value.
 3. It waits, at most 10 seconds of real time on `Dispatchers.Default`, for that scope to end and for
    no call to be left in the gate.
 4. A clear's write-ahead log that an open read held is tried once more; then the database is closed
@@ -928,9 +983,10 @@ session at most 10 seconds; past that the identity is untold for that session st
 is not served and a read goes out under the restoring session, on the anon key, instead of waiting
 on a session store that hangs. Nothing such a read brings back is cached: a one-shot read waits out
 the restore window (a few seconds) and then returns the anon key's answer uncached, with a warning,
-which under row-level security can hold fewer rows, or none; a live read shows nothing
-(`Refreshing`) until the session settles. Without Auth, or with the app's own token provider, every
-request is the anonymous identity: the engine cannot tell those users apart.
+which under row-level security can hold fewer rows, or none; a live read shows none of the cached
+rows, only the queued writes it admits (`Refreshing`), until the session settles. Without Auth, or
+with the app's own token provider, every request is the anonymous identity: the engine cannot tell
+those users apart.
 
 **Ownerless mutations.** Every write the plugin queues records its owner. The queue also accepts a
 write with no owner recorded, which the plugin itself does not make; a pass adopts such writes for a
@@ -945,32 +1001,32 @@ a write goes only into it. A cache no identity owns is adopted by a user, and by
 identity only while it holds nothing, since rows an earlier session left may be a user's.
 
 **`dropCacheFor`.** When the session settles into another identity, or a read or a write finds the
-cache another identity's, the client drops it under the send lock (no pass is stopped, since none of the
-queue goes) and the file cache's lock: the cached queries, their shapes and the file rows go in one
-transaction that records the new owner, the database is rewritten, the files are deleted, and live
-queries fetch again. The drop watermark moves, so a response or a patch that started before it
+cache another identity's, the client drops it under the send lock (no pass is stopped, since none of
+the queue goes) and the file cache's lock: the cached queries, their shapes and the file rows go in
+one transaction that records the new owner, the database is rewritten, the files are deleted, and
+live queries fetch again. The drop watermark moves, so a response or a patch that started before it
 cannot land afterwards; a download that started before it is kept out by the file cache's own
 generation. The mutation queue is kept: queued writes stay with their owners.
 
-**`clearLocalData`.** The replayer bumps its clear generation, cancels the passes in flight and takes
-the send lock; the file cache takes its lock; one transaction deletes every mutation, every file row
-and every cached payload, the engine's own records included, and records the owner, the anonymous
-identity when nobody is signed in with Auth, and nobody otherwise, so a user's first use claims it.
-The queue's in-memory records are set to known-empty, so no later read writes an old one back. Then
-`VACUUM` rewrites the database and one `TRUNCATE` checkpoint, with the busy timeout at zero for its
-length, tries to empty its write-ahead log, and the cache directories go last. Only then are the
-locks let go: when an open read held the log, the clear tries again every 50 ms for at most a
-second, then leaves it to the client's scope, which tries with a wait doubling up to five seconds
-until the log is emptied, and `close()` tries once more before the database closes. The same path
-follows `dropCacheFor`. Live queries fetch again once the clear has let the locks go, and after a
-clear that was cut short too. Without Auth there is one identity and its cache is never dropped;
+**`clearLocalData`.** The replayer bumps its clear generation, cancels the passes in flight and
+takes the send lock; the file cache takes its lock; one transaction deletes every mutation, every
+file row and every cached payload, the engine's own records included, and records the owner, the
+anonymous identity when nobody is signed in with Auth, and nobody otherwise, so a user's first use
+claims it. The queue's in-memory records are set to known-empty, so no later read writes an old one
+back. Then `VACUUM` rewrites the database and one `TRUNCATE` checkpoint, with the busy timeout at
+zero for its length, tries to empty its write-ahead log, and the cache directories go last. Only
+then are the locks let go: when an open read held the log, the clear tries again every 50 ms for at
+most a second, then leaves it to the client's scope, which tries with a wait doubling up to five
+seconds until the log is emptied, and `close()` tries once more before the database closes. The same
+path follows `dropCacheFor`. Live queries fetch again once the clear has let the locks go, and after
+a clear that was cut short too. Without Auth there is one identity and its cache is never dropped;
 only this call empties it.
 
 ### Logging
 
 The engine logs through one logger that builds a message only when its level passes, and hands it
 to supabase-kt's `createLogger("Supabase-Offline", logLevel)`, so it reaches the app's own logging
-processor. Messages at `INFO` and above carry no rows, filter values, tokens or object paths; a
+processor. Messages at `INFO` and above carry no rows, filter values or object paths; a
 background failure is logged by its type, never its message, which can carry row data. The library
 writes nothing to the console on any platform, which a check in CI enforces.
 
@@ -1043,6 +1099,10 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-04 | A reconnection or a settled session cuts the replay backoff short; while the monitor says offline, the library makes one failed attempt per offline period and grows no wait; a server's `Retry-After` stays a floor. | A reconnection's pass waited out up to a minute of backoff that passes made while offline had built. |
 | 2026-10-04 | A client without Auth, with `autoSync` on, sends what an earlier run left queued when it opens. | No other trigger fires for it: its session is settled from the start. |
 | 2026-10-04 | A write that asked for a rollback and was committed is reported with one warning per client. | Hosted projects ignore `tx=rollback`, so an app's dry run changed data, and nothing said so. |
+| 2026-10-04 | Two top-level filters on one column are refused, before anything is sent or queued. | supabase-kt sends only the first: a widened read is a wrong list, and a widened queued delete is data loss replayed out of sight. Rewriting them into one `and` group was rejected: it changes the request away from supabase-kt's own, and becomes wrong the day supabase-kt sends every value. |
+| 2026-10-04 | On iOS the data lives in `Library/Application Support`; a database found in `Documents` moves there. | `Documents` is the user's own files: with file sharing on, the Files app shows the queue of unsent writes, and the user can delete it. |
+| 2026-10-04 | The testing artifact's published metadata pins the library to its own version. | It calls into the library outside the API records; a mismatch should fail resolution, not a test with a missing method. |
+| 2026-10-04 | The platform file helpers extend `OfflineBucketApi` and return non-null. | On the offline bucket they needed a `!!`, and on supabase-kt's own they compiled and silently returned `null`. |
 
 ### What it deliberately does not do
 
@@ -1050,6 +1110,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | --- | --- | --- |
 | 2026-09-28 | Retry the queue on a timer. | A pass runs only when something asks for one; each makes one attempt at the head. |
 | 2026-09-30 | Join rows across queries. | A row joins a cached list only when it starts matching and another list read with the same select list holds it; a row a list held before is outside its window, not missing. An embedded table's rows come only from the server. |
+| 2026-10-04 | Answer a read never fetched from another cached query's rows, such as one row by its key from a cached list. | A serving path of its own, with its own rules (the same select list, the key compared as the overlay compares it, and a row missing from a list meaning nothing known, since the list may hold a window); it can be added later without a break. Read the row from the list instead. |
 | 2026-09-30 | Evaluate conditions beyond `eq`, `neq`, `in` and `is`. | Each needs Postgres's collation and type rules to be right; unknown is always safe. |
 | 2026-09-30 | Cache `single()`, counts and the other shapes. | Stored over the list with the same filters, they were served in its place. |
 | 2026-09-30 | Resolve conflicts. | The last write wins; a value several writers change belongs in a server-side computation. |
@@ -1070,6 +1131,7 @@ What the library promises, each with the tests that pin it:
 | No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
+| A read, an update or a delete with two top-level filters on one column is refused before anything is sent or queued, under every strategy, online and offline. | `SameColumnFiltersTest`, `UpstreamRepeatedParameterTest` |
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
@@ -1085,8 +1147,11 @@ What it does not do yet, or does only so far:
 
 | Limit | Planned |
 | --- | --- |
-| Rejected entries dropped from a full list are not reported anywhere public. | An additive count; its release is not fixed |
-| Nothing fires when the app comes to the foreground: a resume starts a pass only when Auth refreshes the session on it, and a reconnect starts one through the network trigger. | Open: whether to add a trigger is to be decided before 0.1.0 |
+| Rejected entries dropped from a full list are not reported anywhere public: an app lets its user dismiss or retry each entry, so the list stays short. | Not in 0.1.0; a count is additive later |
+| Nothing fires when the app comes to the foreground: a resume starts a pass only when Auth refreshes the session on it, and a reconnect starts one through the network trigger. An app calls `syncPendingMutations()` as it comes to the foreground. | Not in 0.1.0; a trigger is additive later |
+| Each request is cached on its own: offline, a read never answered online has nothing, even when another cached read of the table holds its rows. Read a detail from the list a screen already reads. | Not in 0.1.0; additive later |
+| The refusal of two top-level filters on one column cannot see a second top-level `or` group, or a text search after a filter on its column, which replace what came before and leave one value. Put those conditions in one group. | No change planned |
+| On a hosted project a dry run commits, unless the project lets a request choose the rollback. | No change planned |
 | An upload does not seed the file cache, so a file uploaded just before going offline is not available offline: the bytes are the caller's, and caching them needs a size and ownership policy. | 0.2.0 |
 | An INSERT whose key the server makes is inserted twice when its response is lost and it replays, and shows twice in a cached list when a read of its table is answered while it is on the wire, until the list is fetched again. Give rows their ids on the device. | No change planned |
 | A replayed UPSERT, UPDATE or DELETE overwrites a change another writer made between the lost response and the replay. | No change planned |
@@ -1113,26 +1178,27 @@ Declarations under `@OfflineInternal` or `@OfflineExperimental` stay out of all 
 ties that list of markers to the sources, so nothing else can be hidden from the records.
 
 A classifier rates every pull request from committed files alone: none, patch, additive or breaking,
-flagged `format` for stored data and `dependency` for an upstream pin or a toolchain floor. A removed
-or changed record line is breaking; a new member of `Offline` or `OfflineBucketApi` is additive,
-because only the library implements them; a new case of `ReadStrategy`, `FlowReadStrategy`,
-`MutationStrategy` or `ResponseTrust` is additive, because the policy lists them as types a caller
-passes in (though `Offline.Config.responseTrust` can be read back), and a new case of any other
-sealed or enum type is breaking. A new supabase-kt minor or major, a new minor or major of Ktor,
-okio, kotlinx.coroutines or kotlinx.serialization (held with supabase-kt, and reaching an app at
-the versions this build names), a new Kotlin tooling release, and a raised minimum Android version
-or compile SDK are flagged as dependencies. On the records
-it errs toward breaking when it cannot tell; a catalog entry it watches that is renamed or removed,
-though, rates nothing, so a reviewer checks those. A pull request needs a changelog line under the
-heading its rating needs (before the first tag, any new line under `Unreleased` does), and the release workflow refuses a version number too small for everything
-since the last tag. See [Compatibility](compatibility.md).
+flagged `format` for stored data and `dependency` for an upstream pin or a toolchain floor. A
+removed or changed record line is breaking; a new member of `Offline` or `OfflineBucketApi` is
+additive, because only the library implements them; a new case of `ReadStrategy`,
+`FlowReadStrategy`, `MutationStrategy` or `ResponseTrust` is additive, because the policy lists them
+as types a caller passes in (though `Offline.Config.responseTrust` can be read back), and a new case
+of any other sealed or enum type is breaking. A new supabase-kt minor or major, a new minor or major
+of Ktor, okio, kotlinx.coroutines or kotlinx.serialization (held with supabase-kt, and reaching an
+app at the versions this build names), a new Kotlin tooling release, and a raised minimum Android
+version or compile SDK are flagged as dependencies. On the records it errs toward breaking when it
+cannot tell; a catalog entry it watches that is renamed or removed, though, rates nothing, so a
+reviewer checks those. A pull request needs a changelog line under the heading its rating needs
+(before the first tag, any new line under `Unreleased` does), and the release workflow refuses a
+version number too small for everything since the last tag. See [Compatibility](compatibility.md).
 
-The stored data is pinned apart from the records. Once a version is tagged, editing an exported
-Room schema is an error that nothing can override; before that it rates `format`, as a new schema
-version does. The schema's identity hash,
-`d82a2435c50b4595368573f8728a370b`, is pinned by a continuity test and by a fixture of the database a
-0.1.0 install holds. Sixteen pinned files (thirteen test classes and three fixtures) hold the persisted names and reserved rows, the stored
-mutation formats and their replay on each SQLite driver, the object-name encoding and file layout of
-the file cache, and where the database and the files live on both platforms; a change to any of them
-rates `format`. What no record shows (a changed default, documented behaviour, the body of an inline
-function, a new opt-in requirement) is a reviewer's to catch.
+The stored data is pinned apart from the records. Once a version is tagged, editing an exported Room
+schema is an error that nothing can override; before that it rates `format`, as a new schema version
+does. The schema's identity hash, `d82a2435c50b4595368573f8728a370b`, is pinned by a continuity test
+and by a fixture of the database a 0.1.0 install holds. Eighteen pinned files (fifteen test classes,
+one of them built only on supabase-kt 3.8, and three fixtures) hold the persisted names and reserved
+rows, the stored mutation formats and their replay on each SQLite driver, the object-name encoding
+and file layout of the file cache, and where the database and the files live on both platforms, the
+earlier iOS place they move from included; a change to any of them rates `format`. What no record
+shows (a changed default, documented behaviour, the body of an inline function, a new opt-in
+requirement) is a reviewer's to catch.

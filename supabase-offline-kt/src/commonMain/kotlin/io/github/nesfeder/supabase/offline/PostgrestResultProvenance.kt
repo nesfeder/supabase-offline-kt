@@ -11,7 +11,8 @@ import kotlin.time.Instant
 /*
  * Where a one-shot read's rows came from, as QuerySnapshot says it for a reactive read. The library
  * stamps it on the result of every read through OfflinePostgrestQueryBuilder.select, in response
- * headers PostgREST never sends; a result from supabase-kt itself carries none.
+ * headers PostgREST never sends; a result from supabase-kt itself carries none, unless a proxy in
+ * front of the server adds headers of those names.
  */
 
 /**
