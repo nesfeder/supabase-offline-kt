@@ -86,8 +86,11 @@ BRITISH_FORMS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
     (r"speciality", ((r"speciality", "specialty"),)),
 )
 
+# A prefix the British form may carry: "unlabelled", "unrecognised".
+PREFIX = r"(?:un|re|mis|pre|non|over|under)?"
+
 PATTERNS: Tuple[Tuple["re.Pattern[str]", Tuple[Tuple[str, str], ...]], ...] = tuple(
-    (re.compile(r"(?<![\w-])" + british + r"(?![\w-])", re.IGNORECASE), rewrites)
+    (re.compile(r"(?<![\w-])" + PREFIX + british + r"(?![\w-])", re.IGNORECASE), rewrites)
     for british, rewrites in BRITISH_FORMS
 )
 
@@ -204,6 +207,7 @@ SELF_TEST_CASES: Tuple[Tuple[str, str, int], ...] = (
     ("analyse", "Analyse the log.", 1),
     ("cancelled", "A cancelled pass sends nothing, and a cancelling caller waits.", 2),
     ("labelled", "The issue is labelled upstream-pin.", 1),
+    ("with a prefix", "An unlabelled argument and an unrecognised key.", 2),
     ("licence", "MIT licence.", 1),
     ("centre", "A centred card.", 1),
     ("catalogue", "The version catalogue.", 1),
@@ -252,6 +256,7 @@ SUGGESTION_CASES: Tuple[Tuple[str, str], ...] = (
     ("whilst", "while"),
     ("towards", "toward"),
     ("grey", "gray"),
+    ("unlabelled", "unlabeled"),
 )
 
 

@@ -267,7 +267,7 @@ followed by the check that the public API names nothing of the framework underne
 scripts/test-swift-package.sh --simulator <simulator UDID> --derived-data <a scratch folder>
 ```
 
-The script copies the framework into `swift/LocalCore/`. To open the package in Xcode afterwards,
+The script copies the framework into `swift/LocalCore/`. To open the package in Xcode afterward,
 start Xcode with the variable set: `SUPABASE_OFFLINE_LOCAL_CORE=1 open -a Xcode swift/Package.swift`.
 CI runs the same script in the iOS job on the self-hosted runner.
 

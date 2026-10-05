@@ -113,10 +113,10 @@ supabase-swift never matches, because Storage's refusals arrive as `OfflineError
 | --- | --- | --- |
 | `SupabaseOfflineClient.storage` | `Offline.storage` | Kotlin's name; supabase-swift's is the same |
 | `OfflineStorage` | `OfflineStorage` | Kotlin's name |
-| `OfflineStorage.from(_:)` | `OfflineStorage.from(bucketId)` | Kotlin's name, supabase-swift's unlabelled argument; the operator `get(bucketId)` (`storage["avatars"]`) has no counterpart, as `from(_:)` for tables has none |
+| `OfflineStorage.from(_:)` | `OfflineStorage.from(bucketId)` | Kotlin's name, supabase-swift's unlabeled argument; the operator `get(bucketId)` (`storage["avatars"]`) has no counterpart, as `from(_:)` for tables has none |
 | `OfflineBucketApi` | `OfflineBucketApi` | Kotlin's name; a struct for an interface, since only the library implements it |
 | `OfflineBucketApi.bucketId` | `BucketApi.bucketId` | Kotlin's name. supabase-kt's `supabaseClient`, `resumable` and `setHeader` are not offered: Swift has no supabase-kt client, and resumable uploads are not offered |
-| `upload(_:data:options:)` | `upload(path, data, options)` | supabase-swift's labels (the path unlabelled); `Data` for `ByteArray`. Empty data is refused with `invalidRequest` and nothing is sent, as Kotlin's `upload(path, ByteArray)` refuses it: a zero-byte object (a folder placeholder) cannot be uploaded, where supabase-swift sends it |
+| `upload(_:data:options:)` | `upload(path, data, options)` | supabase-swift's labels (the path unlabeled); `Data` for `ByteArray`. Empty data is refused with `invalidRequest` and nothing is sent, as Kotlin's `upload(path, ByteArray)` refuses it: a zero-byte object (a folder placeholder) cannot be uploaded, where supabase-swift sends it |
 | `update(_:data:options:)` | `update(path, data, options)` | As `upload`, empty data included |
 | `uploadToSignedURL(_:token:data:options:)` | `uploadToSignedUrl(path, token, data, options)` | supabase-swift's labels; empty data as `upload`. `options` is not optional, as Kotlin's has a default |
 | `createSignedUploadURL(path:upsert:)` | `createSignedUploadUrl(path, upsert)` | supabase-swift's name; Kotlin's `upsert` parameter, because supabase-swift's `options: CreateSignedUploadURLOptions` would be a one-field type with no Kotlin counterpart |
