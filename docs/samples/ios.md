@@ -182,11 +182,10 @@ fetched until the new user's token is the one handed over.
 
 - **The app says it is in demo mode.** `Secrets.xcconfig` is missing, is not beside the example
   file, or lacks one of the two keys. Add them and build again.
-- **Xcode cannot resolve the SupabaseOffline package**: the local binary target at
-  `swift/LocalCore/SupabaseOfflineCore.xcframework` "does not contain a binary artifact". The
-  library is not built yet: run `scripts/prepare-local-swift-package.sh`. If Xcode already has the
-  project open, choose **File > Packages > Resolve Package Versions**, or close the project and
-  open it again.
+- **Xcode cannot resolve the SupabaseOffline package**: a local binary target under
+  `swift/LocalCore` "does not contain a binary artifact". The library is not built yet: run
+  `scripts/prepare-local-swift-package.sh`. If Xcode already has the project open, choose **File >
+  Packages > Resolve Package Versions**, or close the project and open it again.
 - **A build for an Intel simulator fails.** The package's library has arm64 simulator code only:
   build on Apple silicon, for a simulator or with `ARCHS=arm64`.
 - **It cannot sign in.** Check that anonymous sign-ins are on (Authentication, Sign In /
