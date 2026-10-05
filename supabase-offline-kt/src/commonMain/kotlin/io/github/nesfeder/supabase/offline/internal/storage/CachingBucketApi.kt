@@ -26,6 +26,8 @@ import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailu
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
+import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
+import io.github.nesfeder.supabase.offline.internal.postgrest.settledIdentityOf
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.utils.io.ByteChannel
@@ -64,6 +66,8 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * @param backgroundScope the client's own scope, which closing the client cancels.
  * @param networkAccess the client's network switch: while it is off nothing is sent, a download is
  *   answered from the cache, and every other call throws `NetworkDisabledException`.
+ * @param requestSession the session a request sent now goes out under. While it is unsettled the
+ *   request carries the anon key, so Storage's "not found" may only mean the key cannot read it.
  */
 @OptIn(OfflineInternal::class)
 internal class CachingBucketApi(
@@ -76,6 +80,7 @@ internal class CachingBucketApi(
     /** Where a streamed download writes its file. */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val networkAccess: NetworkAccess = NetworkAccess(),
+    private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
 ) : OfflineBucketApi, BucketApi by delegate {
 
     override fun setHeader(name: String, value: String): OfflineBucketApi =
@@ -88,6 +93,7 @@ internal class CachingBucketApi(
             renderImagePath,
             ioDispatcher,
             networkAccess,
+            requestSession,
         )
 
     override val resumable: ResumableClient by lazy {
@@ -124,6 +130,7 @@ internal class CachingBucketApi(
             return it
         }
         val generation = cache.currentGeneration()
+        val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         try {
             val download =
@@ -137,7 +144,11 @@ internal class CachingBucketApi(
                     }
                 } catch (failure: Exception) {
                     currentCoroutineContext().ensureActive()
-                    if (failure.indicatesServerObjectMissing())
+                    if (
+                        failure.indicatesServerObjectMissing() &&
+                            !sentUnsettled &&
+                            !isSessionUnsettled()
+                    )
                         cache.invalidateObject(bucketId, path)
                     throw failure
                 }
@@ -227,12 +238,15 @@ internal class CachingBucketApi(
         }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
         val generation = cache.currentGeneration()
+        val sentUnsettled = isSessionUnsettled()
         val bytes =
             try {
                 fetch(probe::wrap)
             } catch (failure: Exception) {
                 currentCoroutineContext().ensureActive()
-                return recover(path, probe, failure) { entry -> cache.readBytes(entry) }
+                return recover(path, probe, failure, sentUnsettled) { entry ->
+                    cache.readBytes(entry)
+                }
             }
         probe.entryToStore(cache, bucketId, path)?.let { entry ->
             cache.write(entry, bytes, generation)
@@ -266,6 +280,7 @@ internal class CachingBucketApi(
         }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
         val generation = cache.currentGeneration()
+        val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         try {
             val download =
@@ -278,7 +293,7 @@ internal class CachingBucketApi(
                     }
                 } catch (failure: Exception) {
                     currentCoroutineContext().ensureActive()
-                    recover(path, probe, failure) { entry ->
+                    recover(path, probe, failure, sentUnsettled) { entry ->
                         if (cache.copyTo(entry, channel)) Unit else null
                     }
                     channel.flushAndClose()
@@ -323,17 +338,19 @@ internal class CachingBucketApi(
 
     /**
      * What a failed download returns instead of its failure. When the server says the object is
-     * gone, nothing: its copies are dropped and the failure rethrown. Otherwise the cached copy of
-     * the variant asked for, or of the original when the request was never built. Offline, which is
-     * expected, is logged at INFO; any other failure at WARNING.
+     * gone, nothing: its copies are dropped and the failure rethrown, unless the session was
+     * unsettled ([sentUnsettled], or now), when the anon key may only lack access. Otherwise the
+     * cached copy of the variant asked for, or of the original when the request was never built.
+     * Offline, which is expected, is logged at INFO; any other failure at WARNING.
      */
     private suspend fun <T : Any> recover(
         path: String,
         probe: DownloadRequestProbe,
         failure: Exception,
+        sentUnsettled: Boolean,
         readCached: suspend (FileCacheEntry) -> T?,
     ): T {
-        if (failure.indicatesServerObjectMissing()) {
+        if (failure.indicatesServerObjectMissing() && !sentUnsettled && !isSessionUnsettled()) {
             cache.invalidateObject(bucketId, path)
             engineLogger.warning {
                 "Storage object in $bucketId no longer exists; dropped its cached copy"
@@ -643,6 +660,9 @@ internal class CachingBucketApi(
         isCacheableBucketId(bucketId) &&
             isCacheableObjectPath(path) &&
             isRequestedByItsOwnName(path)
+
+    /** Whether a request sent now goes out on the anon key because the session has not settled. */
+    private fun isSessionUnsettled(): Boolean = settledIdentityOf(requestSession()) == null
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
     private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T =

@@ -409,3 +409,7 @@ release.
   happened, is reported as it happened rather than as the failed read.
 - A sync that `clearLocalData()` cut short reports the writes it had sent before.
 - While a stored session restores, reads and writes read it once between them, not once each.
+- A Storage "not found" answered while the session restores, or after its refresh failed, keeps
+  the user's cached copy and is answered from it. The download went out on the anon key, and
+  Storage answers an object that key may not read as "not found", so the copy was dropped and an
+  app opening a private file at launch lost it until the next download.

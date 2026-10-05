@@ -442,7 +442,9 @@ seconds, when the cache is dropped for a new owner, and when local data is clear
 
 **What is cached, and what is not.** Downloads (`downloadAuthenticated` and `downloadPublic`, to
 bytes or to a channel) go to the network first. A success is written to the cache; a "not found"
-from the server drops the copy and is rethrown; any other failure is answered from the cached copy
+from the server drops the copy and is rethrown, unless the session had not settled (restoring, or
+after a failed refresh), when the request went out on the anon key and the answer may only mean
+that key cannot read the object; any other failure, and that one, is answered from the cached copy
 when there is one. An error answer is a failure for a channel download too: supabase-kt's own
 channel download copies whatever the server answers into the channel, so the offline bucket checks
 the status first and throws what the bytes download throws, and nothing of the answer is cached or

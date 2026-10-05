@@ -657,6 +657,7 @@ internal class OfflineClient(
             renderImagePath = renderImagePath,
             ioDispatcher = ioDispatcher,
             networkAccess = networkAccess,
+            requestSession = ::requestSession,
         )
     }
 
