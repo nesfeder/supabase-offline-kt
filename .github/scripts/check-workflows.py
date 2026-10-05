@@ -61,7 +61,10 @@ It fails when:
        builds nothing.
      - The documentation site: each release workflow has a job that calls docs-publish.yml at the
        released tag, after finish, holding exactly the Pages and OIDC permissions and
-       `contents: read`, passing no secret, and skipped on a dry run.
+       `contents: read`, passing no secret, and skipped on a dry run. The Swift API reference it
+       places under /swift/ is built (build-swift-docs.sh) and uploaded (artifact swift-reference)
+       by release.yml's framework job alone, which holds no secret and no environment; release.yml's
+       docs job names that artifact, and the resume's, whose run has none, names none.
      - What they run: only the Central steps run a Maven Central publish task, and only
        release.yml releases, waiting until Central says PUBLISHED; the snapshot job's publish step
        runs only for a -SNAPSHOT version; no job of either release workflow, nor the snapshot job,
@@ -163,8 +166,12 @@ CHAINED = re.compile(r"[;&|`\n]|\$\(")
 FRAMEWORK_JOB = ("release.yml", "framework")
 FRAMEWORK_STEPS = ("python3 scripts/swift-release.py build", "python3 scripts/check-bridge-header.py",
                    "python3 scripts/swift-release.py zip", "bash scripts/test-swift-package.sh",
-                   "python3 scripts/swift-release.py read-manifest")
+                   "python3 scripts/swift-release.py read-manifest", "bash scripts/build-swift-docs.sh")
 BUILDS_FRAMEWORK = re.compile(r"swift-release\.py (build|zip)\b|test-swift-package|xcodebuild")
+# The Swift API reference: built from the framework the framework job tested, by that job alone,
+# and handed to the documentation site as this artifact of the run.
+SWIFT_REFERENCE = "swift-reference"
+BUILDS_REFERENCE = re.compile(r"build-swift-docs\.sh|\bdocc\b")
 HOSTED_GUARD_IF = "runner.environment != 'github-hosted'"
 # This repository's tag and GitHub Release, which come after the Swift package's tag.
 TAGS_THIS_REPOSITORY = r"release\.py (push-tag|publish-github-release)"
@@ -526,6 +533,13 @@ def release_job_problems(name: str, job_id: str, job: dict) -> list[str]:
                             f" ({', '.join(action.rstrip('@') for action in RELEASE_ACTIONS)})")
         if name in RELEASE_WORKFLOWS and PUSH_TO_MAIN.search(run):
             problems.append(f"{where}: a step pushes to main; a release pushes tags and its own branch only")
+        if name in RELEASE_WORKFLOWS and key != FRAMEWORK_JOB and BUILDS_REFERENCE.search(run):
+            problems.append(f"{where} builds the Swift API reference, which the framework job alone does,"
+                            " holding no secret and no environment")
+        if (name in RELEASE_WORKFLOWS and key != FRAMEWORK_JOB and uses.startswith("actions/upload-artifact@")
+                and with_.get("name") == SWIFT_REFERENCE):
+            problems.append(f"{where} uploads {SWIFT_REFERENCE}, which the site publishes; only the"
+                            " framework job may")
         if (name == "release.yml" and job_id != "verify" and uses.startswith("actions/checkout@")
                 and "ref" in with_):
             problems.append(f"{where} checks out the ref {with_['ref']!r}, not the run's own commit")
@@ -672,6 +686,11 @@ def docs_problems(name: str, where: str, job: dict, needs: list) -> list[str]:
         problems.append(f"{where} needs {needs}, not finish alone")
     if (job.get("with") or {}).get("ref") != DOCS_REF:
         problems.append(f"{where} builds {(job.get('with') or {}).get('ref')!r}, not the released tag {DOCS_REF!r}")
+    reference = (job.get("with") or {}).get(SWIFT_REFERENCE)
+    expected = SWIFT_REFERENCE if name == "release.yml" else None
+    if reference != expected:
+        problems.append(f"{where} places {reference!r} under /swift/, not {expected!r}: the framework job's"
+                        " artifact in a release, and none in a resume, whose run has no framework job")
     if " ".join(str(job.get("if", "")).split()) != DOCS_IF[name]:
         problems.append(f"{where} runs if {job.get('if')!r}, not {DOCS_IF[name]!r}")
     return problems
@@ -1003,9 +1022,12 @@ jobs:
       - run: python3 scripts/check-bridge-header.py
       - run: python3 scripts/swift-release.py zip --framework f --out z
       - run: bash scripts/test-swift-package.sh --framework f
+      - run: bash scripts/build-swift-docs.sh --derived-data d --out r
       - run: |
           python3 scripts/swift-release.py publish --dry-run --out t
           python3 scripts/swift-release.py read-manifest --tree t
+      - uses: actions/upload-artifact@0123456789abcdef0123456789abcdef01234567
+        with: {{name: swift-reference, path: r}}
   draft:
     needs: framework
     if: ${{{{ !inputs.dry_run }}}}
@@ -1054,7 +1076,7 @@ jobs:
       {DOCS_IF["release.yml"]}
     permissions: {{contents: read, pages: write, id-token: write}}
     uses: {DOCS_WORKFLOW}
-    with: {{ref: '{DOCS_REF}'}}
+    with: {{ref: '{DOCS_REF}', swift-reference: swift-reference}}
 """
 COMPLIANT_RESUME = f"""\
 on:
@@ -1640,8 +1662,44 @@ CASES: list[tuple[str, str, str | None, str]] = [
                               "    uses: $/.github/workflows/docs-publish.yml\n    secrets: inherit\n"),
      "passes secrets to the documentation site's workflow"),
     ("the documentation built from main, not the tag", "release.yml",
-     COMPLIANT_RELEASE.replace(f"with: {{ref: '{DOCS_REF}'}}", "with: {ref: main}"),
+     COMPLIANT_RELEASE.replace(f"ref: '{DOCS_REF}'", "ref: main"),
      "not the released tag"),
+    # The Swift API reference: built and uploaded by the framework job alone, placed by the docs job.
+    ("the resume's documentation job holding contents: write", "release-resume.yml",
+     COMPLIANT_RESUME.replace("permissions: {contents: read, pages: write, id-token: write}",
+                              "permissions: {contents: write, pages: write, id-token: write}"),
+     "job docs holds"),
+    ("the Swift reference built in the job that holds the release environment", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/swift-release.py publish --dry-run --out t\n      - if: inputs.dry_run",
+                               "      - run: python3 scripts/swift-release.py publish --dry-run --out t\n"
+                               "      - run: bash scripts/build-swift-docs.sh --derived-data d --out r\n"
+                               "      - if: inputs.dry_run"),
+     "job publish builds the Swift API reference"),
+    ("the Swift reference built by hand with docc in the job that holds the release environment", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/swift-release.py publish --dry-run --out t\n      - if: inputs.dry_run",
+                               "      - run: python3 scripts/swift-release.py publish --dry-run --out t\n"
+                               "      - run: xcrun docc process-archive transform-for-static-hosting a --output-path r\n"
+                               "      - if: inputs.dry_run"),
+     "job publish builds the Swift API reference"),
+    ("the Swift reference uploaded by the job that holds the release environment", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/swift-release.py publish --dry-run --out t\n      - if: inputs.dry_run",
+                               "      - run: python3 scripts/swift-release.py publish --dry-run --out t\n"
+                               "      - uses: actions/upload-artifact@0123456789abcdef0123456789abcdef01234567\n"
+                               "        with: {name: swift-reference, path: r}\n"
+                               "      - if: inputs.dry_run"),
+     "job publish uploads swift-reference"),
+    ("the framework job skipping the Swift reference", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: bash scripts/build-swift-docs.sh --derived-data d --out r\n", ""),
+     "does not run `bash scripts/build-swift-docs.sh`"),
+    ("the release's documentation without the Swift reference", "release.yml",
+     COMPLIANT_RELEASE.replace(", swift-reference: swift-reference}", "}"),
+     "places None under /swift/"),
+    ("the release's documentation placing another artifact", "release.yml",
+     COMPLIANT_RELEASE.replace("swift-reference: swift-reference}", "swift-reference: swift-package-tree}"),
+     "places 'swift-package-tree' under /swift/"),
+    ("the resume's documentation naming an artifact its run has not", "release-resume.yml",
+     COMPLIANT_RESUME.replace(f"with: {{ref: '{DOCS_REF}'}}", f"with: {{ref: '{DOCS_REF}', swift-reference: swift-reference}}"),
+     "places 'swift-reference' under /swift/"),
     ("the documentation published before finish", "release-resume.yml",
      COMPLIANT_RESUME.replace("  docs:\n    needs: finish\n", "  docs:\n    needs: []\n"),
      "not finish alone"),

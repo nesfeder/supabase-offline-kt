@@ -120,7 +120,9 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/release.py push-post-release-branch --version "$VERSION"
 
-  # As in release.yml: the documentation site at the tag, on GitHub Pages.
+  # As in release.yml: the documentation site at the tag, on GitHub Pages, but without the Swift API
+  # reference: this run has no framework job to build it, so /swift/ is left out and the run's
+  # summary says so.
   docs:
     name: Publish the documentation site
     needs: finish

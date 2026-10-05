@@ -11,7 +11,8 @@ name: Release
 #   framework  macOS, GitHub-hosted, no secret and no environment: the Swift package's framework,
 #              built once from this commit with its privacy manifests, its header and
 #              required-reason checks, the Swift package's tests against it on a simulator, the
-#              public-API check, then zipped once; the zip is this run's artifact
+#              public-API check, then zipped once; the zip is this run's artifact, and so is the
+#              Swift API reference (DocC) built against that framework, for the docs job
 #   draft      real runs only, `contents: write` and nothing else: a draft GitHub Release holding
 #              that zip, before the approval. A draft is not public and creates no tag; it keeps
 #              the zip where Release resume can take it, so nothing is ever rebuilt
@@ -23,12 +24,13 @@ name: Release
 #   finish     real runs only: this repository's tag, the draft GitHub Release published, and the
 #              branch that starts the next version, with the link that opens its pull request in
 #              the summary (Actions may not open pull requests here)
-#   docs       real runs only: the documentation site, built at the tag, on GitHub Pages
+#   docs       real runs only: the documentation site, built at the tag, with the framework job's
+#              Swift API reference under /swift/, on GitHub Pages
 #
 # Every job works on the run's own commit, github.sha. Nothing verify produces reaches a later job:
-# no output, no artifact, no cache. The framework job runs the build too, and the one thing it
-# hands on is the zip, as data: the jobs after it hash it, upload it and name its checksum, and
-# never open or run it.
+# no output, no artifact, no cache. The framework job runs the build too, and hands on two things,
+# as data: the zip, which the jobs after it hash, upload and name the checksum of, and never open
+# or run; and the Swift API reference, static pages the docs job places on the site, never run.
 #
 # Order: Maven Central goes first because it is the step most likely to fail and the one that
 # cannot be undone. Until it says PUBLISHED nothing is public; then the Swift package's tag; then
@@ -213,6 +215,15 @@ jobs:
           --simulator "$CI_SIMULATOR_UDID"
           --derived-data "$RUNNER_TEMP/swift-derived-data"
 
+      # The Swift API reference, from this commit's sources and the framework just tested (the
+      # step above left it in swift/LocalCore), with every DocC warning an error and the check that
+      # it names nothing of the framework; static pages for the site's /swift/.
+      - name: Build the Swift API reference
+        run: >-
+          bash scripts/build-swift-docs.sh
+          --derived-data "$RUNNER_TEMP/swift-docs-derived-data"
+          --out "$RUNNER_TEMP/swift-reference"
+
       # The tree the release would publish, from this commit and this zip, checked, and its
       # manifest read by SwiftPM itself: the Linux jobs that publish it cannot run Swift.
       - name: Stage the Swift package and read its manifest
@@ -241,6 +252,14 @@ jobs:
         with:
           name: swift-framework
           path: ${{ runner.temp }}/swift-release/SupabaseOfflineCore.xcframework.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      # The docs job's docs-publish.yml places it under /swift/, beside the MkDocs pages.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: swift-reference
+          path: ${{ runner.temp }}/swift-reference
           if-no-files-found: error
           retention-days: 90
 
@@ -462,8 +481,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/release.py push-post-release-branch --version "$VERSION"
 
-  # The documentation site at the tag, published to GitHub Pages by docs-publish.yml. It holds no
-  # release secret and cannot push; the Pages token and the OIDC token are the called workflow's.
+  # The documentation site at the tag, published to GitHub Pages by docs-publish.yml, with the
+  # framework job's Swift API reference under /swift/ (an artifact of this run, which the called
+  # workflow downloads). It holds no release secret and cannot push; the Pages token and the OIDC
+  # token are the called workflow's.
   docs:
     name: Publish the documentation site
     needs: finish
@@ -477,3 +498,4 @@ jobs:
     uses: $/.github/workflows/docs-publish.yml
     with:
       ref: refs/tags/${{ needs.finish.outputs.version }}
+      swift-reference: swift-reference
