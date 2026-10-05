@@ -172,19 +172,17 @@ jobs:
               .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/* \
                 | .github/codecov.yml)
                 kotlin=true; docs=true; workflows=true ;;
-              # The Swift documentation's compiled listings: the iOS job compiles them, the docs job
-              # checks the pages' copies of them (a catalog's Markdown is swift/*.md, below).
-              swift/Tests/SupabaseOfflineTests/DocumentationListings/*)
+              # The Swift documentation: the iOS job builds the catalogs and compiles the listings,
+              # the docs job checks the pages' copies of the listings.
+              swift/Sources/*.docc/* | swift/Tests/SupabaseOfflineTests/DocumentationListings/*)
                 kotlin=true; docs=true ;;
               .github/workflows/docs-check.yml | .github/workflows/docs-requirements.txt)
                 docs=true; workflows=true ;;
               .github/workflows/* | .github/dependabot.yml)
                 workflows=true ;;
               swift/*.md)
-                # The Swift package's README is published with it, and its PARITY.md sits beside
-                # it: the Kotlin jobs check the published tree, the docs job's spelling check reads
-                # every Markdown file.
-                kotlin=true; docs=true ;;
+                # The Swift package's README is published with it; its PARITY.md sits beside it.
+                kotlin=true ;;
               docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | samples/supabase/*)
                 docs=true ;;
               .github/* | *.md | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
