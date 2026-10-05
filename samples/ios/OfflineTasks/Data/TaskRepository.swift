@@ -289,24 +289,38 @@ final class TaskRepository {
     ///    none lands after the deletes.
     /// 2. Their photo files and rows are deleted from the server, with their token: an anonymous
     ///    user cannot sign back in to reach them.
-    /// 3. The app signs out, so the client's token closure returns `nil`.
-    /// 4. Local data is cleared. Only now, with no user's token live: a live read still open
-    ///    refetches after a clear, and with this user's token it would cache their rows again for
-    ///    the next user to see.
-    /// 5. The app signs in as a new user.
+    /// 3. The client's network is turned off, until the new user is signed in.
+    /// 4. The app signs out, so the client's token closure returns `nil`.
+    /// 5. Local data is cleared.
+    /// 6. The app signs in as a new user, and the network is turned back on: open live reads then
+    ///    fetch again, with the new user's token.
     ///
-    /// - Throws: ``SampleFailure/needsNetwork`` while offline, when nothing is discarded, deleted or
-    ///   cleared. A failed delete is thrown with the same user still signed in, so it can be tried
-    ///   again; their unsent changes are gone by then.
+    /// The network is off from before the sign-out until the new user is signed in, because a live
+    /// read fetches again right after a clear with whatever token the closure returns then: with
+    /// this user's, their rows would be back for the next user to see. And no queued write can go
+    /// out between the sign-out and the clear.
+    ///
+    /// - Throws: ``SampleFailure/needsNetwork`` while offline, Simulate offline included, when
+    ///   nothing is discarded, deleted or cleared. A failed delete is thrown with the same user still
+    ///   signed in, so it can be tried again; their unsent changes are gone by then. A failed
+    ///   sign-in is thrown with nobody signed in, nothing of anyone's on the device and the network
+    ///   back on, so the app signs in again when it can.
     func startOver() async throws {
         guard canReachNetwork else { throw SampleFailure.needsNetwork }
         for mutation in try await client.pendingMutations().first() {
             try await client.discardPendingMutation(id: mutation.id)
         }
         if let userID = session.userID { try await deleteEverything(of: userID) }
+        try await client.disableNetwork()
         await session.signOut()
         try await client.clearLocalData()
-        try await session.signIn()
+        do {
+            try await session.signIn()
+        } catch {
+            try await client.enableNetwork()
+            throw error
+        }
+        try await client.enableNetwork()
     }
 
     // MARK: - Helpers

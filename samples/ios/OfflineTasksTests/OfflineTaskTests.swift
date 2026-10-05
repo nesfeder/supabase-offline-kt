@@ -170,8 +170,10 @@ struct OfflineTaskTests {
         test.startReads()
         try await eventually("the new user's empty list shows") { test.app.tasks.tasks == [] }
 
-        // Then: nothing of the first user's waited in the queue once the deletes were done
+        // Then: nothing of the first user's waited in the queue once the deletes were done, and
+        // the network the app turned off for the switch is back on
         #expect(queueAtSignOut.value?.isEmpty == true)
+        try await eventually("the network is back on") { test.app.syncStatus.network != .disabled }
         // And the server lost the first user's rows, and the queued write was never sent again
         let requests = await test.server.requests
         let after = requests[requestsBefore...]
@@ -184,6 +186,30 @@ struct OfflineTaskTests {
         #expect(test.app.syncStatus.rejectedMutationCount == 0)
         #expect(test.app.sync.rejected.isEmpty)
         #expect(try await test.repository.client.pendingMutations().first().isEmpty)
+        try await test.stop()
+    }
+
+    @Test("With Simulate offline on, Start over refuses and changes nothing")
+    func startOverWhileSimulatingOffline() async throws {
+        // Given: a task on the server and Simulate offline on
+        let test = TestApp()
+        try await test.start()
+        let user = try #require(test.session.userID)
+        test.app.tasks.addTask(title: "Walk the dog", notes: "")
+        try await eventually("it reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+        try await test.setOffline(true)
+
+        // When
+        test.app.sync.startOver()
+
+        // Then: refused for want of the network, with the user, the task and the switch as they were
+        try await eventually("the app says why") { test.app.failure != nil }
+        #expect(test.app.failure?.message == "That needs the network, and you’re offline.")
+        try await eventually("Start over is done") { !test.app.sync.isStartingOver }
+        #expect(test.session.userID == user)
+        #expect(test.app.syncStatus.network == .disabled)
+        #expect(test.app.tasks.tasks?.map(\.title) == ["Walk the dog"])
+        #expect(await test.server.rows(of: Tables.tasks).count == 1)
         try await test.stop()
     }
 

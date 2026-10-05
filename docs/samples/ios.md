@@ -147,13 +147,16 @@ still show.
 
 **Start over**, under **Local data**, starts again as a new anonymous user with an empty list. In
 this order, it discards the changes not synced yet, deletes this user's photos, photo rows and
-tasks from your project, signs out, clears the device, and signs in as the new user. It needs the
-network: an anonymous user cannot sign back in to reach what it left behind, so offline it refuses
-and deletes nothing.
+tasks from your project, turns the client's network off, signs out, clears the device, signs in as
+the new user, and turns the network back on. It needs the network: an anonymous user cannot sign
+back in to reach what it left behind, so offline, Simulate offline included, it refuses and changes
+nothing.
 
-The device is cleared only once nobody is signed in. A list still open on screen fetches its rows
-again as soon as the device is cleared, with whatever token the app hands the client at that
-moment; with the old user's, their rows would be back on the device for the next user to read.
+The network is off from before the sign-out until the new user is signed in, so the Sync tab shows
+**Offline (simulated)** for that moment. A list still open on screen fetches its rows again as soon
+as the device is cleared, with whatever token the app hands the client then; with the old user's,
+their rows would be back on the device for the next user to read. With the network off nothing is
+fetched until the new user's token is the one handed over.
 
 ## How the app uses the package
 
@@ -166,9 +169,10 @@ moment; with the old user's, their rows would be back on the device for the next
 - **The user comes from the token alone.** supabase-swift's Auth signs in anonymously
   (`Data/AnonymousSession.swift`), and the client receives its access token through
   `Config.accessToken`. The client cannot tell one user's cached rows and queued writes from
-  another's, so Start over signs out first, then clears local data while the token closure returns
-  `nil`, and only then signs in the new user. Model tests pin that nothing of the first user is sent
-  or shown afterward, with a list left open throughout.
+  another's, so Start over turns the network off, signs out, clears local data, signs in the new
+  user, and only then turns the network back on, as the Swift guide's "When the user changes" does.
+  Model tests pin that nothing of the first user is sent or shown afterward, with a list left open
+  throughout.
 - **Ids are made on the device, in lower case** (`uuidString.lowercased()`): Postgres writes a UUID in
   lower case, and the schema compares photo paths as text. Object names hold no `%`, `?` or `#`.
 - **A private photo is downloaded only once a user is signed in.** Without the user's token Storage
