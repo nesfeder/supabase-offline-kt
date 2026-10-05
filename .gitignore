@@ -25,6 +25,8 @@ github.properties
 /swift/LocalCore/
 /swift/.build/
 /swift/.swiftpm/
+/swift/MainActorConsumer/.build/
+/swift/MainActorConsumer/.swiftpm/
 
 # Documentation site: local virtualenv and build output
 /.venv-docs/
