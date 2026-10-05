@@ -21,7 +21,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `init(supabaseURL:supabaseKey:config:)` | `createSupabaseClient(supabaseUrl, supabaseKey) { install(Offline) { … } }` | An initializer for the plugin install; `URL` for the URL string |
 | `close()` | `close()` | Same |
 | `SupabaseOfflineClient.Config` | `Offline.Config` | Same |
-| `Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:autoSync:primaryKeys:logLevel:)` | the `install(Offline) { … }` block | A memberwise initializer with defaults for a configuration block |
+| `Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:logLevel:)` | the `install(Offline) { … }` block | A memberwise initializer with defaults for a configuration block |
 | `Config.defaultSchema` | supabase-kt `Postgrest.Config.defaultSchema` | Same. Swift has no PostgREST plugin, so the setting lives here |
 | `Config.accessToken` | supabase-kt `SupabaseClientBuilder.accessToken` | Same; an `async` closure for a `suspend` lambda |
 | `Config.dataDirectory` | `Offline.Config.dataDirectory` | Same; `URL?` for a path string. The default differs by platform convention: Application Support/SupabaseOffline here |
@@ -30,6 +30,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `SupabaseOfflineClient.CacheSize` | `Long` with `Offline.CACHE_SIZE_UNLIMITED` | An enum is Swift's form of a number with a sentinel |
 | `CacheSize.bytes(_:)` | the `Long` value | As above |
 | `CacheSize.unlimited` | `Offline.CACHE_SIZE_UNLIMITED` | A case for the `-1` sentinel |
+| `Config.networkAvailability` | `Offline.Config.networkAvailability` | Same name; a closure that makes an `AsyncStream<Bool>`, called once when each client opens, for a `Flow<Boolean>?`: a Swift stream has one consumer and is finished with its client, where a cold `Flow` is collected afresh by each client. A Swift stream that ends counts as reachable and the status reads `.online`, where a Kotlin flow that ends stops being watched and the status reads `UNKNOWN` (which also counts as reachable): the framework cannot yet be told a signal has ended. `nil` is the system's path monitor in both |
 | `Config.autoSync` | `Offline.Config.autoSync` | Same |
 | `Config.primaryKeys` | `Offline.Config.primaryKeys`, `primaryKey(table, vararg columns)` | Same; a dictionary literal for the DSL helper |
 | `Config.logLevel` | supabase-kt `logLevel` (each plugin's `MainConfig.logLevel`) | Same. Kotlin's `null` means the client's own level; Swift has no such client, so it defaults to `.warning` |
@@ -215,3 +216,53 @@ chain written for either upstream compiles against its own platform unchanged. T
 | `MutationOutcome` (`applied(result:)`, `queued(pendingMutation:)`, `isQueued`, `result`) | `MutationOutcome` (`Applied(result)`, `Queued(pendingMutation)`, `isQueued`, `resultOrNull()`) | `result` is an optional property, as Swift writes `resultOrNull()` |
 | `PendingMutation` (`id`, `table`, `operation`, `createdAt`, `rowKeys`, `body`) | `PendingMutation` (the same fields) | `Date` for `createdAt`; `OfflineJSON` for the row keys and the body |
 | `MutationOperation` (`insert`, `upsert`, `update`, `delete`) | `MutationOperation` (`INSERT`, `UPSERT`, `UPDATE`, `DELETE`) | Lower-camel cases |
+
+## The mutation queue, sync, status and lifecycle
+
+| Swift | Kotlin | Same / reason |
+| --- | --- | --- |
+| `pendingMutations(table:)` | `Offline.pendingMutations(table)` | Same; it returns a `PendingMutationSequence` where Kotlin returns a `Flow<List<PendingMutation>>` |
+| `PendingMutationSequence`, `PendingMutationSequence.Iterator` | `Flow<List<PendingMutation>>` | An `AsyncSequence` of `[PendingMutation]` for the `Flow` |
+| `PendingMutationSequence.first()` | `Flow.first()` | Same: the list as it is now, read once (without subscribing) |
+| `pendingMutationCount(table:)` | `Offline.pendingMutationCount(table)` | Same; `async throws` for `suspend` |
+| `pendingMutationCountSequence(table:)` | `Offline.pendingMutationCountFlow(table)` | `Sequence` for `Flow` in the name, as `selectAsSequence` is to `selectAsFlow` |
+| `PendingMutationCountSequence`, `PendingMutationCountSequence.Iterator` | `Flow<Int>` | An `AsyncSequence` of `Int` for the `Flow` |
+| `discardPendingMutation(id:)` | `Offline.discardPendingMutation(id)` | Same; the label names the argument, as Swift writes it |
+| `rejectedMutations()` | `Offline.rejectedMutations()` | Same; it returns a `RejectedMutationSequence` where Kotlin returns a `Flow<List<RejectedMutation>>` |
+| `RejectedMutationSequence`, `RejectedMutationSequence.Iterator` | `Flow<List<RejectedMutation>>` | An `AsyncSequence` of `[RejectedMutation]` for the `Flow` |
+| `RejectedMutationSequence.first()` | `Flow.first()` | Same, as for the pending list |
+| `dismissRejectedMutation(id:)`, `retryRejectedMutation(id:)` | `Offline.dismissRejectedMutation(id)`, `Offline.retryRejectedMutation(id)` | Same. A retry Kotlin refuses with `IllegalArgumentException` throws `OfflineError.invalidRequest` |
+| `RejectedMutation` (`id`, `table`, `operation`, `createdAt`, `rowKeys`, `body`, `serverError`, `message`, `rejectedAt`, `isRetryable`) | `RejectedMutation` (the same fields) | Same; `Date` for the times, `OfflineJSON` for the row keys and the body, `OfflineError.ServerError` for `ServerError` |
+| `syncPendingMutations(table:)` | `Offline.syncPendingMutations(table)` | Same; `@discardableResult`, as the report is often not read |
+| `SyncReport` (`syncedCount`, `rejected`, `remainingCount`, `alreadyOnServerCount`, `heldBehindOtherTablesCount`) | `SyncReport` (the same fields) | Same |
+| `syncStatus` | `Offline.syncStatus` | Same name; a `SyncStatusSequence` for the `StateFlow<SyncStatus>` |
+| `SyncStatusSequence`, `SyncStatusSequence.Iterator` | `StateFlow<SyncStatus>` | An `AsyncSequence` of `SyncStatus` for the `StateFlow`; iterating one begun after `close()` throws `clientClosed`, where Kotlin's flow keeps its last value |
+| `SyncStatusSequence.value` | `StateFlow.value` | Same: the status now, without waiting. Before the client has opened its database (it opens in the background) it is the status of a client that has done nothing yet |
+| `SyncStatus` (`network`, `pendingMutationCount`, `rejectedMutationCount`, `isSyncing`, `lastSyncedAt`, `lastSyncError`) | `SyncStatus` (the same fields) | Same; `Date?` for `lastSyncedAt`, and `OfflineError?` (code `syncFailed`, with the server's status and code in `serverError`) for the `SyncFailedException` in `lastSyncError` |
+| `SyncStatus ==` | the data class's `equals` | Two sync errors are equal when their code, message, server error and network flag are, as `OfflineError` is not `Equatable` |
+| `NetworkStatus` (`unknown`, `online`, `offline`, `disabled`) | `NetworkStatus` (`UNKNOWN`, `ONLINE`, `OFFLINE`, `DISABLED`) | Lower-camel cases |
+| `disableNetwork()`, `enableNetwork()` | `Offline.disableNetwork()`, `Offline.enableNetwork()` | Same; `async throws` for `suspend` |
+| `clearLocalData()` | `Offline.clearLocalData()` | Same |
+| `applyServerRecord(table:record:primaryKeys:schema:)` (an `Encodable`, or `[String: OfflineJSON]`) | `Offline.applyServerRecord(table, record, primaryKeys, schema)` (a `JsonObject`, or the reified `T`) | Same parameters in the same order; `Encodable` for the reified form, a dictionary of `OfflineJSON` for `JsonObject`. A record that is not a JSON object throws `invalidRequest` where Kotlin throws `IllegalArgumentException` |
+| `applyServerDelete(table:oldRecord:primaryKeys:schema:)` (an `Encodable`, or `[String: OfflineJSON]`) | `Offline.applyServerDelete(table, oldRecord, primaryKeys, schema)` | As `applyServerRecord`; Kotlin takes a `JsonObject` only |
+
+## Test values
+
+The testing product's factories, for an app's own test doubles: free functions with every field as
+a parameter and defaults for the rest, as the Kotlin testing artifact's are.
+
+| Swift | Kotlin | Same / reason |
+| --- | --- | --- |
+| `pendingMutation(id:table:operation:createdAt:rowKeys:body:)` | `pendingMutation(id, table, operation, createdAt, rowKeys, body)` | Same |
+| `rejectedMutation(id:table:operation:createdAt:rowKeys:body:serverError:message:rejectedAt:isRetryable:)` | `rejectedMutation(…)`, the same parameters | Same |
+| `serverError(status:code:message:details:hint:)` | `serverError(status, code, message, details, hint)` | Same; it builds an `OfflineError.ServerError` |
+| `syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:)` | `syncReport(…)`, the same parameters | Same |
+| `syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:)` | `syncStatus(…)`, the same parameters | Same; `lastSyncError` is an `OfflineError` |
+| `querySnapshot(result:isFromCache:fetchedAt:hasPendingMutations:refresh:)` | `querySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)` | Same; generic over the decoded rows |
+| `offlineResponse(value:data:count:isFromCache:fetchedAt:hasPendingMutations:)` | — | Swift only: Kotlin's `PostgrestResult` is supabase-kt's, with a public constructor |
+| — | `appliedOutcome(result)`, `queuedOutcome(pendingMutation)` | Not needed: `MutationOutcome`'s cases are public in Swift, so `.applied(result:)` and `.queued(pendingMutation:)` build them |
+| — | `stalledRefresh(cause)` | Not needed: `RefreshState.stalled(cause:)` is a public case |
+| `cacheMissError(message:)`, `mutationNotQueueableError(message:)`, `networkDisabledError(message:)` | `cacheMissException(message)`, `mutationNotQueueableException(cause, message)`, `networkDisabledException(message)` | `Error` for `Exception`: each builds an `OfflineError` with that code. Swift's has no `cause`; it is a network failure, as Kotlin's is through its cause |
+| `syncFailedError(message:httpStatus:code:isConnectivityFailure:)` | `syncFailedException(message, httpStatus, code, isConnectivityFailure)` | `Error` for `Exception`; the status and code go in `serverError` |
+| `offlineError(code:message:serverError:isNetworkOrConnectivityFailure:)` | — (supabase-kt's own exceptions have public constructors) | Swift only: any other code, such as `server` or `connectivity` |
+| `cachedFile(path:fetchedAt:sizeBytes:)` | `cachedFile(path, fetchedAt, sizeBytes)` | Same; `Date` for `Instant`, `Int` for `Long` |

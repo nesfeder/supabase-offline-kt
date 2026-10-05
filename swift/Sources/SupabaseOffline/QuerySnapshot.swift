@@ -27,7 +27,7 @@ public struct QuerySnapshot<Value: Sendable>: Sendable {
     /// How the refresh behind the read stands.
     public let refresh: RefreshState
 
-    init(result: Value?, isFromCache: Bool, fetchedAt: Date?, hasPendingMutations: Bool, refresh: RefreshState) {
+    package init(result: Value?, isFromCache: Bool, fetchedAt: Date?, hasPendingMutations: Bool, refresh: RefreshState) {
         self.result = result
         self.isFromCache = isFromCache
         self.fetchedAt = fetchedAt

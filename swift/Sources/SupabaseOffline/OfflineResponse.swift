@@ -27,7 +27,7 @@ public struct OfflineResponse<Value: Sendable>: Sendable {
     /// Whether a queued write added, changed or removed one of the rows.
     public let hasPendingMutations: Bool
 
-    init(value: Value, data: Data, count: Int?, isFromCache: Bool, fetchedAt: Date?, hasPendingMutations: Bool) {
+    package init(value: Value, data: Data, count: Int?, isFromCache: Bool, fetchedAt: Date?, hasPendingMutations: Bool) {
         self.value = value
         self.data = data
         self.count = count

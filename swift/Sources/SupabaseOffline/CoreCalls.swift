@@ -26,20 +26,32 @@ final class CoreConnection: Sendable {
     /// The open, under way or finished; its failure is every call's error.
     private let opening: Task<CoreClientReference, any Error>
 
+    /// The opened client, kept once the open succeeds, for the calls that cannot wait for it.
+    private let opened: OSAllocatedUnfairLock<CoreClientReference?>
+
     /// Starts `open` on a background queue.
     init(open: @escaping @Sendable () throws -> CoreClientReference) {
+        let opened = OSAllocatedUnfairLock<CoreClientReference?>(initialState: nil)
+        self.opened = opened
         opening = Task.detached(priority: .userInitiated) {
-            try await withCheckedThrowingContinuation { continuation in
+            let reference = try await withCheckedThrowingContinuation { continuation in
                 DispatchQueue.global(qos: .userInitiated).async {
                     continuation.resume(with: Result { try open() })
                 }
             }
+            opened.withLock { $0 = reference }
+            return reference
         }
     }
 
     /// The opened client, or the failure that kept it from opening.
     func openedClient() async throws -> CoreClientReference {
         try await opening.value
+    }
+
+    /// The opened client without waiting: `nil` while the open is under way, or when it failed.
+    func openedClientIfReady() -> CoreClientReference? {
+        opened.withLock { $0 }
     }
 
     /// One call on the opened client: `start` sends it and passes on its single answer.

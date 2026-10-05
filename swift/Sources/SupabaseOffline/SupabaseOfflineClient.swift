@@ -45,6 +45,9 @@ public final class SupabaseOfflineClient: Sendable {
             }
             return CoreClientReference(client: client)
         }
+        if let networkAvailability = config.networkAvailability {
+            NetworkAvailabilityRelay.start(reading: networkAvailability, into: connection)
+        }
     }
 
     deinit {
@@ -80,6 +83,7 @@ public final class SupabaseOfflineClient: Sendable {
         coreOptions.cacheSizeBytes = config.cacheSize.coreBytes
         coreOptions.fileCacheSizeBytes = config.fileCacheSize.coreBytes
         coreOptions.autoSync = config.autoSync
+        coreOptions.reportsNetworkAvailability = config.networkAvailability != nil
         coreOptions.primaryKeys = config.primaryKeys
         coreOptions.logSink = SystemLogRelay()
         coreOptions.logLevel = config.logLevel.coreLevel
