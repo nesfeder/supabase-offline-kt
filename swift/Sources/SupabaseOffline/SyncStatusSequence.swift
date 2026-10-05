@@ -4,7 +4,7 @@
 /// The client's ``SyncStatus``: ``value`` now, without waiting, and, iterated, the status now and
 /// then each change.
 ///
-/// Each iteration is a subscription of its own; leaving the loop, throwing out of it or cancelling
+/// Each iteration is a subscription of its own; leaving the loop, throwing out of it or canceling
 /// its task ends it. Only the newest status waits for a slow reader. Iterating keeps the client
 /// open; closing the client ends the iteration normally.
 public struct SyncStatusSequence: AsyncSequence, Sendable {

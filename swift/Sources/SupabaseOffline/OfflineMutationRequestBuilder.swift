@@ -56,7 +56,8 @@ public struct OfflineMutationRequestBuilder: OfflinePostgrestFilterBuilder {
     /// - Returns: ``MutationOutcome/applied(result:)`` once the server applied it, or
     ///   ``MutationOutcome/queued(pendingMutation:)`` when it waits in the mutation queue.
     /// - Throws: ``OfflineError``: the server's refusal of a write sent at once (it then leaves the
-    ///   queue), `mutationNotQueueable` for a write the queue cannot hold made with no connection,
+    ///   queue), `connectivity` for an ``MutationStrategy/onlineOnly`` write with no connection,
+    ///   `mutationNotQueueable` for a write the queue cannot hold made with no connection,
     ///   `networkDisabled` for an ``MutationStrategy/onlineOnly`` write with the network turned off,
     ///   `encoding` or `invalidRequest` before anything is sent; `CancellationError` (a queued write
     ///   stays queued).

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 public import Foundation
 
-/// A failure the package throws; a cancelled call throws `CancellationError` instead.
+/// A failure the package throws; a canceled call throws `CancellationError` instead.
 ///
 /// Match it by code, as `URLError` is matched: `catch OfflineError.cacheMiss { … }`. A later
 /// release may add codes, so a `switch` over ``code`` keeps a `default`.

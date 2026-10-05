@@ -11,12 +11,22 @@ name: Docs publish
 #   access from publishing from an unmerged branch.
 # - A workflow that calls this one must grant `pages: write` and `id-token: write` to the calling
 #   job, and must not use the concurrency group `docs-publish` or `pages`, which this one uses.
+#
+# The Swift API reference is DocC, which builds only on macOS: the release's macOS job builds it
+# (scripts/build-swift-docs.sh) and uploads it as an artifact of the run, which the caller names
+# in `swift-reference`; it is placed at site/swift/, beside the MkDocs pages, in the one Pages
+# artifact. A publish without it (by hand, or a caller that names none) leaves /swift/ out of the
+# site and says so in the run's summary.
 
 on:
   workflow_call:
     inputs:
       ref:
         description: Git ref to build (defaults to the caller's ref)
+        type: string
+        default: ''
+      swift-reference:
+        description: The calling run's artifact holding the Swift API reference, built for static hosting
         type: string
         default: ''
   workflow_dispatch:
@@ -59,6 +69,26 @@ jobs:
 
       - name: Build the site in strict mode
         run: mkdocs build --strict
+
+      # The Swift API reference, as the release's macOS job built it: data, placed and never run.
+      - name: Download the Swift API reference
+        if: inputs.swift-reference != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.swift-reference }}
+          path: site/swift
+
+      - name: Check the Swift API reference
+        env:
+          SWIFT_REFERENCE: ${{ inputs.swift-reference }}
+        run: |
+          if [[ -z "$SWIFT_REFERENCE" ]]; then
+            echo "::warning::Published without the Swift API reference: /swift/ is not part of this site."
+            echo "Published without the Swift API reference: /swift/ is not part of this site." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ ! -f site/swift/documentation/supabaseoffline/index.html ]]; then
+            echo "::error::The Swift API reference holds no SupabaseOffline landing page."
+            exit 1
+          fi
 
       # No configure-pages step: nothing here reads its outputs (site_url is fixed in mkdocs.yml),
       # and its Pages API call would need `pages: read` on this job.

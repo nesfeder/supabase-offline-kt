@@ -9,11 +9,11 @@ extension SupabaseOfflineClient {
     /// A client for tests and previews: the real cache and mutation queue, kept in memory, with
     /// every request answered by `server`.
     ///
-    /// Every option applies but ``SupabaseOfflineClient/Config/dataDirectory``, which nothing
+    /// Every option applies but `SupabaseOfflineClient.Config.dataDirectory`, which nothing
     /// reads. Failed reads are not retried, so a failure the server scripts arrives at once. It
-    /// watches no path monitor: the network reads as ``NetworkStatus/unknown``, which counts as
-    /// online, until a test reports it through ``SupabaseOfflineClient/Config/networkAvailability``
-    /// or calls ``SupabaseOfflineClient/disableNetwork()``.
+    /// watches no path monitor: the network reads as `NetworkStatus.unknown`, which counts as
+    /// online, until a test reports it through `SupabaseOfflineClient.Config.networkAvailability`
+    /// or calls `SupabaseOfflineClient.disableNetwork()`.
     ///
     /// - Parameters:
     ///   - supabaseURL: The project URL the requests carry.

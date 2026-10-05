@@ -4,7 +4,7 @@
 /// The current user's queued writes as the mutation queue changes: the list now, then a new list
 /// after each change, in the order the writes will be sent.
 ///
-/// Each iteration is a subscription of its own; leaving the loop, throwing out of it or cancelling
+/// Each iteration is a subscription of its own; leaving the loop, throwing out of it or canceling
 /// its task ends it. Only the newest list waits for a slow reader. Iterating keeps the client open;
 /// closing the client ends the iteration normally. ``first()`` reads the list once without
 /// subscribing.

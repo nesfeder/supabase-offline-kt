@@ -68,7 +68,8 @@ cache belong to one identity at a time: a signed-in user, or nobody signed in.
   signed in, for the life of the install: the cache is served as it is and never dropped for a
   change of user, since nothing the engine can read tells one user from another. An app whose own
   token provider serves more than one user must call `clearLocalData()` itself when its user
-  changes.
+  changes, and only once the provider has stopped returning the outgoing user's token: a live read
+  open through the clear fetches again with whatever token the provider returns then.
 
 <small>`CacheBelongsToOneIdentityTest.a_signed_out_answer_is_never_served_to_the_user_who_signs_in_next`,
 `CacheBelongsToOneIdentityTest.signing_in_over_another_user_drops_the_cache_and_keeps_every_queued_write`,

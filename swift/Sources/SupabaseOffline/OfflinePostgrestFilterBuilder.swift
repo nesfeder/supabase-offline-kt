@@ -80,11 +80,15 @@ extension OfflinePostgrestFilterBuilder {
     }
 
     /// Rows where `column` is one of `values`.
+    ///
+    /// A value holding `"` or `\` and none of `,.:()` fails the request with
+    /// ``OfflineError/Code/invalidRequest``: filter on such a value with ``eq(_:value:)`` instead.
     public func `in`(_ column: String, values: [any OfflineFilterValue]) -> Self {
         applying(.adding(.condition(column: column, operator: .in, value: .list(values.map(\.filterText)), isNegated: false)))
     }
 
-    /// Rows where `column` is none of `values`.
+    /// Rows where `column` is none of `values`; a value holding `"` or `\` fails as in
+    /// ``in(_:values:)``.
     public func notIn(_ column: String, values: [any OfflineFilterValue]) -> Self {
         applying(.adding(.condition(column: column, operator: .in, value: .list(values.map(\.filterText)), isNegated: true)))
     }
@@ -135,21 +139,31 @@ extension OfflinePostgrestFilterBuilder {
     }
 
     /// Rows where `column` matches every one of the `LIKE` `patterns`, case-sensitively.
+    ///
+    /// An empty list fails the request with ``OfflineError/Code/invalidRequest``, and so does a
+    /// pattern holding none of `,.:()` that is empty, `NULL` in any case, edged with white space or
+    /// holding a brace: match such a pattern with ``like(_:pattern:)`` or ``ilike(_:pattern:)``.
     public func likeAllOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self {
         patternList(.likeAll, column, patterns)
     }
 
     /// Rows where `column` matches at least one of the `LIKE` `patterns`, case-sensitively.
+    ///
+    /// The patterns are checked as in ``likeAllOf(_:patterns:)``.
     public func likeAnyOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self {
         patternList(.likeAny, column, patterns)
     }
 
     /// Rows where `column` matches every one of the `LIKE` `patterns`, ignoring case.
+    ///
+    /// The patterns are checked as in ``likeAllOf(_:patterns:)``.
     public func iLikeAllOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self {
         patternList(.ilikeAll, column, patterns)
     }
 
     /// Rows where `column` matches at least one of the `LIKE` `patterns`, ignoring case.
+    ///
+    /// The patterns are checked as in ``likeAllOf(_:patterns:)``.
     public func iLikeAnyOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self {
         patternList(.ilikeAny, column, patterns)
     }

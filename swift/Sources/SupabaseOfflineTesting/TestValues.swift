@@ -7,7 +7,7 @@ public import SupabaseOffline
 // initializers are not public, so the package can add fields without breaking a caller; these
 // factories take every field, and default the ones a test rarely sets.
 
-/// A write waiting in the mutation queue, as ``SupabaseOfflineClient/pendingMutations(table:)`` lists
+/// A write waiting in the mutation queue, as `SupabaseOfflineClient.pendingMutations(table:)` lists
 /// one.
 ///
 /// - Parameters:
@@ -28,7 +28,7 @@ public func pendingMutation(
     PendingMutation(id: id, table: table, operation: operation, createdAt: createdAt, rowKeys: rowKeys, body: body)
 }
 
-/// A queued write the server refused for good, as ``SupabaseOfflineClient/rejectedMutations()`` lists
+/// A queued write the server refused for good, as `SupabaseOfflineClient.rejectedMutations()` lists
 /// one.
 ///
 /// - Parameters:
@@ -86,7 +86,7 @@ public func serverError(
     OfflineError.ServerError(status: status, code: code, message: message, details: details, hint: hint)
 }
 
-/// What a call of ``SupabaseOfflineClient/syncPendingMutations(table:)`` did.
+/// What a call of `SupabaseOfflineClient.syncPendingMutations(table:)` did.
 ///
 /// - Parameters:
 ///   - syncedCount: The writes sent and accepted.
@@ -111,7 +111,7 @@ public func syncReport(
     )
 }
 
-/// Where the client stands with the queue and the network, as ``SupabaseOfflineClient/syncStatus``
+/// Where the client stands with the queue and the network, as `SupabaseOfflineClient.syncStatus`
 /// holds it; every field defaults to the state of a client that has done nothing yet.
 ///
 /// - Parameters:
@@ -140,7 +140,7 @@ public func syncStatus(
     )
 }
 
-/// One state of a live read, as ``OfflinePostgrestQueryBuilder/selectAsSequence(_:as:readStrategy:)``
+/// One state of a live read, as `OfflinePostgrestQueryBuilder.selectAsSequence(_:as:readStrategy:)`
 /// yields one.
 ///
 /// - Parameters:
@@ -177,7 +177,7 @@ public func cachedFile(path: String, fetchedAt: Date, sizeBytes: Int) -> CachedF
 }
 
 /// The answer to a one-shot read, an applied write or a function call, as `execute` returns one;
-/// wrap it in ``MutationOutcome/applied(result:)`` for a write.
+/// wrap it in `MutationOutcome.applied(result:)` for a write.
 ///
 /// - Parameters:
 ///   - value: The decoded body.
@@ -205,13 +205,13 @@ public func offlineResponse<Value: Sendable>(
 }
 
 /// The failure of a read that may use only the cache and found nothing there:
-/// ``OfflineError/Code/cacheMiss``.
+/// `OfflineError.Code.cacheMiss`.
 public func cacheMissError(message: String = "No valid cached data found for this query") -> OfflineError {
     OfflineError(code: .cacheMiss, message: message)
 }
 
 /// The failure of a write the mutation queue could not hold, sent at once and refused for want of a
-/// connection: ``OfflineError/Code/mutationNotQueueable``, a network failure.
+/// connection: `OfflineError.Code.mutationNotQueueable`, a network failure.
 public func mutationNotQueueableError(
     message: String = "The write could not be queued, and could not be sent"
 ) -> OfflineError {
@@ -219,20 +219,20 @@ public func mutationNotQueueableError(
 }
 
 /// The failure of a request made while the app had turned the client's network access off:
-/// ``OfflineError/Code/networkDisabled``, a network failure.
+/// `OfflineError.Code.networkDisabled`, a network failure.
 public func networkDisabledError(message: String = "The client's network access is turned off") -> OfflineError {
     OfflineError(code: .networkDisabled, message: message, isNetworkOrConnectivityFailure: true)
 }
 
-/// Why a sync pass stopped with writes still queued, as ``SyncStatus/lastSyncError`` reports it:
-/// ``OfflineError/Code/syncFailed``.
+/// Why a sync pass stopped with writes still queued, as `SyncStatus.lastSyncError` reports it:
+/// `OfflineError.Code.syncFailed`.
 ///
 /// - Parameters:
 ///   - message: What the error says.
 ///   - httpStatus: The server's HTTP status; `nil` when it did not answer.
 ///   - code: The server's error code, kept only with a status.
 ///   - isConnectivityFailure: Whether the network caused it, which is what
-///     ``OfflineError/isNetworkOrConnectivityFailure`` answers for it.
+///     `OfflineError.isNetworkOrConnectivityFailure` answers for it.
 public func syncFailedError(
     message: String = "The sync pass stopped with writes still queued",
     httpStatus: Int? = nil,
@@ -247,7 +247,7 @@ public func syncFailedError(
     )
 }
 
-/// Any other failure the client throws, such as a server's refusal (``OfflineError/Code/server``
+/// Any other failure the client throws, such as a server's refusal (`OfflineError.Code.server`
 /// with its ``serverError(status:code:message:details:hint:)``) or a connectivity failure.
 ///
 /// - Parameters:
@@ -255,7 +255,7 @@ public func syncFailedError(
 ///   - message: What the error says.
 ///   - serverError: The server's refusal, when it answered.
 ///   - isNetworkOrConnectivityFailure: Whether the network failed rather than the server; always
-///     `true` for ``OfflineError/Code/connectivity``, as the client reports it.
+///     `true` for `OfflineError.Code.connectivity`, as the client reports it.
 public func offlineError(
     code: OfflineError.Code,
     message: String,

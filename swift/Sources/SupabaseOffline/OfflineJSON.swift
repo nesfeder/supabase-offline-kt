@@ -33,6 +33,8 @@ public enum OfflineJSON: Sendable, Hashable {
 extension OfflineJSON: Codable {
 
     /// Reads whichever JSON value comes next.
+    ///
+    /// - Throws: The decoder's `DecodingError` when what comes next is not JSON.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         if container.decodeNil() {
@@ -53,6 +55,8 @@ extension OfflineJSON: Codable {
     }
 
     /// Writes the value as the JSON it stands for.
+    ///
+    /// - Throws: The encoder's `EncodingError` for a ``double(_:)`` that is not finite.
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {

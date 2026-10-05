@@ -105,7 +105,8 @@ A release runs as a GitHub Actions workflow that a maintainer starts by hand on 
 5. **GitHub.** The tag `X.Y.Z` is pushed at the commit that was checked and published, and the draft
    GitHub Release, with the changelog's section, the merged pull requests and the framework, is
    published.
-6. **The documentation site** is built from the tag and published.
+6. **The documentation site** is built from the tag and published, with the Swift API reference
+   under `/swift/`, which the macOS job built against the framework it tested.
 7. **The next version.** A branch moves the version on to the next `-SNAPSHOT` and opens a new
    `Unreleased` section in the changelog, and the maintainer opens its pull request.
 

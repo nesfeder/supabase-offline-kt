@@ -42,6 +42,8 @@ extension SupabaseOfflineClient {
 
     /// How many of the current user's writes wait, of `table` or of every table: the writes
     /// ``pendingMutations(table:)`` lists.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func pendingMutationCount(table: String? = nil) async throws -> Int {
         try await connection.call { core, complete in
             core.pendingMutationCount(table: table) { count, failure in
@@ -69,6 +71,8 @@ extension SupabaseOfflineClient {
     ///
     /// When the write is on the wire, this waits for that send to end, then discards it if it is
     /// still queued. An id that is not one of the current user's queued writes is ignored.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func discardPendingMutation(id: Int64) async throws {
         try await connection.call { core, complete in
             core.discardPendingMutation(id: id) { failure in complete(coreResult(failure)) }
@@ -110,6 +114,8 @@ extension SupabaseOfflineClient {
 
     /// Removes an entry from the rejected list for good; its write is lost. An id that is not one of
     /// the current user's entries is ignored.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func dismissRejectedMutation(id: Int64) async throws {
         try await connection.call { core, complete in
             core.dismissRejectedMutation(id: id) { failure in complete(coreResult(failure)) }
@@ -123,7 +129,7 @@ extension SupabaseOfflineClient {
     /// not one of the current user's entries is ignored.
     ///
     /// - Throws: ``OfflineError``: `invalidRequest` when the entry's ``RejectedMutation/isRetryable``
-    ///   is `false`.
+    ///   is `false`; `clientClosed` once the client is closed.
     public func retryRejectedMutation(id: Int64) async throws {
         try await connection.call { core, complete in
             core.retryRejectedMutation(id: id) { failure in complete(coreResult(failure)) }

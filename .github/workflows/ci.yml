@@ -130,8 +130,8 @@ jobs:
       # library's public API records, and this workflow. Every push to main builds it, so a
       # library change that breaks the sample without moving the API records shows up there.
       # `ios-sample` runs the iOS sample's tests in ios-tests, on the self-hosted runner only: for
-      # its own sources and what it is built on (the Swift package but its Markdown, the bridge,
-      # the two scripts), and this workflow; every push to main runs them too, as it builds the
+      # its own sources and what it is built on (the Swift package but its documentation and its
+      # own tests, the bridge, the two scripts), and this workflow; every push to main runs them too, as it builds the
       # Android sample. Its sources fall to `kotlin` below, since ios-tests runs only when `kotlin`
       # says so; its page and screenshots are under docs/ and run the docs job alone.
       - name: Classify the changed files
@@ -179,8 +179,8 @@ jobs:
                 sample=true ;;
             esac
             case "$file" in
-              # The Swift package's Markdown builds nothing the sample uses.
-              swift/*.md)
+              # The Swift package's documentation and its own tests build nothing the sample uses.
+              swift/*.md | swift/Sources/*.docc/* | swift/Tests/*)
                 ;;
               samples/ios/* | swift/* | supabase-offline-swift-bridge/* | scripts/test-ios-sample.sh \
                 | scripts/prepare-local-swift-package.sh | .github/workflows/ci.yml)
@@ -190,6 +190,10 @@ jobs:
               .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/* \
                 | .github/codecov.yml)
                 kotlin=true; docs=true; workflows=true ;;
+              # The Swift documentation: the iOS job builds the catalogs and compiles the listings,
+              # the docs job checks the pages' copies of the listings.
+              swift/Sources/*.docc/* | swift/Tests/SupabaseOfflineTests/DocumentationListings/*)
+                kotlin=true; docs=true ;;
               .github/workflows/docs-check.yml | .github/workflows/docs-requirements.txt)
                 docs=true; workflows=true ;;
               .github/workflows/* | .github/dependabot.yml)
@@ -464,7 +468,8 @@ jobs:
           python3 .github/scripts/check-workflows.py --self-test
           python3 .github/scripts/check-workflows.py
           shellcheck --shell=bash .github/scripts/*.sh .github/actions/*/*.sh scripts/test-swift-package.sh \
-            scripts/test-ios-sample.sh scripts/prepare-local-swift-package.sh
+            scripts/build-swift-docs.sh scripts/build-swift-consumer.sh scripts/test-ios-sample.sh \
+            scripts/prepare-local-swift-package.sh
 
       # Template injection, unpinned actions, broad permissions, persisted credentials. Findings
       # fail the job and appear as annotations; nothing is uploaded to code scanning.
@@ -781,7 +786,23 @@ jobs:
           bash scripts/test-swift-package.sh --simulator "$CI_SIMULATOR_UDID"
           --derived-data "$RUNNER_TEMP/offline-kt-ci/swift-derived-data"
 
-      # The iOS sample on the Swift package and the framework the step above copied into
+      # Its documentation with every DocC warning an error, the check that it names nothing of the
+      # core, and the static site a release publishes under /swift/ (built here, kept nowhere).
+      - name: Build the Swift package's documentation
+        if: env.IOS_RUNNER == 'local'
+        run: >-
+          bash scripts/build-swift-docs.sh
+          --derived-data "$RUNNER_TEMP/offline-kt-ci/swift-docs-derived-data"
+          --out "$RUNNER_TEMP/offline-kt-ci/swift-reference"
+
+      # Code written as a new Xcode 26 app writes it (main-actor default isolation), with no warning.
+      - name: Build the main-actor consumer
+        if: env.IOS_RUNNER == 'local'
+        run: >-
+          bash scripts/build-swift-consumer.sh --simulator "$CI_SIMULATOR_UDID"
+          --derived-data "$RUNNER_TEMP/offline-kt-ci/swift-consumer-derived-data"
+
+      # The iOS sample on the Swift package and the framework the package's test step copied into
       # swift/LocalCore, on the self-hosted runner only: its build with every warning of its own an
       # error, its model tests and its UI smoke test, in demo mode (no project, no keys). Its remote
       # packages are fetched into the job's folder at the versions its Package.resolved pins.

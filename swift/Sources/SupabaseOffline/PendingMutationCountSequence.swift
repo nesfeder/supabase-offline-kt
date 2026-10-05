@@ -4,7 +4,7 @@
 /// How many of the current user's writes wait, as the mutation queue changes: the count now, then a
 /// new count each time it differs from the last.
 ///
-/// Each iteration is a subscription of its own; leaving the loop, throwing out of it or cancelling
+/// Each iteration is a subscription of its own; leaving the loop, throwing out of it or canceling
 /// its task ends it. Iterating keeps the client open; closing the client ends the iteration
 /// normally. ``SupabaseOfflineClient/pendingMutationCount(table:)`` reads the count once.
 public struct PendingMutationCountSequence: AsyncSequence, Sendable {

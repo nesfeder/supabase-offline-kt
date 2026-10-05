@@ -83,8 +83,10 @@ public struct QuerySnapshotSequence<Value: Decodable & Sendable>: AsyncSequence,
         /// the server answered once for a query the cache never holds).
         ///
         /// - Throws: ``OfflineError``: `cacheMiss` under ``SequenceReadStrategy/cacheOnly`` for a
-        ///   query the cache never holds, a failure the read cannot recover from, `decoding` or
-        ///   `invalidRequest`. Canceling the task ends the iteration.
+        ///   shape the cache never holds; under ``SequenceReadStrategy/networkFirstThenCache``,
+        ///   `connectivity` with no connection or `networkDisabled` with the network turned off when
+        ///   nothing is cached, and the server's refusal; `decoding` or `invalidRequest`. Canceling
+        ///   the task ends the iteration.
         public mutating func next() async throws -> Element? {
             try await base.next()
         }

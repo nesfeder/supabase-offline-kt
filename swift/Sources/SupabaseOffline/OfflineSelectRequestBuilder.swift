@@ -29,9 +29,12 @@ public struct OfflineSelectRequestBuilder: OfflinePostgrestRequestBuilder {
     /// Reads the rows without decoding them: for a count, a `head` read, or a body read from
     /// ``OfflineResponse/data``.
     ///
-    /// - Throws: ``OfflineError``: `cacheMiss` under ``ReadStrategy/cacheOnly(maxAge:)`` with
-    ///   nothing cached, `networkDisabled` with the network turned off and nothing cached, the
-    ///   server's refusal, or `invalidRequest` for a filter that cannot be sent; `CancellationError`.
+    /// - Throws: ``OfflineError``: `connectivity` with no connection and nothing cached it may serve
+    ///   (any ``ReadStrategy/networkOnly`` read, and a count, `head`, ``OfflinePostgrestRequestBuilder/single()``
+    ///   or other format under every strategy but `cacheOnly`); `cacheMiss` under
+    ///   ``ReadStrategy/cacheOnly(maxAge:)`` with nothing cached; `networkDisabled` with the network
+    ///   turned off and nothing cached; the server's refusal; or `invalidRequest` for a filter that
+    ///   cannot be sent; `CancellationError`.
     @discardableResult
     public func execute() async throws -> OfflineResponse<Void> {
         try await target.client.selectOnce(description: try descriptionText(), decode: BodyDecoding.ignoring)
