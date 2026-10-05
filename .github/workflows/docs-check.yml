@@ -37,13 +37,6 @@ jobs:
         working-directory: docs/assets/javascripts/mermaid
         run: sha256sum --check --strict mermaid.min.js.sha256
 
-      # Every Swift block of the DocC articles, the README's Swift section and the site's Swift
-      # pages is code the Swift package's tests compile; the self-test runs first.
-      - name: Check the Swift listings
-        run: |
-          python3 scripts/check-swift-doc-listings.py --self-test
-          python3 scripts/check-swift-doc-listings.py
-
       - name: Install the pinned toolchain
         run: pip install -r .github/workflows/docs-requirements.txt
 
@@ -52,6 +45,13 @@ jobs:
       - name: Build the site in strict mode
         id: build
         run: mkdocs build --strict
+
+      # Every Swift block of the DocC articles, the README's Swift section and the site's Swift
+      # pages is code the Swift package's tests compile; the self-test runs first.
+      - name: Check the Swift listings
+        run: |
+          python3 scripts/check-swift-doc-listings.py --self-test
+          python3 scripts/check-swift-doc-listings.py
 
       - name: Upload the built site for preview
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

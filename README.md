@@ -99,8 +99,8 @@ An iOS app in Swift uses the Swift package: the same library as a native Swift A
 supabase-swift, which keeps Auth. In Xcode, add `https://github.com/nesfeder/supabase-offline-swift`
 with **File > Add Package Dependencies…** (in a manifest, `.upToNextMinor(from: "0.1.0")`), the
 `SupabaseOffline` library to your app's target and `SupabaseOfflineTesting` to its tests. It needs
-iOS 16 and Xcode 26, and runs on arm64 simulators only: a simulator build that includes x86_64 fails
-to link, so build for a specific simulator, or with `ARCHS=arm64`.
+iOS 16 and Xcode 26 or later, and runs on arm64 simulators only: a simulator build that includes
+x86_64 fails to link, so build for a specific simulator, or with `ARCHS=arm64`.
 
 Create one client; its access-token closure hands it the signed-in user's token from
 supabase-swift's Auth:
