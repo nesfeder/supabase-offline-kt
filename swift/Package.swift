@@ -3,25 +3,14 @@
 // SPDX-License-Identifier: MIT
 import PackageDescription
 
-/// The release this manifest resolves the core framework from; set by the release workflow.
+/// The release whose framework archive the package is built on; the release sets it.
 let version = "0.0.0"
 
-/// The checksum of that release's framework archive; set by the release workflow with `version`.
+/// The SHA-256 checksum of that archive; the release sets it with `version`.
 let checksum = "0000000000000000000000000000000000000000000000000000000000000000"
 
-/// The core framework: a local build when `SUPABASE_OFFLINE_LOCAL_CORE=1` (CONTRIBUTING.md,
-/// "The Swift package"), otherwise the release's archive.
-let core: Target =
-    Context.environment["SUPABASE_OFFLINE_LOCAL_CORE"] == "1"
-    ? .binaryTarget(name: "SupabaseOfflineCore", path: "LocalCore/SupabaseOfflineCore.xcframework")
-    : .binaryTarget(
-        name: "SupabaseOfflineCore",
-        url: "https://github.com/nesfeder/supabase-offline-swift/releases/download/\(version)/SupabaseOfflineCore.xcframework.zip",
-        checksum: checksum
-    )
-
 /// Swift 6, and imports internal unless a file says otherwise, so no public signature can name a
-/// type of the core framework.
+/// type of the framework underneath.
 let swiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .enableUpcomingFeature("InternalImportsByDefault"),
@@ -35,12 +24,17 @@ let package = Package(
         .library(name: "SupabaseOfflineTesting", targets: ["SupabaseOfflineTesting"]),
     ],
     targets: [
-        core,
+        .binaryTarget(
+            name: "SupabaseOfflineCore",
+            url: "https://github.com/nesfeder/supabase-offline-kt/releases/download/\(version)/SupabaseOfflineCore.xcframework.zip",
+            checksum: checksum
+        ),
         .target(
             name: "SupabaseOffline",
             dependencies: ["SupabaseOfflineCore"],
+            resources: [.copy("PrivacyInfo.xcprivacy")],
             swiftSettings: swiftSettings,
-            // The core framework is static: Apple's SQLite and the C++ runtime come from the app's link.
+            // The framework is static: Apple's SQLite and the C++ runtime come from the app's link.
             linkerSettings: [.linkedLibrary("sqlite3"), .linkedLibrary("c++")]
         ),
         .target(
@@ -48,10 +42,27 @@ let package = Package(
             dependencies: ["SupabaseOffline", "SupabaseOfflineCore"],
             swiftSettings: swiftSettings
         ),
-        .testTarget(
-            name: "SupabaseOfflineTests",
-            dependencies: ["SupabaseOffline", "SupabaseOfflineTesting", "SupabaseOfflineCore"],
-            swiftSettings: swiftSettings
-        ),
     ]
+)
+
+// MARK: Development only
+// Everything from the line above to the end is left out of the manifest a release publishes
+// (scripts/swift-release.py). With SUPABASE_OFFLINE_LOCAL_CORE=1 the framework is a local build
+// in LocalCore/ (CONTRIBUTING.md, "The Swift package"), and the tests are a target here only.
+
+if Context.environment["SUPABASE_OFFLINE_LOCAL_CORE"] == "1",
+    let index = package.targets.firstIndex(where: { $0.name == "SupabaseOfflineCore" })
+{
+    package.targets[index] = .binaryTarget(
+        name: "SupabaseOfflineCore",
+        path: "LocalCore/SupabaseOfflineCore.xcframework"
+    )
+}
+
+package.targets.append(
+    .testTarget(
+        name: "SupabaseOfflineTests",
+        dependencies: ["SupabaseOffline", "SupabaseOfflineTesting", "SupabaseOfflineCore"],
+        swiftSettings: swiftSettings
+    )
 )
