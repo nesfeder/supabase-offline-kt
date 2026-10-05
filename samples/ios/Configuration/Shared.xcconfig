@@ -1,0 +1,30 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
+//
+// Settings every target of Offline Tasks shares. Secrets.xcconfig, which git ignores, comes last
+// and may override any of them: the project's keys, and your team and bundle identifier for a
+// device (see Secrets.xcconfig.example).
+
+// The app's bundle identifier; the test targets add a suffix to it. Make it your own to run on a
+// device.
+OFFLINE_TASKS_BUNDLE_IDENTIFIER = io.github.nesfeder.offlinetasks
+
+// No team: simulator builds sign to run locally, and device builds need yours.
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+// Swift 6 with Xcode 26's defaults for a new app: the main actor unless a declaration says
+// otherwise.
+SWIFT_VERSION = 6.0
+SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor
+SWIFT_APPROACHABLE_CONCURRENCY = YES
+TARGETED_DEVICE_FAMILY = 1,2
+
+// CI builds with OFFLINE_TASKS_WARNINGS_AS_ERRORS=YES on the command line, which reaches only these
+// targets: the same setting given directly would reach the packages too, which Xcode builds with
+// their warnings suppressed, and the two clash.
+OFFLINE_TASKS_WARNINGS_AS_ERRORS = NO
+SWIFT_TREAT_WARNINGS_AS_ERRORS = $(OFFLINE_TASKS_WARNINGS_AS_ERRORS)
+GCC_TREAT_WARNINGS_AS_ERRORS = $(OFFLINE_TASKS_WARNINGS_AS_ERRORS)
+
+#include? "Secrets.xcconfig"

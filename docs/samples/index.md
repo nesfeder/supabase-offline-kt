@@ -9,7 +9,7 @@ same offline behavior.
 | --- | --- | --- |
 | The Supabase project both samples need | [`samples/supabase/`](https://github.com/nesfeder/supabase-offline-kt/tree/main/samples/supabase) | [Set up Supabase](supabase-setup.md) |
 | The Android sample | [`samples/android/`](https://github.com/nesfeder/supabase-offline-kt/tree/main/samples/android) | [Run the Android sample](android.md) |
-| The iOS sample | being rebuilt | [Run the iOS sample](ios.md) |
+| The iOS sample | [`samples/ios/`](https://github.com/nesfeder/supabase-offline-kt/tree/main/samples/ios) | [Run the iOS sample](ios.md) |
 
 ## What the app shows
 
@@ -37,3 +37,11 @@ The Android sample runs on the library, against your own Supabase project: its l
 queries on the device's cache, its changes go through the mutation queue, and its photos through
 the offline Storage bucket. [Run the Android sample](android.md#things-to-try) lists the things to
 try, from going offline to starting over.
+
+## The iOS sample
+
+The iOS sample is the same app in SwiftUI, on the Swift package: the same live queries, mutation
+queue and offline Storage bucket, through `SupabaseOfflineClient`. It has the Tasks and Sync
+screens, task detail and New task; it has no Photos tab, and a swiped-away task is deleted without
+an undo. The sync status sits above the tab bar. Without a project it runs in a demo mode kept in
+memory. [Run the iOS sample](ios.md#things-to-try) lists the same things to try.

@@ -1,0 +1,113 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
+import Foundation
+
+// The rows as the tables hold them. They are `nonisolated` because the client decodes them off the
+// main actor, which is this target's default isolation.
+
+/// A row of `tasks` as the server and the cache send it.
+nonisolated struct TaskRow: Codable, Sendable {
+    let id: String
+    let userID: String
+    let title: String
+    let notes: String?
+    let done: Bool
+    let createdAt: Date
+
+    /// The table's column names.
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userID = "user_id"
+        case title
+        case notes
+        case done
+        case createdAt = "created_at"
+    }
+}
+
+/// A new row of `tasks`. It carries its owner and its creation time, so a task made offline sorts
+/// where it belongs before the server has it; `updated_at` is the server's to set.
+nonisolated struct NewTaskRow: Encodable, Sendable {
+    let id: String
+    let userID: String
+    let title: String
+    /// Left out when `nil`, so the column keeps its default, `null`.
+    let notes: String?
+    let done: Bool
+    let createdAt: Date
+
+    /// The table's column names.
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userID = "user_id"
+        case title
+        case notes
+        case done
+        case createdAt = "created_at"
+    }
+}
+
+/// A row of `task_photos`, read or written.
+nonisolated struct TaskPhotoRow: Codable, Sendable {
+    let id: String
+    let userID: String
+    let taskID: String
+    let objectPath: String
+    let width: Int?
+    let height: Int?
+    let createdAt: Date
+
+    /// The table's column names.
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userID = "user_id"
+        case taskID = "task_id"
+        case objectPath = "object_path"
+        case width
+        case height
+        case createdAt = "created_at"
+    }
+}
+
+/// A photo row read for its file alone.
+nonisolated struct ObjectPathRow: Decodable, Sendable {
+    let objectPath: String
+
+    /// The table's column name.
+    enum CodingKeys: String, CodingKey {
+        case objectPath = "object_path"
+    }
+}
+
+extension TaskRow {
+
+    /// The task, marked when `pendingIDs` holds its id.
+    func task(pendingIDs: Set<String>) -> TaskItem {
+        TaskItem(
+            id: id,
+            userID: userID,
+            title: title,
+            notes: notes,
+            isDone: done,
+            createdAt: createdAt,
+            hasPendingMutations: pendingIDs.contains(id)
+        )
+    }
+}
+
+extension TaskPhotoRow {
+
+    /// The photo, marked when `pendingIDs` holds its id.
+    func photo(pendingIDs: Set<String>) -> TaskPhoto {
+        TaskPhoto(
+            id: id,
+            userID: userID,
+            taskID: taskID,
+            objectPath: objectPath,
+            width: width,
+            height: height,
+            createdAt: createdAt,
+            hasPendingMutations: pendingIDs.contains(id)
+        )
+    }
+}
