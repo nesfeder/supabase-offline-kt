@@ -13,7 +13,7 @@ final class RecordingCallHandle: CoreCallHandle, @unchecked Sendable {
     /// How many times `cancel()` ran.
     private var count = 0
 
-    /// How many times the call was cancelled.
+    /// How many times the call was canceled.
     var cancelCount: Int {
         lock.lock()
         defer { lock.unlock() }

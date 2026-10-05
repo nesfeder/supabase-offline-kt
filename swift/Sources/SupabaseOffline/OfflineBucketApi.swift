@@ -37,6 +37,10 @@ public struct OfflineBucketApi: Sendable {
     /// The bytes are not cached, and an upload over a cached object drops its copy; the next
     /// download fetches them. Empty data, and data of 2 GiB or more, is refused with
     /// ``OfflineError/Code/invalidRequest`` before anything is sent.
+    ///
+    /// - Throws: ``OfflineError``: `invalidRequest` for empty or oversized data; `connectivity`
+    ///   offline, `networkDisabled` with the network turned off, or `server` with Storage's status
+    ///   when Storage refuses it.
     @discardableResult
     public func upload(_ path: String, data: Data, options: UploadOptions = UploadOptions()) async throws -> FileUploadResponse {
         let optionsText = try options.coreText()
@@ -51,6 +55,8 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// Online only, and refuses empty data and data of 2 GiB or more, as
     /// ``upload(_:data:options:)`` does.
+    ///
+    /// - Throws: As ``upload(_:data:options:)``.
     @discardableResult
     public func update(_ path: String, data: Data, options: UploadOptions = UploadOptions()) async throws -> FileUploadResponse {
         let optionsText = try options.coreText()
@@ -66,6 +72,8 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// Online only, and refuses empty data and data of 2 GiB or more, as
     /// ``upload(_:data:options:)`` does.
+    ///
+    /// - Throws: As ``upload(_:data:options:)``.
     @discardableResult
     public func uploadToSignedURL(
         _ path: String,
@@ -89,6 +97,9 @@ public struct OfflineBucketApi: Sendable {
     }
 
     /// Deletes the objects at `paths` and their cached copies; online only.
+    ///
+    /// - Throws: ``OfflineError``: `connectivity` offline, `networkDisabled` with the network turned
+    ///   off, or `server` with Storage's status when Storage refuses it.
     public func remove(paths: [String]) async throws {
         try await client.connection.call { core, complete in
             core.storage.delete(bucket: bucketId, paths: paths) { failure in complete(coreResult(failure)) }
@@ -97,6 +108,9 @@ public struct OfflineBucketApi: Sendable {
 
     /// Moves the object at `source` to `destination`, in this bucket or `destinationBucket`;
     /// online only. The source's cached copy moves with it, replacing any copy at the destination.
+    ///
+    /// - Throws: ``OfflineError``: `connectivity` offline, `networkDisabled` with the network turned
+    ///   off, or `server` with Storage's status when Storage refuses it.
     public func move(from source: String, to destination: String, destinationBucket: String? = nil) async throws {
         try await client.connection.call { core, complete in
             core.storage.moveObject(bucket: bucketId, from: source, to: destination, destinationBucket: destinationBucket) {
@@ -107,6 +121,9 @@ public struct OfflineBucketApi: Sendable {
 
     /// Copies the object at `source` to `destination`, in this bucket or `destinationBucket`;
     /// online only. The destination's cached copy is dropped; the source's stays.
+    ///
+    /// - Throws: ``OfflineError``: `connectivity` offline, `networkDisabled` with the network turned
+    ///   off, or `server` with Storage's status when Storage refuses it.
     public func copy(from source: String, to destination: String, destinationBucket: String? = nil) async throws {
         try await client.connection.call { core, complete in
             core.storage.doCopyObject(bucket: bucketId, from: source, to: destination, destinationBucket: destinationBucket) {
@@ -119,7 +136,11 @@ public struct OfflineBucketApi: Sendable {
 
     /// A URL that uploads to `path` without a session, for ``uploadToSignedURL(_:token:data:options:)``.
     ///
-    /// - Parameter upsert: Whether the upload may replace an object already at `path`.
+    /// - Parameters:
+    ///   - path: Where the upload goes in the bucket.
+    ///   - upsert: Whether the upload may replace an object already at `path`.
+    /// - Throws: ``OfflineError``: `connectivity` offline, `networkDisabled` with the network turned
+    ///   off, or `server` with Storage's status when Storage refuses it.
     public func createSignedUploadURL(path: String, upsert: Bool = false) async throws -> UploadSignedURL {
         try await client.connection.call { core, complete in
             core.storage.createSignedUploadUrl(bucket: bucketId, path: escapingURLDelimiters(in: path), upsert: upsert) {
@@ -131,6 +152,9 @@ public struct OfflineBucketApi: Sendable {
 
     /// A URL that downloads the object at `path` for `expiresIn` seconds, transformed first when
     /// `transform` is given.
+    ///
+    /// - Throws: ``OfflineError``: `connectivity` offline, `networkDisabled` with the network turned
+    ///   off, or `server` with Storage's status when Storage refuses it.
     public func createSignedURL(path: String, expiresIn: Int, transform: ImageTransformation? = nil) async throws -> URL {
         let transformText = try transform?.coreText()
         return try await client.connection.call { core, complete in
@@ -150,6 +174,9 @@ public struct OfflineBucketApi: Sendable {
     /// A path Storage cannot sign (an object that does not exist, say) fails the whole call with
     /// ``OfflineError/Code/decoding``, whose message names the path's position in `paths`
     /// (`$[1]` for the second).
+    ///
+    /// - Throws: ``OfflineError``: `decoding` as above; `connectivity` offline, `networkDisabled`
+    ///   with the network turned off, or `server` with Storage's status when Storage refuses it.
     public func createSignedURLs(paths: [String], expiresIn: Int) async throws -> [SignedURL] {
         try await client.connection.call { core, complete in
             core.storage.createSignedUrls(bucket: bucketId, paths: paths, expiresInSeconds: Int64(expiresIn)) {
@@ -164,6 +191,8 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// The URL comes from the opened client: the call waits for the client to finish opening, and
     /// after ``SupabaseOfflineClient/close()`` it throws ``OfflineError/Code/clientClosed``.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func publicURL(path: String) async throws -> URL {
         let answer = try await client.connection.openedClient().client.storage
             .publicUrl(bucket: bucketId, path: escapingURLDelimiters(in: path))
@@ -174,6 +203,8 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// The URL comes from the opened client: the call waits for the client to finish opening, and
     /// after ``SupabaseOfflineClient/close()`` it throws ``OfflineError/Code/clientClosed``.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func authenticatedURL(path: String) async throws -> URL {
         let answer = try await client.connection.openedClient().client.storage
             .authenticatedUrl(bucket: bucketId, path: escapingURLDelimiters(in: path))
@@ -187,11 +218,17 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// A "not found" from Storage drops the cached copy; another refusal is answered from the
     /// cached copy when there is one, and otherwise thrown as ``OfflineError/Code/server`` with
-    /// Storage's status. A transformed download is cached apart from the original.
+    /// Storage's status. A transformed download is cached apart from the original. Canceling the
+    /// task throws `CancellationError` at once, and the download may still finish and be kept on
+    /// the device, whole, when its bytes arrive before the cancellation reaches it.
     ///
     /// - Parameters:
+    ///   - path: The object's path in the bucket.
     ///   - options: An image transformation Storage applies first.
     ///   - isPublic: Whether to download through the public URL rather than with the user's session.
+    /// - Throws: ``OfflineError``: `server` for a refusal with no cached copy to answer it;
+    ///   `connectivity` offline, or `networkDisabled` with the network turned off, with no cached
+    ///   copy.
     public func download(path: String, options: ImageTransformation? = nil, isPublic: Bool = false) async throws -> Data {
         let transformText = try options?.coreText()
         return try await client.connection.call { core, complete in
@@ -203,6 +240,9 @@ public struct OfflineBucketApi: Sendable {
     }
 
     /// The objects and folders under `path` (the bucket's top level by default).
+    ///
+    /// - Throws: ``OfflineError``: `connectivity` offline, `networkDisabled` with the network turned
+    ///   off, or `server` with Storage's status when Storage refuses it.
     public func list(path: String? = nil, options: StorageListFilter? = nil) async throws -> [FileObject] {
         let optionsText = try options?.coreText()
         return try await client.connection.call { core, complete in
@@ -213,6 +253,9 @@ public struct OfflineBucketApi: Sendable {
     }
 
     /// The details of the object at `path`.
+    ///
+    /// - Throws: ``OfflineError``: `connectivity` offline, `networkDisabled` with the network turned
+    ///   off, or `server` with Storage's status when Storage refuses it.
     public func info(path: String) async throws -> FileObjectV2 {
         try await client.connection.call { core, complete in
             core.storage.info(bucket: bucketId, path: path) { answer, failure in
@@ -222,6 +265,9 @@ public struct OfflineBucketApi: Sendable {
     }
 
     /// Whether an object exists at `path`.
+    ///
+    /// - Throws: ``OfflineError``: `connectivity` offline, `networkDisabled` with the network turned
+    ///   off, or `server` with Storage's status when Storage refuses it.
     public func exists(path: String) async throws -> Bool {
         try await client.connection.call { core, complete in
             core.storage.exists(bucket: bucketId, path: path) { answer, failure in
@@ -237,6 +283,8 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// Only an untransformed ``download(path:options:isPublic:)`` or ``ensureCachedFile(path:isPublic:)``
     /// caches the copy this returns.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func cachedFile(path: String) async throws -> CachedFile? {
         try await client.connection.call { core, complete in
             core.storage.cachedFile(bucket: bucketId, path: path) { file, failure in
@@ -250,10 +298,17 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// A cached copy is returned however old it is. Throws ``OfflineError/Code/invalidRequest``
     /// for a name the cache cannot hold (see ``OfflineBucketApi``), sending nothing; one holding
-    /// `%`, `?` or `#` is refused before the client is asked.
+    /// `%`, `?` or `#` is refused before the client is asked. Canceling the task throws
+    /// `CancellationError` at once, and the download may still finish and be kept, as with
+    /// ``download(path:options:isPublic:)``.
     ///
-    /// - Parameter isPublic: Whether a download goes through the public URL rather than with the
-    ///   user's session.
+    /// - Parameters:
+    ///   - path: The object's path in the bucket.
+    ///   - isPublic: Whether a download goes through the public URL rather than with the user's
+    ///     session.
+    /// - Throws: ``OfflineError``: `invalidRequest` as above; with nothing cached, `server` when
+    ///   Storage refuses the download, `connectivity` offline, or `networkDisabled` with the network
+    ///   turned off.
     public func ensureCachedFile(path: String, isPublic: Bool = false) async throws -> CachedFile {
         // A copy of the core's rule, kept only for the wording: when the test
         // `theCoreStillRefusesANameHoldingEachDelimiter` fails, the core caches these names, and

@@ -172,6 +172,10 @@ jobs:
               .github/workflows/ci.yml | .github/actions/* | .github/scripts/* | .github/gradle/* \
                 | .github/codecov.yml)
                 kotlin=true; docs=true; workflows=true ;;
+              # The Swift documentation: the iOS job builds the catalogs and compiles the listings,
+              # the docs job checks the pages' copies of the listings.
+              swift/Sources/*.docc/* | swift/Tests/SupabaseOfflineTests/DocumentationListings/*)
+                kotlin=true; docs=true ;;
               .github/workflows/docs-check.yml | .github/workflows/docs-requirements.txt)
                 docs=true; workflows=true ;;
               .github/workflows/* | .github/dependabot.yml)
@@ -443,7 +447,8 @@ jobs:
           python3 .github/scripts/check-coverage-report.py --self-test
           python3 .github/scripts/check-workflows.py --self-test
           python3 .github/scripts/check-workflows.py
-          shellcheck --shell=bash .github/scripts/*.sh .github/actions/*/*.sh scripts/test-swift-package.sh
+          shellcheck --shell=bash .github/scripts/*.sh .github/actions/*/*.sh scripts/test-swift-package.sh \
+            scripts/build-swift-docs.sh scripts/build-swift-consumer.sh
 
       # Template injection, unpinned actions, broad permissions, persisted credentials. Findings
       # fail the job and appear as annotations; nothing is uploaded to code scanning.
@@ -759,6 +764,22 @@ jobs:
         run: >-
           bash scripts/test-swift-package.sh --simulator "$CI_SIMULATOR_UDID"
           --derived-data "$RUNNER_TEMP/offline-kt-ci/swift-derived-data"
+
+      # Its documentation with every DocC warning an error, the check that it names nothing of the
+      # core, and the static site a release publishes under /swift/ (built here, kept nowhere).
+      - name: Build the Swift package's documentation
+        if: env.IOS_RUNNER == 'local'
+        run: >-
+          bash scripts/build-swift-docs.sh
+          --derived-data "$RUNNER_TEMP/offline-kt-ci/swift-docs-derived-data"
+          --out "$RUNNER_TEMP/offline-kt-ci/swift-reference"
+
+      # Code written as a new Xcode 26 app writes it (main-actor default isolation), with no warning.
+      - name: Build the main-actor consumer
+        if: env.IOS_RUNNER == 'local'
+        run: >-
+          bash scripts/build-swift-consumer.sh --simulator "$CI_SIMULATOR_UDID"
+          --derived-data "$RUNNER_TEMP/offline-kt-ci/swift-consumer-derived-data"
 
       - name: Save Kotlin/Native
         if: >-

@@ -9,6 +9,8 @@ extension SupabaseOfflineClient {
     /// go by POST only; a function called by GET or HEAD takes none.
     ///
     /// - Parameters:
+    ///   - function: The function's name.
+    ///   - params: The arguments, encoded as one JSON object.
     ///   - count: How to count the rows a set-returning function returns.
     ///   - schema: The function's schema; `nil` for the client's default.
     public func rpc(

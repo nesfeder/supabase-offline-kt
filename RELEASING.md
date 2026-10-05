@@ -175,7 +175,9 @@ the number. Once the repository is public, GitHub's standard runners cost nothin
    it.
 8. **docs** builds the documentation site from the tag `X.Y.Z` and deploys it to GitHub Pages
    (`.github/workflows/docs-publish.yml`). It holds the Pages and OIDC permissions only, and no
-   release secret.
+   release secret. The Swift API reference under `/swift/` is the one the framework job built with
+   DocC against the framework it tested (`scripts/build-swift-docs.sh`), handed over as the run's
+   `swift-reference` artifact; the docs job only places it.
 
 So the order in which things become public is: Maven Central, then the Swift package's tag, then
 this repository's tag and its GitHub Release with the framework, then the site. Between the Swift
@@ -239,6 +241,10 @@ every artifact of it. Then, in the order a release makes things public:
 3. it pushes this repository's tag, publishes the draft GitHub Release, and pushes the
    post-release branch, each only if missing; its summary has the pull request's link;
 4. it publishes the documentation site from the tag.
+
+A resume has no macOS job, so the site it publishes has no Swift API reference: `/swift/` is left
+out, and the docs job's summary says so. A publish of the site started by hand
+(`docs-publish.yml`) leaves it out in the same way; the next release puts it back.
 
 It runs `main`'s scripts, never the input commit's, and never runs Gradle, builds the framework or
 publishes to Maven Central: once Central has published a version, nothing may be rebuilt under that

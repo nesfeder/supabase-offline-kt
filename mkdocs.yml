@@ -172,6 +172,7 @@ nav:
   - Help:
       - FAQ and troubleshooting: help/faq.md
       - Security and privacy: help/security.md
+      - Under the hood: help/under-the-hood.md
   - Project:
       - Architecture: project/architecture.md
       - Changelog: project/changelog.md

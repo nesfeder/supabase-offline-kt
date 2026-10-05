@@ -24,7 +24,9 @@ extension SupabaseOfflineClient {
 ///
 /// A `UUID` in a row is written in lower case, as PostgREST writes ids, except one that a type's own
 /// `encode(to:)` hands straight to the encoder, or that sits behind a property wrapper passing the
-/// encoder on: encode `uuidString.lowercased()` there.
+/// encoder on: encode `uuidString.lowercased()` there. A `Date` is written in UTC, ISO 8601, to the
+/// microsecond. `Data` is written as base64 text, as `JSONEncoder` writes it; a `bytea` column reads
+/// Postgres's hex form (`\x…`), so send one as a `String` you have encoded.
 public struct OfflinePostgrestQueryBuilder: Sendable {
 
     /// The client the requests go through.
@@ -45,6 +47,7 @@ public struct OfflinePostgrestQueryBuilder: Sendable {
     /// A one-shot read of `columns` (`*`, or a list such as `id,title,author:authors(name)`).
     ///
     /// - Parameters:
+    ///   - columns: The columns to read, as PostgREST's `select` names them.
     ///   - head: Whether to fetch no rows, only the ``OfflineResponse/count``.
     ///   - count: How to count the matching rows; a counted read goes to the server under every
     ///     strategy but ``ReadStrategy/cacheOnly(maxAge:)``.
@@ -86,6 +89,7 @@ public struct OfflinePostgrestQueryBuilder: Sendable {
     /// default; pass ``OfflineJSON`` to send an explicit `null`.
     ///
     /// - Parameters:
+    ///   - values: One row, or an array of rows.
     ///   - defaultToNull: Whether a column some rows leave out is `null` in them (`true`) or its
     ///     default (`false`), when rows of different columns go in one request.
     ///   - mutationStrategy: Whether the write may wait in the mutation queue.

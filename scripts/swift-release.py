@@ -49,8 +49,9 @@ Commands (from the repository root):
       request, so a refused word is found there, not in the release's macOS job.
   check-tree --tree DIR --zip ZIP --version X.Y.Z
       The check publish runs: the tree holds Package.swift, README.md, LICENSE and Sources/ and
-      nothing else, Sources/ only Swift files and privacy manifests, no symbolic link and no hidden
-      file; the manifest names X.Y.Z, the archive's URL and the zip's checksum (never the zero
+      nothing else, Sources/ only Swift files, privacy manifests and the Markdown pages of a DocC
+      catalog (a `.md` file inside a `*.docc` folder), no symbolic link and no hidden file; the
+      manifest names X.Y.Z, the archive's URL and the zip's checksum (never the zero
       placeholder), with no local-framework switch and no test target; and the words Kotlin, KMP,
       Konan and kfun, in any case, appear nowhere but in the code of Sources/*.swift. There, the
       package's internal code calls the framework, whose runtime types carry the word (such as
@@ -117,6 +118,8 @@ SYSTEM_SQLITE = "-Psupabase.offline.iosSqlite=system"
 BUILT_XCFRAMEWORK = f"supabase-offline-swift-bridge/build/XCFrameworks/release/{XCFRAMEWORK}"
 PRIVACY_MANIFEST = "swift/Sources/SupabaseOffline/PrivacyInfo.xcprivacy"
 PRIVACY_FILE = "PrivacyInfo.xcprivacy"
+# What a DocC catalog in Sources/ may hold: its pages. The package ships no image or other resource.
+CATALOG_PAGE_SUFFIXES = (".md",)
 REQUIRED_REASON_RECORD = "supabase-offline-swift-bridge/privacy/required-reason-apis.txt"
 SOURCE_PACKAGE = "swift"
 MANIFEST = "Package.swift"
@@ -524,6 +527,14 @@ def swift_comments_and_strings(text: str) -> tuple[list[str], list[str]]:
     return comments, strings
 
 
+def is_catalog_page(relative: str) -> bool:
+    """Whether a published path is a page of a DocC catalog: a `.md` file inside a `*.docc` folder of
+    a target in Sources/. The words are refused in it whole, as in any file that is not Swift."""
+    parts = relative.split("/")
+    return (len(parts) > 3 and parts[0] == "Sources" and Path(parts[-1]).suffix in CATALOG_PAGE_SUFFIXES
+            and any(part.endswith(".docc") for part in parts[2:-1]))
+
+
 def tree_problems(tree: Path, version: str, archive_checksum: str) -> list[str]:
     """What keeps a staged tree from being published (check-tree)."""
     problems = []
@@ -544,8 +555,8 @@ def tree_problems(tree: Path, version: str, archive_checksum: str) -> list[str]:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         if relative.startswith("Sources/"):
-            if not (path.suffix == ".swift" or path.name == PRIVACY_FILE):
-                problems.append(f"{relative} is neither Swift nor a privacy manifest")
+            if not (path.suffix == ".swift" or path.name == PRIVACY_FILE or is_catalog_page(relative)):
+                problems.append(f"{relative} is neither Swift, a privacy manifest nor a DocC catalog's page")
             if path.suffix == ".swift":
                 comments, strings = swift_comments_and_strings(text)
                 for kind, pieces in (("a comment", comments), ("a string literal", strings)):
@@ -807,6 +818,8 @@ FIXTURE_FILES = {
     "swift/PARITY.md": "Swift and Kotlin names.\n",
     "swift/Sources/SupabaseOffline/Client.swift": FIXTURE_SWIFT,
     "swift/Sources/SupabaseOffline/PrivacyInfo.xcprivacy": "<plist/>\n",
+    "swift/Sources/SupabaseOffline/SupabaseOffline.docc/SupabaseOffline.md":
+        "# ``SupabaseOffline``\n\nOffline-first reads and queued writes.\n",
     "swift/Sources/SupabaseOfflineTesting/Fake.swift": "/// A fake.\nstruct Fake {}\n",
     "swift/Tests/SupabaseOfflineTests/ClientTests.swift": "import Testing\n",
     "LICENSE": "MIT License\n",
@@ -888,13 +901,15 @@ def self_test() -> int:
         listing = sorted(path.relative_to(tree).as_posix() for path in tree.rglob("*") if path.is_file())
         expect(listing == ["LICENSE", "Package.swift", "README.md", "Sources/SupabaseOffline/Client.swift",
                            "Sources/SupabaseOffline/PrivacyInfo.xcprivacy",
+                           "Sources/SupabaseOffline/SupabaseOffline.docc/SupabaseOffline.md",
                            "Sources/SupabaseOfflineTesting/Fake.swift"],
-               "the staged tree is the manifest, the readme, the license and the sources, nothing else")
+               "the staged tree is the manifest, the readme, the license and the sources (a DocC catalog"
+               " included), nothing else")
         expect(not tree_problems(tree, "0.1.0", archive_checksum),
                "the words in Sources' code (a framework type, a regex) are allowed")
         expect(refused(lambda: stage_tree(root, sha, "0.1.0", archive, tree), "not empty"),
                "a tree is staged afresh")
-        expect(check_sources(root, sha).startswith(f"The tree a release would publish from {sha} (6 files) passes"),
+        expect(check_sources(root, sha).startswith(f"The tree a release would publish from {sha} (7 files) passes"),
                "check-sources stages the commit's tree with a stand-in framework, and it passes")
         worded = release.make_repository(work, "worded", dict(FIXTURE_FILES, **{
             "swift/Sources/SupabaseOffline/Client.swift": FIXTURE_SWIFT.replace(
@@ -935,7 +950,18 @@ def self_test() -> int:
             ("parity", write("PARITY.md", "names\n"), "PARITY.md is not part of"),
             ("local-core", write("LocalCore/x", "x"), "LocalCore is not part of"),
             ("hidden", write("Sources/SupabaseOffline/.DS_Store", "x"), "is a hidden file"),
-            ("resource", write("Sources/SupabaseOffline/notes.txt", "x"), "neither Swift nor a privacy manifest"),
+            ("resource", write("Sources/SupabaseOffline/notes.txt", "x"),
+             "neither Swift, a privacy manifest nor a DocC catalog's page"),
+            ("markdown-outside-a-catalog", write("Sources/SupabaseOffline/Notes.md", "# Notes\n"),
+             "Sources/SupabaseOffline/Notes.md is neither Swift, a privacy manifest nor a DocC catalog's page"),
+            ("catalog-resource", write("Sources/SupabaseOffline/SupabaseOffline.docc/logo.png", "x"),
+             "SupabaseOffline.docc/logo.png is neither Swift"),
+            ("catalog-page", edit("Sources/SupabaseOffline/SupabaseOffline.docc/SupabaseOffline.md",
+                                  "queued writes.", "queued writes, on Kotlin Multiplatform."),
+             "Sources/SupabaseOffline/SupabaseOffline.docc/SupabaseOffline.md:3 names 'Kotlin'"),
+            ("catalog-code", edit("Sources/SupabaseOffline/SupabaseOffline.docc/SupabaseOffline.md",
+                                  "queued writes.\n", "queued writes.\n\n```swift\nlet x: KotlinLong\n```\n"),
+             "SupabaseOffline.docc/SupabaseOffline.md:6 names 'Kotlin'"),
             ("readme", edit("README.md", "Add the package", "Add the Kotlin package"), "README.md:3 names 'Kotlin'"),
             ("doc-comment", edit("Sources/SupabaseOffline/Client.swift", "/// A client.",
                                  "/// A client over KMP."), "'KMP' in a comment"),

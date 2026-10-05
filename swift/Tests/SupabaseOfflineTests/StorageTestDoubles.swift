@@ -1,6 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
 import Foundation
+import SupabaseOfflineCore
 import SupabaseOfflineTesting
 import Testing
 import os
@@ -175,4 +176,37 @@ extension FakeServer.Request {
 func storageDate(_ text: String) -> Date {
     guard let date = PostgresTimestamp.date(from: text) else { preconditionFailure("Not a date: \(text)") }
     return date
+}
+
+/// One answer of the core's download: its bytes, or the kind of its failure.
+struct CoreDownloadAnswer: Sendable, Equatable {
+
+    /// The bytes downloaded; `nil` on a failure.
+    let bytes: Data?
+
+    /// The failure's kind name, such as `CANCELLED`; `nil` on success.
+    let failureKind: String?
+}
+
+extension SupabaseOfflineClient {
+
+    /// Starts the core's own download of `path` from `bucket`, past the package's cancellation
+    /// handling, and returns its handle, so a test decides when the cancellation reaches the core;
+    /// `answers` records the core's completion.
+    func coreDownload(bucket: String, path: String, answers: RecordingList<CoreDownloadAnswer>) async throws -> BridgeCancellable {
+        let core = try await connection.openedClient().client
+        return core.storage.download(bucket: bucket, path: path, isPublic: false, imageTransform: nil) {
+            @Sendable bytes, failure in
+            answers.append(CoreDownloadAnswer(bytes: bytes.map { $0 as Data }, failureKind: failure?.kind.name))
+        }
+    }
+
+    /// Whether the device holds no copy of `path`, or exactly `bytes`: never a part of them, nor
+    /// another object's. Turns the client's network off to read the copy, so only the cache answers.
+    func holdsNothingOrExactly(_ bytes: Data, cachedAt path: String, in bucket: OfflineBucketApi) async throws -> Bool {
+        guard let cached = try await bucket.cachedFile(path: path) else { return true }
+        guard cached.sizeBytes == bytes.count else { return false }
+        try await disableNetwork()
+        return try await bucket.download(path: path) == bytes
+    }
 }

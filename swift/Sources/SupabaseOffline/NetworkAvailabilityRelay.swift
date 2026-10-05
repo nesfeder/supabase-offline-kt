@@ -35,7 +35,7 @@ enum NetworkAvailabilityRelay {
         }
     }
 
-    /// Returns once the client has closed, or once the task is cancelled.
+    /// Returns once the client has closed, or once the task is canceled.
     private static func waitForClosing(of reference: CoreClientReference) async {
         let statuses: AsyncThrowingStream<Void, any Error> = subscriptionStream { _, finish in
             reference.client.observeSyncStatus(

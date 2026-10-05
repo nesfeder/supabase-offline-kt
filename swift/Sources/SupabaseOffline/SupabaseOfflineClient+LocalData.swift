@@ -8,9 +8,13 @@ extension SupabaseOfflineClient {
     /// every queued write, which is never sent, and the rejected list.
     ///
     /// Call it when the signed-in user changes and one access-token closure serves both users: the
-    /// client has one identity, so the cache and the queue would otherwise carry over. A sync pass
-    /// in flight is cancelled first, live reads show nothing cached and fetch again, and the client
-    /// stays usable.
+    /// client has one identity, so the cache and the queue would otherwise carry over. Call it with
+    /// the network turned off, after the closure stops returning the outgoing user's token and
+    /// before it returns the next user's (``Config/accessToken`` gives the order). A sync pass in
+    /// flight is canceled first, live reads show nothing cached and fetch again as soon as they can,
+    /// with the token the closure returns then, and the client stays usable.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func clearLocalData() async throws {
         try await connection.call { core, complete in
             core.clearLocalData { failure in complete(coreResult(failure)) }
@@ -34,7 +38,7 @@ extension SupabaseOfflineClient {
     ///     table of another schema.
     ///   - schema: The table's schema; `nil` for the client's default.
     /// - Throws: ``OfflineError``: `encoding` when `record` cannot be encoded, `invalidRequest` when
-    ///   it does not encode as a JSON object.
+    ///   it does not encode as a JSON object; `clientClosed` once the client is closed.
     public func applyServerRecord(
         table: String,
         record: some Encodable,
@@ -50,6 +54,8 @@ extension SupabaseOfflineClient {
     }
 
     /// Applies a row the server reports, written as JSON, such as `["id": 7, "title": "Milk"]`.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func applyServerRecord(
         table: String,
         record: [String: OfflineJSON],
@@ -69,7 +75,7 @@ extension SupabaseOfflineClient {
     ///     table of another schema.
     ///   - schema: The table's schema; `nil` for the client's default.
     /// - Throws: ``OfflineError``: `encoding` when `oldRecord` cannot be encoded, `invalidRequest`
-    ///   when it does not encode as a JSON object.
+    ///   when it does not encode as a JSON object; `clientClosed` once the client is closed.
     public func applyServerDelete(
         table: String,
         oldRecord: some Encodable,
@@ -85,6 +91,8 @@ extension SupabaseOfflineClient {
     }
 
     /// Removes a row the server reports deleted, its old values written as JSON, such as `["id": 7]`.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func applyServerDelete(
         table: String,
         oldRecord: [String: OfflineJSON],

@@ -18,8 +18,11 @@ public enum SequenceReadStrategy: Sendable, Hashable, CaseIterable {
     /// or on a server error, the sequence throws.
     case networkFirstThenCache
 
-    /// Shows the cached rows and never sends a request; a query the cache never holds throws
-    /// ``OfflineError/Code/cacheMiss``.
+    /// Shows the cached rows and never sends a request.
+    ///
+    /// A query with nothing cached shows `nil` rows, or only the queued writes it admits. A shape the
+    /// cache never holds (a count, ``OfflinePostgrestRequestBuilder/single()``, another format)
+    /// throws ``OfflineError/Code/cacheMiss``.
     case cacheOnly
 
     /// The strategy as a live read description's `strategy` object.
