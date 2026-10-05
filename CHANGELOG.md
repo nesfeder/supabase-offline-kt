@@ -216,6 +216,11 @@ release.
   `iosSimulatorArm64`, each with its sources, an HTML API reference and a signature on every file.
 - `SyncReport.heldBehindOtherTablesCount`, and the testing artifact's
   `syncReport(heldBehindOtherTablesCount = …)`, defaulting to `0`.
+- The Swift package's API reference, built with DocC and published with the documentation site
+  under `/swift/`, with articles on getting started, coming from supabase-swift, offline behavior,
+  handling errors and testing an app; every code sample in it is compiled with the package's tests.
+  The package's public interface is recorded in `swift/api/`, and a change to it is rated as a
+  change to the Kotlin API is.
 
 ### Changed
 
