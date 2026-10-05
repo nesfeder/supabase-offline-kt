@@ -27,6 +27,13 @@ dependencies. Use `.upToNextMinor`: before 1.0, a minor release may change the A
 
 ## Quick start
 
+Import the package where you use it:
+
+<!-- not compiled: an import, which every compiled listing's file carries -->
+```swift
+import SupabaseOffline
+```
+
 A row is a `Codable`, `Sendable` type, `nonisolated` so the package can decode it off the main actor
 (Xcode 26 makes new apps' code main-actor by default). Make its id on the device:
 
@@ -73,8 +80,10 @@ let outcome = try await offline.from("todos").insert(todo).execute()
 // reads show it already, and the client sends it when the network is back.
 ```
 
-At sign-out, sign the user out of Auth first, so the closure returns `nil`, then call
-`clearLocalData()`, and only then let the next user sign in: the guide below shows the order.
+When the user signs out, turn the client's network off with `disableNetwork()`, sign out of Auth
+(so the closure returns `nil`), call `clearLocalData()` even if the sign-out throws, and turn the
+network back on with `enableNetwork()` once the next user is signed in: the guide below shows the
+order and why.
 
 ## Documentation
 

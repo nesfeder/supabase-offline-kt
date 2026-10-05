@@ -143,9 +143,10 @@ let outcome = try await offline.from("todos").insert(todo).execute()
 // reads show it already, and the client sends it when the network is back.
 ```
 
-When the user signs out, clear local data once the closure returns `nil` and before the next user
-signs in: the [guide for Swift apps](./docs/getting-started/swift.md) shows the order, and what else
-the package does.
+When the user signs out, turn the client's network off, sign out (so the closure returns `nil`),
+clear local data even if the sign-out throws, and turn the network back on once the next user is
+signed in: the [guide for Swift apps](./docs/getting-started/swift.md) shows the order and why, and
+what else the package does.
 
 ## Documentation
 

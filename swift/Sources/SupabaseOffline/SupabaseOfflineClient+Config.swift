@@ -18,13 +18,16 @@ extension SupabaseOfflineClient {
         ///
         /// The client learns who the user is only from the token this returns, and cannot tell one
         /// user's cached rows and queued writes from another's: a sync that starts once this returns
-        /// another user's token sends the last user's queued writes with that token, and a live read
-        /// fetches again right after ``SupabaseOfflineClient/clearLocalData()`` with whatever token
-        /// this returns then. So at sign-out: sync with
-        /// ``SupabaseOfflineClient/syncPendingMutations(table:)`` while the user is signed in, if their
-        /// queued writes should still be sent; sign out, so this returns `nil`; clear local data; and
-        /// only then let this return the next user's token. Signing out and back in as the same user
-        /// needs nothing.
+        /// another token sends the last user's queued writes with it, and a live read fetches again
+        /// right after ``SupabaseOfflineClient/clearLocalData()`` with whatever token this returns then.
+        /// So at sign-out: sync with ``SupabaseOfflineClient/syncPendingMutations(table:)`` while the
+        /// user is signed in, if their queued writes should still be sent; turn the network off with
+        /// ``SupabaseOfflineClient/disableNetwork()``; sign out, so this returns `nil`, and clear local
+        /// data even if the sign-out throws (supabase-swift ends the session on the device before it
+        /// tells the server; with an Auth that keeps a session it failed to end, end it yourself
+        /// first); and turn the network back on with ``SupabaseOfflineClient/enableNetwork()`` once
+        /// this returns the next user's token, which makes open live reads fetch again with it.
+        /// Signing out and back in as the same user needs nothing.
         public var accessToken: (@Sendable () async throws -> String?)?
 
         /// The directory for the local database and cached files, created when missing; `nil` for

@@ -64,19 +64,28 @@ requests go with the publishable key alone.
 ## When the user changes
 
 The client learns who the user is only from the token the closure returns, so it cannot tell one
-user's cached rows and queued writes from another's: clear them with `clearLocalData()` while no
-user's token is live. A live read fetches again right after the clear, with whatever token the
-closure returns then, so a clear made while it still returns the outgoing user's token puts that
-user's rows back for the next one. So at sign-out: sync the user's queued writes if they should
-still go, sign out so the closure returns `nil` (and clear even if that throws), clear, and only
-then let the next user sign in:
+user's cached rows and queued writes from another's: clear them with `clearLocalData()` when the
+user signs out, with the client's network turned off from before the sign-out until the next user
+is signed in. Sync the user's queued writes first if they should still go; turn the network off;
+sign out, so the closure returns `nil`, clearing even if the sign-out throws; clear; and once the
+next user is signed in, turn the network back on, which makes open live reads fetch again with
+their token:
 
 ```swift
 --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:sign-out"
 ```
 
-Signing out and back in as the same user needs nothing. If a session can end without your sign-out
-code running, clear local data once it has ended, before the next user signs in.
+Why the network is off: a live read fetches again right after the clear, with whatever token the
+closure returns then, so a clear made while it still returns the outgoing user's token puts that
+user's rows back for the next one; and a sync that runs between the sign-out and the clear sends
+the outgoing user's queued writes with the publishable key alone. Clearing in the `catch` is safe
+with supabase-swift, which ends the session on the device before it calls the server; with an
+Auth that keeps its session when the sign-out fails, end the session on the device yourself first.
+
+Signing out and back in as the same user needs nothing. If your app reads while nobody is signed
+in, turn the network back on right after the clear instead, and restart open live reads once the
+next user signs in. If a session can end without your sign-out code running, clear local data
+once it has ended, before the next user signs in.
 
 ## Read
 

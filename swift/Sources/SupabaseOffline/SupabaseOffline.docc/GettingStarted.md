@@ -65,14 +65,21 @@ requests go with the publishable key alone.
 
 The client learns who the user is only from the token the closure returns, so it cannot tell one
 user's cached rows and queued writes from another's: clear them with
-``SupabaseOfflineClient/clearLocalData()`` while no user's token is live. A live read fetches again
-right after the clear, with whatever token the closure returns then, so a clear made while it still
-returns the outgoing user's token puts that user's rows back for the next one. At sign-out:
+``SupabaseOfflineClient/clearLocalData()`` when the user signs out, with the client's network
+turned off from before the sign-out until the next user is signed in:
 
 1. if the user's queued writes should still be sent, sync while they are signed in;
-2. sign out, so the closure returns `nil`, and clear even if the sign-out throws;
-3. clear local data;
-4. only then let the next user sign in.
+2. turn the network off with ``SupabaseOfflineClient/disableNetwork()``;
+3. sign out, so the closure returns `nil`, and clear even if the sign-out throws;
+4. clear local data;
+5. once the next user is signed in, turn the network back on with
+   ``SupabaseOfflineClient/enableNetwork()``: open live reads then fetch again with their token.
+
+Why the network is off: a live read fetches again right after the clear, with whatever token the
+closure returns then, so a clear made while it still returns the outgoing user's token puts that
+user's rows back for the next one; and a sync that runs between the sign-out and the clear sends
+the outgoing user's queued writes with the publishable key alone. An open live read does not fetch
+again by itself when only the token changes: turning the network back on is what starts it.
 
 <!-- swift-listing: GettingStartedListings.swift:sign-out -->
 ```swift
@@ -80,21 +87,34 @@ func signOut() async throws {
     // Send the user's queued writes while they are signed in. Offline this returns at once,
     // with the writes still queued, and the clear below drops them.
     try await offline.syncPendingMutations()
-    // Sign out first, so the access-token closure returns nil, and clear even if that throws.
+    // Nothing is sent from here until the next user is signed in.
+    try await offline.disableNetwork()
+    // Sign out, so the access-token closure returns nil, and clear even if that throws:
+    // supabase-swift ends the session on the device before it tells the server.
     do {
         try await supabase.auth.signOut()
     } catch {
         try await offline.clearLocalData()
         throw error
     }
-    // A live read fetches again right after the clear, with the token the closure returns then:
-    // none, so nothing of the user's comes back. Only now may the next user sign in.
     try await offline.clearLocalData()
+}
+
+func didSignIn() async throws {
+    // The next user's token is live: open live reads fetch again with it.
+    try await offline.enableNetwork()
 }
 ```
 
-Signing out and back in as the same user needs nothing. If a session can end without your sign-out
-code running, clear local data once it has ended, before the next user signs in.
+Clearing in the `catch` is safe with supabase-swift, which ends the session on the device before
+it calls the server, so the closure returns `nil` even after a sign-out that throws; with an Auth
+that keeps its session when the sign-out fails, end the session on the device yourself before
+clearing.
+
+Signing out and back in as the same user needs nothing. If your app reads while nobody is signed
+in, turn the network back on right after the clear instead, and restart open live reads once the
+next user signs in. If a session can end without your sign-out code running, clear local data once
+it has ended, before the next user signs in.
 
 ### Read
 
