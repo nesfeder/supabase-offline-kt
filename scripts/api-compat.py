@@ -535,7 +535,8 @@ def classify_swift(
     before, after = normalise_swift(base), normalise_swift(head)
     before_platform, after_platform = swift_platform(before), swift_platform(after)
     if before_platform != after_platform:
-        detail = f"{path}: iOS {'.'.join(map(str, before_platform or ()))} -> {'.'.join(map(str, after_platform or ()))}"
+        before_text, after_text = (".".join(map(str, version or ())) for version in (before_platform, after_platform))
+        detail = f"{path}: iOS {before_text} -> {after_text}"
         if before_platform and after_platform and after_platform > before_platform:
             report.add(Finding("additive", "swift-platform-raised", detail, flag="dependency"))
         elif before_platform and after_platform:
@@ -1148,7 +1149,8 @@ enum NetworkStatus | enum NetworkStatus
 enum.case NetworkStatus.online | case online
 protocol OfflinePostgrestFilterBuilder | protocol OfflinePostgrestFilterBuilder : Sendable
 requirement OfflinePostgrestFilterBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> Self
-property OfflineFilterValue.filterText | var filterText: String { get } | where Self: RawRepresentable, Self.RawValue: OfflineFilterValue
+property OfflineFilterValue.filterText | var filterText: String { get } \
+| where Self: RawRepresentable, Self.RawValue: OfflineFilterValue
 conformance SupabaseOfflineClient | Swift.Sendable
 """
 
@@ -1470,7 +1472,8 @@ def self_test() -> int:
     scenario(
         "a Swift case added to an input-only enum",
         with_swift("enum.case ReadStrategy.networkOnly | case networkOnly\n",
-                   "enum.case ReadStrategy.networkOnly | case networkOnly\nenum.case ReadStrategy.cacheOnly | case cacheOnly\n"),
+                   "enum.case ReadStrategy.networkOnly | case networkOnly\n"
+                   "enum.case ReadStrategy.cacheOnly | case cacheOnly\n"),
         "additive",
         ["swift-enum-case-added"],
     )
@@ -1510,9 +1513,8 @@ def self_test() -> int:
     )
     scenario(
         "a Swift declaration made available later",
-        with_swift("method SupabaseOfflineClient.from(_:) | func from(_ table: String) -> OfflinePostgrestQueryBuilder\n",
-                   "method SupabaseOfflineClient.from(_:) | func from(_ table: String) -> OfflinePostgrestQueryBuilder"
-                   " | @available(iOS 17.0)\n"),
+        with_swift("func from(_ table: String) -> OfflinePostgrestQueryBuilder\n",
+                   "func from(_ table: String) -> OfflinePostgrestQueryBuilder | @available(iOS 17.0)\n"),
         "breaking",
         ["swift-removed", "swift-added"],
     )

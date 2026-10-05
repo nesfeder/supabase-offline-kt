@@ -209,7 +209,8 @@ def check_page(path: Path, root: Path, sections: Dict[str, Dict[str, str]], upda
             continue
         if "\n".join(body).strip("\n") != expected:
             if update:
-                replacements.append((opening, closing, [indent + line if line else line for line in expected.split("\n")]))
+                copy = [indent + line if line else line for line in expected.split("\n")]
+                replacements.append((opening, closing, copy))
             else:
                 problems.append(f"{where}: differs from {file_name}:{section} "
                                 "(scripts/check-swift-doc-listings.py --update copies it)")
@@ -362,7 +363,8 @@ def self_test() -> int:
          1, "swift/README.md:3: a swift block needs"),
         ("a changed line in an article", {article: ARTICLE_FIXTURE.replace("print(todos)", "print(todos + 1)")},
          1, "differs from Listings.swift:read"),
-        ("a block with no mark", {article: ARTICLE_FIXTURE.replace("<!-- swift-listing: Listings.swift:read -->\n", "")},
+        ("a block with no mark",
+         {article: ARTICLE_FIXTURE.replace("<!-- swift-listing: Listings.swift:read -->\n", "")},
          1, "needs <!-- swift-listing"),
         ("a section that does not exist", {article: ARTICLE_FIXTURE.replace(":read -->", ":write -->")},
          1, "has no section 'write'"),

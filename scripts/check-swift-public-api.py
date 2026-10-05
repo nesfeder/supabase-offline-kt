@@ -133,6 +133,7 @@ def constraint_text(constraint: dict) -> str:
 
 
 def version_text(version: dict) -> str:
+    """A symbol graph version as Swift writes it: `17.0`, or `17.0.1` when it has a patch."""
     parts = [version.get("major", 0), version.get("minor", 0)] + ([version["patch"]] if version.get("patch") else [])
     return ".".join(str(part) for part in parts)
 
@@ -194,7 +195,9 @@ def interface_record(graphs: list[dict], module: str, platform: str) -> str:
                 continue
             if "::SYNTHESIZED::" in source or names.get(target) in IMPLICIT_PROTOCOLS:
                 continue
-            constraints = ", ".join(constraint_text(constraint) for constraint in relationship.get("swiftConstraints", []))
+            constraints = ", ".join(
+                constraint_text(constraint) for constraint in relationship.get("swiftConstraints", [])
+            )
             where = f" where {constraints}" if constraints else ""
             word = "conformance" if kind == "conformsTo" else "inheritance"
             lines.add(f"{word} {names.get(source, source)} | {names.get(target, target)}{where}")
@@ -220,8 +223,8 @@ def check_records(graphs: Path, platform: str, update: bool) -> tuple[list[str],
     problems = []
     line_count = 0
     for module in MODULES:
-        contents = [json.loads(path.read_text(encoding="utf-8"))
-                    for path in sorted(graphs.glob(f"{module}.symbols.json")) + sorted(graphs.glob(f"{module}@*.symbols.json"))]
+        paths = sorted(graphs.glob(f"{module}.symbols.json")) + sorted(graphs.glob(f"{module}@*.symbols.json"))
+        contents = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
         if not contents:
             problems.append(f"no symbol graph for {module}")
             continue
@@ -290,7 +293,9 @@ def extract_symbol_graphs(products: Path, output: Path, sdk: str, target: str) -
     return problems
 
 
-def typecheck(products: Path, sdk: str, source: str, scratch: Path, name: str, target: str) -> subprocess.CompletedProcess[str]:
+def typecheck(
+    products: Path, sdk: str, source: str, scratch: Path, name: str, target: str
+) -> subprocess.CompletedProcess[str]:
     probe = scratch / f"{name}.swift"
     probe.write_text(source, encoding="utf-8")
     return run([
@@ -428,11 +433,13 @@ RECORD_GRAPH = {
     "symbols": [
         record_symbol("s:Client", "class", ["Client"], "final class Client"),
         record_symbol("s:Client.close", "method", ["Client", "close()"], "func close() async throws"),
-        record_symbol("s:Client.close::SYNTHESIZED::s:Other", "method", ["Other", "close()"], "func close() async throws"),
+        record_symbol("s:Client.close::SYNTHESIZED::s:Other", "method", ["Other", "close()"],
+                      "func close() async throws"),
         record_symbol("s:Strategy", "enum", ["Strategy"], "enum Strategy"),
         record_symbol("s:Strategy.cacheOnly", "enum.case", ["Strategy", "cacheOnly"], "case cacheOnly"),
         record_symbol("s:Builder", "protocol", ["Builder"], "protocol Builder : Sendable"),
-        record_symbol("s:Builder.applying", "method", ["Builder", "applying(_:)"], "func applying(_ change: Change) -> Self"),
+        record_symbol("s:Builder.applying", "method", ["Builder", "applying(_:)"],
+                      "func applying(_ change: Change) -> Self"),
         dict(record_symbol("s:Value.filterText", "property", ["Value", "filterText"], "var filterText: String { get }"),
              swiftExtension={"extendedModule": "Module", "constraints": [
                  {"kind": "conformance", "lhs": "Self", "rhs": "RawRepresentable"},
@@ -456,7 +463,8 @@ RECORD_CASES = [
     ("a conformance", "conformance Client | Swift.Sendable"),
     ("the platform", "platform iOS 16.0"),
     ("an extension's constraints",
-     "property Value.filterText | var filterText: String { get } | where Self: RawRepresentable, Self.RawValue == String"),
+     "property Value.filterText | var filterText: String { get }"
+     " | where Self: RawRepresentable, Self.RawValue == String"),
     ("a declaration's availability", "method Client.sign() | func sign() async throws | @available(iOS 17.0)"),
 ]
 

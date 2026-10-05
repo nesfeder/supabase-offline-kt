@@ -50,7 +50,8 @@ Commands (from the repository root):
   check-tree --tree DIR --zip ZIP --version X.Y.Z
       The check publish runs: the tree holds Package.swift, README.md, LICENSE and Sources/ and
       nothing else, Sources/ only Swift files, privacy manifests and the Markdown pages of a DocC
-      catalog (a `.md` file inside a `*.docc` folder), no symbolic link and no hidden file; the manifest names X.Y.Z, the archive's URL and the zip's checksum (never the zero
+      catalog (a `.md` file inside a `*.docc` folder), no symbolic link and no hidden file; the
+      manifest names X.Y.Z, the archive's URL and the zip's checksum (never the zero
       placeholder), with no local-framework switch and no test target; and the words Kotlin, KMP,
       Konan and kfun, in any case, appear nowhere but in the code of Sources/*.swift. There, the
       package's internal code calls the framework, whose runtime types carry the word (such as

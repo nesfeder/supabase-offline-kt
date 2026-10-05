@@ -53,8 +53,9 @@ jobs:
         id: build
         run: mkdocs build --strict
 
-      # Every Swift block of the DocC articles, the README's Swift section and the site's Swift
-      # pages is code the Swift package's tests compile; the self-test runs first.
+      # Every Swift block of the DocC articles, the package's own README (swift/README.md), the
+      # README's Swift section and the site's Swift pages is code the Swift package's tests
+      # compile; the self-test runs first.
       - name: Check the Swift listings
         run: |
           python3 scripts/check-swift-doc-listings.py --self-test
