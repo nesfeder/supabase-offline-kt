@@ -64,7 +64,10 @@ It fails when:
        `contents: read`, passing no secret, and skipped on a dry run. The Swift API reference it
        places under /swift/ is built (build-swift-docs.sh) and uploaded (artifact swift-reference)
        by release.yml's framework job alone, which holds no secret and no environment; release.yml's
-       docs job names that artifact, and the resume's, whose run has none, names none.
+       docs job names that artifact, and the resume's, whose run has none, names none. No other job
+       of a release workflow downloads an artifact but the framework's zip. docs-publish.yml's build
+       job holds `contents: read` alone, downloads only the artifact the caller names, from the
+       calling run with the default token, into site/swift, and runs nothing from the site.
      - What they run: only the Central steps run a Maven Central publish task, and only
        release.yml releases, waiting until Central says PUBLISHED; the snapshot job's publish step
        runs only for a -SNAPSHOT version; no job of either release workflow, nor the snapshot job,
@@ -172,6 +175,14 @@ BUILDS_FRAMEWORK = re.compile(r"swift-release\.py (build|zip)\b|test-swift-packa
 # and handed to the documentation site as this artifact of the run.
 SWIFT_REFERENCE = "swift-reference"
 BUILDS_REFERENCE = re.compile(r"build-swift-docs\.sh|\bdocc\b")
+# The one artifact a release job may download: the framework's zip, hashed and never opened.
+FRAMEWORK_ARTIFACT = "swift-framework"
+# docs-publish.yml's build job: what its one download takes, and where it puts it.
+DOCS_BUILD_JOB = ("docs-publish.yml", "build")
+REFERENCE_DOWNLOAD = {"name": "${{ inputs.swift-reference }}", "path": "site/swift"}
+# A test of a path (`[[ -f site/… ]]`) reads the site; anything else naming it may run or move it.
+SITE_TEST = re.compile(r"\[\[\s*!?\s*-[fde]\s+site/\S*")
+TOUCHES_SITE = re.compile(r"(?<![\w/.-])site/|\bcd\s+[\"']?site\b")
 HOSTED_GUARD_IF = "runner.environment != 'github-hosted'"
 # This repository's tag and GitHub Release, which come after the Swift package's tag.
 TAGS_THIS_REPOSITORY = r"release\.py (push-tag|publish-github-release)"
@@ -536,6 +547,11 @@ def release_job_problems(name: str, job_id: str, job: dict) -> list[str]:
         if name in RELEASE_WORKFLOWS and key != FRAMEWORK_JOB and BUILDS_REFERENCE.search(run):
             problems.append(f"{where} builds the Swift API reference, which the framework job alone does,"
                             " holding no secret and no environment")
+        if (name in RELEASE_WORKFLOWS and uses.startswith("actions/download-artifact@")
+                and with_.get("name") != FRAMEWORK_ARTIFACT):
+            problems.append(f"{where} downloads {with_.get('name')!r}; a release job downloads the"
+                            f" framework's zip ({FRAMEWORK_ARTIFACT}) alone, and the Swift reference"
+                            " reaches docs-publish.yml only")
         if (name in RELEASE_WORKFLOWS and key != FRAMEWORK_JOB and uses.startswith("actions/upload-artifact@")
                 and with_.get("name") == SWIFT_REFERENCE):
             problems.append(f"{where} uploads {SWIFT_REFERENCE}, which the site publishes; only the"
@@ -714,6 +730,30 @@ def verify_problems(where: str, job: dict, steps: list[dict]) -> list[str]:
     return problems
 
 
+def docs_build_problems(name: str, document: dict) -> list[str]:
+    """Rule 9: docs-publish.yml's build job places the Swift reference and does nothing else with it."""
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    if name != DOCS_BUILD_JOB[0] or not isinstance(jobs.get(DOCS_BUILD_JOB[1]), dict):
+        return [] if name != DOCS_BUILD_JOB[0] else [f"{name}: has no build job"]
+    job = jobs[DOCS_BUILD_JOB[1]]
+    where = f"{name}: job {DOCS_BUILD_JOB[1]}"
+    problems = []
+    if job.get("permissions") != {"contents": "read"}:
+        problems.append(f"{where} holds {job.get('permissions')}, not exactly {{'contents': 'read'}}:"
+                        " the job that places the Swift reference holds nothing more (no Pages, OIDC or Actions token)")
+    for step in steps_of(job):
+        uses = str(step.get("uses", ""))
+        with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
+        if uses.startswith("actions/download-artifact@") and with_ != REFERENCE_DOWNLOAD:
+            problems.append(f"{where} downloads with {with_}, not exactly {REFERENCE_DOWNLOAD}: the"
+                            " caller's artifact, from the calling run with the default token, into"
+                            " site/swift alone")
+        if TOUCHES_SITE.search(SITE_TEST.sub("", str(step.get("run", "")))):
+            problems.append(f"{where} runs a step that uses what the site holds beyond testing a"
+                            " path: nothing from the Swift reference is run, moved or changed")
+    return problems
+
+
 def release_problems(name: str, document: dict) -> list[str]:
     """Rule 9, for one workflow."""
     problems = []
@@ -883,6 +923,7 @@ def check_tree(root: Path) -> list[str]:
         problems += self_reference_problems(root, path.name, document)
         problems += oidc_problems(path.name, document)
         problems += release_problems(path.name, document)
+        problems += docs_build_problems(path.name, document)
         problems += scheduled_problems(path.name, document)
     workflows = root / ".github" / "workflows"
     if (workflows / "release.yml").is_file() and not (workflows / "release-resume.yml").is_file():
@@ -985,10 +1026,21 @@ SWIFT_STEP = """\
         run: rm -f "$RUNNER_TEMP/swift-package-deploy-key"
 """
 COMPLIANT_DOCS_PUBLISH = """\
-on: {workflow_call: {inputs: {ref: {type: string}}}, workflow_dispatch: {}}
+on: {workflow_call: {inputs: {ref: {type: string}, swift-reference: {type: string}}}, workflow_dispatch: {}}
 permissions: {}
 jobs:
-  build: {runs-on: ubuntu-latest, permissions: {contents: read}, steps: [{run: echo}]}
+  build:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    steps:
+      - run: mkdocs build --strict
+      - if: inputs.swift-reference != ''
+        uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567
+        with: {name: '${{ inputs.swift-reference }}', path: site/swift}
+      - run: |
+          if [[ ! -f site/swift/documentation/supabaseoffline/index.html ]]; then
+            echo "Published without the Swift API reference: /swift/ is not part of this site."
+          fi
 """
 COMPLIANT_RELEASE = f"""\
 on:
@@ -1697,6 +1749,29 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("the release's documentation placing another artifact", "release.yml",
      COMPLIANT_RELEASE.replace("swift-reference: swift-reference}", "swift-reference: swift-package-tree}"),
      "places 'swift-package-tree' under /swift/"),
+    ("the job holding the release environment downloading the Swift reference", "release.yml",
+     COMPLIANT_RELEASE.replace("      - run: python3 scripts/swift-release.py publish --dry-run --out t\n      - if: inputs.dry_run",
+                               "      - run: python3 scripts/swift-release.py publish --dry-run --out t\n"
+                               "      - uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567\n"
+                               "        with: {name: swift-reference, path: swift/Sources/SupabaseOffline}\n"
+                               "      - if: inputs.dry_run"),
+     "job publish downloads 'swift-reference'"),
+    ("the site's build downloading another run's artifact with a token", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("permissions: {contents: read}", "permissions: {contents: read, actions: read}")
+     .replace("path: site/swift}", "path: site/swift, run-id: '1', github-token: '${{ github.token }}'}"),
+     "job build downloads with"),
+    ("the site's build running a script from the Swift reference", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("      - run: |\n", "      - run: bash site/swift/prepare.sh\n      - run: |\n"),
+     "job build runs a step that uses what the site holds"),
+    ("the site's build running the Swift reference from its folder", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("      - run: |\n", "      - run: cd site && ./swift/prepare.sh\n      - run: |\n"),
+     "job build runs a step that uses what the site holds"),
+    ("the Swift reference placed over the site's root", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("path: site/swift}", "path: site}"),
+     "job build downloads with"),
+    ("the site's build holding a Pages token", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("permissions: {contents: read}", "permissions: {contents: read, pages: write}"),
+     "job build holds"),
     ("the resume's documentation naming an artifact its run has not", "release-resume.yml",
      COMPLIANT_RESUME.replace(f"with: {{ref: '{DOCS_REF}'}}", f"with: {{ref: '{DOCS_REF}', swift-reference: swift-reference}}"),
      "places 'swift-reference' under /swift/"),
