@@ -42,26 +42,21 @@ scripts/prepare-local-swift-package.sh
 ```
 
 It builds the library with Gradle (JDK 17; the first build downloads its toolchain, which takes a
-few minutes) and copies it into `swift/LocalCore`, which git ignores. The package then takes it
-from there whenever `SUPABASE_OFFLINE_LOCAL_CORE=1` is in the environment of whatever builds it.
+few minutes) and copies it into `swift/LocalCore`, which git ignores. The package finds it there by
+itself. Run the script before you first open the project: Xcode remembers how it read the package
+(see [Troubleshooting](#troubleshooting) if it read it too early).
 
 ## Build and run
 
-In Xcode, quit Xcode first, then open the project with the variable in Xcode's environment:
-
-```bash
-open -a Xcode --env SUPABASE_OFFLINE_LOCAL_CORE=1 samples/ios/OfflineTasks.xcodeproj
-```
-
-Choose the **OfflineTasks** scheme and an iOS 26 simulator, and run. An Xcode that was already open
-without the variable cannot resolve the package: quit it and open the project this way.
+Open `samples/ios/OfflineTasks.xcodeproj` in Xcode, choose the **OfflineTasks** scheme and an iOS 26
+simulator, and run.
 
 From the command line:
 
 ```bash
 cd samples/ios
-SUPABASE_OFFLINE_LOCAL_CORE=1 xcodebuild build -project OfflineTasks.xcodeproj \
-    -scheme OfflineTasks -destination 'platform=iOS Simulator,name=iPhone 17'
+xcodebuild build -project OfflineTasks.xcodeproj -scheme OfflineTasks \
+    -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
 The tests, model tests on the testing product's in-memory client and one UI test, run in demo mode
@@ -184,9 +179,13 @@ moment; with the old user's, their rows would be back on the device for the next
 
 - **The app says it is in demo mode.** `Secrets.xcconfig` is missing, is not beside the example
   file, or lacks one of the two keys. Add them and build again.
-- **Xcode cannot resolve the SupabaseOffline package.** Run `scripts/prepare-local-swift-package.sh`,
-  then quit Xcode and open the project with `open -a Xcode --env SUPABASE_OFFLINE_LOCAL_CORE=1 …`.
-  Without the variable the package looks for a release that a checkout does not have.
+- **Xcode cannot resolve the SupabaseOffline package**, and names a release archive it could not
+  download. The library is not built yet: run `scripts/prepare-local-swift-package.sh`. If Xcode had
+  the project open before the script ran, it keeps its first reading of the package (SwiftPM caches
+  it by the manifest's text and the environment, not by what is on disk): choose **File >
+  Packages > Reset Package Caches**, or quit Xcode and open the project once with the variable
+  that forces the local build, `open -a Xcode --env SUPABASE_OFFLINE_LOCAL_CORE=1
+  samples/ios/OfflineTasks.xcodeproj`.
 - **A build for an Intel simulator fails.** The package's library has arm64 simulator code only:
   build on Apple silicon, for a simulator or with `ARCHS=arm64`.
 - **It cannot sign in.** Check that anonymous sign-ins are on (Authentication, Sign In /

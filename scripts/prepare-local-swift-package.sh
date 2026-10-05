@@ -3,14 +3,13 @@
 # SPDX-License-Identifier: MIT
 #
 # Makes swift/ buildable from this checkout: builds the framework the Swift package wraps (debug,
-# on Apple's SQLite) and copies it into swift/LocalCore (ignored by git), where Package.swift takes
-# it when SUPABASE_OFFLINE_LOCAL_CORE=1. For the iOS sample, which depends on swift/ by path, and for
-# anyone opening the package itself. Needs JDK 17; the first build downloads its toolchain.
+# on Apple's SQLite) and copies it into swift/LocalCore (ignored by git), where Package.swift finds
+# it by itself. For the iOS sample, which depends on swift/ by path, and for anyone opening the
+# package itself. Needs JDK 17; the first build downloads its toolchain.
 #
-# Usage, from anywhere in the repository:
+# Usage, from anywhere in the repository, before opening the project in Xcode:
 #   scripts/prepare-local-swift-package.sh
-# then quit Xcode and open the sample with the variable in Xcode's environment:
-#   open -a Xcode --env SUPABASE_OFFLINE_LOCAL_CORE=1 samples/ios/OfflineTasks.xcodeproj
+#   open samples/ios/OfflineTasks.xcodeproj
 #
 # Run it again after a change outside swift/ (the engine or the bridge). Portable: bash 3.2 or later.
 
@@ -32,6 +31,5 @@ fi
 rm -rf "${local_core:?}/SupabaseOfflineCore.xcframework"
 mkdir -p "$local_core"
 cp -R "$built" "$local_core/"
-echo "Copied the framework into ${local_core#"$root"/}."
-echo "Build with SUPABASE_OFFLINE_LOCAL_CORE=1, or open Xcode with it:"
-echo "  open -a Xcode --env SUPABASE_OFFLINE_LOCAL_CORE=1 samples/ios/OfflineTasks.xcodeproj"
+echo "Copied the framework into ${local_core#"$root"/}, where the package finds it."
+echo "Open the sample with: open samples/ios/OfflineTasks.xcodeproj"

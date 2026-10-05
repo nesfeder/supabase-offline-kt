@@ -13,7 +13,8 @@
 #
 # --framework tests against another build of the core, such as the release's (scripts/swift-release.py);
 # the default is Gradle's debug XCFramework above. The framework is copied into swift/LocalCore
-# (ignored by git), where Package.swift finds it when SUPABASE_OFFLINE_LOCAL_CORE=1. Everything xcodebuild writes goes under the derived-data directory,
+# (ignored by git), where Package.swift finds it, and the script sets SUPABASE_OFFLINE_LOCAL_CORE=1
+# so nothing else is used. Everything xcodebuild writes goes under the derived-data directory,
 # but for the link SwiftPM re-creates in ~/.swiftpm on every package build (home-snapshot.sh).
 # When GITHUB_STEP_SUMMARY is set, the test count is added to it. Portable: bash 3.2 or later.
 

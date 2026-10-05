@@ -129,10 +129,11 @@ jobs:
       # version catalog, build-logic, any build script or gradle.properties), a change to the
       # library's public API records, and this workflow. Every push to main builds it, so a
       # library change that breaks the sample without moving the API records shows up there.
-      # `ios-sample` runs the iOS sample's tests in ios-tests: for its own sources and what it is
-      # built on (the Swift package, the bridge, the two scripts), and this workflow; every push to
-      # main runs them too, as it builds the Android sample. Its sources still count as a build
-      # input, since ios-tests runs only when `kotlin` says so.
+      # `ios-sample` runs the iOS sample's tests in ios-tests, on the self-hosted runner only: for
+      # its own sources and what it is built on (the Swift package but its Markdown, the bridge,
+      # the two scripts), and this workflow; every push to main runs them too, as it builds the
+      # Android sample. Its sources fall to `kotlin` below, since ios-tests runs only when `kotlin`
+      # says so; its page and screenshots are under docs/ and run the docs job alone.
       - name: Classify the changed files
         id: classify
         env:
@@ -178,6 +179,9 @@ jobs:
                 sample=true ;;
             esac
             case "$file" in
+              # The Swift package's Markdown builds nothing the sample uses.
+              swift/*.md)
+                ;;
               samples/ios/* | swift/* | supabase-offline-swift-bridge/* | scripts/test-ios-sample.sh \
                 | scripts/prepare-local-swift-package.sh | .github/workflows/ci.yml)
                 ios_sample=true ;;
