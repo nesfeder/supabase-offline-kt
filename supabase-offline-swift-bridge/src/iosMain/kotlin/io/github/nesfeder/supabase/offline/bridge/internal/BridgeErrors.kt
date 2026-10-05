@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.bridge.internal
 
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.exceptions.SupabaseEncodingException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
@@ -92,8 +93,8 @@ internal fun bridgeErrorOf(failure: Throwable, clientClosing: Boolean): BridgeEr
         clientClosing && (failure is IllegalStateException || failure is CancellationException) ->
             clientClosedError(type)
         failure.isNetworkOrConnectivityFailure() -> connectivityError(failure, type)
-        failure is SerializationException ->
-            bridgeError(BridgeErrorKind.DECODING, "A response could not be decoded", type)
+        failure is SerializationException || failure is SupabaseEncodingException ->
+            bridgeError(BridgeErrorKind.DECODING, decodingMessageOf(failure), type)
         failure is IllegalArgumentException ->
             bridgeError(BridgeErrorKind.INVALID_ARGUMENT, failure.messageOr(type), type)
         else -> bridgeError(BridgeErrorKind.UNEXPECTED, failure.messageOr(type), type)
@@ -126,18 +127,84 @@ private fun postgrestError(failure: PostgrestRestException, type: String): Bridg
         debugType = type,
     )
 
-/** Another REST failure: the server's error and description, never the URL and headers. */
-private fun restError(failure: RestException, type: String): BridgeError =
-    BridgeError(
+/** Storage's refusal: the status, Storage's error code and message, never the URL and headers. */
+private fun restError(failure: RestException, type: String): BridgeError {
+    val refusal = storageRefusalOf(failure)
+    return BridgeError(
         kind = BridgeErrorKind.HTTP,
-        message = failure.error,
+        message = refusal.message,
         httpStatus = failure.statusCode,
-        code = null,
-        details = failure.description,
+        code = refusal.code,
+        details = null,
         hint = null,
         isConnectivityFailure = false,
         debugType = type,
     )
+}
+
+/** The error code and message Storage sent with a refusal; `code` is `null` when it sent none. */
+internal class StorageRefusal(val code: String?, val message: String)
+
+/**
+ * What Storage sent with [failure]. supabase-kt keeps Storage's error and message as the error and
+ * description of a `400`, and for any other status prints its own record of them into the error.
+ */
+internal fun storageRefusalOf(failure: RestException): StorageRefusal {
+    val printed = PRINTED_STORAGE_ERROR.matchEntire(failure.error)
+    val description = failure.description
+    val (code, message) =
+        when {
+            printed != null -> printed.groupValues[1] to printed.groupValues[2]
+            description != null -> failure.error to description
+            else -> null to failure.error
+        }
+    return when {
+        code == UNREAD_STORAGE_ERROR && message.isBlank() ->
+            StorageRefusal(null, "The server answered ${failure.statusCode}")
+        message.isBlank() ->
+            StorageRefusal(code, code ?: "The server answered ${failure.statusCode}")
+        else -> StorageRefusal(code, message)
+    }
+}
+
+/** supabase-kt's printed record of a Storage refusal: Storage's error, then its message. */
+private val PRINTED_STORAGE_ERROR =
+    Regex(
+        """Unknown error response StorageErrorResponse\(statusCode=-?\d+, error=(.*?), message=(.*)\)""",
+        RegexOption.DOT_MATCHES_ALL,
+    )
+
+/** The error supabase-kt records when Storage's answer held no refusal it could read. */
+private const val UNREAD_STORAGE_ERROR = "Unknown error"
+
+/**
+ * What could not be decoded and where, read from the failure's own text before the payload it
+ * quotes: the missing field and the JSON path when it names them. Never the payload or a type name.
+ */
+internal fun decodingMessageOf(failure: Throwable): String {
+    val text = QUOTED_PAYLOAD_MARKER.split(failure.message.orEmpty(), limit = 2).first()
+    val field = MISSING_FIELD.find(text)?.groupValues?.get(1)
+    val path = JSON_PATH.find(text)?.groupValues?.get(1)
+    val reason =
+        when {
+            field != null && path != null -> ": the field \"$field\" is missing at $path"
+            field != null -> ": the field \"$field\" is missing"
+            path != null -> ": the value at $path is missing or of the wrong type"
+            else -> ""
+        }
+    return "The server's answer could not be read$reason"
+}
+
+/**
+ * What kotlinx.serialization and supabase-kt write before the payload they quote ("JSON input:").
+ */
+private val QUOTED_PAYLOAD_MARKER = Regex("""(?i)input:""")
+
+/** A missing field's name, as kotlinx.serialization reports it. */
+private val MISSING_FIELD = Regex("""Field '([^']+)' is required""")
+
+/** The JSON path of a decoding failure, such as `$[1].signedURL`. */
+private val JSON_PATH = Regex("""at path:? (\$[^\s,]*)""")
 
 /** An error of [kind] carrying the server's [httpStatus] and nothing else. */
 private fun serverFieldsError(

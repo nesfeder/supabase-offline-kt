@@ -9,8 +9,8 @@ package io.github.nesfeder.supabase.offline.bridge
  * @property message what happened, in words. It never quotes a URL, a header, a row or a token.
  * @property httpStatus the server's HTTP status, for [BridgeErrorKind.SERVER],
  *   [BridgeErrorKind.HTTP] and a [BridgeErrorKind.SYNC_FAILED] the server caused; otherwise `null`.
- * @property code the Postgres SQLSTATE or PostgREST code (such as `23505` or `PGRST204`), when the
- *   server sent one.
+ * @property code the Postgres SQLSTATE or PostgREST code (such as `23505` or `PGRST204`), or
+ *   Storage's error code (such as `not_found`), when the server sent one.
  * @property details the server's details, when it sent any.
  * @property hint the server's hint, when it sent one.
  * @property isConnectivityFailure whether the network, not the server, failed: `true` for
@@ -48,7 +48,7 @@ public enum class BridgeErrorKind {
     /** PostgREST refused the request: status, code, message, details and hint as it sent them. */
     SERVER,
 
-    /** Another HTTP failure, such as Storage's: status, and the server's error and description. */
+    /** Another HTTP failure, such as Storage's: status, and Storage's error code and message. */
     HTTP,
 
     /** A cache-only read found nothing it may serve; nothing was sent. */
@@ -79,7 +79,7 @@ public enum class BridgeErrorKind {
      */
     INVALID_ARGUMENT,
 
-    /** A response could not be decoded. The message names no payload. */
+    /** A response could not be decoded. The message says where, and names no payload or type. */
     DECODING,
 
     /** Anything else: a defect, reported rather than thrown. [BridgeError.debugType] names it. */
