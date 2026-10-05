@@ -624,7 +624,7 @@ struct StorageTests {
 
     // MARK: - Cancellation and closing
 
-    @Test func aCancelledDownloadThrowsCancellationErrorAtOnce() async throws {
+    @Test func aCanceledDownloadThrowsCancellationErrorAtOnce() async throws {
         // Given a download Storage has not answered
         let storage = FakeStorageServer()
         let answered = Gate()
@@ -643,12 +643,62 @@ struct StorageTests {
         download.cancel()
         let result = await download.result
 
-        // Then
+        // Then it throws at once, before Storage has answered
         #expect(throws: CancellationError.self) { try result.get() }
+        #expect(answers.values.isEmpty)
+
+        // And once Storage answers, the device holds no copy or exactly Storage's bytes, as the
+        // cancellation or the answer reaches the core's download first (each is driven below)
         await answered.open()
         #expect(await eventually { !answers.values.isEmpty })
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(try await bucket.cachedFile(path: "a.png") == nil)
+        #expect(try await client.holdsNothingOrExactly(FakeStorageServer.photo, cachedAt: "a.png", in: bucket))
+        try await client.close()
+    }
+
+    @Test func aDownloadWhoseCancellationReachesTheCoreBeforeTheAnswerKeepsNothing() async throws {
+        // Given a core download Storage has not answered
+        let storage = FakeStorageServer()
+        let answered = Gate()
+        let served = RecordingList<Bool>()
+        storage.answer { _ in
+            await answered.wait()
+            served.append(true)
+            return .status(200, body: FakeStorageServer.photo)
+        }
+        let client = Self.makeClient(storage)
+        let answers = RecordingList<CoreDownloadAnswer>()
+        let handle = try await client.coreDownload(bucket: "avatars", path: "a.png", answers: answers)
+        #expect(await eventually { !storage.requests.values.isEmpty })
+
+        // When the cancellation reaches the core, which ends the download, and only then Storage answers
+        handle.cancel()
+        #expect(await eventually { !answers.values.isEmpty })
+        await answered.open()
+        #expect(await eventually { !served.values.isEmpty })
+
+        // Then the core reported the cancellation and kept nothing
+        #expect(answers.values == [CoreDownloadAnswer(bytes: nil, failureKind: BridgeErrorKind.cancelled.name)])
+        #expect(try await client.storage.from("avatars").cachedFile(path: "a.png") == nil)
+        try await client.close()
+    }
+
+    @Test func aDownloadWhoseAnswerReachesTheCoreBeforeTheCancellationKeepsExactlyStoragesBytes() async throws {
+        // Given a core download Storage answers
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let answers = RecordingList<CoreDownloadAnswer>()
+        let handle = try await client.coreDownload(bucket: "avatars", path: "a.png", answers: answers)
+
+        // When the answer is in, and only then the cancellation reaches the core, as when the
+        // caller's task is canceled a moment before the core hears of it
+        #expect(await eventually { !answers.values.isEmpty })
+        handle.cancel()
+
+        // Then the download finished, and the device keeps exactly Storage's bytes
+        #expect(answers.values == [CoreDownloadAnswer(bytes: FakeStorageServer.photo, failureKind: nil)])
+        let bucket = client.storage.from("avatars")
+        #expect(try await bucket.cachedFile(path: "a.png")?.sizeBytes == FakeStorageServer.photo.count)
+        #expect(try await client.holdsNothingOrExactly(FakeStorageServer.photo, cachedAt: "a.png", in: bucket))
         try await client.close()
     }
 

@@ -218,7 +218,9 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// A "not found" from Storage drops the cached copy; another refusal is answered from the
     /// cached copy when there is one, and otherwise thrown as ``OfflineError/Code/server`` with
-    /// Storage's status. A transformed download is cached apart from the original.
+    /// Storage's status. A transformed download is cached apart from the original. Canceling the
+    /// task throws `CancellationError` at once, and the download may still finish and be kept on
+    /// the device, whole, when its bytes arrive before the cancellation reaches it.
     ///
     /// - Parameters:
     ///   - path: The object's path in the bucket.
@@ -296,7 +298,9 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// A cached copy is returned however old it is. Throws ``OfflineError/Code/invalidRequest``
     /// for a name the cache cannot hold (see ``OfflineBucketApi``), sending nothing; one holding
-    /// `%`, `?` or `#` is refused before the client is asked.
+    /// `%`, `?` or `#` is refused before the client is asked. Canceling the task throws
+    /// `CancellationError` at once, and the download may still finish and be kept, as with
+    /// ``download(path:options:isPublic:)``.
     ///
     /// - Parameters:
     ///   - path: The object's path in the bucket.
