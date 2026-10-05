@@ -80,6 +80,93 @@ class BridgeErrorsTest {
     }
 
     @Test
+    fun a_storage_refusal_carries_storages_code_and_message_and_nothing_else() = bridgeTest {
+        // Given — Storage's own refusals, and a gateway page that is not Storage's
+        val refusals =
+            listOf(
+                Triple(403, "Unauthorized", "new row violates row-level security policy"),
+                Triple(404, "not_found", "Object not found"),
+                Triple(409, "Duplicate", "The resource already exists"),
+            )
+        val client = openTestClient(server)
+
+        for ((status, code, message) in refusals) {
+            server.answer = {
+                ScriptedAnswer.json(
+                    status,
+                    """{"statusCode":"$status","error":"$code","message":"$message"}""",
+                )
+            }
+
+            // When
+            val probe = CompletionProbe<NSData>()
+            client.storage.download("avatars", "a.png", false, null, probe.completion)
+            val error = probe.awaitError()
+
+            // Then
+            assertEquals(BridgeErrorKind.HTTP, error.kind)
+            assertEquals(status, error.httpStatus)
+            assertEquals(code, error.code)
+            assertEquals(message, error.message)
+            assertEquals(null, error.details)
+        }
+        server.answer = {
+            ScriptedAnswer(502, "<html>Bad gateway</html>".encodeToByteArray(), "text/html")
+        }
+        val probe = CompletionProbe<NSData>()
+        client.storage.download("avatars", "a.png", false, null, probe.completion)
+        val gateway = probe.awaitError()
+        assertEquals(502, gateway.httpStatus)
+        assertEquals(null, gateway.code)
+        assertEquals("The server answered 502", gateway.message)
+        client.closeAndWait()
+    }
+
+    @Test
+    fun a_decoding_failure_says_where_and_names_no_type_or_payload() = bridgeTest {
+        // Given — a listing missing a field, and a batch of signed URLs with a null one
+        server.answer = { request ->
+            if (request.path.startsWith("/storage/v1/object/list/")) {
+                ScriptedAnswer.json(200, """[{"id":"secret-object"}]""")
+            } else {
+                ScriptedAnswer.json(
+                    200,
+                    """[{"error":"Either the object does not exist","signedURL":null,"path":"secret-path.png"}]""",
+                )
+            }
+        }
+        val client = openTestClient(server)
+
+        // When
+        val listing = CompletionProbe<String>()
+        client.storage.list("avatars", "", null, listing.completion)
+        val signing = CompletionProbe<String>()
+        client.storage.createSignedUrls(
+            "avatars",
+            listOf("secret-path.png"),
+            60,
+            signing.completion,
+        )
+        val errors = listOf(listing.awaitError(), signing.awaitError())
+
+        // Then
+        for (error in errors) {
+            assertEquals(BridgeErrorKind.DECODING, error.kind)
+            assertTrue(error.message.startsWith("The server's answer could not be read"))
+            assertFalse(error.message.contains("secret"))
+            assertFalse(
+                Regex("""[A-Z][A-Za-z]*(Exception|Error)\b|kotlin|ktor|Json""")
+                    .containsMatchIn(error.message)
+            )
+        }
+        assertEquals(
+            "The server's answer could not be read: the value at \$[0].signedURL is missing or of the wrong type",
+            errors[1].message,
+        )
+        client.closeAndWait()
+    }
+
+    @Test
     fun a_transport_failure_is_connectivity_and_never_quotes_the_url() = bridgeTest {
         // Given — a server that cannot be reached
         server.online = false
