@@ -26,7 +26,7 @@ public struct PendingMutation: Sendable, Hashable, Identifiable {
     /// The body it sends; `nil` for a delete.
     public let body: OfflineJSON?
 
-    init(
+    package init(
         id: Int64,
         table: String,
         operation: MutationOperation,
