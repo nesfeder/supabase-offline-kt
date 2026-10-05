@@ -251,9 +251,10 @@ enum TopLevelFilters {
 
     /// Why `node`'s value would reach PostgREST as something else, or `nil`; never quotes the value.
     ///
-    /// A list or group escapes `"` and `\` but quotes only a value with one of `,.:()`, and PostgREST
-    /// reads the escapes of an unquoted one literally; a group splits an unquoted range at its comma
-    /// and cuts a text search's query at a comma or `)`. A top-level single value is read as written.
+    /// A list or group escapes `"` and `\` but quotes only a value with one of `,.:()`, which
+    /// PostgREST then reads literally; a group splits a range and cuts a text search's query at a
+    /// comma or `)`. A pattern list leaves empty, `NULL`, edge-spaced or braced patterns unquoted
+    /// (and an empty list matches every row). A top-level single value is read as written.
     static func valueRefusal(of node: FilterNode, isInGroup: Bool, table: String? = nil) -> String? {
         let advice = "filter on it with a single condition outside any list or group"
         let column = node.column.map { written($0, in: table) } ?? ""
@@ -264,6 +265,10 @@ enum TopLevelFilters {
             return "A value for \"\(column)\" inside a filter group holds a double quote or a backslash, which a group sends in a form the server reads differently; \(advice)"
         case .condition(_, _, .range, _) where isInGroup:
             return "A range filter on \"\(column)\" cannot be sent inside a filter group; filter on it with a single condition outside any group"
+        case .patternList(_, _, let patterns) where patterns.isEmpty:
+            return "The pattern list for \"\(column)\" is empty, which would match every row; give at least one pattern"
+        case .patternList(_, _, let patterns) where patterns.contains(where: isMisreadInAnArrayUnquoted):
+            return "A pattern for \"\(column)\" is empty, NULL, edged with white space or holds a brace, which a pattern list sends in a form the server reads differently; match it with a single like or ilike condition outside any list"
         case .textSearch(_, let query, _, _)
         where isInGroup && (query.contains(where: { $0 == "," || $0 == ")" }) || query.hasPrefix("\"")):
             return "A text search on \"\(column)\" inside a filter group has a comma, a \")\" or a leading double quote in its query, which a group cannot carry; search on it with a single condition outside any group"
@@ -275,6 +280,15 @@ enum TopLevelFilters {
     /// `column` as the caller wrote it: prefixed with its embedded `table`, when it has one.
     private static func written(_ column: String, in table: String?) -> String {
         table.map { "\($0).\(column)" } ?? column
+    }
+
+    /// Whether Postgres would read `text`, sent unquoted in an array literal (it holds none of
+    /// `,.:()`), as something else: empty, `NULL` in any case, edged with white space, or braced.
+    static func isMisreadInAnArrayUnquoted(_ text: String) -> Bool {
+        guard !text.contains(where: { ",.:()".contains($0) }) else { return false }
+        return text.isEmpty || text.caseInsensitiveCompare("NULL") == .orderedSame
+            || text.first?.isWhitespace == true || text.last?.isWhitespace == true
+            || text.contains(where: { $0 == "{" || $0 == "}" })
     }
 
     /// Whether `text` would be escaped but left unquoted in a list or group (a `"` or `\`, and none
