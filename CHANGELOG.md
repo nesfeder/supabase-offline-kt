@@ -77,6 +77,23 @@ release.
   failure there is logged, never thrown into the test.
 - `ReadStrategy.NetworkFirst`, `CacheFirst` and `CacheOnly` take a `Duration` only: the
   constructors taking milliseconds are gone, and `NetworkFirst(null)` now compiles.
+- The Storage file helpers extend `OfflineBucketApi`, the bucket `offline.storage.from(…)` returns,
+  in place of supabase-kt's `BucketApi`: on Android `ensureLocalFile` returns a `File` and
+  `ensureLocalUri` a `Uri`, on iOS `ensureLocalPath` a `String`, none of them nullable any more, and
+  each takes `path` as the bucket's own members do. `localUriIfCached` and `localPathIfCached` are
+  `null` only when nothing is cached. On supabase-kt's own bucket they no longer compile, where
+  they returned `null`.
+- A read, an update or a delete with two top-level filters on one column, such as
+  `filter { gte("age", 1); lte("age", 10) }`, throws `IllegalArgumentException` before anything is
+  sent or queued. supabase-kt sends only the first of them, so the read showed rows outside the
+  window and the write reached them, and a queued write replayed that way later. Write the two as
+  one `and { }` group, which sends both.
+- On iOS the database and the file cache live in `Library/Application Support` by default
+  (`supabase_offline.db` and `supabase_offline/`), not in `Documents`, which an app with file
+  sharing on shows in the Files app. A client that finds a database in `Documents` moves it, with
+  its unsent writes and its cached files, when it opens; while another client holds it, it stays
+  there and that client's claim fails the open, and when both places hold a database the one in
+  `Documents` is left and a warning logged.
 - The iOS framework carries no Swift-only helpers and no SKIE-generated Swift (see Removed). Nothing
   uses the framework yet: the Swift package is being rebuilt on a bridge of its own.
 - On Android, an interface member with a body compiles to a JVM default method only, so the
@@ -91,14 +108,14 @@ release.
 
 ### Added
 
-- Built and tested against supabase-kt 3.6 (`supabase-bom` in the version catalog), with Ktor
-  3.4.3 and kotlinx.coroutines 1.10.2, the versions it was released with. Not 3.8: supabase-kt
-  3.7.0 and 3.8.0 carry a Realtime crash and a protocol-V2 leave defect, fixed upstream but not yet
-  released, and this library's pin sets an app's Realtime too; it moves to the first release with
-  both fixes. On 3.6 there is no `dryRun()`, `maybeSingle()`, `isdistinct` filter or `purgeCache`
-  (write a dry run by adding `Prefer: tx=rollback` to the request), and a Storage object name with
-  `%`, `?` or `#` is downloaded as supabase-kt downloads it but never cached, since supabase-kt 3.6
-  puts it in the URL unencoded and can fetch a different object (see the compatibility page). Each minor
+- Built and tested against supabase-kt 3.6 (`supabase-bom` in the version catalog), with Ktor 3.4.3
+  and kotlinx.coroutines 1.10.2, the versions it was released with. Not 3.8: supabase-kt 3.7.0 and
+  3.8.0 carry a Realtime crash and a protocol-V2 leave defect, fixed upstream but not yet released,
+  and this library's pin sets an app's Realtime too; it moves to the first release with both fixes.
+  On 3.6 there is no `dryRun()`, `maybeSingle()`, `isdistinct` filter or `purgeCache` (write a dry
+  run by adding `Prefer: tx=rollback` to the request), and a Storage object name with `%`, `?` or
+  `#` is downloaded as supabase-kt downloads it but never cached, since supabase-kt 3.6 puts it in
+  the URL unencoded and can fetch a different object (see the compatibility page). Each minor
   release of this library names exactly one supabase-kt minor: the artifact compiles supabase-kt's
   inline functions into itself and implements its `BucketApi`, which gains members in minor
   releases, so a range cannot be promised. When an app resolves another supabase-kt minor, the
@@ -253,6 +270,10 @@ release.
   down.
 - After a sync pass stopped on a server's `Retry-After`, the library's own next pass waits at least
   that long (at most an hour); a sync the app asks for is sent at once.
+- The testing artifact pins the library to its own version with a strict constraint in its
+  published metadata. Beside a newer library, an older testing artifact fails dependency resolution
+  instead of a test failing with a missing method; a newer testing artifact raises the library in
+  the test classpath to its own version without a word. Keep both on one version.
 - A slow collector of a `CacheFirstThenNetwork` read is handed the latest snapshot, not each one in
   turn, and never holds back the query's other collectors.
 - The request lambda passed to a read or a write may run more than once, so it must configure the
@@ -306,17 +327,18 @@ release.
 
 - The ways in before the plugin, and the names the plugin's API replaced, with nothing deprecated
   left behind: `createSupabaseOfflineClient` (Android and iOS) and `SupabaseOfflineConfig` (install
-  the plugin and use `supabase.offline`; it opens the same database in the same place, so the cache
-  and unsent writes carry over); the `SupabaseOfflineClient` type (`Offline`); `insertJson`,
-  `upsertJson` and `updateJson` (`insert`, `upsert` and `update`); `insertWith`, `upsertWith` and
-  `updateWith`, and the reified `insert`, `upsert` and `update` extensions (the typed members,
-  which encode through `postgrest.serializer`); `storage(bucket)` (`storage.from(bucket)`);
-  `clearAllCache()` (`clearLocalData()`); `supabase` (`supabaseClient`); `OfflineLogger` and
-  `OfflineLogLevel`, with the iOS factory's `logger` and `minLogLevel` (supabase-kt's logging, at
-  `logLevel`); `syncAllPendingMutations()` and `syncPendingMutations(table): Int`
-  (`syncPendingMutations(table?): SyncReport`); the two-overload `pendingMutationCount()` /
-  `pendingMutationCount(table)` and `pendingMutationCountFlow()` / `pendingMutationCountFlow(table)`
-  (one member each, `table: String? = null`); and `OfflineReadResult` (`QuerySnapshot`).
+  the plugin and use `supabase.offline`; it opens the same database, on iOS once it has moved from
+  `Documents` to `Library/Application Support`, so the cache and unsent writes carry over); the
+  `SupabaseOfflineClient` type (`Offline`); `insertJson`, `upsertJson` and `updateJson` (`insert`,
+  `upsert` and `update`); `insertWith`, `upsertWith` and `updateWith`, and the reified `insert`,
+  `upsert` and `update` extensions (the typed members, which encode through `postgrest.serializer`);
+  `storage(bucket)` (`storage.from(bucket)`); `clearAllCache()` (`clearLocalData()`); `supabase`
+  (`supabaseClient`); `OfflineLogger` and `OfflineLogLevel`, with the iOS factory's `logger` and
+  `minLogLevel` (supabase-kt's logging, at `logLevel`); `syncAllPendingMutations()` and
+  `syncPendingMutations(table): Int` (`syncPendingMutations(table?): SyncReport`); the two-overload
+  `pendingMutationCount()` / `pendingMutationCount(table)` and `pendingMutationCountFlow()` /
+  `pendingMutationCountFlow(table)` (one member each, `table: String? = null`); and
+  `OfflineReadResult` (`QuerySnapshot`).
 - `buildInMemorySupabaseOfflineClient` (`install(Offline) { inMemory() }`), and the millisecond
   constructors of `ReadStrategy.NetworkFirst`, `CacheFirst` and `CacheOnly` (pass `maxAge` as a
   `Duration`).
@@ -360,7 +382,8 @@ release.
 - A channel download Storage answers with an error (`ensureCachedFile`, the offline bucket's
   `downloadAuthenticated` and `downloadPublic` to a channel, and supabase-kt's `…To` helpers through
   it) throws what the bytes download throws. It cached the error body as the file and served it
-  from then on.
+  from then on. A redirect from https to plain http is refused too, even where Ktor's
+  `allowHttpsDowngrade` lets the bytes download follow it.
 - A live read fetches again after `clearLocalData()`, as after a change of owner, instead of
   showing the emptied cache until something else fetched; a refresh request made while a read's
   refresh ran is no longer lost.

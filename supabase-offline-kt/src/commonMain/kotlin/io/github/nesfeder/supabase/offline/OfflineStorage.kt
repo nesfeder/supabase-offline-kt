@@ -27,6 +27,7 @@ internal constructor(private val bucketOf: (bucketId: String) -> OfflineBucketAp
      *
      * @param bucketId the bucket's id.
      * @return the bucket, with downloads kept on the device.
+     * @throws IllegalStateException when the plugin is closed, or [Storage] is not installed.
      */
     public operator fun get(bucketId: String): OfflineBucketApi = from(bucketId)
 }

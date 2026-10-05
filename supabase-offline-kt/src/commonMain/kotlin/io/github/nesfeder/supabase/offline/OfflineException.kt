@@ -13,10 +13,13 @@ public abstract class OfflineException internal constructor(message: String, cau
     Exception(message, cause)
 
 /**
- * A read that may use only the device's cache found nothing there for it: a
- * [ReadStrategy.CacheOnly] or [FlowReadStrategy.CacheOnly] read of a query that is not cached, or
- * cached rows older than its `maxAge`, or of a shape the cache never holds (`single()`, a count,
- * `csv()`, …). No request was sent.
+ * A read that may use only the device's cache found nothing there for it. No request was sent.
+ *
+ * A one-shot [ReadStrategy.CacheOnly] read throws it for a query that is not cached, for cached
+ * rows older than its `maxAge`, and for a shape the cache never holds (`single()`, a count,
+ * `csv()`, …). A reactive [FlowReadStrategy.CacheOnly] read fails with it only for such a shape:
+ * for a query that is not cached it emits a snapshot whose rows are `null`, or only the queued
+ * writes the query admits.
  */
 public class CacheMissException internal constructor(message: String) :
     OfflineException(message, null)
@@ -56,8 +59,8 @@ public class NetworkDisabledException internal constructor(message: String) :
 /**
  * Why a sync pass stopped with writes still queued, as [SyncStatus.lastSyncError] reports it: the
  * network could not be reached, the server answered with a failure that may pass (a `5xx`, `408`,
- * `429` or `401`, or a refusal held behind an earlier write), or a local failure stopped it. The
- * writes stay queued and are sent by a later pass.
+ * `429` or `401`, or PostgREST's schema cache not yet knowing the table or a column), or a local
+ * failure stopped it. The writes stay queued and are sent by a later pass.
  *
  * The library builds it from what stopped the pass and keeps nothing else of that failure, whose
  * message may carry a row, a filter value or a token. [isNetworkOrConnectivityFailure] is `true`

@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import android.content.Context
+import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.jan.supabase.exceptions.UnauthorizedRestException
@@ -29,9 +30,9 @@ import okio.Path.Companion.toPath
 import org.junit.runner.RunWith
 
 /**
- * The Android storage helpers (`ensureLocalFile`, `ensureLocalUri`, `localUriIfCached`) over the
- * offline bucket wrapper: download-through-cache, cache reuse without the network, and `null` when
- * nothing can be served.
+ * The Android storage helpers (`ensureLocalFile`, `ensureLocalUri`, `localUriIfCached`) on the
+ * offline bucket: download-through-cache, cache reuse without the network, a failure thrown rather
+ * than turned into "not available", and `null` only from `localUriIfCached` with nothing cached.
  */
 @RunWith(AndroidJUnit4::class)
 class BucketApiAndroidExtensionsTest {
@@ -53,10 +54,9 @@ class BucketApiAndroidExtensionsTest {
         fakeBucket.onDownload = { "content".toByteArray() }
 
         // When
-        val file = offlineApi.ensureLocalFile("test.txt", isPublic = true)
+        val file: File = offlineApi.ensureLocalFile("test.txt", isPublic = true)
 
         // Then
-        assertNotNull(file)
         assertTrue(file.exists())
         assertEquals("content", file.readText())
         assertEquals(listOf("test.txt"), fakeBucket.publicDownloadPaths)
@@ -70,10 +70,9 @@ class BucketApiAndroidExtensionsTest {
         fakeBucket.onDownload = { throw IOException("Network error") }
 
         // When
-        val file = offlineApi.ensureLocalFile("test.txt", isPublic = true)
+        val file: File = offlineApi.ensureLocalFile("test.txt", isPublic = true)
 
         // Then — served from the cache without another network attempt
-        assertNotNull(file)
         assertTrue(file.exists())
         assertEquals("cached content", file.readText())
         assertEquals(1, fakeBucket.downloadInvocations)
@@ -85,10 +84,9 @@ class BucketApiAndroidExtensionsTest {
         fakeBucket.onDownload = { "uri content".toByteArray() }
 
         // When
-        val uri = offlineApi.ensureLocalUri("image.png", isPublic = true)
+        val uri: Uri = offlineApi.ensureLocalUri("image.png", isPublic = true)
 
         // Then
-        assertNotNull(uri)
         assertEquals("file", uri.scheme)
         assertTrue(uri.path.orEmpty().endsWith("image.png"))
     }
@@ -125,10 +123,9 @@ class BucketApiAndroidExtensionsTest {
         fakeBucket.onDownload = { "auth content".toByteArray() }
 
         // When
-        val file = offlineApi.ensureLocalFile("auth.txt", isPublic = false)
+        val file: File = offlineApi.ensureLocalFile("auth.txt", isPublic = false)
 
         // Then
-        assertNotNull(file)
         assertTrue(file.exists())
         assertEquals("auth content", file.readText())
         assertEquals(listOf("auth.txt"), fakeBucket.authenticatedDownloadPaths)

@@ -172,6 +172,7 @@ supabase-offline-kt-testing file .pom
 supabase-offline-kt-testing klib .jar!commonMain/default/manifest unique_name=supabase-offline-kt-testing_commonMain
 supabase-offline-kt-testing pom dependency io.github.nesfeder.supabase-offline:supabase-offline-kt:$VERSION scope=runtime
 supabase-offline-kt-testing pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.4.20 scope=runtime
+supabase-offline-kt-testing pom managed io.github.nesfeder.supabase-offline:supabase-offline-kt:$VERSION
 supabase-offline-kt-testing variant androidApiElements-published available-at supabase-offline-kt-testing-android
 supabase-offline-kt-testing variant androidRuntimeElements-published available-at supabase-offline-kt-testing-android
 supabase-offline-kt-testing variant androidSourcesElements-published available-at supabase-offline-kt-testing-android
@@ -181,6 +182,7 @@ supabase-offline-kt-testing variant iosArm64SourcesElements-published available-
 supabase-offline-kt-testing variant iosSimulatorArm64ApiElements-published available-at supabase-offline-kt-testing-iossimulatorarm64
 supabase-offline-kt-testing variant iosSimulatorArm64MetadataElements-published available-at supabase-offline-kt-testing-iossimulatorarm64
 supabase-offline-kt-testing variant iosSimulatorArm64SourcesElements-published available-at supabase-offline-kt-testing-iossimulatorarm64
+supabase-offline-kt-testing variant metadataApiElements constraint io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION strictly=$VERSION
 supabase-offline-kt-testing variant metadataApiElements dependency io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION
 supabase-offline-kt-testing variant metadataApiElements dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
 supabase-offline-kt-testing-android file -javadoc.jar
@@ -191,8 +193,11 @@ supabase-offline-kt-testing-android file .pom
 supabase-offline-kt-testing-android kotlin-module .aar!classes.jar!META-INF/io.github.nesfeder.supabase-offline_supabase-offline-kt-testing.kotlin_module
 supabase-offline-kt-testing-android pom dependency io.github.nesfeder.supabase-offline:supabase-offline-kt-android:$VERSION scope=compile
 supabase-offline-kt-testing-android pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.4.20 scope=compile
+supabase-offline-kt-testing-android pom managed io.github.nesfeder.supabase-offline:supabase-offline-kt:$VERSION
+supabase-offline-kt-testing-android variant androidApiElements-published constraint io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION strictly=$VERSION
 supabase-offline-kt-testing-android variant androidApiElements-published dependency io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION
 supabase-offline-kt-testing-android variant androidApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
+supabase-offline-kt-testing-android variant androidRuntimeElements-published constraint io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION strictly=$VERSION
 supabase-offline-kt-testing-android variant androidRuntimeElements-published dependency io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION
 supabase-offline-kt-testing-android variant androidRuntimeElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
 supabase-offline-kt-testing-iosarm64 file -javadoc.jar
@@ -204,8 +209,11 @@ supabase-offline-kt-testing-iosarm64 file .pom
 supabase-offline-kt-testing-iosarm64 klib .klib!default/manifest unique_name=io.github.nesfeder.supabase-offline:supabase-offline-kt-testing
 supabase-offline-kt-testing-iosarm64 pom dependency io.github.nesfeder.supabase-offline:supabase-offline-kt-iosarm64:$VERSION scope=compile
 supabase-offline-kt-testing-iosarm64 pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.4.20 scope=compile
+supabase-offline-kt-testing-iosarm64 pom managed io.github.nesfeder.supabase-offline:supabase-offline-kt:$VERSION
+supabase-offline-kt-testing-iosarm64 variant iosArm64ApiElements-published constraint io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION strictly=$VERSION
 supabase-offline-kt-testing-iosarm64 variant iosArm64ApiElements-published dependency io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION
 supabase-offline-kt-testing-iosarm64 variant iosArm64ApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
+supabase-offline-kt-testing-iosarm64 variant iosArm64MetadataElements-published constraint io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION strictly=$VERSION
 supabase-offline-kt-testing-iosarm64 variant iosArm64MetadataElements-published dependency io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION
 supabase-offline-kt-testing-iosarm64 variant iosArm64MetadataElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
 supabase-offline-kt-testing-iossimulatorarm64 file -javadoc.jar
@@ -217,7 +225,10 @@ supabase-offline-kt-testing-iossimulatorarm64 file .pom
 supabase-offline-kt-testing-iossimulatorarm64 klib .klib!default/manifest unique_name=io.github.nesfeder.supabase-offline:supabase-offline-kt-testing
 supabase-offline-kt-testing-iossimulatorarm64 pom dependency io.github.nesfeder.supabase-offline:supabase-offline-kt-iossimulatorarm64:$VERSION scope=compile
 supabase-offline-kt-testing-iossimulatorarm64 pom dependency org.jetbrains.kotlin:kotlin-stdlib:2.4.20 scope=compile
+supabase-offline-kt-testing-iossimulatorarm64 pom managed io.github.nesfeder.supabase-offline:supabase-offline-kt:$VERSION
+supabase-offline-kt-testing-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published constraint io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION strictly=$VERSION
 supabase-offline-kt-testing-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION
 supabase-offline-kt-testing-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20
+supabase-offline-kt-testing-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published constraint io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION strictly=$VERSION
 supabase-offline-kt-testing-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.github.nesfeder.supabase-offline:supabase-offline-kt requires=$VERSION
 supabase-offline-kt-testing-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.20

@@ -19,16 +19,23 @@ import io.github.jan.supabase.storage.BucketApi
  * the file operation is done and the file is deleted: behind a clear or an eviction holding the
  * cache, that can take as long as they do. No partial file is left behind.
  *
- * **Writes** — uploads, updates, deletes, moves and copies — are online-only: offline they fail
- * with supabase-kt's own connectivity error, and nothing is queued. A write that reaches the server
- * drops any cached copy it made stale, so a later read never serves the old bytes. A resumable
- * upload started or continued through [resumable] drops them once it finishes.
+ * **Writes** — uploads, updates, deletes, moves and copies — are online-only and never queued. They
+ * are tried whatever the connectivity monitor says, and offline fail with supabase-kt's own
+ * connectivity error; while network access is off ([Offline.disableNetwork]) they throw
+ * [NetworkDisabledException] without being sent. A write that reaches the server drops any cached
+ * copy it made stale, so a later read never serves the old bytes. A resumable upload started or
+ * continued through [resumable] drops them once it finishes.
  *
- * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\`, or a
- * control character — still download and write normally; they are never mapped onto a file.
+ * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\`, a
+ * control character, and with supabase-kt below 3.8 a `%`, `?` or `#`, which it puts in the URL
+ * unencoded — still download and write normally; they are never mapped onto a file.
  *
  * The cache is bounded by [Offline.Config.fileCacheSizeBytes], evicting the least recently used
  * files first; clearing local data empties it.
+ *
+ * The members inherited from [BucketApi] keep supabase-kt's declarations, so they declare no
+ * `@Throws`: in a framework exported to Swift, one that throws ends the app unless the caller's own
+ * bridge catches around it. [cachedFile] and [ensureCachedFile] declare it.
  *
  * Only the library implements this interface; [OfflineInternal] marks it so.
  */
