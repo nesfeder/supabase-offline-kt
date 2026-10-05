@@ -94,3 +94,11 @@ struct SyncStatusLabel: View {
         return false
     }
 }
+
+#Preview("Tasks") {
+    RootView().environment(AppModel.preview())
+}
+
+#Preview("Sync") {
+    RootView().environment(AppModel.preview(tab: .sync))
+}

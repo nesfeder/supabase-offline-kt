@@ -58,3 +58,9 @@ struct NewTaskSheet: View {
         title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
+
+#Preview {
+    Color.clear.sheet(isPresented: .constant(true)) {
+        NewTaskSheet { _, _ in }
+    }
+}
