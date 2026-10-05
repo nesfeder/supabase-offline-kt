@@ -42,6 +42,9 @@ final class AppModel {
     /// Failures reported while another was showing.
     @ObservationIgnored private var waitingFailures: [FailureAlert] = []
 
+    /// Hides "All changes synced" again.
+    @ObservationIgnored private var justSyncedTimer: Task<Void, Never>?
+
     /// The ids of the refused writes already announced.
     @ObservationIgnored private var announcedRejections: Set<Int64>?
 
@@ -133,14 +136,20 @@ final class AppModel {
             for try await status in repository.syncStatus {
                 let wasSyncing = syncStatus.isSyncing && syncStatus.pendingMutationCount > 0
                 syncStatus = status
-                if wasSyncing, status.pendingMutationCount == 0, !status.isSyncing {
-                    showsJustSynced = true
-                    try? await Task.sleep(for: .seconds(2.5))
-                    showsJustSynced = false
-                }
+                if wasSyncing, status.pendingMutationCount == 0, !status.isSyncing { showJustSynced() }
             }
         } catch {
             report(error)
+        }
+    }
+
+    /// Shows "All changes synced" for a moment.
+    private func showJustSynced() {
+        showsJustSynced = true
+        justSyncedTimer?.cancel()
+        justSyncedTimer = Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            if !Task.isCancelled { showsJustSynced = false }
         }
     }
 

@@ -59,11 +59,6 @@ final class TasksModel {
         rows?.map { $0.task(pendingIDs: pendingIDs) }.sorted { $0.createdAt > $1.createdAt }
     }
 
-    /// The task with `id`, as the list holds it.
-    func task(id: String) -> TaskItem? {
-        tasks?.first { $0.id == id }
-    }
-
     /// The screen's state for `session` and the client's `network`.
     func state(session: SessionState, network: NetworkStatus) -> TasksListState {
         let canAskServer = network == .online || network == .unknown

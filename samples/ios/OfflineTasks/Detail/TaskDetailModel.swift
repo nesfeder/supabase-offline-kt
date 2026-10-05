@@ -86,6 +86,9 @@ final class TaskDetailModel {
     /// The save waiting for typing to pause.
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
+    /// Whether the task was deleted from this screen, after which nothing more is saved.
+    @ObservationIgnored private var isDeleted = false
+
     /// Reads and writes.
     @ObservationIgnored private let repository: TaskRepository
 
@@ -191,6 +194,7 @@ final class TaskDetailModel {
     /// Deletes the task, its photos' files first when online. The screen closes at once; a
     /// refusal is shown, and the task is back in the list.
     func delete() {
+        isDeleted = true
         pendingSave?.cancel()
         Task { await failures.perform { try await repository.deleteTask(id: taskID) } }
     }
@@ -239,7 +243,9 @@ final class TaskDetailModel {
 
     /// Saves the draft, unless it is what the device holds or its title is blank.
     private func save() {
-        guard let stored, draftTitle != stored.title || draftNotes != stored.notes, !isTitleBlank else { return }
+        guard !isDeleted, let stored, draftTitle != stored.title || draftNotes != stored.notes, !isTitleBlank else {
+            return
+        }
         let title = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let notes = draftNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         self.stored = (draftTitle, draftNotes)

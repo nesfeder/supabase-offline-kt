@@ -36,9 +36,6 @@ actor DemoServer {
     /// The bucket's files, by object path.
     private var files: [String: Data] = [:]
 
-    /// Whether requests reach the server; `false` answers each as a device with no network would.
-    private var isReachable = true
-
     /// An answer a test puts in front of the server's own: when it returns a response, that is the
     /// answer.
     private var interception: (@Sendable (FakeServer.Request, String?) -> FakeServer.Response?)?
@@ -69,11 +66,6 @@ actor DemoServer {
         "demo-access-token.\(userID)"
     }
 
-    /// Makes every later request fail as if the device had no network, or reach the server again.
-    func setReachable(_ reachable: Bool) {
-        isReachable = reachable
-    }
-
     /// Puts `interception` in front of the server's answers; `nil` takes it away.
     func intercept(_ interception: (@Sendable (FakeServer.Request, String?) -> FakeServer.Response?)?) {
         self.interception = interception
@@ -102,7 +94,6 @@ actor DemoServer {
                 body: String(decoding: request.body, as: UTF8.self)
             )
         )
-        guard isReachable else { return .noConnection }
         if let answer = interception?(request, userID) { return answer }
         let path = request.url.path(percentEncoded: false)
         if path.hasPrefix("/rest/v1/") {
