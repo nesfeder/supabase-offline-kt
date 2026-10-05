@@ -462,7 +462,7 @@ private fun NoTasks(filter: TaskFilter) {
     )
 }
 
-/** True while the list is scrolled towards its top, or at rest there: the FAB is extended. */
+/** True while the list is scrolled toward its top, or at rest there: the FAB is extended. */
 @Composable
 private fun LazyListState.isScrollingUp(): Boolean {
     var previousIndex by remember(this) { mutableIntStateOf(firstVisibleItemIndex) }

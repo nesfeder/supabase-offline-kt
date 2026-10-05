@@ -155,7 +155,7 @@ class StorageCachedFileTest {
     @Test
     fun ensureCachedFile_propagates_cancellation_and_leaves_no_file() = runTest {
         // Given — a download that has written part of the object to disk when its caller is
-        // cancelled
+        // canceled
         delegate.onDownload = { BYTES }
         delegate.channelChunkSize = 3
         val midway = CompletableDeferred<Unit>()
@@ -181,7 +181,7 @@ class StorageCachedFileTest {
         // When
         job.cancelAndJoin()
 
-        // Then — cancelled, and the partial file is gone
+        // Then — canceled, and the partial file is gone
         assertFalse(returned)
         assertIs<CancellationException>(caught)
         assertEquals(emptyList(), regularFilesUnder(dataDirectory))

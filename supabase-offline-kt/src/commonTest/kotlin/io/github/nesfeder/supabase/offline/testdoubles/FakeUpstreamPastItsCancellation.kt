@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * An upstream that emits 1, then — deaf to cancellation, signaling [betweenValues] — waits for
- * [closeReturned] and emits 2. A `flow {}` would refuse that second emission once cancelled.
+ * [closeReturned] and emits 2. A `flow {}` would refuse that second emission once canceled.
  */
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
 internal class FakeUpstreamPastItsCancellation(

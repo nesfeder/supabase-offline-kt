@@ -18,7 +18,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 
 /**
- * What a pending write does not do to the lists it shows in, as the behaviour pages say: it is
+ * What a pending write does not do to the lists it shows in, as the behavior pages say: it is
  * appended past a list's order and limit, and on every page it matches; it carries only the columns
  * it wrote; one whose filter the engine cannot evaluate changes nothing shown; an upsert keys on
  * `id` unless it names its conflict columns; an ignore-duplicates upsert shows as though it landed.

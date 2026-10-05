@@ -122,7 +122,7 @@ class SchemaCacheMissTest {
     }
 
     @Test
-    fun misses_counted_before_a_restart_count_towards_the_bound() = runTest {
+    fun misses_counted_before_a_restart_count_toward_the_bound() = runTest {
         // Given — five counted misses, then a new process, whose clock starts again
         enqueueInsert()
         val server =

@@ -91,7 +91,7 @@ Facts about the engine. Each names the test that pins it.
 - **Keys are read as UUIDs.** A key written in capitals matches the same key sent back in lower
   case, so the row is shown once.
   <small>`UuidKeyCaseTest.a_row_written_in_capitals_and_sent_back_in_lower_case_is_shown_once`,
-  `UuidKeyCaseTest.an_update_filtered_by_a_capitalised_key_changes_the_row_sent_in_lower_case`</small>
+  `UuidKeyCaseTest.an_update_filtered_by_a_capitalized_key_changes_the_row_sent_in_lower_case`</small>
 - **An online update brings in only rows a cached list holds.** A row that no cached list holds
   does not join a list it starts matching after an online update, even when the update asked for
   the row back; the list shows it once it is fetched again.

@@ -68,7 +68,7 @@ internal fun assembleSupabaseClient(
 
 /**
  * supabase-kt's token provider over the app's callback: each request waits for one answer. A second
- * answer, or one after the request was cancelled, is dropped.
+ * answer, or one after the request was canceled, is dropped.
  */
 private fun accessTokenFrom(
     provider: BridgeAccessTokenProvider,

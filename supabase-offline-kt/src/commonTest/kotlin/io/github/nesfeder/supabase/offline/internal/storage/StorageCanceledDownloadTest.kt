@@ -30,13 +30,13 @@ import okio.Path
 import okio.SYSTEM
 
 /**
- * A download whose caller is cancelled leaves no file behind, wherever the cancellation lands:
+ * A download whose caller is canceled leaves no file behind, wherever the cancellation lands:
  * while the cache is still creating the download's file, or while it is committing a finished one.
  * The caller returns only once that file is gone. Each way in: bytes, a channel, and
  * `ensureCachedFile`. The file system holds its operation until the caller's cancellation has
  * reached the call's own work, so the cancellation always lands there, however the threads run.
  */
-class StorageCancelledDownloadTest {
+class StorageCanceledDownloadTest {
 
     private lateinit var dataDirectory: Path
     private lateinit var store: TestStore
@@ -48,7 +48,7 @@ class StorageCancelledDownloadTest {
     fun setUp() {
         dataDirectory =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
-                "supabase-offline-cancelled-${Random.nextLong().toULong()}"
+                "supabase-offline-canceled-${Random.nextLong().toULong()}"
         store = newTestStore()
         delegate = FakeBucketApi(bucketId = BUCKET)
         delegate.onDownload = { CONTENT }
@@ -75,43 +75,43 @@ class StorageCancelledDownloadTest {
         )
 
     @Test
-    fun a_download_cancelled_while_its_file_is_being_created_leaves_no_file() = runTest {
-        // Given — the caller is cancelled while the cache is still creating the download's file
+    fun a_download_canceled_while_its_file_is_being_created_leaves_no_file() = runTest {
+        // Given — the caller is canceled while the cache is still creating the download's file
         lateinit var caller: Job
         fileSystem.onSinkOpened = { cancelAndHoldUntilItReachesTheWork(caller) }
 
         // When
         val outcomes = DOWNLOADS.map { (name, download) ->
-            name to cancelledDownload(download) { job -> caller = job }
+            name to canceledDownload(download) { job -> caller = job }
         }
 
-        // Then — every call ended cancelled, and the file it had just created went with it
-        assertEquals(DOWNLOADS.map { (name, _) -> name to CANCELLED_AND_CLEAN }, outcomes)
+        // Then — every call ended canceled, and the file it had just created went with it
+        assertEquals(DOWNLOADS.map { (name, _) -> name to CANCELED_AND_CLEAN }, outcomes)
     }
 
     @Test
-    fun a_download_cancelled_while_the_cache_refuses_its_file_leaves_no_file() = runTest {
+    fun a_download_canceled_while_the_cache_refuses_its_file_leaves_no_file() = runTest {
         // Given — the whole object is on disk, the file system refuses to move it into place, and
-        // the caller is cancelled while the cache is trying
+        // the caller is canceled while the cache is trying
         fileSystem.failMoves = true
         lateinit var caller: Job
         fileSystem.onMove = { _, _ -> cancelAndHoldUntilItReachesTheWork(caller) }
 
         // When
         val outcomes = DOWNLOADS.map { (name, download) ->
-            name to cancelledDownload(download) { job -> caller = job }
+            name to canceledDownload(download) { job -> caller = job }
         }
 
-        // Then — every call ended cancelled, and the finished file the cache could not keep is
+        // Then — every call ended canceled, and the finished file the cache could not keep is
         // gone as well
-        assertEquals(DOWNLOADS.map { (name, _) -> name to CANCELLED_AND_CLEAN }, outcomes)
+        assertEquals(DOWNLOADS.map { (name, _) -> name to CANCELED_AND_CLEAN }, outcomes)
     }
 
     /**
      * Runs [download] from an empty cache in a child the file system's hook cancels, once the call
      * has returned: how it ended, and how many files it left.
      */
-    private suspend fun CoroutineScope.cancelledDownload(
+    private suspend fun CoroutineScope.canceledDownload(
         download: suspend (OfflineBucketApi) -> Unit,
         started: (Job) -> Unit,
     ): String {
@@ -126,14 +126,14 @@ class StorageCancelledDownloadTest {
         }
         started(job)
         job.join()
-        val ended = if (caught is CancellationException) "cancelled" else "ended with $caught"
+        val ended = if (caught is CancellationException) "canceled" else "ended with $caught"
         return "$ended, ${regularFilesUnder(dataDirectory).size} file(s) left"
     }
 
     /**
      * Cancels [caller], then holds the file operation in progress until that cancellation has
      * reached the call's own work, which runs in [engine]. Without the hold, work that finishes
-     * before its caller next suspends completes as if never cancelled, and the test proves nothing.
+     * before its caller next suspends completes as if never canceled, and the test proves nothing.
      */
     private fun cancelAndHoldUntilItReachesTheWork(caller: Job) {
         caller.cancel()
@@ -158,7 +158,7 @@ class StorageCancelledDownloadTest {
         const val BUCKET = "videos"
         const val PATH = "u-1/clip.mp4"
         val CONTENT = ByteArray(300) { index -> (index % 251).toByte() }
-        const val CANCELLED_AND_CLEAN = "cancelled, 0 file(s) left"
+        const val CANCELED_AND_CLEAN = "canceled, 0 file(s) left"
         val HOLD_LIMIT = 5.seconds
 
         val DOWNLOADS: List<Pair<String, suspend (OfflineBucketApi) -> Unit>> =

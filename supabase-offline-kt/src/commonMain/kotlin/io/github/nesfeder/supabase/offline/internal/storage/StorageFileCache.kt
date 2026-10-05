@@ -388,7 +388,7 @@ internal class StorageFileCache(
      * Opens a temporary file for a download of [entry], in the directory of the entry's file.
      *
      * Runs under the lock, so a [clear] never finds a file appearing in a directory it is deleting.
-     * A caller cancelled while the file is being created still gets it back, to [discard].
+     * A caller canceled while the file is being created still gets it back, to [discard].
      *
      * @param entry the entry.
      * @return the temporary download, or `null` when the file system refuses or the directory
@@ -456,7 +456,7 @@ internal class StorageFileCache(
      * bound. The row goes first, so a database that refuses it leaves the previous copy in place.
      *
      * @param startedInGeneration [currentGeneration] as read before the download started.
-     * @return what happened, even to a caller cancelled meanwhile; on anything but
+     * @return what happened, even to a caller canceled meanwhile; on anything but
      *   [CommitOutcome.COMMITTED] the caller reads, then [discard]s, the temporary file.
      */
     suspend fun commit(temporary: TemporaryDownload, startedInGeneration: Long): CommitOutcome =
@@ -782,7 +782,7 @@ internal class StorageFileCache(
 
     /**
      * Runs [block] on the IO dispatcher to the end, and hands its result back even to a caller
-     * cancelled meanwhile. A bare `withContext` would drop it, and with it a file only that caller
+     * canceled meanwhile. A bare `withContext` would drop it, and with it a file only that caller
      * can clean up.
      */
     private suspend fun <T> onIoHandingBackItsResult(block: suspend () -> T): T =

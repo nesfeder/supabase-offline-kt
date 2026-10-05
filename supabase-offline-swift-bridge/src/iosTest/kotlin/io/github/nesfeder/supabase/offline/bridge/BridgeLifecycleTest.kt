@@ -21,14 +21,14 @@ import platform.Foundation.NSUUID
 class BridgeLifecycleTest {
 
     @Test
-    fun a_close_cancelled_at_once_still_closes_and_frees_the_database() = bridgeTest {
+    fun a_close_canceled_at_once_still_closes_and_frees_the_database() = bridgeTest {
         // Given — a client over a database on disk
         val directory = NSTemporaryDirectory() + "bridge-close-" + NSUUID().UUIDString()
         try {
             repeat(4) {
                 val client = openOnDisk(directory)
 
-                // When — the close's handle is cancelled straight away, then it closes again
+                // When — the close's handle is canceled straight away, then it closes again
                 val closing = CompletionProbe<Unit>()
                 client.close(closing.errorCompletion).cancel()
                 val first = closing.await()

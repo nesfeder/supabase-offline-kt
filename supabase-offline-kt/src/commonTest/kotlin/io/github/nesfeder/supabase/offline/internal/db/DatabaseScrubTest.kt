@@ -96,7 +96,7 @@ class DatabaseScrubTest {
     }
 
     @Test
-    fun a_clear_cancelled_while_it_waits_still_leaves_the_log_to_the_background() = runTest {
+    fun a_clear_canceled_while_it_waits_still_leaves_the_log_to_the_background() = runTest {
         // Given — a read holds the log
         var held = true
         var emptied = false
@@ -112,7 +112,7 @@ class DatabaseScrubTest {
             )
         scrub.rewriteAfterDelete()
 
-        // When — the clear's caller is cancelled during its wait, then the read ends
+        // When — the clear's caller is canceled during its wait, then the read ends
         val clear = launch { scrub.finishSoon() }
         advanceTimeBy(200.milliseconds)
         clear.cancelAndJoin()
@@ -120,7 +120,7 @@ class DatabaseScrubTest {
         advanceTimeBy(10.seconds)
 
         // Then — the background emptied the log all the same
-        assertTrue(emptied, "nothing emptied the log after the cancelled clear")
+        assertTrue(emptied, "nothing emptied the log after the canceled clear")
     }
 
     @Test

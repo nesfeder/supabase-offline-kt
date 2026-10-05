@@ -397,7 +397,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * `auth.signOut()`, or in a `finally` around it: offline, `signOut()` throws and keeps the
      * session, so a clear after it would never run.
      *
-     * A replay pass in progress is cancelled first, and nothing queued is sent once clearing has
+     * A replay pass in progress is canceled first, and nothing queued is sent once clearing has
      * begun. A write already on the wire is neither applied to the cache nor queued when it
      * answers. A Storage download in flight may hand its bytes to its caller, or fail, but is not
      * written back.
@@ -408,7 +408,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * library empties the log as soon as the read ends, and once more at [close]. It never fails
      * the clear, and never waits longer.
      *
-     * The client stays usable afterwards. A live read open through the clear fetches again, as it
+     * The client stays usable afterward. A live read open through the clear fetches again, as it
      * does when the cache passes to another identity: at once online, and once the network is back
      * offline, [RefreshState.Paused] meanwhile.
      *
@@ -460,7 +460,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * Every setting has a default that suits most apps; set only what you need. The plugin reads
      * the configuration once, when the client is created: changing `supabase.offline.config`
-     * afterwards has no effect.
+     * afterward has no effect.
      */
     public class Config internal constructor() {
 
@@ -539,7 +539,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * client's default schema, `schema.table` for one in another schema. A table not named here
          * has the key `id`.
          *
-         * The key is how the cache recognises a row: where a queued or applied upsert lands, which
+         * The key is how the cache recognizes a row: where a queued or applied upsert lands, which
          * row a server record replaces, and which rows a queued write reports in
          * [PendingMutation.rowKeys]. Set it for every table whose key is not `id`, such as one with
          * a composite key. Use [primaryKey] to add one.

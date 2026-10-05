@@ -56,13 +56,13 @@ class FaultInjectionTest {
         }
         client.runner.faultInjector = null
         delay(200)
-        val (afterwards, error) = client.selectAndWait(readOf())
+        val (afterward, error) = client.selectAndWait(readOf())
 
         // Then — every call answered once with the failure as a value, and the client still reads
         assertEquals(emptyList(), mismatches)
         assertEquals(emptyList(), probes.filter { it.callCount != 1 }.map { it.callCount })
         assertNull(error)
-        assertEquals(SERVER_ROWS, afterwards?.data)
+        assertEquals(SERVER_ROWS, afterward?.data)
         client.closeAndWait()
     }
 
@@ -100,11 +100,11 @@ class FaultInjectionTest {
 
         // When
         val closing = awaitErrorOnly { client.close(it) }
-        val (_, afterwards) = client.selectAndWait(readOf())
+        val (_, afterward) = client.selectAndWait(readOf())
 
         // Then
         assertEquals(BridgeErrorKind.UNEXPECTED, closing?.kind)
-        assertEquals(BridgeErrorKind.CLIENT_CLOSED, afterwards?.kind)
+        assertEquals(BridgeErrorKind.CLIENT_CLOSED, afterward?.kind)
     }
 
     @Test
@@ -180,14 +180,14 @@ class FaultInjectionTest {
             awaitErrorOnly { client.disableNetwork(it) }
             val disabled = values.awaitValue { it.network == BridgeNetworkStatus.DISABLED }
             awaitErrorOnly { client.enableNetwork(it) }
-            val (afterwards, error) = client.selectAndWait(readOf())
+            val (afterward, error) = client.selectAndWait(readOf())
 
             // Then — both reported; the subscription went on, and the client still reads
             assertEquals(BridgeNetworkStatus.DISABLED, disabled.network)
             awaitUntil { sink.messages.any { "The completion of select" in it } }
             awaitUntil { sink.messages.any { "A value handler of observeSyncStatus" in it } }
             assertNull(error)
-            assertNotNull(afterwards)
+            assertNotNull(afterward)
             client.closeAndWait()
         }
 

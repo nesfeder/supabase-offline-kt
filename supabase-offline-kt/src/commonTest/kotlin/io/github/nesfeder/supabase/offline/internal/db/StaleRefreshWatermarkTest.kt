@@ -89,7 +89,7 @@ class StaleRefreshWatermarkTest {
         tick = 20L
         store.insertProjectTwo(liveCacheKeys = setOf("sig-A"))
 
-        // And — the pre-insert `[]` lands afterwards
+        // And — the pre-insert `[]` lands afterward
         tick = 30L
         val outcome =
             store.queryCache.cacheResponse(
@@ -399,7 +399,7 @@ class StaleRefreshWatermarkTest {
         val queued = mutationDao.inserted.single()
         store.mutationQueue.recordReplayed(id = queued.id, table = "projects")
 
-        // When — a refresh issued afterwards brings back server state that already includes it
+        // When — a refresh issued afterward brings back server state that already includes it
         tick = 20L
         val requestStartedAtTick = store.freshness.tickNow()
         tick = 30L

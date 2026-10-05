@@ -44,7 +44,7 @@ internal data class MutationRow(
 
     /**
      * Client-side timestamp (epoch millis) when the mutation was enqueued. Informational only:
-     * replay and overlay order by [id], because a wall clock can step backwards.
+     * replay and overlay order by [id], because a wall clock can step backward.
      */
     @ColumnInfo(name = "created_at_ms") val createdAtMs: Long,
 
@@ -105,7 +105,7 @@ internal interface MutationDao {
      * Pending mutations for a specific table, in insertion order.
      *
      * Only rows with [MutationRow.syncedAtMs] == null are considered pending. The order is the
-     * autoincrement [MutationRow.id], never the wall clock: `created_at_ms` can step backwards (a
+     * autoincrement [MutationRow.id], never the wall clock: `created_at_ms` can step backward (a
      * clock change, an NTP correction) and ties within a millisecond, and replay order has to be
      * the order the writes were made.
      */

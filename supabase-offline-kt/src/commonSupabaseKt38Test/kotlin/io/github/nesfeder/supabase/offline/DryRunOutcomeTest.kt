@@ -32,7 +32,7 @@ class DryRunOutcomeTest {
     private val store = newTestStore(queryCacheDao = queryCacheDao, mutationDao = mutationDao)
 
     @Test
-    fun a_dry_run_the_server_did_not_honour_is_overlaid_like_any_committed_write() = runTest {
+    fun a_dry_run_the_server_did_not_honor_is_overlaid_like_any_committed_write() = runTest {
         // Given — a server on PostgREST's default db-tx-end: tx=rollback is ignored and the write
         // commits
         val server = RecordingPostgrestServer(answer = { okJson("[]") })

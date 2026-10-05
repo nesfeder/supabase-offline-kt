@@ -59,7 +59,7 @@ struct AwaitCompletionTests {
         MainActor.assertIsolated()
     }
 
-    @Test func cancelledBeforeTheCallIsSentNeverSendsIt() async {
+    @Test func canceledBeforeTheCallIsSentNeverSendsIt() async {
         // Given
         let call = FakeCoreCall<Int>()
 
@@ -77,20 +77,20 @@ struct AwaitCompletionTests {
         #expect(ContinuousClock.now - started < .seconds(1))
     }
 
-    @Test func cancelledWhileRunningThrowsAtOnceAndCancelsTheCallOnce() async throws {
+    @Test func canceledWhileRunningThrowsAtOnceAndCancelsTheCallOnce() async throws {
         // Given a call the core never answers
         let call = FakeCoreCall<Int>()
         let task = Task { try await awaitCompletion { call.start($0) } }
         #expect(await eventually { call.wasSent })
 
         // When
-        let cancelled = ContinuousClock.now
+        let canceled = ContinuousClock.now
         task.cancel()
         let result = await task.result
 
         // Then
         #expect(throws: CancellationError.self) { try result.get() }
-        #expect(ContinuousClock.now - cancelled < .seconds(1))
+        #expect(ContinuousClock.now - canceled < .seconds(1))
         #expect(call.handle.cancelCount == 1)
 
         // When the core answers late, then the answer is dropped
@@ -99,11 +99,11 @@ struct AwaitCompletionTests {
         #expect(call.handle.cancelCount == 1)
     }
 
-    @Test func cancelledWhileTheCallIsBeingSentCancelsItOnceItIsSent() async {
+    @Test func canceledWhileTheCallIsBeingSentCancelsItOnceItIsSent() async {
         // Given
         let call = FakeCoreCall<Int>()
 
-        // When the task is cancelled after the call starts but before its handle comes back
+        // When the task is canceled after the call starts but before its handle comes back
         let result = await Task {
             try await awaitCompletion { complete in
                 let handle = call.start(complete)
@@ -117,11 +117,11 @@ struct AwaitCompletionTests {
         #expect(call.handle.cancelCount == 1)
     }
 
-    @Test func cancelledAfterTheAnswerKeepsTheAnswer() async throws {
+    @Test func canceledAfterTheAnswerKeepsTheAnswer() async throws {
         // Given
         let call = FakeCoreCall<Int>()
 
-        // When the core answers, and only then the task is cancelled
+        // When the core answers, and only then the task is canceled
         let value = try await Task {
             try await awaitCompletion { complete in
                 let handle = call.start(complete)

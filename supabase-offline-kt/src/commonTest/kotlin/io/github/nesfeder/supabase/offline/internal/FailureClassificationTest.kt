@@ -70,7 +70,7 @@ class FailureClassificationTest {
     @Test
     fun isNetworkOrConnectivityFailure_false_forCancellation() {
         // Given
-        val throwable = CancellationException("cancelled")
+        val throwable = CancellationException("canceled")
 
         // When
         val result = throwable.isNetworkOrConnectivityFailure()

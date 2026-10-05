@@ -78,7 +78,7 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
     }
 
     /**
-     * Runs [block] as a call that cancelling [scope] stops: a child of [scope] on the caller's
+     * Runs [block] as a call that canceling [scope] stops: a child of [scope] on the caller's
      * dispatcher. Stopped that way after [close], its caller gets the closed error, not a
      * cancellation.
      */
@@ -94,7 +94,7 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
             work.await()
         } catch (cancellation: CancellationException) {
             if (!currentCoroutineContext().isActive) {
-                // The caller was cancelled: stop the work, and leave the gate only once it has.
+                // The caller was canceled: stop the work, and leave the gate only once it has.
                 withContext(NonCancellable) { work.cancelAndJoin() }
                 throw cancellation
             }
@@ -104,7 +104,7 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
 
     /**
      * [flow] as a call while collected, via a rendezvous channel. At [close] the channel completes,
-     * then the upstream is cancelled, and the producer ends quietly; an upstream the closing stops
+     * then the upstream is canceled, and the producer ends quietly; an upstream the closing stops
      * (its HTTP client closed under it) completes the channel too. Collected after [close], it
      * fails with the closed error. Upstream failures of their own end it after their values; only
      * the collector's cancellation propagates.
@@ -112,7 +112,7 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
     fun <T> callCollecting(flow: Flow<T>): Flow<T> = channelFlow {
         try {
             call {
-                // Leaves the gate only once the upstream has ended, even when cancelled
+                // Leaves the gate only once the upstream has ended, even when canceled
                 coroutineScope {
                     val upstream =
                         launch(start = CoroutineStart.UNDISPATCHED) {
@@ -130,7 +130,7 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
                                 this@channelFlow.close(if (endedByClosing) null else failure)
                             }
                         }
-                    // Completed first, or the cancelled upstream would end it first
+                    // Completed first, or the canceled upstream would end it first
                     val onClose = closing.invokeOnCompletion {
                         this@channelFlow.close()
                         upstream.cancel()

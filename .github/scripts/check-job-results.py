@@ -166,7 +166,7 @@ CASES: list[tuple[str, dict, bool]] = [
     ("iOS due but skipped", needs_of(outputs(), ios_tests="skipped"), False),
     ("iOS held but ran", needs_of(HELD), False),
     ("a test job failed", needs_of(outputs(), jvm_tests="failure"), False),
-    ("a job was cancelled", needs_of(outputs(), ios_tests="cancelled"), False),
+    ("a job was canceled", needs_of(outputs(), ios_tests="cancelled"), False),
     ("formatting due but skipped", needs_of(outputs(formatting="true")), False),
     ("docs not due but ran", needs_of(outputs(docs="false")), False),
     ("static checks not due but ran", needs_of(DOCS_ONLY, jvm_tests="skipped",

@@ -30,7 +30,7 @@ internal class LocalData(
     /**
      * Wipes every cached payload, storage-object row and mutation, the mutation queue's records
      * included, in one transaction, and moves the watermarks so that no response or cache patch
-     * started before it lands afterwards. For identity changes: sign-out, account switch, deletion.
+     * started before it lands afterward. For identity changes: sign-out, account switch, deletion.
      *
      * @param owner the identity the emptied cache belongs to, recorded in the same transaction;
      *   `null` records none, and the next identity to use the cache claims it.
@@ -68,7 +68,7 @@ internal class LocalData(
     /**
      * Empties the cache for [owner], the identity it now belongs to: every cached query with its
      * shape record, and every Storage row, go in one transaction that records [owner]. The mutation
-     * queue and its records stay. No response or cache patch started before it lands afterwards;
+     * queue and its records stay. No response or cache patch started before it lands afterward;
      * the files of the Storage cache are its caller's to delete.
      */
     suspend fun dropCacheFor(owner: String) {

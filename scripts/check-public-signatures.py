@@ -132,7 +132,7 @@ def split_top_level(text: str) -> List[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
-def normalise(text: str) -> str:
+def normalize(text: str) -> str:
     """[text] on one line, with the spacing ktfmt would give it."""
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"\s*([,?)\]>])", r"\1", text)
@@ -147,7 +147,7 @@ def render_parameters(text: str) -> str:
         parameter = re.sub(r"^(?:" + ANNOTATION + r"\s+)*", "", parameter)
         words = re.match(r"((?:(?:" + MODIFIERS + r"|val|var)\s+)*)(\w+)\s*:(.*)", parameter, re.S)
         if not words:
-            rendered.append(normalise(parameter))
+            rendered.append(normalize(parameter))
             continue
         modifiers, name, rest = words.groups()
         type_text, default = rest, None
@@ -163,7 +163,7 @@ def render_parameters(text: str) -> str:
                 type_text, default = rest[:index], rest[index + 1 :]
                 break
         prefix = "vararg " if "vararg" in modifiers.split() else ""
-        line = f"{prefix}{name}: {normalise(type_text)}"
+        line = f"{prefix}{name}: {normalize(type_text)}"
         rendered.append(line + (" = …" if default is not None else ""))
     return ", ".join(rendered)
 
@@ -284,7 +284,7 @@ def scan_file(code: str, package: str, source_set: str, markers: Sequence[str]) 
                     type_parameters = re.compile(r"\s*<").match(code, position)
                     if kind == "fun" and type_parameters:
                         close = matching_close(code, type_parameters.end() - 1)
-                        type_parameter_text = normalise(code[type_parameters.end() - 1 : close]) + " "
+                        type_parameter_text = normalize(code[type_parameters.end() - 1 : close]) + " "
                         position_after = close
                     open_paren = position_after
                     while open_paren < length and code[open_paren] != "(":
@@ -292,7 +292,7 @@ def scan_file(code: str, package: str, source_set: str, markers: Sequence[str]) 
                             open_paren = matching_close(code, open_paren)
                             continue
                         open_paren += 1
-                    name_text = normalise(code[position_after:open_paren])
+                    name_text = normalize(code[position_after:open_paren])
                     close = matching_close(code, open_paren)
                     parameters = render_parameters(code[open_paren + 1 : close - 1])
                     if kind == "constructor":

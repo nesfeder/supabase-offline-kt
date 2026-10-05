@@ -72,7 +72,7 @@ private suspend fun Transactor.tryTruncatingCheckpoint(): Boolean {
  * files, best effort: what an open read holds is finished outside the clear's locks, then in the
  * background, then at close. It never fails its caller and never waits without bound.
  *
- * @param scope where the background retries run; cancelling it stops them.
+ * @param scope where the background retries run; canceling it stops them.
  * @param engineLogger where a read holding the log, and a failure, are reported.
  * @param rewrite rewrites the database and tries once to empty the log; whether it emptied it.
  * @param emptyLog tries once to empty the log, waiting for no read; whether it emptied it.
@@ -114,7 +114,7 @@ internal class DatabaseScrub(
 
     /**
      * Outside the caller's locks: waits, for at most a second, for what [rewriteAfterDelete] left,
-     * then leaves the rest to background retries, its caller cancelled or not. Throws only a
+     * then leaves the rest to background retries, its caller canceled or not. Throws only a
      * cancellation.
      */
     suspend fun finishSoon() {

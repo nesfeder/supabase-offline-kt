@@ -38,7 +38,7 @@ internal const val MAX_REJECTED_TEXT_CHARS: Int = 4 * 1024
 /** The most characters the whole rejected list may take; the oldest entries go to stay under it. */
 internal const val MAX_REJECTED_LIST_CHARS: Int = 512 * 1024
 
-/** Version written into every reserved row, so a later format can recognise this one. */
+/** Version written into every reserved row, so a later format can recognize this one. */
 private const val REJECTED_MUTATION_LIST_FORMAT_VERSION: Int = 1
 
 /**

@@ -72,7 +72,7 @@ fun <T> predictiveBackSpec(from: Float = 0f, to: Float = 1f): FiniteAnimationSpe
 /**
  * [content] whose bounds travel to the element with the same [key] on the other side of a
  * navigation, the content cross-fading on the way: Material's container transform. The content
- * fills the travelling bounds, so its own background is the container that changes shape.
+ * fills the traveling bounds, so its own background is the container that changes shape.
  */
 @Composable
 fun SharedBounds(key: String, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
@@ -105,7 +105,7 @@ fun SharedBounds(key: String, modifier: Modifier = Modifier, content: @Composabl
                 boundsTransform = boundsTransform(seeking),
                 resizeMode = RemeasureToBounds,
             ),
-            // The travelling bounds are fixed constraints; the content takes them, not its own
+            // The traveling bounds are fixed constraints; the content takes them, not its own
             // size.
             propagateMinConstraints = true,
         ) {

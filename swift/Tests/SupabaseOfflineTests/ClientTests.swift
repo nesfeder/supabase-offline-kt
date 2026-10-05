@@ -199,7 +199,7 @@ struct ClientTests {
         // When the iterator is let go
         iterator = nil
 
-        // Then the subscription ends (cancelled, or by the freed client's close) and the client is freed
+        // Then the subscription ends (canceled, or by the freed client's close) and the client is freed
         #expect(await eventually { ends.values.count == 1 })
         #expect(["CANCELLED", "nil"].contains(ends.values.first ?? ""))
         #expect(await eventually { reference.value == nil })

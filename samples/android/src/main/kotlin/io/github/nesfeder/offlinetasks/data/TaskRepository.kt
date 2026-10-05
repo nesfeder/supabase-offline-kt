@@ -37,7 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
  * Storage's `RestException` onto [PhotoStorageException]. Anything may also fail in a way no one
  * planned for; the screens report every failure as a message, so none of them crashes the app.
  *
- * **Cancellation.** A call that has started a write finishes it even if its caller is cancelled: a
+ * **Cancellation.** A call that has started a write finishes it even if its caller is canceled: a
  * screen that closes mid-delete cannot leave a photo's file deleted and its row in place, and one
  * that closes mid-upload cannot leave a file with no row. The caller only stops waiting for the
  * result. A photo whose row the server refuses at once has its file deleted too.

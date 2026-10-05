@@ -95,11 +95,11 @@ internal class UnknownOperationRowScenario(private val open: (path: String) -> O
 
             // Then — the unknown write is refused for the app to see, and the rest are sent
             assertEquals(
-                listOf(UNKNOWN_ID to "The queued operation is not recognised"),
+                listOf(UNKNOWN_ID to "The queued operation is not recognized"),
                 report.rejected.map { mutation -> mutation.id to mutation.message },
             )
             assertEquals(
-                listOf(UNKNOWN_ID to "The queued operation is not recognised"),
+                listOf(UNKNOWN_ID to "The queued operation is not recognized"),
                 rejected.map { mutation -> mutation.id to mutation.message },
             )
             assertEquals(5 to 0, report.syncedCount to report.remainingCount)

@@ -20,8 +20,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 
 /**
- * A replay pass that is cancelled — by `close()`, or a clear of local data — finishes a request it
- * has already sent, but sends none it has not: cancelled after it chose a mutation and before the
+ * A replay pass that is canceled — by `close()`, or a clear of local data — finishes a request it
+ * has already sent, but sends none it has not: canceled after it chose a mutation and before the
  * request left, it stops there, and the mutation stays queued, known never to have been sent.
  */
 class ReplayPassStopTest {
@@ -31,8 +31,8 @@ class ReplayPassStopTest {
     private val server = RecordingPostgrestServer()
 
     @Test
-    fun a_pass_cancelled_before_its_request_leaves_sends_nothing() = runTest {
-        // Given — a keyed insert queued offline, and a pass that is cancelled when the send's start
+    fun a_pass_canceled_before_its_request_leaves_sends_nothing() = runTest {
+        // Given — a keyed insert queued offline, and a pass that is canceled when the send's start
         // is recorded: after the mutation was claimed, before the request is built
         val supabase = newTestSupabaseClientWithAuth(server.engine)
         supabase.signInForTest("user-a")
