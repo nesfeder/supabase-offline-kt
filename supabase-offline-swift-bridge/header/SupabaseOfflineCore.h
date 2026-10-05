@@ -956,11 +956,14 @@ __attribute__((swift_name("BridgeStringResult")))
  * @property rejected the writes refused for good during this call, now on the rejected list.
  * @property remainingCount the writes still queued when the call returned.
  * @property alreadyOnServerCount of [syncedCount], the inserts whose rows the server already held.
+ * @property heldBehindOtherTablesCount of [remainingCount], the writes a call for one table held
+ *   back behind an earlier write of the user to another table; `0` for a call over every table.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeSyncReport")))
 @interface SOCBridgeSyncReport : SOCBase
 @property (readonly) int32_t alreadyOnServerCount __attribute__((swift_name("alreadyOnServerCount")));
+@property (readonly) int32_t heldBehindOtherTablesCount __attribute__((swift_name("heldBehindOtherTablesCount")));
 @property (readonly) NSArray<SOCBridgeRejectedMutation *> *rejected __attribute__((swift_name("rejected")));
 @property (readonly) int32_t remainingCount __attribute__((swift_name("remainingCount")));
 @property (readonly) int32_t syncedCount __attribute__((swift_name("syncedCount")));

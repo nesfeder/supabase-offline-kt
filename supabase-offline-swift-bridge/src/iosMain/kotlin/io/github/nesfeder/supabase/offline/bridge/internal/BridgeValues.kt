@@ -134,6 +134,7 @@ internal fun SyncReport.toBridge(): BridgeSyncReport =
         rejected = rejected.map { it.toBridge() },
         remainingCount = remainingCount,
         alreadyOnServerCount = alreadyOnServerCount,
+        heldBehindOtherTablesCount = heldBehindOtherTablesCount,
     )
 
 /** The sync status; the last sync error is the one [BridgeErrorKind.SYNC_FAILED] value. */
