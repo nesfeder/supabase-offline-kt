@@ -18,6 +18,7 @@ import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -124,6 +125,7 @@ class CacheBelongsToOneIdentityTest {
         restoresStoredSession: Boolean = false,
         responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
         scrubDatabase: suspend () -> Boolean = { true },
+        fileSystem: FileSystem = FileSystem.SYSTEM,
         plugins: SupabaseClientBuilder.() -> Unit = {
             install(Auth) {
                 sessionManager = sessions
@@ -156,6 +158,7 @@ class CacheBelongsToOneIdentityTest {
                 coordinatorScope = backgroundScope,
                 scrubDatabase = scrubDatabase,
                 responseTrust = responseTrust,
+                fileSystem = fileSystem,
             )
             .also { runCurrent() }
     }
@@ -577,6 +580,36 @@ class CacheBelongsToOneIdentityTest {
         assertTrue(after.none { payload -> payload != null && "\"A\"" in payload }, "$after")
         assertEquals(rowsOf("B"), after.lastOrNull())
     }
+
+    @Test
+    fun a_reactive_read_fetches_again_when_deleting_the_files_fails_after_a_change_of_user() =
+        runTest {
+            // Given — A signed in, with a reactive read showing A's rows, on a disk that will
+            // refuse to delete the file cache's folders
+            val disk = FakeFailingFileSystem()
+            val server = newServer()
+            val client = launchClient(server, signedInAs = "A", fileSystem = disk)
+            val shown = mutableListOf<String?>()
+            val job = backgroundScope.launch {
+                client.from(TABLE).selectAsFlow().collect { emission ->
+                    shown += emission.result?.data
+                }
+            }
+            advanceTimeBy(5.seconds)
+            runCurrent()
+            assertEquals(rowsOf("A"), shown.last())
+            disk.failDeletes = true
+
+            // When — B signs in: the drop commits, then deleting the folders fails
+            client.supabaseClient.signInForTest("B")
+            awaitCacheOwner("user:B")
+            advanceTimeBy(1.minutes)
+            awaitUntil { shown.lastOrNull() == rowsOf("B") }
+            job.cancel()
+
+            // Then — the read still fetched again, and ends on B's rows
+            assertEquals(rowsOf("B"), shown.lastOrNull())
+        }
 
     @Test
     fun a_change_of_user_drops_the_file_cache_and_its_rows() = runTest {

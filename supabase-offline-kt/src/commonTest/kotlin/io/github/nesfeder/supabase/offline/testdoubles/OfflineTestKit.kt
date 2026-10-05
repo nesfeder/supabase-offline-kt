@@ -223,6 +223,8 @@ internal suspend fun TestStore.recordQueryShape(
  * @param responseTrust which read responses may replace what the cache holds.
  * @param config the plugin configuration the client reports, and reads `autoSync` from.
  * @param networkAvailability the connectivity signal the client watches; `null` for none.
+ * @param fileSystem the file system the Storage file cache uses; pass a [FakeFailingFileSystem] to
+ *   make it fail.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -245,6 +247,7 @@ internal fun newTestOfflineClient(
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     config: Offline.Config = Offline.Config(),
     networkAvailability: Flow<Boolean>? = null,
+    fileSystem: FileSystem = FileSystem.SYSTEM,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
@@ -266,6 +269,7 @@ internal fun newTestOfflineClient(
         responseTrust = responseTrust,
         config = config,
         networkAvailability = networkAvailability,
+        fileSystem = fileSystem,
     )
 
 /**

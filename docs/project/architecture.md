@@ -1031,7 +1031,7 @@ identity only while it holds nothing, since rows an earlier session left may be 
 cache another identity's, the client drops it under the send lock (no pass is stopped, since none of
 the queue goes) and the file cache's lock: the cached queries, their shapes and the file rows go in
 one transaction that records the new owner, the database is rewritten, the files are deleted, and
-live queries fetch again. The drop watermark moves, so a response or a patch that started before it
+live queries fetch again, as after a clear, even when a later step fails. The drop watermark moves, so a response or a patch that started before it
 cannot land afterward; a download that started before it is kept out by the file cache's own
 generation. The mutation queue is kept: queued writes stay with their owners.
 

@@ -397,6 +397,9 @@ release.
 - A live read fetches again after `clearLocalData()`, as after a change of owner, instead of
   showing the emptied cache until something else fetched; a refresh request made while a read's
   refresh ran is no longer lost.
+- A live read fetches again after a change of owner whose last step, deleting the file cache's
+  folders, failed: it showed the emptied cache until something else fetched, and the error logged
+  said the cache had not been dropped.
 - A read made while the stored session restores waits for it at most 10 seconds instead of waiting
   on a session store that hangs. Past that the cache is not served and the read goes out on the anon
   key: a one-shot read returns that answer uncached, which under row-level security can hold fewer

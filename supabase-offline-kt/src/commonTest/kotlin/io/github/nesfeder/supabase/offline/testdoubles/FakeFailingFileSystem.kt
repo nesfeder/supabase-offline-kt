@@ -23,6 +23,9 @@ internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
     /** When `true`, [atomicMove] throws. */
     var failMoves: Boolean = false
 
+    /** When `true`, [delete] throws, so a recursive delete fails too. */
+    var failDeletes: Boolean = false
+
     /** Runs once a file sink is open, with the file on disk, on the thread that opened it. */
     var onSinkOpened: ((Path) -> Unit)? = null
 
@@ -54,6 +57,11 @@ internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
 
             override fun timeout(): Timeout = real.timeout()
         }
+    }
+
+    override fun delete(path: Path, mustExist: Boolean) {
+        if (failDeletes) throw IOException("Operation not permitted")
+        super.delete(path, mustExist)
     }
 
     override fun atomicMove(source: Path, target: Path) {
