@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 import Foundation
 import SupabaseOffline
+import SupabaseOfflineTesting
 import Testing
 
 @testable import OfflineTasks
@@ -75,6 +76,64 @@ struct PhotoTests {
         #expect(await test.server.objectPaths().isEmpty)
         try await test.stop()
     }
+
+    @Test("A photo whose row the server refuses at once takes its file with it")
+    func refusedRowRemovesItsFile() async throws {
+        // Given: the server refuses every photo row, as it does when the task is gone from it
+        let test = TestApp()
+        try await test.start()
+        test.app.tasks.addTask(title: "Mend the gate", notes: "")
+        let task = try await test.task(titled: "Mend the gate")
+        try await eventually("the task reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+        let refusal = Self.missingTaskRefusal
+        await test.server.intercept { request, _ in
+            let isPhotoRow = request.method == "POST" && request.url.path().hasSuffix("/rest/v1/\(Tables.taskPhotos)")
+            return isPhotoRow ? refusal : nil
+        }
+
+        // When
+        let failure = await #expect(throws: SampleFailure.self) {
+            try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
+        }
+
+        // Then: the refusal is said, and the file uploaded for the row is gone
+        guard case .writeRefused(_, let serverError)? = failure else {
+            Issue.record("Expected a refused write, got \(String(describing: failure))")
+            return
+        }
+        #expect(serverError.code == "23503")
+        #expect(await test.server.requests.contains { $0.method == "POST" && $0.path.hasPrefix("/storage/v1/object/") })
+        #expect(await test.server.objectPaths().isEmpty)
+        try await test.stop()
+    }
+
+    @Test("A photo whose row only fails to arrive keeps its file, and its row waits in the queue")
+    func unansweredRowKeepsItsFile() async throws {
+        // Given: the server fails every photo row in a way that may pass
+        let test = TestApp()
+        try await test.start()
+        test.app.tasks.addTask(title: "Oil the hinges", notes: "")
+        let task = try await test.task(titled: "Oil the hinges")
+        try await eventually("the task reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+        await test.server.intercept { request, _ in
+            let isPhotoRow = request.method == "POST" && request.url.path().hasSuffix("/rest/v1/\(Tables.taskPhotos)")
+            return isPhotoRow ? .status(503) : nil
+        }
+
+        // When
+        let photo = try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
+
+        // Then: the file stays for the row the queue will send
+        #expect(await test.server.objectPaths() == [photo.objectPath])
+        #expect(try await test.repository.client.pendingMutationCount(table: Tables.taskPhotos) == 1)
+        try await test.stop()
+    }
+
+    /// PostgREST's answer to a photo row whose task is not on the server.
+    private static let missingTaskRefusal = FakeServer.Response.json(
+        #"{"code":"23503","message":"insert or update on table \"task_photos\" violates foreign key constraint \"task_photos_task_fkey\"","details":null,"hint":null}"#,
+        status: 409
+    )
 
     @Test("A picked image is re-encoded as a JPEG under the bucket's limit, its size kept")
     func encodesJPEG() async throws {

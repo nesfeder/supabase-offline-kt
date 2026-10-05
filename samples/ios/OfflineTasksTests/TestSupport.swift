@@ -168,3 +168,10 @@ final class LiveRecording<Element: Sendable> {
 func jsonText(_ rows: [[String: OfflineJSON]]) throws -> String {
     String(decoding: try JSONEncoder().encode(OfflineJSON.array(rows.map(OfflineJSON.object))), as: UTF8.self)
 }
+
+/// A value a test's closure records for the test to read afterward.
+final class Recorded<Value> {
+
+    /// What was recorded; `nil` until something was.
+    var value: Value?
+}

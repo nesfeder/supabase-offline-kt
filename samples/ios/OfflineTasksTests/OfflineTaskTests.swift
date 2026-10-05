@@ -157,6 +157,11 @@ struct OfflineTaskTests {
         }
         #expect(test.app.syncStatus.pendingMutationCount == 1)
         let requestsBefore = await test.server.requests.count
+        let queueAtSignOut = Recorded<[PendingMutation]>()
+        let client = test.repository.client
+        test.session.beforeSignOut = {
+            queueAtSignOut.value = try? await client.pendingMutations().first()
+        }
 
         // When
         test.app.sync.startOver()
@@ -165,7 +170,9 @@ struct OfflineTaskTests {
         test.startReads()
         try await eventually("the new user's empty list shows") { test.app.tasks.tasks == [] }
 
-        // Then: the server lost the first user's rows, and the queued write was never sent again
+        // Then: nothing of the first user's waited in the queue once the deletes were done
+        #expect(queueAtSignOut.value?.isEmpty == true)
+        // And the server lost the first user's rows, and the queued write was never sent again
         let requests = await test.server.requests
         let after = requests[requestsBefore...]
         #expect(!after.contains { $0.body.contains("Stuck in the queue") })

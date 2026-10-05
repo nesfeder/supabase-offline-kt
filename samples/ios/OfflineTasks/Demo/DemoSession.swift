@@ -17,6 +17,9 @@ final class DemoSession: UserSession {
     /// How long signing out takes before the token is gone, as a real sign-out takes a moment.
     @ObservationIgnored private let signOutDelay: Duration
 
+    /// Runs as a sign-out begins, before the token goes: tests look at what the app left behind.
+    @ObservationIgnored var beforeSignOut: (() async -> Void)?
+
     /// A session signed in as `userID`, whose sign-out takes `signOutDelay`.
     init(userID: String = DeviceID.make(), signOutDelay: Duration = .zero) {
         state = .signedIn(userID: userID)
@@ -33,6 +36,7 @@ final class DemoSession: UserSession {
     }
 
     func signOut() async {
+        await beforeSignOut?()
         try? await Task.sleep(for: signOutDelay)
         token.withLock { $0 = nil }
         state = .signingIn

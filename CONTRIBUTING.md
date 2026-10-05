@@ -270,10 +270,11 @@ python3 scripts/swift-release.py check-required-reasons --update \
 The Swift package lives in `swift/`, laid out as the repository the release publishes it to: its
 `Package.swift`, the `SupabaseOffline` and `SupabaseOfflineTesting` sources, and the tests. It is
 iOS-only, so it builds and tests with `xcodebuild` on an iOS simulator, never with `swift build` on
-the Mac. `Package.swift` takes the core framework from `swift/LocalCore/` (ignored by git) whenever
-that folder holds one, and from the release otherwise; `SUPABASE_OFFLINE_LOCAL_CORE=1` or `=0` in its
-environment decides instead. `scripts/prepare-local-swift-package.sh` builds the framework and puts
-it there, which is all the iOS sample (`samples/ios`, which depends on `swift/` by path) needs.
+the Mac. In a checkout `Package.swift` takes the core framework from `swift/LocalCore/` (ignored by
+git), whatever is on disk, so its answer never depends on the folder; `SUPABASE_OFFLINE_LOCAL_CORE=0`
+in its environment takes the release's archive instead (in a checkout that is version `0.0.0`, which
+never resolves). `scripts/prepare-local-swift-package.sh` builds the framework and puts it there,
+which is all the iOS sample (`samples/ios`, which depends on `swift/` by path) needs.
 
 To build the framework and run the tests on a simulator of your own, with every warning an error,
 followed by the check that the public API names nothing of the framework underneath it:
@@ -286,11 +287,9 @@ scripts/test-swift-package.sh --simulator <simulator UDID> --derived-data <a scr
 
 The script copies the framework into `swift/LocalCore/`; `--framework <path>` tests against
 another build of it instead, such as the release's. To open the package in Xcode afterward,
-open `swift/Package.swift`: the framework in `swift/LocalCore/` is found by itself. SwiftPM caches
-its reading of a manifest by the manifest's text and the environment, not by what is on disk, so
-an Xcode that read the package before `swift/LocalCore/` existed keeps looking for the release:
-reset its package caches (File > Packages > Reset Package Caches), or open it once with
-`open -a Xcode --env SUPABASE_OFFLINE_LOCAL_CORE=1 swift/Package.swift`.
+open `swift/Package.swift`. An Xcode that opened it before `swift/LocalCore/` held the framework
+reports that the local binary target "does not contain a binary artifact": once the framework is
+there, File > Packages > Resolve Package Versions (or reopening the package) picks it up.
 CI runs the same script in the iOS job on the self-hosted runner, and the release runs it on
 GitHub's macOS runner against the release framework. GitHub's own runners do not run it in CI (the
 merge queue and the weekly run skip it, to save macOS minutes), so a change to the bridge or to
