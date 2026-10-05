@@ -398,7 +398,7 @@ release.
   rows, or none, and a live read shows nothing (`Refreshing`) until the session settles.
 - A read the cache cannot answer, made while the connectivity monitor says the network is down, is
   sent once instead of after supabase-kt's retries.
-- One failed read of the database no longer turns automatic behaviour off for the client's life,
+- One failed read of the database no longer turns automatic behavior off for the client's life,
   or fails a write the server answered: a later sign-in sends the user's queued writes, the sync
   status follows the queue again, and a write the server applied (or refused), or a discard that
   happened, is reported as it happened rather than as the failed read.

@@ -2,7 +2,7 @@
 
 This page describes supabase-offline-kt as 0.1.0 ships it: the public API in full, how the engine
 behind it works, the decisions that shaped both, and what the library promises. The
-[Behaviours](../behaviours/index.md) pages hold the case-by-case tables; this page is the map.
+[Behaviors](../behaviors/index.md) pages hold the case-by-case tables; this page is the map.
 
 ## What it is
 
@@ -85,7 +85,7 @@ anonymous identity when nobody is signed in or the client has no Auth plugin (se
 | `Offline.Companion` | The provider `install(Offline) { … }` takes, under the key `"offline"`. | `createConfig` checks the settings; `create` builds the plugin, which opens its database in supabase-kt's `init`, once every plugin exists. | `IllegalArgumentException` when a table's primary key names no column; through `createSupabaseClient`, `IllegalStateException` when another client holds the database or its directory, or, on Android, when the app removed androidx.startup's provider |
 | `val SupabaseClient.offline: Offline` | The installed plugin, reached as `supabase.postgrest` is. | Import `io.github.nesfeder.supabase.offline.offline`. | `IllegalStateException` when the client has no `install(Offline)` |
 | `Offline.CACHE_SIZE_UNLIMITED` | `-1L`, the size that turns eviction off, for either cache. | — | — |
-| `class Offline.Config` | The settings, written in `install(Offline) { … }`. | **Read once**, when the client is created: changing `supabase.offline.config` afterwards has no effect. | — |
+| `class Offline.Config` | The settings, written in `install(Offline) { … }`. | **Read once**, when the client is created: changing `supabase.offline.config` afterward has no effect. | — |
 
 The settings:
 
@@ -96,7 +96,7 @@ The settings:
 | `dataDirectory: String?` | `null` | Where the database, `supabase_offline.db`, and the file cache live. `null` is the platform's place: the app's database directory and `<filesDir>/supabase_offline` on Android, `Library/Application Support` on iOS, where a database found in `Documents`, an earlier default, is first moved with its files. When this directory has no database and the default place has one no client holds, the first client moves it here, unsent writes included; when it cannot, it opens the one it can without leaving queued writes behind, and logs a warning. |
 | `networkAvailability: Flow<Boolean>?` | `null` | The app's own connectivity signal, `true` while online, in place of the platform's monitor. `null` uses the monitor. |
 | `autoSync: Boolean` | `true` | Whether the library sends queued writes by itself when the session settles and when the network comes back. |
-| `primaryKeys`, `primaryKey(table, vararg columns)` | `id` | Each table's key columns, by its name in the default schema and as `schema.table` in another: how the cache recognises a row. `primaryKey` throws `IllegalArgumentException` for no column. |
+| `primaryKeys`, `primaryKey(table, vararg columns)` | `id` | Each table's key columns, by its name in the default schema and as `schema.table` in another: how the cache recognizes a row. `primaryKey` throws `IllegalArgumentException` for no column. |
 | `responseTrust: ResponseTrust` | `SettledSession` | Which server responses may replace what the cache holds. |
 | `logLevel: LogLevel?` | `null` | The least severe level the plugin logs at; `null` takes the client's `defaultLogLevel`. |
 
@@ -239,7 +239,7 @@ What a `QueueIfOffline` write returns:
 | Sent at once, and the server answered with any other status: a refusal, a `408` or `429`, another `5xx`, or the tenth schema-cache refusal | The server's exception is thrown, and the write leaves the queue |
 | Local data was cleared while it was on the wire | `Applied` without a cache patch, or its failure |
 | The queue cannot hold it faithfully (below) | Sent directly: `Applied`, or its failure; for want of a connection, `MutationNotQueueableException` |
-| The caller is cancelled while it is on the wire | It stays queued, since the server may have it, and a pass sends it |
+| The caller is canceled while it is on the wire | It stays queued, since the server may have it, and a pass sends it |
 
 **The immediate refusal.** A write sent at once that the server refuses throws supabase-kt's
 exception to its caller, as `supabase.from(…)` would. It is deleted from the queue, never reaches
@@ -456,7 +456,7 @@ puts the name in the URL as written, so its request can fetch a different object
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. Live reads open through it fetch again, as after a change of owner. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background as soon as the read ends, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. On sign-out, clear before `auth.signOut()` or in a `finally` around it: offline, `signOut()` throws and keeps the session. | — |
+| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is canceled first, and nothing queued is sent once it has begun. Live reads open through it fetch again, as after a change of owner. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background as soon as the read ends, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. On sign-out, clear before `auth.signOut()` or in a `finally` around it: offline, `signOut()` throws and keeps the session. | — |
 | `applyServerRecord(table, record: JsonObject, primaryKeys = null, schema = null)`; reified `applyServerRecord(table, record: T, …)` | Applies a row the server reports, such as a Realtime INSERT or UPDATE record, to every cached query of the table. | The cached row with the same key is replaced, and a query that admits the row gains it. A record without its whole key is logged and dropped. `primaryKeys = null` is the table's key as `primaryKeys` gives it (`schema.table` for another schema), `id` when none is configured. | The reified form: `IllegalArgumentException` when `record` does not encode to a JSON object |
 | `applyServerDelete(table, oldRecord, primaryKeys = null, schema = null)` | Removes a row the server reports deleted from every cached query of the table. | As `applyServerRecord`. | — |
 | `rpc(function, request)`, `rpc(function, parameters: JsonObject, request)`; reified `rpc(function, parameters: T, request)` | Calls a database function, as `supabase.postgrest.rpc` does. | Network only: never cached, never queued, since a function may change data. | `NetworkDisabledException` while access is off; `IllegalStateException` without PostgREST; the reified form, `IllegalArgumentException` when `parameters` does not encode to a JSON object |
@@ -472,7 +472,7 @@ not yet sent go out.
 
 | | What happens |
 | --- | --- |
-| At once | `from` and every new suspending call fail with the closed error, on the plugin and on any builder or bucket obtained from it, and a flow obtained from it fails when collected; what does no work (`syncStatus`, the getters, a bucket's URL builders) still answers. Every flow being collected completes, a channel held through `produceIn` included, failing no scope; a flow collected afterwards fails with the closed error. The library's own work stops (refreshes, passes), and so do the syncs and every Storage call in progress but `cachedFile` and a resumable upload, their callers getting the closed error, never a cancellation. |
+| At once | `from` and every new suspending call fail with the closed error, on the plugin and on any builder or bucket obtained from it, and a flow obtained from it fails when collected; what does no work (`syncStatus`, the getters, a bucket's URL builders) still answers. Every flow being collected completes, a channel held through `produceIn` included, failing no scope; a flow collected afterward fails with the closed error. The library's own work stops (refreshes, passes), and so do the syncs and every Storage call in progress but `cachedFile` and a resumable upload, their callers getting the closed error, never a cancellation. |
 | Left to finish | A PostgREST write, a clear, a one-shot `select` that goes to the network, an `rpc`, a read of the cache, and the start or continuation of a resumable upload. A clear that has begun completes, and a write whose answer arrives is applied and never sent again. A pass with a queued write on the wire finishes that request and records its answer first. A stopped Storage write may have been applied, so the cached copies it touched are dropped. |
 | May still be sent | Through `supabase.close()`, a call made while supabase-kt closes its HTTP client, or one whose request had not gone out, is either still sent (Ktor can send while its client finishes closing) or ends as it would offline: a read the cache can answer is answered from it, a write the queue holds returns `Queued`, and anything else fails with the closed error. Never with a cancellation. |
 | The bound | Every `close()` returns once the database is released, or after 10 seconds of real time at most, even under a test's virtual clock, and never throws: a failure closing the database is logged and the claim released. Past that, the database is released when the last call finishes; until then a new client on it fails with an error saying it is still closing. Safe to call more than once, and from inside a collector of one of the plugin's flows. |
@@ -685,7 +685,11 @@ second PostgREST instance configured as the app's but with a fixed token, and a 
 phase placed ahead of every plugin reads the method and the `Accept` and `Prefer` headers and
 stops it. Building the check asks no token provider and sends nothing. It fails closed: a read whose
 request cannot be built fails as sending it would. Anything but a JSON array of rows goes to the
-network as it is.
+network as it is. No app plugin sees the stopped request, but a subscriber to the client's
+`HttpRequestCreated` monitor event does, since that event fires before the pipeline runs, and
+supabase-kt's own `DEBUG` logging records it as a failed `GET`. The PostgREST instance is built at
+the first `from()` and kept, so a setting of the app's PostgREST changed after that is not
+followed by the check.
 
 **The cache key.** A cached query lives under `(table, cache key)`. The key is the table, its query
 parameters sorted by name and its range, such as
@@ -797,7 +801,8 @@ flowchart TD
    `dryRun()` only in that header, and on 3.6, which has no `dryRun()`, a caller adds the header
    itself. The queue does not keep it, so the engine builds the write once more, on the token-free
    PostgREST instance, under a probe that a pipeline phase ahead of every plugin reads (every
-   `Prefer` value) and stops. No app plugin sees the stopped request.
+   `Prefer` value) and stops. No app plugin sees the stopped request; a subscriber to the client's
+   `HttpRequestCreated` monitor event does, as for the read-shape check.
 4. It saves the write: one row in `mutation_cache` with its owner, inserted under the queue lock,
    refused when local data was cleared since the write began. The table's readers are told, and the
    overlay shows the write from now on.
@@ -848,7 +853,7 @@ is not patched.
 the send lock: still pending, no earlier write in flight whoever owns it, network access still on,
 no clear since the pass began, and, in a pass for one table, no earlier write of the identity still
 queued in another table. It reads the identity again before every request and stops if it changed. A
-cancelled pass stops between writes: a request already on the wire runs to its answer, which is
+canceled pass stops between writes: a request already on the wire runs to its answer, which is
 recorded, because a write the server applied but the queue kept would be sent again.
 
 - **An INSERT that may already be on the server**, a keyed INSERT with its send record set, replays
@@ -879,7 +884,7 @@ with its recorded outcome, and on every other way out.
 request-pipeline phase placed just before the send, after supabase-kt has set the `Authorization`
 header, reads the owner the request carries. With Auth installed, it stops a PostgREST request whose
 token does not speak for that owner: a user's JWT must name the owner as `sub`, and an anonymous
-write must carry no user's token. It also stops a request whose pass was cancelled before it went
+write must carry no user's token. It also stops a request whose pass was canceled before it went
 out. The write then stays queued for its owner's next session, and the send record this attempt made
 is cleared, since nothing left the device. A token that does not name its own session's user holds
 that user's queue, and is reported once at `WARNING`. A PostgREST configured with its own `jwtToken`
@@ -918,12 +923,24 @@ new offline period whether or not a pass is asked for then.
    passes are what sends an online write that returned `Queued`.
 
 **The `disableNetwork()` interception.** The switch is checked where requests start, never by
-cancelling them. Each PostgREST verb of a table handle throws `NetworkDisabledException` before
+canceling them. Each PostgREST verb of a table handle throws `NetworkDisabledException` before
 supabase-kt is called; the head send leaves its write queued; a pass sends nothing; a refresh waits,
 `Paused`; the bucket answers a download from the file cache when it holds the file, and otherwise
 throws, as for any other call, but a resumable upload's handle, supabase-kt's own, still sends its
 chunks; `rpc` throws. The exception proves the request was never sent: a write it stops stays
 queued as never sent, and a read falls back to the cache as it would offline.
+
+### The file cache
+
+`StorageFileCache` runs every commit, eviction, move, invalidation and clear under one lock. A
+download is written to a temporary file. Under the lock its row is recorded first, then the file is
+renamed over the entry's own in one move; a failed move puts the previous row back, so no partial
+file is ever served. A file's last use is recorded as its modification time,
+which survives a restart and needs no database column. Once the cache is over its bound, eviction
+takes the least recently used files until the cache is a tenth below it, sparing the file just
+committed, the files being read and any used in the last 30 seconds; when those recently used
+files keep it over, it skips the scan until the oldest of them ages out. Temporary files a crash
+left behind are swept once per cache, when they are more than a day old and no row names them.
 
 ### Lifecycle
 
@@ -964,7 +981,7 @@ cancellation the closing caused, that reaches a call's edge into the closed erro
 `close()` then runs, in order:
 
 1. The gate shuts: every new call fails with the closed error, and every collection completes.
-2. The client's scope is cancelled, which stops its own work, the syncs and every Storage call in
+2. The client's scope is canceled, which stops its own work, the syncs and every Storage call in
    progress but `cachedFile` and a resumable upload, and `syncStatus` takes its last value.
 3. It waits, at most 10 seconds of real time on `Dispatchers.Default`, for that scope to end and for
    no call to be left in the gate.
@@ -1005,7 +1022,7 @@ cache another identity's, the client drops it under the send lock (no pass is st
 the queue goes) and the file cache's lock: the cached queries, their shapes and the file rows go in
 one transaction that records the new owner, the database is rewritten, the files are deleted, and
 live queries fetch again. The drop watermark moves, so a response or a patch that started before it
-cannot land afterwards; a download that started before it is kept out by the file cache's own
+cannot land afterward; a download that started before it is kept out by the file cache's own
 generation. The mutation queue is kept: queued writes stay with their owners.
 
 **`clearLocalData`.** The replayer bumps its clear generation, cancels the passes in flight and
@@ -1053,6 +1070,11 @@ a query or overlaid. `localPath` records where a file was written, but a file's 
 derived from its bucket and path; the recorded one is read only to clean up a file an older mapping
 left. A schema change after 0.1.0 is a new version with a migration that keeps `mutation_cache`'s
 rows.
+
+Every payload, overlay and stored filter is read and written with one `Json` instance,
+`EngineJson`, so the serializer cache is shared and the settings cannot drift between call sites.
+It ignores unknown keys and coerces no values, since coercion would change what the overlay
+decodes.
 
 ## Decisions
 
@@ -1138,7 +1160,7 @@ What the library promises, each with the tests that pin it:
 | With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
 | After `clearLocalData()`, the deleted rows cannot be read back from the database's files once no open read holds its write-ahead log: when the clear returns if none does within a second, otherwise as soon as the read ends while the client is open, or at `close()`. The clear never waits longer, and never fails for it. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest`, `DatabaseScrubTest` |
 | Within one process, one database is open in one client at a time. | `OfflinePluginAndroidTest`, `OfflinePluginIosTest`, `IosClientLifecycleTest` |
-| `close()` returns within 10 seconds of real time and never throws, a clear that has begun completes, and a write whose answer arrives during it is applied and never sent again. A caller cancelled while it runs gets its own cancellation. | `SupabaseOfflineClientCloseTest`, `PluginCloseTest`, `PluginCloseRaceAndroidTest`, `PluginCloseRaceIosTest`, `ClientCloseRaceAndroidTest`, `ClientCloseRaceIosTest`, `MutationQueueAcrossCloseTest` |
+| `close()` returns within 10 seconds of real time and never throws, a clear that has begun completes, and a write whose answer arrives during it is applied and never sent again. A caller canceled while it runs gets its own cancellation. | `SupabaseOfflineClientCloseTest`, `PluginCloseTest`, `PluginCloseRaceAndroidTest`, `PluginCloseRaceIosTest`, `ClientCloseRaceAndroidTest`, `ClientCloseRaceIosTest`, `MutationQueueAcrossCloseTest` |
 | A failure in the library's background work never crashes the process, and one failed read of the database never turns an automatic trigger or the status off, nor fails a write the server answered. | `BackgroundFailureContainmentTest`, `QueueCheckFailureTest`, `SyncStatusTest` |
 | The library writes nothing to the console itself; its messages go only where supabase-kt's logging sends them. | `scripts/check-no-console.py`, in CI |
 | Logs at `INFO` and above carry no rows, filter values, server messages or object paths. | `LogPrivacyTest`, `OfflineMutationQueueDecisionTest`, `OfflineBucketApiDownloadTest` |
@@ -1200,5 +1222,5 @@ one of them built only on supabase-kt 3.8, and three fixtures) hold the persiste
 rows, the stored mutation formats and their replay on each SQLite driver, the object-name encoding
 and file layout of the file cache, and where the database and the files live on both platforms, the
 earlier iOS place they move from included; a change to any of them rates `format`. What no record
-shows (a changed default, documented behaviour, the body of an inline function, a new opt-in
+shows (a changed default, documented behavior, the body of an inline function, a new opt-in
 requirement) is a reviewer's to catch.
